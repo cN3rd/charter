@@ -1,0 +1,27 @@
+[package]
+name = "symphonia-wrap"
+version = "0.0.0"
+edition = "2024"
+
+[lib]
+crate-type = ["dylib", "rlib"]
+
+[dependencies.symphonia]
+version = "0.6.1"
+default-features = false
+features = [
+	"opt-simd",
+	"all-meta",
+	"aiff",
+	"caf",
+	"isomp4",
+	"ogg",
+	"wav",
+	"aac",
+	"adpcm",
+	"alac",
+	"mpa",
+	"flac",
+	"pcm",
+	"vorbis",
+]

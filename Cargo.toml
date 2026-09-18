@@ -1,0 +1,55 @@
+[workspace]
+members = [
+    "third-party/symphonia-wrap"
+]
+resolver = "3"
+
+# Workspace optimizations to workspace to third-party dependencies
+# which are noticeably slow on debug builds
+[profile.dev.package.symphonia]
+opt-level = 3
+
+[profile.dev.package."symphonia-bundle-mp3"]
+opt-level = 3
+
+[profile.dev.package."symphonia-codec-aac"]
+opt-level = 3
+
+[profile.dev.package."symphonia-bundle-flac"]
+opt-level = 3
+
+[profile.dev.package."symphonia-codec-adpcm"]
+opt-level = 3
+
+[profile.dev.package."symphonia-codec-alac"]
+opt-level = 3
+
+[profile.dev.package."symphonia-codec-pcm"]
+opt-level = 3
+
+[profile.dev.package."symphonia-codec-vorbis"]
+opt-level = 3
+
+[profile.dev.package."symphonia-common"]
+opt-level = 3
+
+[profile.dev.package."symphonia-core"]
+opt-level = 3
+
+[profile.dev.package."symphonia-format-caf"]
+opt-level = 3
+
+[profile.dev.package."symphonia-format-isomp4"]
+opt-level = 3
+
+[profile.dev.package."symphonia-format-ogg"]
+opt-level = 3
+
+[profile.dev.package."symphonia-format-riff"]
+opt-level = 3
+
+[profile.dev.package."symphonia-metadata"]
+opt-level = 3
+
+[profile.dev.package."symphonia-wrap"]
+opt-level = 3
