@@ -36,3 +36,7 @@ Grade: **observed** for the model; **unresolved** for charter.
 - Whether an anchor may target a post-warp row at all, given warps skip time.
 - What manual BPM editing does in anchor mode: move the next anchor's offset, move its row, or
   split the segment.
+
+## Draft position
+
+**Not in v0.** Excluded as redundant with `bpm` events and unresolved; if it returns it should be editor project data, not chart data. See [known gaps](../../format.md#known-gaps).

@@ -31,3 +31,7 @@ Earlier research stated "do not use the domain model to store editor UI state" a
 project's experience generalized into a principle, with no recorded failure from EOF's approach.
 
 Grade: **inferred**.
+
+## Draft position
+
+Provisionally resolved for the format: no editor state in chart data. See [notes](../../format.md#objects).

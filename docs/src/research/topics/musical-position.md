@@ -32,3 +32,7 @@ and round-trip concerns plus `.ssc` requirements. **No observed Tempora failure 
 concern is reasonable but untested, and the counter-example is a shipped tool.
 
 Grade: **inferred**, against an **observed** working counter-example.
+
+## Draft position
+
+Provisionally resolved: integer ticks. See [time base](../../format.md#time-base).

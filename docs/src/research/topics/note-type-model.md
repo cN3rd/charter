@@ -38,3 +38,7 @@ Grade: **observed** for the breadth; **inferred** for the conclusion.
 
 How generalized flags map across StepMania, Clone Hero/GH/RB, Rocksmith, vocals and future
 rulesets. See [target audience](target-audience.md).
+
+## Draft position
+
+Provisionally addressed: `Kind` is a namespaced identifier, not an enum, because the core never branches on it. Closed vocabularies are re-typed at the plugin boundary. See [kinds](../../format.md#kinds).

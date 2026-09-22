@@ -36,3 +36,7 @@ of an MVP as risk management. That is **asserted** scheduling, not a capability 
 Non-bijective timing is the real cost driver here. Warps and stops break timestamp-to-row
 inversion for everything downstream, so supporting them is an architectural commitment rather than
 a feature. See [audio timing physics](../constraints/audio-timing-physics.md).
+
+## Draft position
+
+Provisionally addressed: everything is preserved, almost nothing is interpreted. See [timing](../../format.md#timing).

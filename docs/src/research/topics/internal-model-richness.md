@@ -30,3 +30,7 @@ criterion. The premise (formats are non-equivalent) is **observed**; the conclus
 richer does not follow from it.
 
 Grade: **asserted**.
+
+## Draft position
+
+Provisionally addressed: five timing kinds are interpreted, everything else is carried verbatim. A kind is core only if it changes the tick-to-time mapping or the measure grid. See [timing](../../format.md#timing).

@@ -40,3 +40,7 @@ Grade: **observed** for both constants; the preference for 48 is **asserted**.
 ## Unresolved
 
 Whether 48 is sufficient for dense or deliberately unquantized charts.
+
+## Draft position
+
+Provisionally resolved: 960 ticks/beat, configurable. See [time base](../../format.md#time-base).

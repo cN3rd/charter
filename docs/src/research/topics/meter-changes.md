@@ -34,3 +34,7 @@ what the data means.
 
 Tempora's behaviour is **observed**. Which policy charter should expose is **unresolved**, and
 earlier research raised it as a design concern without settling it.
+
+## Draft position
+
+The format takes no position; all three policies are representable. See [timing](../../format.md#timing).

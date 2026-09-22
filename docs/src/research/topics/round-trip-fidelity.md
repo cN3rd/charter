@@ -40,3 +40,7 @@ drop. The failure mode is **observed**; the proposed remedy is **inferred**.
 
 Whether EOF's unknown-track passthrough generalizes beyond `.mid`. Complete conversion semantics
 among `.ssc`, `.sm`, `.osu`, `.qua`, `.chart`, `.mid` and `.mc` are not established.
+
+## Draft position
+
+Provisionally addressed: verbatim extension passthrough makes an empty-loss-report test possible. See [extensions](../../format.md#extensions).
