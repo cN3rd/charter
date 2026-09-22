@@ -4,6 +4,23 @@ members = [
 ]
 resolver = "3"
 
+# ponytail: correctness enforced by the compiler, not by review.
+# Loosen an individual lint at the call site with #[allow], don't weaken it here.
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+expect_used = "warn"
+indexing_slicing = "warn"
+
+# ponytail: tick/sample arithmetic is everywhere in a charting app and silent wraparound
+# is a nightmare to debug. Drop this if DSP profiling ever shows it costs real time.
+[profile.release]
+overflow-checks = true
+
 # Workspace optimizations to workspace to third-party dependencies
 # which are noticeably slow on debug builds
 [profile.dev.package.symphonia]
