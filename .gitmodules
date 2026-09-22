@@ -1,0 +1,4 @@
+[submodule ".github/skills/rust-skills"]
+	path = .github/skills/rust-skills
+	url = https://github.com/leonardomso/rust-skills.git
+	branch = master
