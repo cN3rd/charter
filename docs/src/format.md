@@ -30,6 +30,7 @@ becoming loose.
 | [Musical position](research/topics/musical-position.md) | Integer ticks in time, floats only in space | High |
 | [Note type model](research/topics/note-type-model.md) | Structure in core, semantics in plugin | Medium |
 | Ruleset scope | Exactly one per file, structurally; other plugins unrestricted | Medium |
+| Keysounds | Core: a file-level bank objects reference | Medium |
 | [Internal model richness](research/topics/internal-model-richness.md) | Five interpreted timing kinds, rest carried | Medium |
 | [Gimmick coverage](research/topics/gimmick-coverage.md) | Everything representable, little interpreted | Medium |
 | [Round-trip fidelity](research/topics/round-trip-fidelity.md) | Unknown data preserved verbatim | High |
@@ -221,8 +222,29 @@ do not. Space is a different axis; see [positions](#positions).
 ## Timing
 
 ```
+Timing {
+    offset_seconds: f64,          // audio timestamp of tick 0
+    events:         Vec<TimingEvent>,
+}
+
 TimingEvent { tick: i64, kind: TimingKind, ext: Extensions }
 ```
+
+### The origin
+
+`bpm` sets the *rate* at which ticks become time. `offset_seconds` sets the *origin*, without
+which the mapping is incomplete: a stream of BPM changes says how fast the music moves but never
+where tick 0 sits in the audio file.
+
+It is defined as **the audio timestamp at which tick 0 occurs**. A positive value means beat 0
+falls that many seconds into the file; a negative value means the chart starts before the audio
+does, which silence-padded exports rely on.
+
+Deliberately defined as a position rather than a delta, because the surveyed formats disagree on
+the sign of their offset fields and inherit endless confusion from it. Adapters convert; charter
+has one unambiguous meaning.
+
+### Kinds
 
 A kind is **interpreted** only if charter must compute with it. That leaves five:
 
@@ -240,6 +262,14 @@ does either.
 `delay` earns its place despite charter never judging anything: it pauses time exactly as `stop`
 does, so omitting it would corrupt the mapping.
 
+### The starting state
+
+- A `bpm` event at or before the earliest object tick is **required**. Tempo has no safe default,
+  and a stream without one has no mapping at all rather than a slightly wrong one.
+- `time_signature` **defaults to 4/4** until the first such event. A meter default is safe in a way
+  a tempo default is not: it affects only the measure grid, and every surveyed format assumes the
+  same value.
+
 Everything else — scroll, speed, tick count, combo multipliers, labels, fake regions — is
 `other { name, value }`. Carried faithfully, never interpreted. This is
 [gimmick coverage](research/topics/gimmick-coverage.md) resolved by preserving everything and
@@ -254,6 +284,15 @@ Tick to time is a function; time to tick is not. Conversion returns a resolved p
 tick, and the caller handles the warped case. Notes inside warps stay representable — real files
 contain them, so a validator should report them rather than the format forbidding them.
 
+**Spans resolve through the same mapping.** A `Sustain` records a span in ticks, never in seconds,
+so its real duration is whatever the timing map makes it: a hold containing a two-second stop lasts
+two seconds longer, and one containing a warp lasts shorter, because the warped ticks contribute no
+time. This falls out of ticks being the only stored unit, and is the reason durations are not
+stored in seconds.
+
+An object positioned inside a warp is unreachable in play. So is the tail of a sustain that ends
+inside one. Both stay representable and both are validator findings.
+
 ### Per-chart timing
 
 `.sm` has one timing stream per song, shared by every difficulty. **`.ssc` lets an individual chart
@@ -266,7 +305,10 @@ touching the others.
 So timing appears in two places:
 
 - `timing` on the song, required
-- `timing` on a chart, optional — when present it **replaces** the song's entirely
+- `timing` on a chart, optional — when present it **replaces** the song's entirely, offset included
+
+The offset travels with the timing it belongs to, so a difficulty re-synced on its own carries its
+own origin rather than inheriting one that no longer fits.
 
 Replacement rather than merge, because `.ssc` semantics are replacement, and merge rules would be
 one more thing to specify and get wrong.
@@ -282,14 +324,63 @@ the choice is editing behaviour, not representation.
 ## Metadata
 
 ```
-Metadata { title: String, artist: String, audio: Path, ext: Extensions }
+Metadata {
+    title:   String,
+    artist:  String,
+    audio:   Path,
+    preview: Option<Preview>,
+    ext:     Extensions,
+}
+
+Preview { start_seconds: f64, length_seconds: Option<f64> }
 ```
 
-Three fields, because three are what the core actually uses: `audio` to load the file, `title` and
-`artist` to identify it in a chart browser. Banners, backgrounds, credits, preview windows and
-genre tags are all real, all format-specific, and all go in `ext`.
+Four fields, because four are what the core actually uses: `audio` to load the file, `title` and
+`artist` to identify it in a browser, and `preview` to play an excerpt of it.
 
-An open-ended metadata block is where formats accumulate twenty optional strings nobody reads.
+`preview` earns a field on the same evidence that `title` does — it appears in `.sm` as
+`#SAMPLESTART` and `#SAMPLELENGTH`, in `.osu` as `PreviewTime`, and in `.qua` as a preview time.
+Something present in nearly every surveyed format is not format-specific. `length_seconds` is
+optional because some formats give only a start point.
+
+Banners, backgrounds, credits and genre tags stay in `ext`. An open-ended metadata block is where
+formats accumulate twenty optional strings nobody reads.
+
+---
+
+## Samples
+
+```
+samples: Map<SampleId, Path>     // file-level bank
+```
+
+An object may name one:
+
+```
+Object { ..., sample: Option<SampleId> }
+```
+
+Keysounds are the motivating failure for [extensions](#extensions): ArrowVortex drops them
+silently. Leaving them in `ext` would repeat that failure more politely — data preserved on disk
+but unplayable, because the editor cannot audition a sound it has no generic way to find.
+
+So this is core by the same test as everything else: **charter must compute with it.** Loading and
+scheduling audio is editor work, not ruleset rendering. The ruleset decides what a keysound *means*;
+the editor still has to play it.
+
+Two levels, because the formats have two. `.sm` `#KEYSOUNDS` is a file-level list that notes index
+into; `.qua` carries per-object keysounds alongside custom audio samples. A bank plus a reference
+covers both, and deduplicates the common case of one sample used a thousand times.
+
+Named sample *sets* — osu!'s normal, soft and drum banks — are not file paths and stay ruleset
+semantics in `ext`.
+
+Unlike `plugins`, the bank is **not** declared-if-and-only-if-used. An unreferenced sample is a
+sound the charter loaded but has not placed yet, which is an ordinary authoring state rather than
+a stale dependency claim.
+
+Multiple stems are **not** covered. Editor on Fire supports them, but no surveyed chart *format*
+carries them, so they are project state rather than chart data.
 
 ---
 
@@ -301,8 +392,9 @@ One type covers taps, holds, slides and arcs.
 Object {
     tick:     i64,
     position: Position,
-    kind:     Kind,
+    kind:     Ident,
     shape:    Shape,
+    sample:   Option<SampleId>,   // keysound, see samples
     children: Vec<Object>,
     ext:      Extensions,
 }
@@ -346,9 +438,6 @@ error instead of a validation rule.
 state is the same defect as a duration contradicting a path, and the fix is the same: remove the
 spelling rather than validate against it.
 
-One invariant resists this treatment: a `Path` must be non-empty, and Rust has no cheap non-empty
-vector. It stays a validation rule, and it is the only one in the object model.
-
 `Instant` and `Sustain` allocate nothing; only real paths pay for a vector.
 
 A hold is `Sustain`, following ArrowVortex, which treats a `NOTE_STEP_OR_HOLD` with
@@ -389,6 +478,42 @@ independent existence, and deleting the parent deletes them.
 
 Arcaea validates this — its `.aff` nests arctaps **inside** the arc they sit on rather than giving
 them IDs pointing at one. Containment cannot dangle and needs no identity.
+
+---
+
+## Well-formedness
+
+Structure removes most illegal states — a `Shape` cannot hold a duration and a path at once,
+`NonZeroI64` stops `Sustain` restating `Instant`, and containment cannot dangle. What is left is
+stated here rather than left to each implementation to guess, because an unstated rule is two
+implementations disagreeing.
+
+**Ordering and uniqueness**
+
+- `objects` are sorted by `tick`. Canonical order makes diffs stable and lets range queries be a
+  binary search, which is how Moonscraper queries the visible window.
+- At most one object per `tick` and `Lane` position. Two taps in one lane at one instant is
+  universally invalid, and it is cheap to check. `Plane` positions carry no such rule, since two
+  points may legitimately coincide.
+- At most one timing event per `tick` and kind; `other` events are keyed by `tick` and name. Import
+  adapters resolve duplicates rather than passing them on.
+
+**Spans**
+
+- `Path` points are non-empty and strictly increasing in `tick`, and the first is later than the
+  object's own tick. The object's `tick` and `position` are the path's first point; `points` are
+  the ones after it.
+- A child's span lies within its parent's. An arctap belongs to the arc it sits on, so one outside
+  it is meaningless.
+- **Overlapping sustains are not a core rule.** A sustain and another object overlapping in one lane
+  is invalid in every VSRG surveyed, but that is a ruleset judgement, and a ruleset that wants it is
+  not wrong. Core rules cover what is universally impossible, not what is usually wrong.
+
+**Ticks**
+
+- Negative ticks are legal. Charts have lead-ins, and objects can precede beat 0.
+- `Path` non-emptiness is the one invariant that resists being made structural, since Rust has no
+  cheap non-empty vector.
 
 ---
 
@@ -510,27 +635,37 @@ not where a draft should start.
   "format_version": 0,
   "ticks_per_beat": 960,
   "ruleset": { "id": "arcaea", "version": "1.2.0" },
-  "settings": { "base_bpm": 174.0, "audio_offset_ms": -14 },
+  "settings": { "sky_input": true },
   "plugins": {
     "swing": { "version": "0.2.0" },
     "osu":   { "version": "0.1.0" }
   },
-  "metadata": { "title": "...", "artist": "...", "audio": "song.ogg" },
-  "timing": [
-    { "tick": 0,     "kind": { "bpm": 174.0 } },
-    { "tick": 30720, "kind": { "stop": 0.5 } },
-    { "tick": 61440, "kind": { "time_signature": [7, 8] } },
-    { "tick": 61440, "kind": { "other": { "name": "swing.groove", "value": 0.62 } } }
-  ],
+  "metadata": {
+    "title": "...", "artist": "...", "audio": "song.ogg",
+    "preview": { "start_seconds": 42.5, "length_seconds": 15.0 }
+  },
+  "samples": {
+    "clap": "keysounds/clap.wav",
+    "kick": "keysounds/kick.wav"
+  },
+  "timing": {
+    "offset_seconds": -0.014,
+    "events": [
+      { "tick": 0,     "kind": { "bpm": 174.0 } },
+      { "tick": 30720, "kind": { "stop": 0.5 } },
+      { "tick": 61440, "kind": { "time_signature": [7, 8] } },
+      { "tick": 61440, "kind": { "other": { "name": "swing.groove", "value": 0.62 } } }
+    ]
+  },
   "charts": [
     {
       "name": "Future",
       "lanes": 4,
-      "settings": { "rating": 10, "style": "touch", "sky_input": true },
+      "settings": { "rating": 10, "style": "touch" },
       "ext": { "osu.approach_rate": 9.2 },
       "objects": [
         { "tick": 0, "position": { "lane": { "index": 0 } },
-          "kind": "tap", "shape": "instant" },
+          "kind": "tap", "shape": "instant", "sample": "kick" },
         { "tick": 240, "position": { "lane": { "index": 3 } },
           "kind": "hold", "shape": { "sustain": { "duration": 480 } } },
         { "tick": 960, "position": { "plane": { "x": 0.5, "y": 0.0 } },
@@ -551,8 +686,11 @@ not where a draft should start.
       "name": "Beyond",
       "lanes": 4,
       "settings": { "rating": 12 },
-      "timing": [ { "tick": 0, "kind": { "bpm": 174.0 } },
-                  { "tick": 15360, "kind": { "warp": 1920 } } ],
+      "timing": {
+        "offset_seconds": -0.014,
+        "events": [ { "tick": 0, "kind": { "bpm": 174.0 } },
+                    { "tick": 15360, "kind": { "warp": 1920 } } ]
+      },
       "objects": []
     }
   ]
@@ -561,10 +699,13 @@ not where a draft should start.
 
 At 960 ticks per beat the `stop` sits on beat 32 and the 7/8 signature begins on beat 64.
 
-The file shows the four things easiest to get wrong: both playfield geometries in one chart, which
-Arcaea requires; a second difficulty overriding the song timing with a warp the first does not
-have; a non-ruleset `swing` plugin contributing a timing event alongside the ruleset; and an `osu.`
-key surviving an import, declared because its data is present and for no other reason.
+The `offset_seconds` of `-0.014` means tick 0 falls 14 milliseconds **before** the audio begins.
+
+The file shows the things easiest to get wrong: both playfield geometries in one chart, which
+Arcaea requires; a second difficulty overriding the song timing, offset included, with a warp the
+first does not have; a keysound referencing the file-level bank; a non-ruleset `swing` plugin
+contributing a timing event; and an `osu.` key surviving an import, declared because its data is
+present and for no other reason.
 
 ---
 
@@ -574,7 +715,7 @@ key surviving an import, declared because its data is present and for no other r
   variable tempo. Not a problem while osu! is an export target rather than a first-class one:
   import rounds to the nearest tick and keeps the original in `ext`, making the loss visible and
   reversible. Revisit only if osu! becomes primary.
-- **Object size.** Roughly 120-150 bytes per object, about 1.5 MB for a 10,000-note chart.
+- **Object size.** Roughly 150 bytes per object, about 1.5 MB for a 10,000-note chart.
   Acceptable. If it stops being acceptable the fix is interning kinds and arena-allocating
   children, not a different model.
 - **Sync anchors are not in v0.** Tempora pairs an audio offset with a musical position and derives
