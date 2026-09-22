@@ -1,5 +1,7 @@
 [workspace]
 members = [
+    "crates/charter-core",
+    "crates/charter-app",
     "third-party/symphonia-wrap"
 ]
 resolver = "3"
