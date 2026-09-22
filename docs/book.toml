@@ -1,0 +1,9 @@
+[book]
+title = "Charter Docs"
+authors = ["cN3rd"]
+language = "en"
+
+# ponytail: 10 lines beats a cargo-install dependency. Swap for mdbook-frontmatter-strip
+# if the book ever needs the metadata rendered rather than hidden.
+[preprocessor.okf-frontmatter]
+command = "python3 okf-frontmatter.py"

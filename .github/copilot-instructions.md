@@ -38,6 +38,28 @@ lint with `#[allow(...)]` at the call site instead of weakening the workspace ta
 - Undo/redo and multi-select edits are where borrow-checker pressure will show up. Redesign the
   ownership there before reaching for `Rc<RefCell<_>>`.
 
+## Documentation
+
+Project documentation lives in an mdbook under `docs/`, built with `mdbook build docs` and
+previewed with `mdbook serve docs`. Anything explaining design, formats or workflows goes in the
+book. READMEs stay short and stay next to the thing they describe, pointing into the book rather
+than duplicating it.
+
+`docs/src/` is simultaneously an [OKF](https://github.com/GoogleCloudPlatform/open-knowledge-format)
+bundle, so the same files serve human readers and agents. Every chapter carries OKF frontmatter
+with at least a `type`; `docs/okf-frontmatter.py` is an mdbook preprocessor that removes it before
+rendering, since mdbook would otherwise show it as a stray rule and heading. Check conformance
+with:
+
+```bash
+.github/skills/okf-open-knowledge-format/scripts/validate.sh docs/src
+python3 docs/okf-frontmatter.py selftest
+```
+
+`docs/src/SUMMARY.md` is the one file that must not have frontmatter: mdbook parses it as a
+sidebar separator and part title, which corrupts the navigation. The validator reports one
+expected `E1` for it. Do not silence that by adding frontmatter.
+
 ## Layout
 
 | Path | Role |
