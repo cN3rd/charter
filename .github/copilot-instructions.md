@@ -89,9 +89,9 @@ changing audio dependencies, features or dev-profile settings.
 ## Tooling
 
 Rust rules live in the `.github/skills/rust-skills` submodule, invoked with `/rust-skills`.
-Production code is written test-first with `/test-driven-development`. `.github/skills/README.md`
-lists every skill and its local rules. `.github/lsp.json` registers `rust-analyzer` for agent code
-intelligence.
+Production code is written test-first with `/test-driven-development`, and changes are split into
+atomic commits with `/commit`. `.github/skills/README.md` lists every skill and its local rules.
+`.github/lsp.json` registers `rust-analyzer` for agent code intelligence.
 
 ## Current state
 

@@ -32,3 +32,16 @@ writing any production code. Its examples are TypeScript; in Rust a test calling
 does not exist yet is a compile error, which the skill counts as an error rather than a failure.
 Add the signature with a stub that returns a wrong value, so `cargo test` shows the assertion
 failing, then implement.
+
+## commit
+
+Vendored from [Lusinhas/pi-config](https://github.com/Lusinhas/pi-config) at commit `449dfe6`,
+MIT, license retained in the skill directory. Upstream keeps it as `skills/git/commit/skill.md`;
+refresh it by copying that file here as `SKILL.md` and updating the commit above.
+
+Splits a working tree into single-concern, dependency-ordered commits, staging hunks
+non-interactively with `git apply --cached`. Invoke with `/commit`. Two rules tighten it here:
+
+- Step 5 is mandatory. With the rest stashed, every staged state passes
+  `cargo clippy --workspace --all-targets` and `cargo test --workspace` before it is committed.
+- Commit before `git stash pop`, so a conflicting pop can never leak into the commit.
