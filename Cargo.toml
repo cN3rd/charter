@@ -2,11 +2,13 @@
 members = [
     "crates/charter-core",
     "crates/charter-app",
+    "plugins/ttr",
     "third-party/symphonia-wrap"
 ]
 resolver = "3"
 
 [workspace.dependencies]
+charter-core = { path = "crates/charter-core" }
 serde = { version = "1.0.229", features = ["derive"] }
 # ponytail: exact float parsing costs about 1.5x on float-heavy input; the format promises
 # values survive a round trip, and the default parser drifts one value in ten.
