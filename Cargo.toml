@@ -4,6 +4,7 @@ members = [
     "crates/charter-app",
     "plugins/stepmania",
     "plugins/ttr",
+    "plugins/osu-mania",
     "third-party/symphonia-wrap"
 ]
 resolver = "3"
