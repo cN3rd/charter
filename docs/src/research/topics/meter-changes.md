@@ -37,4 +37,4 @@ earlier research raised it as a design concern without settling it.
 
 ## Draft position
 
-The format takes no position; all three policies are representable. See [timing](../../format.md#timing).
+The format takes no position; all three policies are representable. See [measures](../../format.md#measures).

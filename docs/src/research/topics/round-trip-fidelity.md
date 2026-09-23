@@ -43,4 +43,4 @@ among `.ssc`, `.sm`, `.osu`, `.qua`, `.chart`, `.mid` and `.mc` are not establis
 
 ## Draft position
 
-Provisionally addressed: verbatim extension passthrough makes an empty-loss-report test possible. See [extensions](../../format.md#extensions).
+Provisionally addressed: extension data passes through by value, which makes an empty-loss-report test possible. See [extensions](../../format.md#extensions).

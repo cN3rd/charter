@@ -33,4 +33,4 @@ Grade: **asserted**.
 
 ## Draft position
 
-Provisionally addressed: five timing kinds are interpreted, everything else is carried verbatim. A kind is core only if it changes the tick-to-time mapping or the measure grid. See [timing](../../format.md#timing).
+Provisionally addressed: five timing kinds are interpreted, everything else is carried by value. A kind is core only if it changes the tick-to-time mapping or the measure grid. See [timing](../../format.md#timing).

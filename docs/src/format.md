@@ -14,13 +14,13 @@ status: draft
 ## Design rule
 
 **The core interprets as little as possible.** Something is a core concept only if charter itself
-must compute with it. Everything else is carried verbatim and belongs to a ruleset plugin.
+must compute with it. Everything else is opaque to the core and belongs to a plugin.
 
-The corollary matters as much as the rule: **the format is deliberately weakly typed, and the
-plugin boundary is where type safety lives.** The core stores an extension value as opaque data;
-the plugin that owns it deserializes it into its own types and is free to be as strict as it
-likes. Pushing the strictness outward is what lets the core stay small without the whole system
-becoming loose.
+The corollary matters as much as the rule: **the format types only what the core computes with,
+and the plugin boundary is where everything else gets its type safety.** The core stores an
+extension value as opaque data; the plugin that owns it deserializes it into its own types and is
+free to be as strict as it likes. Pushing the strictness outward is what lets the core stay small
+without the whole system becoming loose.
 
 ## What this commits to
 
@@ -35,9 +35,10 @@ becoming loose.
 | Grouping | Value-keyed, so objects need no identity | Medium |
 | [Internal model richness](research/topics/internal-model-richness.md) | Five interpreted timing kinds, rest carried | Medium |
 | [Gimmick coverage](research/topics/gimmick-coverage.md) | Everything representable, little interpreted | Medium |
-| [Round-trip fidelity](research/topics/round-trip-fidelity.md) | Unknown data preserved verbatim | High |
+| [Round-trip fidelity](research/topics/round-trip-fidelity.md) | Plugin data preserved by value | High |
 | [Domain model purity](research/topics/domain-model-purity.md) | No editor state in chart data | High |
 | [Meter changes](research/topics/meter-changes.md) | Meter is timing data, policy left to the editor | Medium |
+| Schema evolution | Closed core schema, open plugin data | Medium |
 | Serialization | JSON | **Low, most likely to change** |
 
 Deferred: [target audience](research/topics/target-audience.md),
@@ -50,26 +51,27 @@ is not.
 
 ## Versioning
 
-Three independent questions, deliberately kept apart because they have different answers and
-different error paths.
-
-### Can I parse this?
+### Format version
 
 ```
 format_version: u32
 ```
 
-One integer, incremented **only on a breaking change**. A reader seeing a higher version than it
-knows must refuse rather than guess.
+One integer, incremented on **every** change to the core schema. A reader seeing a higher version
+than it knows must refuse rather than guess.
 
-Additive changes do not bump it, which is safe only because of one rule:
+The plugin boundary separates closed from open. Everything charter defines is closed: a reader
+rejects any key it does not recognise, because such a key is either from a newer format, which the
+version already reports, or a mistake. Everything a plugin writes sits in an opaque slot,
+`settings`, `ext` or an `other` timing value, which the core carries without inspecting. A plugin
+changes its own data without touching `format_version` and records the change in its
+[own version](#plugin-versions).
 
-> **Parsers must preserve keys they do not recognise**, round-tripping them untouched.
+The cost is that an older charter refuses a file from a newer one even after a purely additive
+change. Carrying unknown core keys instead would need a catch-all field on every struct, and it
+would turn a misspelled key into silently kept data rather than an error.
 
-Without that rule an old reader silently drops new data, so every addition would have to be
-breaking. With it, an old reader opening a newer file keeps everything it cannot use.
-
-### Who wrote this?
+### Ownership
 
 ```
 ruleset: { id: Namespace, version: String }     // exactly one
@@ -86,66 +88,63 @@ plugins: Map<Namespace, { version: String }>    // every other contributor
 }
 ```
 
-The ruleset sits in its own field rather than in the map, so **a file cannot name two rulesets**.
-That is a shape, not a rule a validator has to enforce. Everything else — a timing plugin, an
-import adapter that left data behind — goes in `plugins`, where any number may appear.
+The ruleset sits in its own field rather than in the map, so the shape alone stops a file naming
+two rulesets. Every other contributor, such as a timing plugin or an import adapter that left data
+behind, goes in `plugins`, where any number may appear.
 
 A namespace identifies its owner everywhere a plugin can leave data, always as
 `<namespace>.<name>`: extension keys, note kinds, easings, and timing `other` names. Unprefixed
-names belong to the shared vocabulary and to no plugin.
+names belong to the shared vocabulary and to no plugin. The grammar is under
+[identifiers](#identifiers).
 
-Two rules bind them together:
+The declarations and the data must agree:
 
 - Every namespace used anywhere in the file is either `ruleset.id` or a key in `plugins`
 - Every key in `plugins` is **actually used** somewhere in the file
+- `plugins` does not contain `ruleset.id`
 
-The second direction matters as much as the first. Declarations track contributors, so a plugin
-that left nothing behind has no business being listed, and a stale entry is a lie about what the
-file depends on. `ruleset` is exempt: it defines the chart's meaning whether or not it wrote a
-single extension key.
+Declarations track contributors, so a plugin that left nothing behind has no business being
+listed, and a stale entry is a lie about what the file depends on. `ruleset` needs no such use: it
+defines the chart's meaning whether or not it wrote a single extension key. Listing it in
+`plugins` as well would give it a second version that could disagree with the first.
 
 Together this is what makes data mappable back to its owner. Without it, `ext` is a bag of strings
 whose meaning depends on where the file came from, which is unrecoverable once the file moves.
 
-### Can I interpret it correctly?
+### Plugin versions
 
-The recorded version answers this, and it is the reason a bare namespace is not enough. A plugin
-that changed the meaning or shape of its own extension data between `1.2` and `2.0` needs to know
-which one it is reading before deserializing. Recording the version lets the plugin migrate, warn,
-or refuse, and lets it do so **per namespace** rather than failing the whole file.
+A bare namespace is not enough, because a plugin that changed the meaning or shape of its own data
+between `1.2` and `2.0` needs to know which one it is reading before deserializing. Recording the
+version lets the plugin migrate, warn or refuse, and lets it do so **per namespace** rather than
+failing the whole file.
+
+The core never compares versions. The string is opaque to it and belongs to the owning plugin,
+which may use semver or anything else.
 
 A reader missing a plugin entirely, or holding an incompatible version, can still parse and
-round-trip the file. It simply cannot render or meaningfully edit that ruleset. That is a missing
-plugin, not a corrupt file, and the two should not share an error path.
+round-trip the file. It cannot render that ruleset or meaningfully edit that plugin's data, and it
+reports a missing plugin on a different error path from a corrupt file.
 
 ---
 
 ## One ruleset per file
 
-```
-ruleset:  { id: Namespace, version: String }
-settings: Value        // opaque, owned by that ruleset
-```
+Every chart in a file is a difficulty of the file's one [ruleset](#ownership). Other plugins are
+unrestricted: a file may pull in a timing plugin, an analysis plugin and an import adapter at
+once, because those extend a chart rather than define what it is.
 
-A file declares **one** ruleset, at the top level, in a field that cannot hold two. Its `charts`
-are difficulties of that same ruleset, not independent charts that happen to share an audio file.
-
-Non-ruleset plugins are unrestricted. A file may pull in a timing plugin, an analysis plugin and an
-import adapter at once, because those extend a chart rather than define what it is. Only the
-ruleset is exclusive.
-
-**Ruleset means the game, not the layout.** `sm` is a ruleset; dance-single and dance-double are
-not. A real `.sm` file routinely holds both a single and a double chart, so making layout the
-ruleset would make ordinary files unrepresentable under this rule.
+**A ruleset is a game, and layout belongs to the chart.** `sm` is a ruleset; dance-single and
+dance-double are layouts. A real `.sm` file routinely holds both a single and a double chart, so
+making layout the ruleset would make ordinary files unrepresentable under this rule.
 
 Layout therefore stays per chart:
 
 ```
 Chart {
-    name:     String,           // "Challenge", "Future", "Expert+"
-    lanes:    Option<u16>,
-    settings: Value,            // opaque, owned by the ruleset
-    timing:   Option<Timing>,   // replaces the song's when present
+    name:     String,               // "Challenge", "Future", "Expert+"
+    lanes:    Option<NonZeroU16>,
+    settings: Map<String, Value>,   // opaque, owned by the ruleset
+    timing:   Option<Timing>,       // replaces the song's when present
     objects:  Vec<Object>,
     ext:      Extensions,
 }
@@ -153,51 +152,50 @@ Chart {
 
 `name` is core only because the editor must list charts and tell them apart; ArrowVortex's chart
 list is the reference. The numeric **rating is not core** and lives in `settings`, because rating
-scales are ruleset-specific — Arcaea, StepMania and osu! do not agree on range or meaning, and a
+scales are ruleset-specific: Arcaea, StepMania and osu! do not agree on range or meaning, and a
 shared `meter: u8` would be a number the core cannot interpret, compare or validate.
 
 `lanes` is structural rather than semantic, so it is a field. The plugin knows dance-single has
 four lanes, but **an editor missing that plugin does not**, and lane count is exactly what it needs
-to draw a generic notefield and to check that `Lane.index` is in range. It is optional because a
+to draw a generic notefield and to check that every `Lane` position fits. It is optional because a
 purely `Plane`-based ruleset has no lanes. The style *name* is the plugin's business and lives in
-`ext`.
+`settings`.
+
+`charts` may be empty. Timing, metadata and samples alone make a sync-only document, which is what
+Tempora produces and what charter would export to hand timing to another tool.
 
 ### Ruleset settings
 
-`settings` is configuration the ruleset owns: opaque to the core, deserialized by the plugin into
-its own types, and validated there. The core cannot know that an approach rate is bounded or that
-a scroll speed must be positive; the plugin cannot avoid knowing.
+`settings` is configuration the ruleset owns, opaque to the core and deserialized by the plugin
+into its own types.
 
-It appears in two scopes, and they do **not** merge:
-
-- On the file, for configuration that applies to the whole ruleset
-- On a chart, for configuration that differs per difficulty, which is common — osu!'s difficulty
-  settings and Quaver's per-map scroll behaviour both live at this level
-
-No merging, for the same reason per-chart timing replaces rather than merges: merge rules are one
-more thing to specify and get wrong. The plugin reads two independent objects and decides what
-they mean.
+It appears on the file, for configuration that applies to the whole ruleset, and on each chart,
+for configuration that differs per difficulty. The per-chart case is common: osu!'s difficulty
+settings and Quaver's per-map scroll behaviour both live there. The two do not merge, for the same
+reason per-chart timing [replaces](#per-chart-timing) the song's. The plugin reads two independent
+maps and decides what they mean.
 
 **`settings` needs no namespace prefix**, and that is a direct payoff of one ruleset per file.
 Ownership is unambiguous, so the keys inside it are the plugin's own flat vocabulary. The moment a
 file can carry several rulesets, this either needs prefixes or needs to move.
 
-The distinction from `ext` is worth stating, since both are opaque bags:
+`settings` and `ext` are both opaque maps, split by scope and owner:
 
-| | Purpose | Written by |
-|---|---|---|
-| `settings` | Deliberate configuration the ruleset owns | The ruleset plugin |
-| `ext` | Data charter could not map, kept so it is not lost | Import adapters, other plugins |
+| | Holds | Keys | Written by |
+|---|---|---|---|
+| `settings` | Configuration for the file or one chart | Unprefixed | The ruleset |
+| `ext` | Data attached to one item | `<namespace>.<name>` | Any plugin, the ruleset included |
 
-Multiple rulesets per file is the obvious later extension: move `ruleset` from the file down to
-the chart. That is a breaking change, hence the version field.
+Multiple rulesets per file is the obvious later extension: move `ruleset` from the file down to the
+chart, under a new `format_version`.
 
 ---
 
 ## Time base
 
-Musical position is a signed integer **tick**. Resolution is `ticks_per_beat`, defaulting to
-**960**.
+Musical position is an `i32` **tick**. Resolution is `ticks_per_beat`, a `NonZeroU16` defaulting
+to **960**. A beat is a quarter note whatever the meter, as in StepMania, `.chart` and MIDI, so
+`bpm` counts quarter notes too.
 
 An "Nth note" spans `4/N` beats, so resolution `T` represents it exactly when `4T mod N == 0`:
 
@@ -211,10 +209,19 @@ An "Nth note" spans `4/N` beats, so resolution `T` represents it exactly when `4
 
 960 is the smallest value representing both source formats exactly while reaching the practical
 ceiling on snap coverage; 3840 buys nothing. Conversions are exact integer scaling: StepMania row
-× 20, `.chart` tick × 5.
+× 20, and `.chart` tick × 5 at its usual resolution of 192.
 
-It stays configurable because **no finite resolution covers every snap** — 960 handles quintuplets
-(a 20th note is 192 ticks) but not septuplets. A knob, not indecision.
+It stays configurable because **no finite resolution covers every snap**: 960 handles quintuplets
+(a 20th note is 192 ticks) but not septuplets.
+
+At 960, an `i32` tick reaches about 2.2 million beats either side of zero, over 600 hours at 60
+BPM, and even the finest `u16` resolution leaves over 32,000 beats. Spans are `u32`, and tick
+arithmetic is done in `i64`, where no tick plus span can overflow.
+
+Negative ticks are legal, since charts have lead-ins and objects can precede beat 0. Source
+positions that do not land on the grid are rounded to the nearest tick on import, ties to even,
+with the original preserved in `ext`. The loss is then visible and reversible. This applies to any
+source, not only millisecond-based ones.
 
 Time is integers because two musically identical positions must compare equal, and computed floats
 do not. Space is a different axis; see [positions](#positions).
@@ -225,11 +232,19 @@ do not. Space is a different axis; see [positions](#positions).
 
 ```
 Timing {
-    offset_seconds: f64,          // audio timestamp of tick 0
+    offset_seconds: FiniteF64,          // audio time of tick 0
     events:         Vec<TimingEvent>,
 }
 
-TimingEvent { tick: i64, kind: TimingKind, ext: Extensions }
+TimingEvent { tick: i32, kind: TimingKind, ext: Extensions }
+
+TimingKind =
+    Bpm(PositiveF64)                        // quarter notes per minute
+  | Stop(PositiveF64)                       // seconds
+  | Delay(PositiveF64)                      // seconds
+  | Warp(NonZeroU32)                        // ticks
+  | TimeSignature(NonZeroU16, NonZeroU16)   // numerator, denominator
+  | Other { name: Ident, value: Value }
 ```
 
 ### The origin
@@ -238,9 +253,9 @@ TimingEvent { tick: i64, kind: TimingKind, ext: Extensions }
 which the mapping is incomplete: a stream of BPM changes says how fast the music moves but never
 where tick 0 sits in the audio file.
 
-It is defined as **the audio timestamp at which tick 0 occurs**. A positive value means beat 0
-falls that many seconds into the file; a negative value means the chart starts before the audio
-does, which silence-padded exports rely on.
+It is defined as **the audio time of tick 0**, in seconds from the start of the audio file. A
+positive value means beat 0 falls that many seconds into the file; a negative value means the
+chart starts before the audio does, which silence-padded exports rely on.
 
 Deliberately defined as a position rather than a delta, because the surveyed formats disagree on
 the sign of their offset fields and inherit endless confusion from it. Adapters convert; charter
@@ -248,78 +263,87 @@ has one unambiguous meaning.
 
 ### Kinds
 
-A kind is **interpreted** only if charter must compute with it. That leaves five:
+A kind is **interpreted** only if charter must compute with it:
 
-| Kind | Payload | Why it is core |
-|---|---|---|
-| `bpm` | beats per minute | Sets the tick to time rate |
-| `stop` | seconds | Time advances, position does not |
-| `delay` | seconds | Same as `stop` for time, differs only in judgement |
-| `warp` | ticks | Position jumps, time does not advance |
-| `time_signature` | numerator, denominator | Measure structure, which drives the grid |
+| Kind | Effect |
+|---|---|
+| `bpm` | Sets the rate at which ticks become time |
+| `stop` | Pauses time after the objects on its tick |
+| `delay` | Pauses time before the objects on its tick |
+| `warp` | Skips ticks without advancing time |
+| `time_signature` | Sets the [measure grid](#measures) |
 
-The first four define the tick to time mapping. The fifth defines the measure grid. Nothing else
-does either.
+`stop` and `delay` differ only in where the objects on their own tick fall. That is a difference
+in time, so charter needs both even though it never judges anything.
 
-`delay` earns its place despite charter never judging anything: it pauses time exactly as `stop`
-does, so omitting it would corrupt the mapping.
+Everything else, such as scroll, speed, tick count, combo multipliers, labels and fake regions, is
+`other { name, value }`, carried faithfully and never interpreted. Its name is always prefixed by
+the plugin that owns it. This is [gimmick coverage](research/topics/gimmick-coverage.md) resolved
+by preserving everything and interpreting almost nothing.
 
 ### The starting state
 
-- A `bpm` event at or before the earliest object tick is **required**. Tempo has no safe default,
-  and a stream without one has no mapping at all rather than a slightly wrong one.
-- `time_signature` **defaults to 4/4** until the first such event. A meter default is safe in a way
-  a tempo default is not: it affects only the measure grid, and every surveyed format assumes the
-  same value.
+- Every `Timing` has at least one `bpm`, and the first also applies to every earlier tick, as
+  StepMania's loader does. Tempo has no safe default, and a stream without one has no mapping at
+  all rather than a slightly wrong one.
+- The meter is 4/4 until the first `time_signature`. A meter default is safe in a way a tempo
+  default is not: it affects only the measure grid, and every surveyed format assumes the same
+  value.
 
-Everything else — scroll, speed, tick count, combo multipliers, labels, fake regions — is
-`other { name, value }`. Carried faithfully, never interpreted. This is
-[gimmick coverage](research/topics/gimmick-coverage.md) resolved by preserving everything and
-interpreting almost nothing.
+### Resolving time
 
-### Time is not invertible
+The timing map is a non-decreasing function from tick to audio time. `offset_seconds` fixes it at
+tick 0, and it extends from there in both directions:
 
-- **stop** and **delay** map one tick to a range of times.
-- **warp** maps a range of ticks to one time. Ticks inside a warp have **no** time at all.
+- Between events, time advances at the current `bpm`.
+- A `stop` pauses **after** the objects on its tick and a `delay` **before** them, so an object on
+  a `stop` tick is hit as the pause begins and one on a `delay` tick as it ends. The time of a tick
+  includes its own `delay` and excludes its own `stop`, and `offset_seconds` is the time of tick 0
+  in that sense.
+- A `warp` at tick `t` of length `w` covers ticks `[t, t + w)`. They take no time, and an object on
+  one is skipped in play. A warped tick carrying a `stop` or `delay` is the exception: it still
+  pauses and its objects are playable, which lets gimmick charts alternate stops and warps.
+- Warps do not overlap. Importers merge overlapping ones the way StepMania does, keeping the
+  furthest end.
 
-Tick to time is a function; time to tick is not. Conversion returns a resolved position, not a
-tick, and the caller handles the warped case. Notes inside warps stay representable — real files
-contain them, so a validator should report them rather than the format forbidding them.
+This is StepMania's model, including the order of events on one tick, as implemented in
+[TimingData.cpp](https://raw.githubusercontent.com/stepmania/stepmania/5_1-new/src/TimingData.cpp).
 
-**Spans resolve through the same mapping.** A `Sustain` records a span in ticks, never in seconds,
-so its real duration is whatever the timing map makes it: a hold containing a two-second stop lasts
-two seconds longer, and one containing a warp lasts shorter, because the warped ticks contribute no
-time. This falls out of ticks being the only stored unit, and is the reason durations are not
-stored in seconds.
+Tick to time is a function; time to tick is not. A `stop` or `delay` maps one tick to a range of
+times, and a warp maps a range of ticks to one time. Converting time back returns a resolved
+position rather than a tick, and the caller handles the paused and warped cases.
 
-An object positioned inside a warp is unreachable in play. So is the tail of a sustain that ends
-inside one. Both stay representable and both are validator findings.
+A `Sustain` records its span in ticks, so its length in seconds is whatever the map makes it: a
+hold containing a two-second stop lasts two seconds longer, and one containing a warp lasts
+shorter. An object on a warped tick is unreachable in play, and so is a sustain that ends on one.
+Real files contain both, so they stay legal and are reported as warnings.
 
 ### Per-chart timing
 
 `.sm` has one timing stream per song, shared by every difficulty. **`.ssc` lets an individual chart
 carry its own**, overriding the song's.
 
-It exists because difficulties genuinely disagree. A Challenge chart may add warps and stops as
-gimmicks its Easy chart does not have, and a single difficulty is sometimes re-synced without
-touching the others.
+It exists because difficulties disagree. A Challenge chart may add warps and stops as gimmicks its
+Easy chart does not have, and a single difficulty is sometimes re-synced without touching the
+others.
 
-So timing appears in two places:
+`timing` is therefore required on the song and optional on a chart, where it **replaces** the
+song's entirely, offset included. The offset travels with the timing it belongs to, so a difficulty
+re-synced on its own carries its own origin rather than inheriting one that no longer fits.
 
-- `timing` on the song, required
-- `timing` on a chart, optional — when present it **replaces** the song's entirely, offset included
-
-The offset travels with the timing it belongs to, so a difficulty re-synced on its own carries its
-own origin rather than inheriting one that no longer fits.
-
-Replacement rather than merge, because `.ssc` semantics are replacement, and merge rules would be
+It replaces rather than merges because `.ssc` semantics are replacement, and merge rules would be
 one more thing to specify and get wrong.
 
-### Meter changes
+### Measures
 
-`time_signature` is just another event. The format takes **no position** on what a meter change
-preserves — measure labels, beat count, or audio offsets — because all three are expressible and
-the choice is editing behaviour, not representation.
+A measure lasts `numerator * 4 / denominator` beats and must be a whole number of ticks, so
+`numerator * 4 * ticks_per_beat` must divide evenly by `denominator`. Before the first
+`time_signature`, a measure starts at every multiple of `4 * ticks_per_beat`, negative ones
+included. Each `time_signature` restarts the grid at its own tick, cutting short any measure in
+progress.
+
+The format takes no position on what editing a meter change preserves, whether measure labels,
+beat count or audio offsets. Each is expressible, so the choice belongs to the editor.
 
 ---
 
@@ -334,16 +358,17 @@ Metadata {
     ext:     Extensions,
 }
 
-Preview { start_seconds: f64, length_seconds: Option<f64> }
+Preview { start_seconds: NonNegativeF64, length_seconds: Option<PositiveF64> }
 ```
 
-Four fields, because four are what the core actually uses: `audio` to load the file, `title` and
-`artist` to identify it in a browser, and `preview` to play an excerpt of it.
+Each field is one the core uses: `audio` to load the file, `title` and `artist` to identify it in a
+browser, and `preview` to play an excerpt of it.
 
-`preview` earns a field on the same evidence that `title` does — it appears in `.sm` as
-`#SAMPLESTART` and `#SAMPLELENGTH`, in `.osu` as `PreviewTime`, and in `.qua` as a preview time.
-Something present in nearly every surveyed format is not format-specific. `length_seconds` is
-optional because some formats give only a start point.
+`preview` earns a field on the same evidence as `title`: it appears in `.sm` as `#SAMPLESTART` and
+`#SAMPLELENGTH`, in `.osu` as `PreviewTime`, and in `.qua` as a preview time. Something present in
+nearly every surveyed format is not format-specific. `length_seconds` is optional because some
+formats give only a start point. Both fields are audio time, like `offset_seconds`, so a chart's
+own timing does not move the preview.
 
 Banners, backgrounds, credits and genre tags stay in `ext`. An open-ended metadata block is where
 formats accumulate twenty optional strings nobody reads.
@@ -356,30 +381,23 @@ formats accumulate twenty optional strings nobody reads.
 samples: Map<SampleId, ResourcePath>     // file-level bank
 ```
 
-An object may name one:
-
-```
-Object { ..., sample: Option<SampleId> }
-```
-
-Keysounds are the motivating failure for [extensions](#extensions): ArrowVortex drops them
-silently. Leaving them in `ext` would repeat that failure more politely — data preserved on disk
-but unplayable, because the editor cannot audition a sound it has no generic way to find.
+`Object.sample` names one. Keysounds could live in `ext`, preserved on disk but unplayable,
+because the editor cannot audition a sound it has no generic way to find.
 
 So this is core by the same test as everything else: **charter must compute with it.** Loading and
-scheduling audio is editor work, not ruleset rendering. The ruleset decides what a keysound *means*;
-the editor still has to play it.
+scheduling audio is editor work. The ruleset decides what a keysound *means*; the editor still has
+to play it.
 
-Two levels, because the formats have two. `.sm` `#KEYSOUNDS` is a file-level list that notes index
-into; `.qua` carries per-object keysounds alongside custom audio samples. A bank plus a reference
-covers both, and deduplicates the common case of one sample used a thousand times.
+A bank plus a reference matches the formats: `.sm` `#KEYSOUNDS` is a file-level list that notes
+index into, and `.qua` carries per-object keysounds alongside custom audio samples. The bank also
+deduplicates the common case of one sample used a thousand times.
 
-Named sample *sets* — osu!'s normal, soft and drum banks — are not file paths and stay ruleset
-semantics in `ext`.
+Named sample *sets*, such as osu!'s normal, soft and drum banks, are not file paths and stay
+ruleset semantics in `ext`.
 
 Unlike `plugins`, the bank is **not** declared-if-and-only-if-used. An unreferenced sample is a
-sound the charter loaded but has not placed yet, which is an ordinary authoring state rather than
-a stale dependency claim.
+sound the author loaded but has not placed yet, which is an ordinary authoring state rather than a
+stale dependency claim.
 
 Multiple stems are **not** covered. Editor on Fire supports them, but no surveyed chart *format*
 carries them, so they are project state rather than chart data.
@@ -392,12 +410,12 @@ One type covers taps, holds, slides and arcs.
 
 ```
 Object {
-    tick:     i64,
+    tick:     i32,
     position: Position,
     kind:     Ident,
     shape:    Shape,
-    sample:   Option<SampleId>,   // keysound, see samples
-    children: Vec<Object>,
+    sample:   Option<SampleId>,   // keysound, from the bank
+    children: Vec<Child>,
     ext:      Extensions,
 }
 ```
@@ -406,12 +424,13 @@ Object {
 
 ```
 Position =
-    Lane  { index: u16, width: u16 }   // discrete columns, width defaults to 1
-  | Plane { x: f64, y: f64 }           // continuous playfield
+    Lane  { index: u16, width: NonZeroU16 }   // discrete columns, width defaults to 1
+  | Plane { x: FiniteF64, y: FiniteF64 }      // continuous playfield
 ```
 
-`Lane` covers every VSRG. `width` exists because lane-based games such as Project Sekai give notes
-a span across several columns; games without widths leave it at 1.
+`Lane` covers every VSRG. Lanes are numbered from 0, and a `Lane` position covers `width` of them
+starting at `index`. `width` exists because lane-based games such as Project Sekai give notes a
+span across several columns; games without widths leave it at 1.
 
 `Plane` covers continuous playfields, where position is a point rather than a column.
 
@@ -424,7 +443,7 @@ having ten digit keys, not of its data model.
 **Multi-player charts are multi-lane charts.** StepMania's couple and routine modes put two players
 on shared panels, with each note assigned to a player. Charter gives each player its own lanes and
 lets the exporter fold them back onto shared panels, because player assignment is a ruleset
-concern. It also keeps the `(tick, lane)` uniqueness rule intact, which a shared-panel model would
+concern. It also keeps [lane uniqueness](#well-formedness) intact, which a shared-panel model would
 break the moment both players hit the same panel together.
 
 ### Shapes
@@ -432,20 +451,23 @@ break the moment both players hit the same panel together.
 ```
 Shape =
     Instant
-  | Sustain { duration: NonZeroU64 }
+  | Sustain { duration: NonZeroU32 }     // ticks
   | Path    { points: Vec<PathPoint> }   // non-empty
 
-PathPoint { tick: i64, position: Position, ease: Ident }
+PathPoint { tick: i32, position: Position, ease: Ident, ext: Extensions }
 ```
 
+A path starts at the object's own `tick` and `position`, and `points`, which cannot be empty, are
+the ones after it. Each point's `ease` shapes the segment arriving at it.
+
 An enum rather than a duration field plus an optional point list, because that pairing lets an
-object carry both and disagree with itself about where it ends. Three variants make that a compile
+object carry both and disagree with itself about where it ends. The enum makes that a compile
 error instead of a validation rule.
 
 `duration` is unsigned and non-zero, so `Sustain { 0 }` cannot restate `Instant` and a sustain
-cannot end before it starts. Two spellings of one
-state is the same defect as a duration contradicting a path, and the fix is the same: remove the
-spelling rather than validate against it.
+cannot end before it starts. Two spellings of one state is the same defect as a duration
+contradicting a path, and the fix is the same: remove the spelling rather than validate against
+it.
 
 `Instant` and `Sustain` allocate nothing; only real paths pay for a vector.
 
@@ -459,15 +481,21 @@ inverted spans stop being representable.
 Ident(String)    // "tap", "linear", "psk.flick", "arcaea.si"
 ```
 
+An `Ident` is either a word from the shared vocabulary below or `<namespace>.<name>`. It splits at
+the first `.`: the namespace matches `[a-z][a-z0-9_]*` and the name is the non-empty rest, so a
+name may contain dots and a namespace never does. Extension keys and `other` names use the same
+grammar but are always prefixed.
+
 One type covers both note kinds and easings, **because the core never branches on either**. An
-enum would privilege one game's vocabulary — StepMania's — over every other, then hand everything
+enum would privilege one game's vocabulary, StepMania's, over every other, then hand everything
 else to a catch-all variant anyway. An enum whose last variant is `Other(String)` is a string with
 extra steps.
 
 Easing was the clearest case. The core never needs to evaluate a curve: drawing a path and
 hit-testing it both require knowing how the playfield projects, which is the plugin's job.
 
-Unprefixed names are shared vocabulary that rulesets should reuse rather than reinvent:
+The shared vocabulary is closed, one list per role, and grows only with `format_version`.
+Rulesets should reuse it rather than reinvent it:
 
 - kinds: `tap`, `hold`, `roll`, `mine`, `lift`, `fake`
 - easings: `linear`, `step`, `in`, `out`, `in_out`
@@ -482,117 +510,120 @@ Kind and shape are independent. A roll and a hold share a shape and differ in ki
 
 ### Children
 
-An object may contain objects. Structural containment, not a reference: children have no
-independent existence, and deleting the parent deletes them.
+An object may contain children. A `Child` has every field of an `Object` except `children`, so
+containment is one level deep by type. Children have no independent existence: deleting the parent
+deletes them.
 
-Arcaea validates this — its `.aff` nests arctaps **inside** the arc they sit on rather than giving
-them IDs pointing at one. Containment cannot dangle and needs no identity.
+Arcaea's `.aff` does the same, nesting arctaps inside the arc they sit on rather than giving them
+IDs that point at it. Containment cannot dangle and needs no identity.
+
+No surveyed game needs more than one level, the deepest being Arcaea's arctaps on an arc, and most
+need none.
 
 ---
 
 ## Well-formedness
 
-Structure removes most illegal states — a `Shape` cannot hold a duration and a path at once,
-`NonZeroI64` stops `Sustain` restating `Instant`, and containment cannot dangle. What is left is
-stated here rather than left to each implementation to guess, because an unstated rule is two
-implementations disagreeing.
+Deserialization checks each value on its own: the types, the [identifier grammar](#identifiers),
+[resource paths](#resource-paths) and [numeric bounds](#numbers). One validation pass then checks
+every rule relating values to each other: the rules below, the [namespace rules](#ownership), the
+[`bpm` requirement](#the-starting-state), [warp overlap](#resolving-time),
+[measure lengths](#measures) and [finite times](#numbers). No other code sees a document that
+failed either.
+
+Types remove most illegal states: a `Shape` cannot hold a duration and a path at once, `NonZeroU32`
+stops `Sustain` restating `Instant`, and containment cannot dangle. What is left is stated here
+rather than left to each implementation to guess, because an unstated rule is two implementations
+disagreeing.
 
 **Ordering and uniqueness**
 
-- `objects` are sorted by `tick`. Canonical order makes diffs stable and lets range queries be a
+- `objects` and timing `events` are sorted by `tick`. Order among items on one tick carries no
+  meaning, and writers preserve it. Sorted order makes diffs stable and lets range queries be a
   binary search, which is how Moonscraper queries the visible window.
-- At most one object per `tick` and `Lane` position. Two taps in one lane at one instant is
-  universally invalid, and it is cheap to check. `Plane` positions carry no such rule, since two
-  points may legitimately coincide.
+- No two top-level objects on one tick cover a common lane. Two taps in one lane at one instant is
+  universally invalid, and it is cheap to check. The rule stops there: two `Plane` points may
+  legitimately coincide, and where children may sit is the ruleset's judgement.
 - At most one timing event per `tick` and kind; `other` events are keyed by `tick` and name. Import
   adapters resolve duplicates rather than passing them on.
+- Chart names are unique, since the editor tells charts apart by name.
+
+**References**
+
+- Every `sample` is a key in `samples`.
+- Every lane a position covers exists: `index + width <= lanes`. A chart with any `Lane` position
+  therefore sets `lanes`.
 
 **Spans**
 
-- `Path` points are non-empty and strictly increasing in `tick`, and the first is later than the
-  object's own tick. The object's `tick` and `position` are the path's first point; `points` are
-  the ones after it.
-- A child's span lies within its parent's. An arctap belongs to the arc it sits on, so one outside
-  it is meaningless.
+- `Path` points are strictly increasing in `tick`, and the first is later than the object's own
+  tick.
 - All points of a `Path`, including the object's own position, are the **same** `Position` variant.
   An object cannot begin in a lane and end in the plane.
+- A child's span lies within its parent's, both ends included. An arctap belongs to the arc it sits
+  on, so one outside it is meaningless, and a Project Sekai slide can end in a flick on its final
+  tick.
 - **Overlapping sustains are not a core rule.** A sustain and another object overlapping in one lane
   is invalid in every VSRG surveyed, but that is a ruleset judgement, and a ruleset that wants it is
   not wrong. Core rules cover what is universally impossible, not what is usually wrong.
-
-**Ticks**
-
-- Negative ticks are legal. Charts have lead-ins, and objects can precede beat 0.
-- Source positions that do not land on the tick grid are rounded to the nearest tick on import,
-  with the original preserved in `ext`. The loss is then visible and reversible. This applies to
-  any source, not only millisecond-based ones.
-- `Path` non-emptiness is the one invariant that resists being made structural, since Rust has no
-  cheap non-empty vector.
 
 ---
 
 ## Untrusted input
 
-Chart files arrive from strangers. These are **parse-time** rules, not a later validation pass: a
-hostile file has to be rejected before it is walked, not after.
+Chart files arrive from strangers, usually inside downloaded archives.
 
 ### Resource paths
 
-`ResourcePath` values — `metadata.audio` and every entry in `samples` — are relative to the
-directory containing the chart. A conforming reader rejects a path that:
+`ResourcePath` values, `metadata.audio` and every entry in `samples`, are relative to the directory
+containing the chart. An unconstrained path in a downloaded chart is an arbitrary-file-read
+primitive, so the grammar is strict: `/` is the only separator, and every component is non-empty,
+is neither `.` nor `..`, and contains no `\`, `:` or NUL. That rules out absolute paths, drive
+letters, UNC prefixes and traversal by grammar alone, and gives each path one spelling on every
+platform.
 
-- is absolute, or carries a drive letter or UNC prefix
-- contains a `..` component
-- resolves, after following any links, outside the chart's own directory
-
-Charts are distributed as archives downloaded from strangers. An unconstrained path in one is an
-arbitrary-file-read primitive, so containment is checked before opening rather than after.
+Opening a resource must not follow a link out of the chart's directory. That check happens each
+time a resource is opened, since links are filesystem state that can change after the document is
+parsed.
 
 ### Limits
 
-- `children` nest **at most one level**: a child has no children of its own. Every surveyed game
-  needs exactly one level, Arcaea's arctaps on an arc, and most need none. A fixed depth makes the
-  structure non-recursive in practice, so no document can drive a parser off its stack. Raising it
-  later is a breaking change, which is what `format_version` is for.
-- Readers impose configurable ceilings on object count, sample count and document size, and reject
-  rather than allocate.
+Readers cap document size and nesting depth, and reject a document over either rather than
+allocate for it or recurse into it. Every count is bounded by the size. Core structure has a fixed
+depth, since a `Child` has no children, so only opaque values can reach the depth cap. serde_json's
+default recursion limit of 128 is one such cap.
 
 ### Numbers
 
-Every `f64` must be **finite**. NaN and the infinities are rejected at parse, because one NaN
-`bpm` turns every downstream tick-to-time result into NaN without raising anything.
+Every `f64` in the core schema is one of these newtypes, checked when deserialized:
 
-| Field | Rule |
+| Type | Accepts |
 |---|---|
-| `bpm` | `> 0` |
-| `stop`, `delay` seconds | `>= 0` |
-| `warp` ticks | `> 0` |
-| `time_signature` numerator, denominator | `>= 1` |
-| `ticks_per_beat` | `>= 1` |
-| `preview.start_seconds` | `>= 0`, and `length_seconds` `> 0` |
-| `offset_seconds`, `Plane` x and y | finite, any sign |
+| `FiniteF64` | Any finite value |
+| `NonNegativeF64` | Finite and `>= 0` |
+| `PositiveF64` | Finite and `> 0` |
 
-**Negative BPM is rejected.** StepMania files use it as a time-skipping gimmick predating explicit
-warps, but charter already has `warp`, and two mechanisms for skipping time is one too many.
+NaN and the infinities never get in, because one NaN `bpm` turns every downstream tick-to-time
+result into NaN without raising anything. Integer bounds use the standard `NonZero` types the same
+way.
 
-**Zero BPM is rejected for the same reason.** Position would stop advancing while time ran on, an
-unbounded `stop`, and `stop` already expresses a pause.
+`bpm` must be positive. Negative BPM is a StepMania time-skipping gimmick predating explicit warps,
+and charter has `warp` for that. Zero BPM would stop position advancing while time ran on, an
+unbounded `stop`, and `stop` already expresses a pause. `stop` and `delay` must be positive too,
+since a zero-length one is a second spelling of no event at all.
 
-Importers handle both the way the source game does, which is what makes a converted chart play the
-same. StepMania's
+Importers handle all of these the way the source game does, which is what makes a converted chart
+play the same. StepMania's
 [loader](https://raw.githubusercontent.com/stepmania/stepmania/5_1-new/src/NotesLoaderSM.cpp)
-converts negative BPMs into warps and discards zero BPMs, keeping the previous tempo, so the `.sm`
-adapter does both and keeps the original values in `ext`.
+turns negative BPMs and negative stops into warps and discards zero BPMs, zero stops and
+non-positive delays, so the `.sm` adapter does the same and keeps the original values in `ext`.
 
 **Finite fields do not guarantee finite times.** A subnormal `bpm` such as `5e-324` passes every
 bound above and still overflows `60 / bpm` to infinity, and two stops near `f64::MAX` overflow when
-summed. Readers therefore also reject a document whose earliest or latest tick resolves to a
-non-finite time. Positive BPM makes time non-decreasing in ticks, so those two evaluations bound
-every other.
-
-Finding the latest tick adds durations and warp lengths to ticks, which can overflow `i64` on
-hostile input. That addition is checked, and overflow rejects the document instead of panicking or
-wrapping.
+summed. The validation pass therefore also resolves, for each timing stream, the earliest and
+latest ticks resolved through it, span ends included, and rejects the document if either time is
+not finite. Positive BPM makes time non-decreasing in ticks, so those two evaluations bound every
+other.
 
 ---
 
@@ -607,18 +638,18 @@ The test is whether games structurally unlike StepMania fit without a core chang
 Structure is what generic editing operates on: when an object happens, where it is, its geometry,
 what it contains. Semantics is what a plugin renders and judges.
 
-This is load-bearing because select, move, copy, paste, resnap, stretch and delete need only
-structure. They work on a Project Sekai slide without knowing what a slide is.
+This matters because select, move, copy, paste, resnap, stretch and delete need only structure.
+They work on a Project Sekai slide without knowing what a slide is.
 
-### Where it stops working
+### Transforms that need the plugin
 
 A horizontal mirror must turn a left-flick into a right-flick, and nothing in the core knows that.
 
-**Semantically meaningful transforms need plugin participation**, regardless of where the attribute
-is stored — promoting flick direction to a core field would not help, because the core still would
-not know that mirroring inverts it. The format's job is to make structure addressable so a plugin
-hook has something to operate on. That hook is the [plugin](research/topics/plugins.md) surface,
-still undesigned.
+**Semantically meaningful transforms need plugin participation**, wherever the attribute is
+stored. Promoting flick direction to a core field would not help, because the core still would not
+know that mirroring inverts it. The format's job is to make structure addressable so a plugin hook
+has something to operate on. That hook is the [plugin](research/topics/plugins.md) surface, still
+undesigned.
 
 ### Project Sekai
 
@@ -630,31 +661,32 @@ still undesigned.
 | Flick | `Instant`, kind `psk.flick`, direction in `ext` |
 | Trace / slide | `Path`, one point per waypoint |
 | Slide changing lane | each `PathPoint` carries its own `Lane` |
-| Slide ending in a flick | last `PathPoint`, or a child at the end tick |
+| Visible or invisible relay point | `PathPoint.ext` |
+| Slide ending in a flick | child `Instant`, kind `psk.flick`, on the end tick |
 | Curved segment | `PathPoint.ease` |
 | Critical (gold) | `ext` |
 
-Critical is the instructive one: it is orthogonal to note type — any type can be critical — so
-modelling it as a kind would multiply the vocabulary.
+Critical is the instructive one. Any note type can be critical, so modelling it as a kind would
+multiply the vocabulary.
 
 ### Arcaea
 
 | Feature | Representation |
 |---|---|
-| Floor note | `Lane { index: 1..4 }`, `Instant` |
+| Floor note | `Lane`, index 0 to 3 for `.aff` lanes 1 to 4, `Instant` |
 | Floor hold | `Lane`, `Sustain` |
 | Arc | `Plane`, `Path`, kind `arcaea.arc` |
-| Arc easing (`s`, `b`, `si`, `so`) | `PathPoint.ease`, `Named` where needed |
+| Arc easing (`s`, `b`, `si`, `so`, ...) | `PathPoint.ease`: `linear` for `s`, `arcaea.<name>` otherwise |
 | Arctap on an arc | child object, `Instant` |
-| Colour, trace-only, arc group | `ext` |
+| Colour, trace-only, timing group | `ext` |
 
 Both playfield geometries appear **in the same chart**, which Arcaea requires: floor notes are
 lanes and arcs are not.
 
-Arc *groups* — sibling arcs traced as one motion — stay in `ext`, and so do Quaver's timing groups
-and layers. Two games wanting sibling grouping would normally argue for core structure, but they
-do not need any: **grouping here is keyed by value, not by reference.** Objects sharing
-`arcaea.group: 1` are in a group because they carry the same value, not because anything points at
+Timing groups, which give a set of notes their own scroll timing in both Arcaea and Quaver, stay in
+`ext`, and so do Quaver's layers. Two games wanting grouping would normally argue for core
+structure, but grouping here needs none, because it is **keyed by value**: objects sharing
+`arcaea.timing_group: 1` are in a group because they carry the same value, and nothing points at
 anything.
 
 That is why no object carries an identity. Identity would only become necessary if something had
@@ -665,14 +697,14 @@ games does.
 
 ## Extensions
 
-Every object, chart and timing event carries:
+Metadata, charts, timing events, objects, children and path points each carry:
 
 ```
 Extensions = Map<String, Value>
 ```
 
-Keys are `<namespace>.<key>`, where the namespace is a plugin declared in
-[`plugins`](#who-wrote-these-extensions). Unknown keys are preserved verbatim.
+Keys are `<namespace>.<name>`, where the namespace is `ruleset.id` or a key in
+[`plugins`](#ownership). The core preserves every entry [by value](#serialization).
 
 `Value` is opaque to the core. The owning plugin deserializes it into its own types, which is
 where validation belongs: the core cannot know that `arcaea.color` must be blue or red, and the
@@ -687,14 +719,14 @@ It also makes loss reporting mechanical, which gives a testable property:
 
 > A same-format round trip produces an empty loss report.
 
-That is a test, not a policy. See [export loss reporting](research/topics/export-loss-reporting.md).
+See [export loss reporting](research/topics/export-loss-reporting.md).
 
 Extensions do not make `.osu` able to hold a warp;
 [structural incompatibility](research/formats/interoperability.md) is unaffected by anything
 charter does.
 
-The rule that stops `ext` becoming a dumping ground: **`ext` is for data originating outside
-charter, or semantics belonging to a plugin. Charter's own structural concepts get fields.**
+`ext` holds data from outside charter or semantics owned by a plugin. Charter's own structural
+concepts get fields.
 
 ---
 
@@ -704,6 +736,16 @@ charter, or semantics belonging to a plugin. Charter's own structural concepts g
 
 For it: serde-native, universal tooling, unambiguous unlike YAML. Against it: no comments, and a
 10,000-note chart runs to roughly a megabyte.
+
+The file is [I-JSON](https://www.rfc-editor.org/rfc/rfc7493): UTF-8, no duplicate keys, and no
+number beyond the range or precision of an IEEE 754 double. A reader rejects a duplicate key
+instead of picking a winner, because parsers disagree on which one wins. The number rule reaches
+into opaque values too, so a plugin needing an exact 64-bit integer stores it as a string.
+
+A round trip preserves the document by value: key order, whitespace and number spelling may
+change, and values may not. Writers omit every field holding its default, such as an empty
+collection, `None`, `width: 1` or `ticks_per_beat: 960`, so re-saving an unedited file adds
+nothing to it.
 
 | Alternative | For | Against |
 |---|---|---|
@@ -718,7 +760,6 @@ not where a draft should start.
 ```json
 {
   "format_version": 0,
-  "ticks_per_beat": 960,
   "ruleset": { "id": "arcaea", "version": "1.2.0" },
   "settings": { "sky_input": true },
   "plugins": {
@@ -763,7 +804,7 @@ not where a draft should start.
             { "tick": 1440, "position": { "plane": { "x": 0.62, "y": 0.5 } },
               "kind": "arcaea.arctap", "shape": "instant" }
           ],
-          "ext": { "arcaea.color": "blue", "arcaea.group": 1 }
+          "ext": { "arcaea.color": "blue", "arcaea.timing_group": 1 }
         }
       ]
     },
@@ -775,43 +816,35 @@ not where a draft should start.
         "offset_seconds": -0.014,
         "events": [ { "tick": 0, "kind": { "bpm": 174.0 } },
                     { "tick": 15360, "kind": { "warp": 1920 } } ]
-      },
-      "objects": []
+      }
     }
   ]
 }
 ```
 
-At 960 ticks per beat the `stop` sits on beat 32 and the 7/8 signature begins on beat 64.
+`ticks_per_beat` is absent, so it is 960: the `stop` sits on beat 32 and the 7/8 signature begins
+on beat 64.
 
 The `offset_seconds` of `-0.014` means tick 0 falls 14 milliseconds **before** the audio begins.
 
-The file shows the things easiest to get wrong: both playfield geometries in one chart, which
-Arcaea requires; a second difficulty overriding the song timing, offset included, with a warp the
-first does not have; a keysound referencing the file-level bank; a non-ruleset `swing` plugin
-contributing a timing event; and an `osu.` key surviving an import, declared because its data is
-present and for no other reason.
+The file shows the things easiest to get wrong: both playfield geometries in one chart; a second
+difficulty overriding the song timing, offset included, with a warp the first does not have; a
+keysound referencing the file-level bank; a non-ruleset `swing` plugin contributing a timing event;
+and an `osu.` key surviving an import, declared because its data is present and for no other
+reason.
 
 ---
 
 ## Known gaps
 
-- **Time-native positions.** osu! places objects in milliseconds, which do not land on ticks under
-  variable tempo. Not a problem while osu! is an export target rather than a first-class one:
-  import rounds to the nearest tick and keeps the original in `ext`, making the loss visible and
-  reversible. Revisit only if osu! becomes primary.
-- **Object size.** Roughly 150 bytes per object, about 1.5 MB for a 10,000-note chart.
-  Acceptable. If it stops being acceptable the fix is interning kinds and arena-allocating
-  children, not a different model.
-- **A file with no charts is legal.** Timing, metadata and samples with an empty `charts` list is a
-  sync-only document, which is exactly what Tempora produces and what charter would export to hand
-  timing to another tool.
-- **Sync anchors are not in v0.** Tempora pairs an audio offset with a musical position and derives
+- osu! places objects in milliseconds, which do not land on ticks under variable tempo. Import
+  [rounds them](#time-base), which is acceptable while osu! is an export target rather than a
+  first-class one. Revisit only if osu! becomes primary.
+- An object takes roughly 150 bytes, about 1.5 MB for a 10,000-note chart. Acceptable. If it stops
+  being acceptable the fix is interning kinds and arena-allocating children, not a different model.
+- Sync anchors are not in v0. Tempora pairs an audio offset with a musical position and derives
   tempo from it, which is a better *authoring* model than typing BPM values. Excluded because it
-  duplicates information already in `bpm` events and raises questions this draft cannot answer —
-  what an anchor inside a warp means, what editing a derived BPM does to the anchor that produced
-  it. If it returns it should be editor project data, not chart data. See
+  duplicates information already in `bpm` events and raises questions this draft cannot answer,
+  such as what an anchor inside a warp means and what editing a derived BPM does to the anchor
+  that produced it. If it returns it should be editor project data, not chart data. See
   [sync anchors](research/topics/sync-anchors.md).
-- **Plugin version semantics are unspecified.** The field records a version string; nothing yet
-  says whether comparison is semver, what a plugin must do on a mismatch, or how migrations are
-  expressed.
