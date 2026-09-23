@@ -77,9 +77,11 @@ expected `E1` for it. Do not silence that by adding frontmatter.
 |---|---|
 | `crates/charter-core` | the chart format: data model, JSON I/O, validation, tick to time |
 | `crates/charter-app` | binary front end, thin |
+| `plugins/stepmania`, `plugins/ttr`, `plugins/osu-mania` | ruleset plugins: typed game models over `charter-core` |
 | `third-party/symphonia-wrap` | build-time facade over `symphonia`, read its README first |
 
-All three are workspace members listed in the root `Cargo.toml`.
+All are workspace members listed in the root `Cargo.toml`. The ruleset plugin conventions are in
+the book's ruleset chapter, `docs/src/rulesets.md`.
 
 The workspace grows into small crates with one job each. Put a new crate in the kind it belongs
 to and keep the dependency direction one-way:
@@ -106,5 +108,6 @@ atomic commits with `/commit`. `.github/skills/README.md` lists every skill and 
 
 ## Current state
 
-`charter-core` implements the format chapter. `charter-app` is a generated stub. No UI, DSP or
-plugin crate exists yet. Ask before inventing a crate boundary.
+`charter-core` implements the format chapter, and the three ruleset plugins model their games on
+top of it without file import or export. `charter-app` is a generated stub. No UI or DSP crate
+exists yet. Ask before inventing a crate boundary.

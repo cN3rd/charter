@@ -64,3 +64,4 @@
     - [Toolchain and packaging](./research/constraints/toolchain-and-packaging.md)
     - [Audio timing physics](./research/constraints/audio-timing-physics.md)
 - [Chart format draft](./format.md)
+- [Ruleset plugins](./rulesets.md)
