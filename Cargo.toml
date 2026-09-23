@@ -2,6 +2,7 @@
 members = [
     "crates/charter-core",
     "crates/charter-app",
+    "plugins/stepmania",
     "plugins/ttr",
     "third-party/symphonia-wrap"
 ]

@@ -1,0 +1,1004 @@
+//! StepMania as a charter ruleset.
+//!
+//! A chart's [`Style`] fixes its lane count. Timing covers everything StepMania 5 interprets,
+//! including its scroll and combo segments, which travel as `sm.*` events.
+//!
+//! [`Song`] is the typed view of a document whose ruleset is [`ID`]. Reading one fails on
+//! anything StepMania cannot represent and skips data other plugins left behind;
+//! [`Song::to_document`] writes this ruleset's data alone.
+
+use std::collections::BTreeMap;
+
+use charter_core::{
+    Bpm, Chart as CoreChart, Decimal, Document, Extensions, FORMAT_VERSION, InvalidValue, Key,
+    Kind, LaneCount, LaneIndex, Metadata, Name, Namespace, Object, Origin, Position, ResourcePath,
+    Ruleset, SampleId, Seconds, Settings, Shape, Tick, Ticks, TicksPerBeat, TimeSignature,
+    Timing as CoreTiming, TimingEvent as CoreEvent, TimingKind as CoreKind, ValidDocument,
+};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+use serde_json::Value;
+
+/// The ruleset namespace.
+pub const ID: &str = "sm";
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Song {
+    pub metadata: Metadata,
+    pub ticks_per_beat: TicksPerBeat,
+    /// Keysounds.
+    pub samples: BTreeMap<SampleId, ResourcePath>,
+    pub timing: Timing,
+    pub charts: Vec<Chart>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Timing {
+    pub offset_seconds: Origin,
+    pub events: Vec<TimingEvent>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TimingEvent {
+    pub tick: Tick,
+    pub kind: TimingKind,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum TimingKind {
+    Bpm(Bpm),
+    Stop(Seconds),
+    Delay(Seconds),
+    Warp(Ticks),
+    TimeSignature(TimeSignature),
+    /// Hold ticks per beat for scoring.
+    TickCount(u32),
+    Combo(Combo),
+    /// Scroll speed that eases toward `ratio` over `length`.
+    Speed(Speed),
+    /// Scroll speed that applies immediately.
+    Scroll(Decimal),
+    /// Ticks from here whose notes are fake.
+    Fake(Ticks),
+    Label(String),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Combo {
+    pub hit: u32,
+    pub miss: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Speed {
+    pub ratio: Decimal,
+    pub length: SpeedLength,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum SpeedLength {
+    /// The new speed applies at once.
+    Instant,
+    Ticks(Ticks),
+    Seconds(Seconds),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Chart {
+    pub name: String,
+    pub style: Style,
+    pub difficulty: Difficulty,
+    pub meter: u32,
+    pub description: String,
+    /// Replaces the song's timing when present, as in `.ssc`.
+    pub timing: Option<Timing>,
+    pub notes: Vec<Note>,
+}
+
+/// Defines [`Style`] from one table of variant, StepMania name and lane count.
+macro_rules! styles {
+    ($($variant:ident = $name:literal, $lanes:expr;)+) => {
+        /// A StepMania steps type such as `dance-single`.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub enum Style {
+            $($variant,)+
+        }
+
+        impl Style {
+            /// Every playable steps type in StepMania 5's `GameManager.cpp`.
+            pub const ALL: &'static [Self] = &[$(Self::$variant,)+];
+
+            /// The name StepMania writes, such as `dance-single`.
+            #[must_use]
+            pub const fn name(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $name,)+
+                }
+            }
+
+            #[must_use]
+            pub const fn lanes(self) -> LaneCount {
+                match self {
+                    $(Self::$variant => lanes($lanes),)+
+                }
+            }
+        }
+    };
+}
+
+styles! {
+    DanceSingle = "dance-single", 4;
+    DanceDouble = "dance-double", 8;
+    DanceCouple = "dance-couple", 8;
+    DanceSolo = "dance-solo", 6;
+    DanceThreepanel = "dance-threepanel", 3;
+    DanceRoutine = "dance-routine", routine(8);
+    PumpSingle = "pump-single", 5;
+    PumpHalfdouble = "pump-halfdouble", 6;
+    PumpDouble = "pump-double", 10;
+    PumpCouple = "pump-couple", 10;
+    PumpRoutine = "pump-routine", routine(10);
+    Kb7Single = "kb7-single", 7;
+    Ez2Single = "ez2-single", 5;
+    Ez2Double = "ez2-double", 10;
+    Ez2Real = "ez2-real", 7;
+    ParaSingle = "para-single", 5;
+    Ds3ddxSingle = "ds3ddx-single", 8;
+    BmSingle5 = "bm-single5", 6;
+    BmVersus5 = "bm-versus5", 6;
+    BmDouble5 = "bm-double5", 12;
+    BmSingle7 = "bm-single7", 8;
+    BmVersus7 = "bm-versus7", 8;
+    BmDouble7 = "bm-double7", 16;
+    ManiaxSingle = "maniax-single", 4;
+    ManiaxDouble = "maniax-double", 8;
+    TechnoSingle4 = "techno-single4", 4;
+    TechnoSingle5 = "techno-single5", 5;
+    TechnoSingle8 = "techno-single8", 8;
+    TechnoDouble4 = "techno-double4", 8;
+    TechnoDouble5 = "techno-double5", 10;
+    TechnoDouble8 = "techno-double8", 16;
+    PnmFive = "pnm-five", 5;
+    PnmNine = "pnm-nine", 9;
+    KickboxHuman = "kickbox-human", 4;
+    KickboxQuadarm = "kickbox-quadarm", 4;
+    KickboxInsect = "kickbox-insect", 6;
+    KickboxArachnid = "kickbox-arachnid", 8;
+}
+
+/// Routine styles, where two players share one set of panels, get a full set of lanes per
+/// player, player 1 first.
+const fn routine(columns: u16) -> u16 {
+    columns * 2
+}
+
+impl Style {
+    #[must_use]
+    pub fn named(name: &str) -> Option<Self> {
+        Self::ALL.iter().copied().find(|style| style.name() == name)
+    }
+}
+
+/// `n` lanes, for the styles' own column counts.
+const fn lanes(n: u16) -> LaneCount {
+    match LaneCount::new(n) {
+        Some(lanes) => lanes,
+        None => unreachable!(),
+    }
+}
+
+impl Serialize for Style {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.name())
+    }
+}
+
+// Written by hand so the names come from the style table.
+impl<'de> Deserialize<'de> for Style {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let name = String::deserialize(deserializer)?;
+        Self::named(&name)
+            .ok_or_else(|| de::Error::custom(format_args!("unknown StepMania style {name:?}")))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Difficulty {
+    Beginner,
+    Easy,
+    Medium,
+    Hard,
+    Challenge,
+    Edit,
+}
+
+/// Chart settings as stored in the document.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ChartSettings {
+    style: Style,
+    difficulty: Difficulty,
+    meter: u32,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    description: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Note {
+    pub tick: Tick,
+    pub lane: LaneIndex,
+    pub kind: NoteKind,
+    pub keysound: Option<SampleId>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NoteKind {
+    Tap,
+    Hold(Ticks),
+    Roll(Ticks),
+    Mine,
+    Lift,
+    Fake,
+    /// Plays its keysound unjudged.
+    AutoKeysound,
+}
+
+const AUTO_KEYSOUND: &str = "auto_keysound";
+const TICKCOUNT: &str = "tickcount";
+const COMBO: &str = "combo";
+const SPEED: &str = "speed";
+const SCROLL: &str = "scroll";
+const FAKE: &str = "fake";
+const LABEL: &str = "label";
+
+/// This ruleset's key for `name`.
+fn own(name: &str) -> Result<Key, InvalidValue> {
+    Ok(Key::new(Namespace::new(ID)?, Name::new(name)?))
+}
+
+/// Written as the ruleset version.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+impl Song {
+    /// Writes the song as a document holding only this ruleset's data.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the song breaks a document rule.
+    pub fn to_document(&self) -> Result<ValidDocument, Error> {
+        let charts = self
+            .charts
+            .iter()
+            .map(Chart::to_core)
+            .collect::<Result<_, _>>()?;
+        let doc = Document {
+            format_version: FORMAT_VERSION,
+            ticks_per_beat: self.ticks_per_beat,
+            ruleset: Ruleset {
+                id: Namespace::new(ID)?,
+                version: VERSION.to_owned(),
+            },
+            settings: Settings::new(),
+            plugins: BTreeMap::new(),
+            metadata: self.metadata.clone(),
+            samples: self.samples.clone(),
+            timing: self.timing.to_core()?,
+            charts,
+        };
+        Ok(ValidDocument::new(doc)?)
+    }
+}
+
+impl Timing {
+    fn to_core(&self) -> Result<CoreTiming, Error> {
+        let other = |name: &str, value: Value| -> Result<CoreKind, Error> {
+            Ok(CoreKind::Other {
+                name: own(name)?,
+                value,
+            })
+        };
+        let events = self.events.iter().map(|event| {
+            let kind = match &event.kind {
+                TimingKind::Bpm(bpm) => CoreKind::Bpm(*bpm),
+                TimingKind::Stop(seconds) => CoreKind::Stop(*seconds),
+                TimingKind::Delay(seconds) => CoreKind::Delay(*seconds),
+                TimingKind::Warp(ticks) => CoreKind::Warp(*ticks),
+                TimingKind::TimeSignature(meter) => CoreKind::TimeSignature(*meter),
+                TimingKind::TickCount(count) => other(TICKCOUNT, (*count).into())?,
+                TimingKind::Combo(combo) => other(COMBO, serde_json::to_value(combo)?)?,
+                TimingKind::Speed(speed) => other(SPEED, serde_json::to_value(speed)?)?,
+                TimingKind::Scroll(ratio) => other(SCROLL, serde_json::to_value(ratio)?)?,
+                TimingKind::Fake(ticks) => other(FAKE, serde_json::to_value(ticks)?)?,
+                TimingKind::Label(text) => other(LABEL, text.as_str().into())?,
+            };
+            Ok(CoreEvent {
+                tick: event.tick,
+                kind,
+                ext: Extensions::new(),
+            })
+        });
+        Ok(CoreTiming {
+            offset_seconds: self.offset_seconds,
+            events: events.collect::<Result<_, Error>>()?,
+        })
+    }
+}
+
+impl Chart {
+    fn to_core(&self) -> Result<CoreChart, Error> {
+        let settings = serde_json::to_value(ChartSettings {
+            style: self.style,
+            difficulty: self.difficulty,
+            meter: self.meter,
+            description: self.description.clone(),
+        })?;
+        let settings = match settings {
+            Value::Object(map) => map.into_iter().collect(),
+            _ => Settings::new(),
+        };
+        Ok(CoreChart {
+            name: self.name.clone(),
+            lanes: Some(self.style.lanes()),
+            settings,
+            timing: self.timing.as_ref().map(Timing::to_core).transpose()?,
+            objects: self
+                .notes
+                .iter()
+                .map(Note::to_object)
+                .collect::<Result<_, _>>()?,
+            ext: Extensions::new(),
+        })
+    }
+}
+
+impl Note {
+    fn to_object(&self) -> Result<Object, InvalidValue> {
+        let (kind, shape) = match self.kind {
+            NoteKind::Tap => (Kind::Tap, Shape::Instant),
+            NoteKind::Hold(duration) => (Kind::Hold, Shape::Sustain { duration }),
+            NoteKind::Roll(duration) => (Kind::Roll, Shape::Sustain { duration }),
+            NoteKind::Mine => (Kind::Mine, Shape::Instant),
+            NoteKind::Lift => (Kind::Lift, Shape::Instant),
+            NoteKind::Fake => (Kind::Fake, Shape::Instant),
+            NoteKind::AutoKeysound => (Kind::Other(own(AUTO_KEYSOUND)?), Shape::Instant),
+        };
+        Ok(Object {
+            tick: self.tick,
+            position: Position::Lane {
+                index: self.lane,
+                width: LaneCount::ONE,
+            },
+            kind,
+            shape,
+            sample: self.keysound.clone(),
+            children: Vec::new(),
+            ext: Extensions::new(),
+        })
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("ruleset is {0:?}, not {ID:?}")]
+    WrongRuleset(String),
+    #[error("{at}: a {style} chart has {expected} lanes, not {}", .found.map_or_else(|| "none".to_owned(), |lanes| lanes.to_string()))]
+    Lanes {
+        at: String,
+        style: &'static str,
+        expected: LaneCount,
+        found: Option<LaneCount>,
+    },
+    #[error("{at}: {key:?} is not a StepMania key")]
+    UnknownKey { at: String, key: String },
+    #[error("{at}: not a StepMania note")]
+    UnsupportedObject { at: String },
+    #[error("{at}: {what} are not part of StepMania")]
+    Unsupported { at: String, what: &'static str },
+    #[error("{at}: {source}")]
+    Malformed {
+        at: String,
+        source: serde_json::Error,
+    },
+    #[error(transparent)]
+    Value(#[from] InvalidValue),
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+    #[error(transparent)]
+    Document(#[from] charter_core::Error),
+}
+
+impl TryFrom<&ValidDocument> for Song {
+    type Error = Error;
+
+    fn try_from(valid: &ValidDocument) -> Result<Self, Error> {
+        let doc = valid.document();
+        if doc.ruleset.id.as_str() != ID {
+            return Err(Error::WrongRuleset(doc.ruleset.id.as_str().to_owned()));
+        }
+        if let Some(key) = doc.settings.keys().next() {
+            return Err(Error::UnknownKey {
+                at: "settings".into(),
+                key: key.clone(),
+            });
+        }
+        reject_own_keys(&doc.metadata.ext, "metadata.ext")?;
+        let charts = doc
+            .charts
+            .iter()
+            .enumerate()
+            .map(|(c, chart)| read_chart(chart, &format!("charts[{c}]")))
+            .collect::<Result<_, _>>()?;
+        Ok(Self {
+            metadata: Metadata {
+                ext: Extensions::new(),
+                ..doc.metadata.clone()
+            },
+            ticks_per_beat: doc.ticks_per_beat,
+            samples: doc.samples.clone(),
+            timing: read_timing(&doc.timing, "timing")?,
+            charts,
+        })
+    }
+}
+
+fn read_chart(chart: &CoreChart, at: &str) -> Result<Chart, Error> {
+    reject_own_keys(&chart.ext, &format!("{at}.ext"))?;
+    let settings = Value::Object(chart.settings.clone().into_iter().collect());
+    let settings: ChartSettings =
+        serde_json::from_value(settings).map_err(|source| Error::Malformed {
+            at: format!("{at}.settings"),
+            source,
+        })?;
+    if chart.lanes != Some(settings.style.lanes()) {
+        return Err(Error::Lanes {
+            at: at.to_owned(),
+            style: settings.style.name(),
+            expected: settings.style.lanes(),
+            found: chart.lanes,
+        });
+    }
+    let notes = chart
+        .objects
+        .iter()
+        .enumerate()
+        .map(|(j, object)| read_note(object, &format!("{at}.objects[{j}]")))
+        .collect::<Result<_, _>>()?;
+    Ok(Chart {
+        name: chart.name.clone(),
+        style: settings.style,
+        difficulty: settings.difficulty,
+        meter: settings.meter,
+        description: settings.description,
+        timing: chart
+            .timing
+            .as_ref()
+            .map(|timing| read_timing(timing, &format!("{at}.timing")))
+            .transpose()?,
+        notes,
+    })
+}
+
+fn read_note(object: &Object, at: &str) -> Result<Note, Error> {
+    if !object.children.is_empty() {
+        return Err(Error::Unsupported {
+            at: at.to_owned(),
+            what: "child objects",
+        });
+    }
+    reject_own_keys(&object.ext, at)?;
+    let unsupported = || Error::UnsupportedObject { at: at.to_owned() };
+    let Position::Lane { index, width } = object.position else {
+        return Err(unsupported());
+    };
+    if width != LaneCount::ONE {
+        return Err(unsupported());
+    }
+    let kind = match (&object.kind, &object.shape) {
+        (Kind::Tap, Shape::Instant) => NoteKind::Tap,
+        (Kind::Hold, &Shape::Sustain { duration }) => NoteKind::Hold(duration),
+        (Kind::Roll, &Shape::Sustain { duration }) => NoteKind::Roll(duration),
+        (Kind::Mine, Shape::Instant) => NoteKind::Mine,
+        (Kind::Lift, Shape::Instant) => NoteKind::Lift,
+        (Kind::Fake, Shape::Instant) => NoteKind::Fake,
+        (Kind::Other(key), Shape::Instant)
+            if key.namespace().as_str() == ID && key.name().as_str() == AUTO_KEYSOUND =>
+        {
+            NoteKind::AutoKeysound
+        }
+        _ => return Err(unsupported()),
+    };
+    Ok(Note {
+        tick: object.tick,
+        lane: index,
+        kind,
+        keysound: object.sample.clone(),
+    })
+}
+
+fn read_timing(timing: &CoreTiming, at: &str) -> Result<Timing, Error> {
+    let mut events = Vec::with_capacity(timing.events.len());
+    for (i, event) in timing.events.iter().enumerate() {
+        reject_own_keys(&event.ext, &format!("{at}.events[{i}]"))?;
+        let kind = match &event.kind {
+            CoreKind::Bpm(bpm) => TimingKind::Bpm(*bpm),
+            CoreKind::Stop(seconds) => TimingKind::Stop(*seconds),
+            CoreKind::Delay(seconds) => TimingKind::Delay(*seconds),
+            CoreKind::Warp(ticks) => TimingKind::Warp(*ticks),
+            CoreKind::TimeSignature(meter) => TimingKind::TimeSignature(*meter),
+            CoreKind::Other { name, value } => match read_other(name, value) {
+                Some(Ok(kind)) => kind,
+                Some(Err(source)) => {
+                    return Err(Error::Malformed {
+                        at: format!("{at}.events[{i}]"),
+                        source,
+                    });
+                }
+                None if name.namespace().as_str() == ID => {
+                    return Err(Error::UnknownKey {
+                        at: format!("{at}.events[{i}]"),
+                        key: name.to_string(),
+                    });
+                }
+                None => continue,
+            },
+        };
+        events.push(TimingEvent {
+            tick: event.tick,
+            kind,
+        });
+    }
+    Ok(Timing {
+        offset_seconds: timing.offset_seconds,
+        events,
+    })
+}
+
+/// This ruleset's reading of an `other` event, or `None` if the name is not one of its own.
+fn read_other(name: &Key, value: &Value) -> Option<Result<TimingKind, serde_json::Error>> {
+    if name.namespace().as_str() != ID {
+        return None;
+    }
+    Some(match name.name().as_str() {
+        TICKCOUNT => u32::deserialize(value).map(TimingKind::TickCount),
+        COMBO => Combo::deserialize(value).map(TimingKind::Combo),
+        SPEED => Speed::deserialize(value).map(TimingKind::Speed),
+        SCROLL => Decimal::deserialize(value).map(TimingKind::Scroll),
+        FAKE => Ticks::deserialize(value).map(TimingKind::Fake),
+        LABEL => String::deserialize(value).map(TimingKind::Label),
+        _ => return None,
+    })
+}
+
+/// Fails on a key in this ruleset's namespace, which defines none; other plugins' keys are
+/// theirs to read.
+fn reject_own_keys(ext: &Extensions, at: &str) -> Result<(), Error> {
+    match ext.keys().find(|key| key.namespace().as_str() == ID) {
+        Some(key) => Err(Error::UnknownKey {
+            at: at.to_owned(),
+            key: key.to_string(),
+        }),
+        None => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use charter_core::ValidDocument;
+    use serde_json::{Value, json};
+
+    /// A one-chart dance-single document holding `objects`.
+    fn document(objects: Value) -> Value {
+        let mut value = json!({
+            "format_version": 0,
+            "ruleset": { "id": "sm", "version": "0" },
+            "metadata": { "title": "t", "artist": "a", "audio": "song.ogg" },
+            "timing": { "offset_seconds": -0.014, "events": [ { "tick": 0, "kind": { "bpm": 174.0 } } ] },
+            "charts": [ {
+                "name": "Single Hard",
+                "lanes": 4,
+                "settings": { "style": "dance-single", "difficulty": "hard", "meter": 9, "description": "someone" }
+            } ]
+        });
+        value["charts"][0]["objects"] = objects;
+        value
+    }
+
+    fn lane_object(tick: i32, lane: u16, kind: &str) -> Value {
+        json!({ "tick": tick, "position": { "lane": { "index": lane } }, "kind": kind, "shape": "instant" })
+    }
+
+    fn read(value: &Value) -> Result<Song, Error> {
+        Song::try_from(&ValidDocument::from_json(&serde_json::to_vec(value).unwrap()).unwrap())
+    }
+
+    #[test]
+    fn reads_a_dance_single_chart_and_its_settings() {
+        let song = read(&document(json!([lane_object(0, 3, "tap")]))).unwrap();
+        let chart = &song.charts[0];
+        assert_eq!(chart.name, "Single Hard");
+        assert_eq!(chart.style.name(), "dance-single");
+        assert_eq!(chart.difficulty, Difficulty::Hard);
+        assert_eq!(chart.meter, 9);
+        assert_eq!(chart.description, "someone");
+        assert_eq!(
+            chart.notes,
+            [Note {
+                tick: Tick::new(0),
+                lane: LaneIndex::new(3),
+                kind: NoteKind::Tap,
+                keysound: None
+            }]
+        );
+    }
+
+    fn written(song: &Song) -> Value {
+        serde_json::from_slice(&song.to_document().unwrap().to_json().unwrap()).unwrap()
+    }
+
+    /// What a song read from `document(objects)` writes back.
+    fn expected(objects: Value) -> Value {
+        let mut value = document(objects);
+        value["ruleset"]["version"] = json!(VERSION);
+        value
+    }
+
+    #[test]
+    fn writes_a_chart_back_with_its_settings() {
+        let objects = json!([lane_object(0, 3, "tap")]);
+        let song = read(&document(objects.clone())).unwrap();
+        assert_eq!(written(&song), expected(objects));
+    }
+
+    #[test]
+    fn every_playable_stepmania_style_knows_its_lanes() {
+        // Column counts from StepMania 5's GameManager.cpp; routine styles get a set per player.
+        let styles = [
+            ("dance-single", 4),
+            ("dance-double", 8),
+            ("dance-couple", 8),
+            ("dance-solo", 6),
+            ("dance-threepanel", 3),
+            ("dance-routine", 16),
+            ("pump-single", 5),
+            ("pump-halfdouble", 6),
+            ("pump-double", 10),
+            ("pump-couple", 10),
+            ("pump-routine", 20),
+            ("kb7-single", 7),
+            ("ez2-single", 5),
+            ("ez2-double", 10),
+            ("ez2-real", 7),
+            ("para-single", 5),
+            ("ds3ddx-single", 8),
+            ("bm-single5", 6),
+            ("bm-versus5", 6),
+            ("bm-double5", 12),
+            ("bm-single7", 8),
+            ("bm-versus7", 8),
+            ("bm-double7", 16),
+            ("maniax-single", 4),
+            ("maniax-double", 8),
+            ("techno-single4", 4),
+            ("techno-single5", 5),
+            ("techno-single8", 8),
+            ("techno-double4", 8),
+            ("techno-double5", 10),
+            ("techno-double8", 16),
+            ("pnm-five", 5),
+            ("pnm-nine", 9),
+            ("kickbox-human", 4),
+            ("kickbox-quadarm", 4),
+            ("kickbox-insect", 6),
+            ("kickbox-arachnid", 8),
+        ];
+        for (name, lanes) in styles {
+            assert_eq!(
+                Style::named(name).map(Style::lanes),
+                LaneCount::new(lanes),
+                "{name}"
+            );
+        }
+        assert_eq!(Style::ALL.len(), styles.len());
+    }
+
+    #[test]
+    fn a_chart_has_exactly_its_styles_lanes() {
+        let mut eight = document(json!([]));
+        eight["charts"][0]["lanes"] = json!(8);
+        assert!(matches!(read(&eight), Err(Error::Lanes { .. })));
+        let mut unknown = document(json!([]));
+        unknown["charts"][0]["settings"]["style"] = json!("dance-quad");
+        assert!(matches!(read(&unknown), Err(Error::Malformed { .. })));
+    }
+
+    #[test]
+    fn every_stepmania_difficulty_reads_and_writes() {
+        use Difficulty::{Beginner, Challenge, Easy, Edit, Hard, Medium};
+        let names = [
+            ("beginner", Beginner),
+            ("easy", Easy),
+            ("medium", Medium),
+            ("hard", Hard),
+            ("challenge", Challenge),
+            ("edit", Edit),
+        ];
+        for (name, difficulty) in names {
+            let mut value = document(json!([]));
+            value["charts"][0]["settings"]["difficulty"] = json!(name);
+            let song = read(&value).unwrap();
+            assert_eq!(song.charts[0].difficulty, difficulty);
+            assert_eq!(
+                written(&song)["charts"][0]["settings"]["difficulty"],
+                json!(name)
+            );
+        }
+    }
+
+    #[test]
+    fn every_stepmania_note_kind_reads_and_writes() {
+        let held = Ticks::new(240).unwrap();
+        let sustain = json!({ "sustain": { "duration": 240 } });
+        let kinds = [
+            ("tap", json!("instant"), NoteKind::Tap),
+            ("hold", sustain.clone(), NoteKind::Hold(held)),
+            ("roll", sustain, NoteKind::Roll(held)),
+            ("mine", json!("instant"), NoteKind::Mine),
+            ("lift", json!("instant"), NoteKind::Lift),
+            ("fake", json!("instant"), NoteKind::Fake),
+            ("sm.auto_keysound", json!("instant"), NoteKind::AutoKeysound),
+        ];
+        for (kind, shape, expected_kind) in kinds {
+            let mut object = lane_object(0, 1, kind);
+            object["shape"] = shape;
+            let objects = json!([object]);
+            let song = read(&document(objects.clone())).unwrap();
+            assert_eq!(song.charts[0].notes[0].kind, expected_kind, "{kind}");
+            assert_eq!(written(&song), expected(objects), "{kind}");
+        }
+    }
+
+    #[test]
+    fn keysounds_and_their_bank_read_and_write() {
+        let mut object = lane_object(0, 1, "sm.auto_keysound");
+        object["sample"] = json!("clap");
+        let objects = json!([object]);
+        let mut value = document(objects.clone());
+        value["samples"] = json!({ "clap": "keysounds/clap.wav" });
+        let song = read(&value).unwrap();
+        assert_eq!(
+            song.charts[0].notes[0].keysound,
+            Some(charter_core::SampleId("clap".into()))
+        );
+        let mut out = expected(objects);
+        out["samples"] = value["samples"].clone();
+        assert_eq!(written(&song), out);
+    }
+
+    fn with_events(events: &[Value]) -> Value {
+        let mut value = document(json!([]));
+        value["timing"]["events"]
+            .as_array_mut()
+            .unwrap()
+            .extend_from_slice(events);
+        value
+    }
+
+    fn event(tick: i32, kind: Value) -> Value {
+        let mut event = json!({ "tick": tick });
+        event["kind"] = kind;
+        event
+    }
+
+    #[test]
+    fn stops_delays_warps_and_meters_read_and_write() {
+        let value = with_events(&[
+            event(960, json!({ "stop": 0.5 })),
+            event(1920, json!({ "delay": 0.25 })),
+            event(2880, json!({ "warp": 480 })),
+            event(3840, json!({ "time_signature": [7, 8] })),
+        ]);
+        let song = read(&value).unwrap();
+        let kinds: Vec<&TimingKind> = song.timing.events.iter().map(|event| &event.kind).collect();
+        let nz = |n| std::num::NonZeroU16::new(n).unwrap();
+        assert_eq!(
+            kinds[1..],
+            [
+                &TimingKind::Stop(Seconds::try_from(0.5).unwrap()),
+                &TimingKind::Delay(Seconds::try_from(0.25).unwrap()),
+                &TimingKind::Warp(Ticks::new(480).unwrap()),
+                &TimingKind::TimeSignature(TimeSignature {
+                    numerator: nz(7),
+                    denominator: nz(8)
+                }),
+            ]
+        );
+        assert_eq!(written(&song)["timing"], value["timing"]);
+    }
+
+    fn other(tick: i32, name: &str, value: Value) -> Value {
+        let mut kind = json!({ "other": { "name": name } });
+        kind["other"]["value"] = value;
+        event(tick, kind)
+    }
+
+    #[test]
+    fn stepmania_timing_segments_read_and_write() {
+        let value = with_events(&[
+            other(0, "sm.tickcount", json!(4)),
+            other(0, "sm.combo", json!({ "hit": 2, "miss": 1 })),
+            other(
+                960,
+                "sm.speed",
+                json!({ "ratio": 1.5, "length": { "ticks": 960 } }),
+            ),
+            other(
+                1920,
+                "sm.speed",
+                json!({ "ratio": 1.0, "length": { "seconds": 0.5 } }),
+            ),
+            other(1920, "sm.scroll", json!(-1.0)),
+            other(2880, "sm.fake", json!(480)),
+            other(2880, "sm.label", json!("drop")),
+        ]);
+        let song = read(&value).unwrap();
+        let kinds: Vec<&TimingKind> = song.timing.events.iter().map(|event| &event.kind).collect();
+        let decimal = |v| Decimal::try_from(v).unwrap();
+        assert_eq!(
+            kinds[1..],
+            [
+                &TimingKind::TickCount(4),
+                &TimingKind::Combo(Combo { hit: 2, miss: 1 }),
+                &TimingKind::Speed(Speed {
+                    ratio: decimal(1.5),
+                    length: SpeedLength::Ticks(Ticks::new(960).unwrap())
+                }),
+                &TimingKind::Speed(Speed {
+                    ratio: decimal(1.0),
+                    length: SpeedLength::Seconds(Seconds::try_from(0.5).unwrap())
+                }),
+                &TimingKind::Scroll(decimal(-1.0)),
+                &TimingKind::Fake(Ticks::new(480).unwrap()),
+                &TimingKind::Label("drop".into()),
+            ]
+        );
+        assert_eq!(written(&song)["timing"], value["timing"]);
+    }
+
+    #[test]
+    fn stepmania_segments_must_be_well_formed_and_known() {
+        let malformed = with_events(&[other(0, "sm.combo", json!({ "hit": -1, "miss": 1 }))]);
+        assert!(matches!(read(&malformed), Err(Error::Malformed { .. })));
+        let unknown = with_events(&[other(0, "sm.attacks", json!("x"))]);
+        assert!(matches!(read(&unknown), Err(Error::UnknownKey { .. })));
+    }
+
+    #[test]
+    fn a_chart_can_carry_its_own_timing() {
+        let own = json!({ "offset_seconds": 0.0, "events": [
+            { "tick": 0, "kind": { "bpm": 87.0 } },
+            { "tick": 0, "kind": { "other": { "name": "sm.scroll", "value": 2.0 } } }
+        ] });
+        let mut value = document(json!([]));
+        value["charts"][0]["timing"] = own.clone();
+        let song = read(&value).unwrap();
+        assert_eq!(
+            song.charts[0].timing.as_ref().map(|t| t.events.len()),
+            Some(2)
+        );
+        assert_eq!(written(&song)["charts"][0]["timing"], own);
+    }
+
+    #[test]
+    fn a_song_of_another_ruleset_is_refused() {
+        let mut value = document(json!([]));
+        value["ruleset"]["id"] = json!("ttr");
+        assert!(matches!(read(&value), Err(Error::WrongRuleset(id)) if id == "ttr"));
+    }
+
+    #[test]
+    fn objects_stepmania_cannot_play_are_refused() {
+        let mut wide = lane_object(0, 0, "tap");
+        wide["position"] = json!({ "lane": { "index": 0, "width": 2 } });
+        let mut plane = lane_object(0, 0, "tap");
+        plane["position"] = json!({ "plane": { "x": 0.0, "y": 0.0 } });
+        let mut path = lane_object(0, 0, "tap");
+        path["shape"] = json!({ "path": { "points": [
+            { "tick": 240, "position": { "lane": { "index": 1 } }, "ease": "linear" } ] } });
+        let mut held_mine = lane_object(0, 0, "mine");
+        held_mine["shape"] = json!({ "sustain": { "duration": 240 } });
+        for object in [wide, plane, path, held_mine, lane_object(0, 0, "sm.attack")] {
+            let value = document(json!([object]));
+            assert!(
+                matches!(read(&value), Err(Error::UnsupportedObject { .. })),
+                "{object}"
+            );
+        }
+        let mut parent = lane_object(0, 0, "hold");
+        parent["shape"] = json!({ "sustain": { "duration": 480 } });
+        parent["children"] = json!([lane_object(240, 1, "tap")]);
+        assert!(matches!(
+            read(&document(json!([parent]))),
+            Err(Error::Unsupported { .. })
+        ));
+    }
+
+    #[test]
+    fn keys_in_the_sm_namespace_or_song_settings_that_it_does_not_define_are_refused() {
+        type Edit = fn(&mut Value);
+        let edits: [Edit; 5] = [
+            |v| v["charts"][0]["objects"][0]["ext"] = json!({ "sm.color": 1 }),
+            |v| v["metadata"]["ext"] = json!({ "sm.banner": "b.png" }),
+            |v| v["charts"][0]["ext"] = json!({ "sm.radar": [0.5] }),
+            |v| v["timing"]["events"][0]["ext"] = json!({ "sm.x": 1 }),
+            |v| v["settings"] = json!({ "selectable": true }),
+        ];
+        for edit in edits {
+            let mut value = document(json!([lane_object(0, 0, "tap")]));
+            edit(&mut value);
+            assert!(
+                matches!(read(&value), Err(Error::UnknownKey { .. })),
+                "{value}"
+            );
+        }
+    }
+
+    #[test]
+    fn other_plugins_data_is_skipped_and_not_written_back() {
+        let plain = document(json!([lane_object(0, 0, "tap")]));
+        let mut decorated = plain.clone();
+        decorated["plugins"] = json!({ "swing": { "version": "1" } });
+        decorated["metadata"]["ext"] = json!({ "swing.feel": "late" });
+        decorated["charts"][0]["objects"][0]["ext"] = json!({ "swing.accent": true });
+        decorated["timing"]["events"]
+            .as_array_mut()
+            .unwrap()
+            .push(other(0, "swing.groove", json!(0.6)));
+        let song = read(&decorated).unwrap();
+        assert_eq!(song, read(&plain).unwrap());
+        assert_eq!(
+            written(&song),
+            expected(plain["charts"][0]["objects"].clone())
+        );
+    }
+
+    #[test]
+    fn chart_settings_are_closed_and_the_description_optional() {
+        let mut radar = document(json!([]));
+        radar["charts"][0]["settings"]["radar"] = json!([0.5]);
+        assert!(matches!(read(&radar), Err(Error::Malformed { .. })));
+        let mut anonymous = document(json!([]));
+        anonymous["charts"][0]["settings"]
+            .as_object_mut()
+            .unwrap()
+            .remove("description");
+        let song = read(&anonymous).unwrap();
+        assert_eq!(song.charts[0].description, "");
+        let mut out = anonymous.clone();
+        out["ruleset"]["version"] = json!(VERSION);
+        out["charts"][0].as_object_mut().unwrap().remove("objects");
+        assert_eq!(written(&song), out);
+    }
+
+    #[test]
+    fn a_speed_change_takes_no_time_only_when_marked_instant() {
+        let instant = json!({ "ratio": 2.0, "length": "instant" });
+        let value = with_events(&[other(960, "sm.speed", instant)]);
+        assert_eq!(written(&read(&value).unwrap())["timing"], value["timing"]);
+        for zero in [json!({ "ticks": 0 }), json!({ "seconds": 0.0 })] {
+            let mut speed = json!({ "ratio": 2.0 });
+            speed["length"] = zero;
+            assert!(read(&with_events(&[other(960, "sm.speed", speed)])).is_err());
+        }
+    }
+
+    #[test]
+    fn styles_are_variants_named_as_stepmania_names_them() {
+        assert_eq!(Style::named("dance-single"), Some(Style::DanceSingle));
+        assert_eq!(Style::PumpRoutine.name(), "pump-routine");
+        assert_eq!(Style::PumpRoutine.lanes(), LaneCount::new(20).unwrap());
+    }
+}
