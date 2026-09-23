@@ -574,12 +574,15 @@ Every `f64` must be **finite**. NaN and the infinities are rejected at parse, be
 
 **Negative BPM is rejected.** StepMania files use it as a time-skipping gimmick predating explicit
 warps, but charter already has `warp`, and two mechanisms for skipping time is one too many.
-Adapters normalise on import and keep the original value in `ext`, so the round trip stays lossless.
 
-**Zero BPM is rejected for the same reason.** Position would stop advancing while time ran on,
-which is an unbounded `stop` leaving every later tick without a finite time, and `stop` already
-expresses a pause. Unlike negative BPM it has no finite equivalent to normalise to, so an adapter
-meeting one refuses the import rather than guessing.
+**Zero BPM is rejected for the same reason.** Position would stop advancing while time ran on, an
+unbounded `stop`, and `stop` already expresses a pause.
+
+Importers handle both the way the source game does, which is what makes a converted chart play the
+same. StepMania's
+[loader](https://raw.githubusercontent.com/stepmania/stepmania/5_1-new/src/NotesLoaderSM.cpp)
+converts negative BPMs into warps and discards zero BPMs, keeping the previous tempo, so the `.sm`
+adapter does both and keeps the original values in `ext`.
 
 **Finite fields do not guarantee finite times.** A subnormal `bpm` such as `5e-324` passes every
 bound above and still overflows `60 / bpm` to infinity, and two stops near `f64::MAX` overflow when
