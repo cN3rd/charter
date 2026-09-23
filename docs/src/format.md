@@ -564,7 +564,7 @@ Every `f64` must be **finite**. NaN and the infinities are rejected at parse, be
 
 | Field | Rule |
 |---|---|
-| `bpm` | `>= 0` |
+| `bpm` | `> 0` |
 | `stop`, `delay` seconds | `>= 0` |
 | `warp` ticks | `> 0` |
 | `time_signature` numerator, denominator | `>= 1` |
@@ -576,10 +576,20 @@ Every `f64` must be **finite**. NaN and the infinities are rejected at parse, be
 warps, but charter already has `warp`, and two mechanisms for skipping time is one too many.
 Adapters normalise on import and keep the original value in `ext`, so the round trip stays lossless.
 
-**A `bpm` of exactly zero halts musical progression.** Seconds per beat becomes unbounded, so no
-later tick has a finite time and every object after it is unreachable. The bound permits it, so
-implementations must guard the `60 / bpm` division rather than trusting it, and validators report
-everything downstream of one.
+**Zero BPM is rejected for the same reason.** Position would stop advancing while time ran on,
+which is an unbounded `stop` leaving every later tick without a finite time, and `stop` already
+expresses a pause. Unlike negative BPM it has no finite equivalent to normalise to, so an adapter
+meeting one refuses the import rather than guessing.
+
+**Finite fields do not guarantee finite times.** A subnormal `bpm` such as `5e-324` passes every
+bound above and still overflows `60 / bpm` to infinity, and two stops near `f64::MAX` overflow when
+summed. Readers therefore also reject a document whose earliest or latest tick resolves to a
+non-finite time. Positive BPM makes time non-decreasing in ticks, so those two evaluations bound
+every other.
+
+Finding the latest tick adds durations and warp lengths to ticks, which can overflow `i64` on
+hostile input. That addition is checked, and overflow rejects the document instead of panicking or
+wrapping.
 
 ---
 
