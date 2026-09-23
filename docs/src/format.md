@@ -31,6 +31,8 @@ becoming loose.
 | [Note type model](research/topics/note-type-model.md) | Structure in core, semantics in plugin | Medium |
 | Ruleset scope | Exactly one per file, structurally; other plugins unrestricted | Medium |
 | Keysounds | Core: a file-level bank objects reference | Medium |
+| Multi-player | Modelled as extra lanes; exporters fold them back | Medium |
+| Grouping | Value-keyed, so objects need no identity | Medium |
 | [Internal model richness](research/topics/internal-model-richness.md) | Five interpreted timing kinds, rest carried | Medium |
 | [Gimmick coverage](research/topics/gimmick-coverage.md) | Everything representable, little interpreted | Medium |
 | [Round-trip fidelity](research/topics/round-trip-fidelity.md) | Unknown data preserved verbatim | High |
@@ -327,7 +329,7 @@ the choice is editing behaviour, not representation.
 Metadata {
     title:   String,
     artist:  String,
-    audio:   Path,
+    audio:   ResourcePath,
     preview: Option<Preview>,
     ext:     Extensions,
 }
@@ -351,7 +353,7 @@ formats accumulate twenty optional strings nobody reads.
 ## Samples
 
 ```
-samples: Map<SampleId, Path>     // file-level bank
+samples: Map<SampleId, ResourcePath>     // file-level bank
 ```
 
 An object may name one:
@@ -419,12 +421,18 @@ nothing ever needs to prove two x values are the same position. Ticks do.
 `index` is an index, nothing more. There is no ten-lane ceiling; StepMania's is an artifact of
 having ten digit keys, not of its data model.
 
+**Multi-player charts are multi-lane charts.** StepMania's couple and routine modes put two players
+on shared panels, with each note assigned to a player. Charter gives each player its own lanes and
+lets the exporter fold them back onto shared panels, because player assignment is a ruleset
+concern. It also keeps the `(tick, lane)` uniqueness rule intact, which a shared-panel model would
+break the moment both players hit the same panel together.
+
 ### Shapes
 
 ```
 Shape =
     Instant
-  | Sustain { duration: NonZeroI64 }
+  | Sustain { duration: NonZeroU64 }
   | Path    { points: Vec<PathPoint> }   // non-empty
 
 PathPoint { tick: i64, position: Position, ease: Ident }
@@ -434,7 +442,8 @@ An enum rather than a duration field plus an optional point list, because that p
 object carry both and disagree with itself about where it ends. Three variants make that a compile
 error instead of a validation rule.
 
-`duration` is non-zero so that `Sustain { 0 }` cannot restate `Instant`. Two spellings of one
+`duration` is unsigned and non-zero, so `Sustain { 0 }` cannot restate `Instant` and a sustain
+cannot end before it starts. Two spellings of one
 state is the same defect as a duration contradicting a path, and the fix is the same: remove the
 spelling rather than validate against it.
 
@@ -505,6 +514,8 @@ implementations disagreeing.
   the ones after it.
 - A child's span lies within its parent's. An arctap belongs to the arc it sits on, so one outside
   it is meaningless.
+- All points of a `Path`, including the object's own position, are the **same** `Position` variant.
+  An object cannot begin in a lane and end in the plane.
 - **Overlapping sustains are not a core rule.** A sustain and another object overlapping in one lane
   is invalid in every VSRG surveyed, but that is a ruleset judgement, and a ruleset that wants it is
   not wrong. Core rules cover what is universally impossible, not what is usually wrong.
@@ -512,8 +523,63 @@ implementations disagreeing.
 **Ticks**
 
 - Negative ticks are legal. Charts have lead-ins, and objects can precede beat 0.
+- Source positions that do not land on the tick grid are rounded to the nearest tick on import,
+  with the original preserved in `ext`. The loss is then visible and reversible. This applies to
+  any source, not only millisecond-based ones.
 - `Path` non-emptiness is the one invariant that resists being made structural, since Rust has no
   cheap non-empty vector.
+
+---
+
+## Untrusted input
+
+Chart files arrive from strangers. These are **parse-time** rules, not a later validation pass: a
+hostile file has to be rejected before it is walked, not after.
+
+### Resource paths
+
+`ResourcePath` values — `metadata.audio` and every entry in `samples` — are relative to the
+directory containing the chart. A conforming reader rejects a path that:
+
+- is absolute, or carries a drive letter or UNC prefix
+- contains a `..` component
+- resolves, after following any links, outside the chart's own directory
+
+Charts are distributed as archives downloaded from strangers. An unconstrained path in one is an
+arbitrary-file-read primitive, so containment is checked before opening rather than after.
+
+### Limits
+
+- `children` nest **at most one level**: a child has no children of its own. Every surveyed game
+  needs exactly one level, Arcaea's arctaps on an arc, and most need none. A fixed depth makes the
+  structure non-recursive in practice, so no document can drive a parser off its stack. Raising it
+  later is a breaking change, which is what `format_version` is for.
+- Readers impose configurable ceilings on object count, sample count and document size, and reject
+  rather than allocate.
+
+### Numbers
+
+Every `f64` must be **finite**. NaN and the infinities are rejected at parse, because one NaN
+`bpm` turns every downstream tick-to-time result into NaN without raising anything.
+
+| Field | Rule |
+|---|---|
+| `bpm` | `>= 0` |
+| `stop`, `delay` seconds | `>= 0` |
+| `warp` ticks | `> 0` |
+| `time_signature` numerator, denominator | `>= 1` |
+| `ticks_per_beat` | `>= 1` |
+| `preview.start_seconds` | `>= 0`, and `length_seconds` `> 0` |
+| `offset_seconds`, `Plane` x and y | finite, any sign |
+
+**Negative BPM is rejected.** StepMania files use it as a time-skipping gimmick predating explicit
+warps, but charter already has `warp`, and two mechanisms for skipping time is one too many.
+Adapters normalise on import and keep the original value in `ext`, so the round trip stays lossless.
+
+**A `bpm` of exactly zero halts musical progression.** Seconds per beat becomes unbounded, so no
+later tick has a finite time and every object after it is unreachable. The bound permits it, so
+implementations must guard the `60 / bpm` division rather than trusting it, and validators report
+everything downstream of one.
 
 ---
 
@@ -572,9 +638,15 @@ modelling it as a kind would multiply the vocabulary.
 Both playfield geometries appear **in the same chart**, which Arcaea requires: floor notes are
 lanes and arcs are not.
 
-Arc *groups* — sibling arcs traced as one motion — stay in `ext`. They are a sibling relation,
-which containment does not express, and one game wanting them is not enough to justify core
-structure.
+Arc *groups* — sibling arcs traced as one motion — stay in `ext`, and so do Quaver's timing groups
+and layers. Two games wanting sibling grouping would normally argue for core structure, but they
+do not need any: **grouping here is keyed by value, not by reference.** Objects sharing
+`arcaea.group: 1` are in a group because they carry the same value, not because anything points at
+anything.
+
+That is why no object carries an identity. Identity would only become necessary if something had
+to reference **one specific object** rather than share a value with it, and nothing in the surveyed
+games does.
 
 ---
 
@@ -718,6 +790,9 @@ present and for no other reason.
 - **Object size.** Roughly 150 bytes per object, about 1.5 MB for a 10,000-note chart.
   Acceptable. If it stops being acceptable the fix is interning kinds and arena-allocating
   children, not a different model.
+- **A file with no charts is legal.** Timing, metadata and samples with an empty `charts` list is a
+  sync-only document, which is exactly what Tempora produces and what charter would export to hand
+  timing to another tool.
 - **Sync anchors are not in v0.** Tempora pairs an audio offset with a musical position and derives
   tempo from it, which is a better *authoring* model than typing BPM values. Excluded because it
   duplicates information already in `bpm` events and raises questions this draft cannot answer —
