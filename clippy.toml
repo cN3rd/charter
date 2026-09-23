@@ -1,0 +1,6 @@
+# ponytail: tests may unwrap and index; a failed unwrap there is a failed test, not a crash.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-indexing-slicing-in-tests = true
+# Game and tool names that doc_markdown would otherwise want in backticks.
+doc-valid-idents = ["StepMania", "ArrowVortex", "..",]

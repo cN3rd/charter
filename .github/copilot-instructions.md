@@ -11,8 +11,8 @@ Rust Cargo workspace, edition 2024, `resolver = "3"` (needs Rust 1.85+; develope
 ```bash
 cargo check --workspace --all-targets   # fast feedback loop
 cargo test --workspace
-cargo test -p charter-core it_works     # single test: -p <crate> <substring of test path>
-cargo test -p charter-core -- --nocapture --exact tests::it_works
+cargo test -p charter-core format_chapter  # single test: -p <crate> <substring of test path>
+cargo test -p charter-core -- --nocapture --exact json::tests::the_format_chapter_example_survives_a_round_trip
 cargo clippy --workspace --all-targets
 cargo fmt --all
 cargo run -p charter-app
@@ -24,11 +24,22 @@ git submodule update --init              # required once, see .github/skills/REA
 Lints do the enforcing. The root `Cargo.toml` carries `[workspace.lints]` and first-party crates
 opt in with `[lints] workspace = true`. `unsafe_code` is forbidden there, so a genuine need for
 `unsafe` goes into a `third-party/` wrapper crate with a written reason. Narrow an individual
-lint with `#[allow(...)]` at the call site instead of weakening the workspace table.
+lint with `#[allow(...)]` at the call site instead of weakening the workspace table. The root
+`clippy.toml` lets test code unwrap and index.
+
+Every source file with logic tests itself in a `#[cfg(test)] mod tests` at its end; there are no
+`tests/` directories. Unit tests can reach private items, so a rule is tested where it lives.
+
+Tests are sans-io: they build inputs in memory and feed bytes or values to the code under test,
+never touching files, the network or the clock. The format tests embed the format chapter's
+example with `include_str!`, which happens at compile time.
 
 - Newtype anything carrying a unit: ticks, beats, measures, seconds, samples, pixels, scroll
-  offsets. They are all integers, and silently swapping two of them is a common bug class in
-  charting tools. Make conversions explicit and mix-ups a compile error.
+  offsets. Silently swapping two of them is a common bug class in charting tools. Make
+  conversions explicit and mix-ups a compile error. The format's units live in
+  `crates/charter-core/src/unit.rs`, each showing a rejected mix-up as a `compile_fail` doctest
+  beside a passing twin one line apart, because stable rustdoc does not check which error a
+  `compile_fail` block hits.
 - Chart files are untrusted input. Format crates parse bytes into already-valid domain types;
   nothing downstream handles a `Chart` that might be malformed, and no parser panics on hostile
   input.
@@ -64,7 +75,7 @@ expected `E1` for it. Do not silence that by adding frontmatter.
 
 | Path | Role |
 |---|---|
-| `crates/charter-core` | library crate, the logic lives here |
+| `crates/charter-core` | the chart format: data model, JSON I/O, validation, tick to time |
 | `crates/charter-app` | binary front end, thin |
 | `third-party/symphonia-wrap` | build-time facade over `symphonia`, read its README first |
 
@@ -95,6 +106,5 @@ atomic commits with `/commit`. `.github/skills/README.md` lists every skill and 
 
 ## Current state
 
-`charter-core` and `charter-app` are generated stubs (`add()`, `println!`). No UI, DSP or plugin
-crate exists yet. Only the workspace manifests and `symphonia-wrap` are committed. Ask before
-inventing a crate boundary.
+`charter-core` implements the format chapter. `charter-app` is a generated stub. No UI, DSP or
+plugin crate exists yet. Ask before inventing a crate boundary.
