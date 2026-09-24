@@ -18,12 +18,14 @@ how plugins are loaded is still [open](research/topics/plugins.md).
   read.
 - Writing produces a validated document holding the ruleset's own data. The typed model is a
   view, so reading and writing back drops other plugins' data.
+- Every ruleset keeps the song's markers of the shared kinds, `section` and `bookmark`, and none
+  defines a kind of its own. StepMania's `#LABELS` are section markers.
 - A song is checked when built, by reading or by `Song::new`, against the ruleset and every
   document rule, and cannot change after. Writing one therefore cannot fail.
 
 | Ruleset | Namespace | Kinds | Timing | Chart settings |
 |---|---|---|---|---|
-| StepMania | `sm` | `tap`, `hold`, `roll`, `mine`, `lift`, `fake`, `sm.auto_keysound` | Every core kind, `sm.tickcount`, `sm.combo`, `sm.speed`, `sm.scroll`, `sm.fake`, `sm.label` | `style`, `difficulty`, `meter`, `description` |
+| StepMania | `sm` | `tap`, `hold`, `roll`, `mine`, `lift`, `fake`, `sm.auto_keysound` | Every core kind, `sm.tickcount`, `sm.combo`, `sm.speed`, `sm.scroll`, `sm.fake` | `style`, `difficulty`, `meter`, `description` |
 | Tap Tap Revenge | `ttr` | `tap`, `hold`, `ttr.shake`, `ttr.slice`, `ttr.mega_tap` | `bpm`, `time_signature` | None |
 | osu!mania | `osu_mania` | `tap`, `hold` | `bpm`, `time_signature` over 4, `osu_mania.scroll_speed` | `hp`, `od` |
 

@@ -1,7 +1,8 @@
 //! StepMania as a charter ruleset.
 //!
 //! A chart's [`Style`] fixes its lane count. Timing covers everything StepMania 5 interprets,
-//! including its scroll and combo segments, which travel as `sm.*` events.
+//! including its scroll and combo segments, which travel as `sm.*` events. `#LABELS` are the song's
+//! section markers.
 //!
 //! [`Song`] is the typed view of a document whose ruleset is [`ID`]. Reading one fails on
 //! anything StepMania cannot represent and skips data other plugins left behind;
@@ -63,7 +64,6 @@ pub enum TimingKind {
     Scroll(Decimal),
     /// Ticks from here whose notes are fake.
     Fake(Ticks),
-    Label(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -256,7 +256,6 @@ const COMBO: &str = "combo";
 const SPEED: &str = "speed";
 const SCROLL: &str = "scroll";
 const FAKE: &str = "fake";
-const LABEL: &str = "label";
 
 /// This ruleset's key for `name`.
 fn own(name: &str) -> Result<Key, InvalidValue> {
@@ -401,7 +400,6 @@ impl Timing {
                 TimingKind::Speed(speed) => other(SPEED, serde_json::to_value(speed)?)?,
                 TimingKind::Scroll(ratio) => other(SCROLL, serde_json::to_value(ratio)?)?,
                 TimingKind::Fake(ticks) => other(FAKE, serde_json::to_value(ticks)?)?,
-                TimingKind::Label(text) => other(LABEL, text.as_str().into())?,
             };
             Ok(CoreEvent {
                 tick: event.tick,
@@ -663,7 +661,6 @@ fn read_other(name: &Key, value: &Value) -> Option<Result<TimingKind, serde_json
         SPEED => Speed::deserialize(value).map(TimingKind::Speed),
         SCROLL => Decimal::deserialize(value).map(TimingKind::Scroll),
         FAKE => Ticks::deserialize(value).map(TimingKind::Fake),
-        LABEL => String::deserialize(value).map(TimingKind::Label),
         _ => return None,
     })
 }
@@ -943,7 +940,6 @@ mod tests {
             ),
             other(1920, "sm.scroll", json!(-1.0)),
             other(2880, "sm.fake", json!(480)),
-            other(2880, "sm.label", json!("drop")),
         ]);
         let song = read(&value).unwrap();
         let kinds: Vec<&TimingKind> = song
@@ -968,7 +964,6 @@ mod tests {
                 }),
                 &TimingKind::Scroll(decimal(-1.0)),
                 &TimingKind::Fake(Ticks::new(480).unwrap()),
-                &TimingKind::Label("drop".into()),
             ]
         );
         assert_eq!(written(&song)["timing"], value["timing"]);
@@ -1188,5 +1183,11 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn labels_travel_as_section_markers_rather_than_timing_segments() {
+        let label = with_events(&[other(0, "sm.label", json!("drop"))]);
+        assert!(matches!(read(&label), Err(Error::UnknownKey { .. })));
     }
 }
