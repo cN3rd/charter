@@ -148,10 +148,27 @@ fn inexact<E: de::Error>(v: impl fmt::Display) -> E {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+    use std::num::NonZeroU16;
+    use std::ops::RangeInclusive;
+
+    use proptest::collection::{btree_map, vec};
+    use proptest::option;
+    use proptest::prelude::*;
     use serde_json::{Value, json};
 
     use super::*;
-    use crate::error::{Rule, Violation};
+    use crate::document::{
+        Chart, Child, Extensions, Metadata, Object, PathPoint, Points, Position, Preview, Ruleset,
+        SampleId, Settings, Shape, Timing, TimingEvent, TimingKind,
+    };
+    use crate::error::{InvalidValue, Rule, Violation};
+    use crate::ident::{Ease, Key, Kind, Namespace};
+    use crate::number::{MAX_MILLIONTHS, from_millionths};
+    use crate::path::ResourcePath;
+    use crate::unit::{
+        AudioTime, LaneCount, LaneIndex, Seconds, Tick, Ticks, TicksPerBeat, TimeSignature,
+    };
 
     fn minimal() -> Value {
         json!({
@@ -283,6 +300,290 @@ mod tests {
             let mut value = minimal();
             value["settings"] = json!({ "n": n });
             assert_eq!(read(&value).is_ok(), accepted, "{value}");
+        }
+    }
+
+    /// Lanes in every generated chart.
+    const LANES: u16 = 8;
+
+    /// A decimal-backed value built from a count of millionths in `range`, ends drawn often.
+    fn decimal<T>(range: RangeInclusive<i64>) -> BoxedStrategy<T>
+    where
+        T: TryFrom<f64, Error = InvalidValue> + fmt::Debug + 'static,
+    {
+        prop_oneof![Just(*range.start()), Just(*range.end()), range]
+            .prop_map(|m| T::try_from(from_millionths(m)).unwrap())
+            .boxed()
+    }
+
+    fn key() -> BoxedStrategy<Key> {
+        "[a-z0-9_.]{1,6}"
+            .prop_map(|name| format!("test.{name}").parse().unwrap())
+            .boxed()
+    }
+
+    /// Any I-JSON value: integers a double holds exactly, finite floats, nesting a few deep.
+    fn value() -> BoxedStrategy<Value> {
+        let exact = i64::try_from(MAX_EXACT_INTEGER).unwrap();
+        let leaf = prop_oneof![
+            Just(Value::Null),
+            any::<bool>().prop_map(Value::from),
+            (-exact..=exact).prop_map(Value::from),
+            any::<f64>()
+                .prop_filter("finite", |f| f.is_finite())
+                .prop_map(Value::from),
+            "\\PC{0,8}".prop_map(Value::from),
+        ];
+        leaf.prop_recursive(3, 16, 4, |inner| {
+            prop_oneof![
+                vec(inner.clone(), 0..4).prop_map(Value::from),
+                btree_map("\\PC{0,6}", inner, 0..4)
+                    .prop_map(|map| Value::Object(map.into_iter().collect())),
+            ]
+        })
+        .boxed()
+    }
+
+    fn ext() -> BoxedStrategy<Extensions> {
+        btree_map(key(), value(), 0..3).boxed()
+    }
+
+    fn settings() -> BoxedStrategy<Settings> {
+        btree_map("[a-z_]{1,6}", value(), 0..3).boxed()
+    }
+
+    fn kind() -> BoxedStrategy<Kind> {
+        prop_oneof![
+            Just(Kind::Tap),
+            Just(Kind::Hold),
+            Just(Kind::Roll),
+            Just(Kind::Mine),
+            Just(Kind::Lift),
+            Just(Kind::Fake),
+            key().prop_map(Kind::Other),
+        ]
+        .boxed()
+    }
+
+    fn ease() -> BoxedStrategy<Ease> {
+        prop_oneof![
+            Just(Ease::Linear),
+            Just(Ease::Step),
+            Just(Ease::In),
+            Just(Ease::Out),
+            Just(Ease::InOut),
+            key().prop_map(Ease::Other),
+        ]
+        .boxed()
+    }
+
+    /// A lane position within [`LANES`], or a point on the plane.
+    fn position(plane: bool) -> BoxedStrategy<Position> {
+        if plane {
+            (
+                decimal(-MAX_MILLIONTHS..=MAX_MILLIONTHS),
+                decimal(-MAX_MILLIONTHS..=MAX_MILLIONTHS),
+            )
+                .prop_map(|(x, y)| Position::Plane { x, y })
+                .boxed()
+        } else {
+            (0..LANES)
+                .prop_flat_map(|index| (Just(index), 1..=LANES - index))
+                .prop_map(|(index, width)| Position::Lane {
+                    index: LaneIndex::new(index),
+                    width: LaneCount::new(width).unwrap(),
+                })
+                .boxed()
+        }
+    }
+
+    /// An object on `tick` whose path, if any, and children stay in its span and geometry.
+    fn object(tick: i32, samples: usize) -> BoxedStrategy<Object> {
+        any::<bool>()
+            .prop_flat_map(move |plane| {
+                let path = vec((position(plane), ease(), ext()), 1..3).prop_map(move |points| {
+                    let points = points
+                        .into_iter()
+                        .zip(1..)
+                        .map(|((position, ease, ext), j)| PathPoint {
+                            tick: Tick::new(tick + 100 * j),
+                            position,
+                            ease,
+                            ext,
+                        });
+                    Shape::Path {
+                        points: Points::new(points.collect()).unwrap(),
+                    }
+                });
+                let shape = prop_oneof![
+                    Just(Shape::Instant),
+                    (1_u32..=900).prop_map(|d| Shape::Sustain {
+                        duration: Ticks::new(d).unwrap()
+                    }),
+                    path,
+                ];
+                let sample = if samples == 0 {
+                    Just(None).boxed()
+                } else {
+                    option::of((0..samples).prop_map(|s| SampleId(format!("s{s}")))).boxed()
+                };
+                let children = vec((0_i32..=1000, position(plane), kind(), ext()), 0..3);
+                (position(plane), kind(), shape, sample, children, ext())
+            })
+            .prop_map(move |(position, kind, shape, sample, children, ext)| {
+                let start = Tick::new(tick);
+                let end = shape.end(start).unwrap();
+                let children = children
+                    .into_iter()
+                    .map(|(offset, position, kind, ext)| Child {
+                        tick: Tick::new(tick + offset).min(end),
+                        position,
+                        kind,
+                        shape: Shape::Instant,
+                        sample: None,
+                        ext,
+                    })
+                    .collect();
+                Object {
+                    tick: start,
+                    position,
+                    kind,
+                    shape,
+                    sample,
+                    children,
+                    ext,
+                }
+            })
+            .boxed()
+    }
+
+    /// A timing map with a tempo on tick 0 and one event on each of a few other ticks, spaced
+    /// so no warp overlaps the next and every meter is whole at any resolution.
+    fn timing() -> BoxedStrategy<Timing> {
+        let event = prop_oneof![
+            decimal(1..=MAX_MILLIONTHS).prop_map(TimingKind::Bpm),
+            decimal(1..=MAX_MILLIONTHS).prop_map(TimingKind::Stop),
+            decimal(1..=MAX_MILLIONTHS).prop_map(TimingKind::Delay),
+            (1_u32..=16).prop_map(|w| TimingKind::Warp(Ticks::new(w).unwrap())),
+            (1_u16..=16, prop_oneof![Just(1_u16), Just(2), Just(4)]).prop_map(|(n, d)| {
+                TimingKind::TimeSignature(TimeSignature {
+                    numerator: NonZeroU16::new(n).unwrap(),
+                    denominator: NonZeroU16::new(d).unwrap(),
+                })
+            }),
+            (key(), value()).prop_map(|(name, value)| TimingKind::Other { name, value }),
+        ];
+        let ticks = prop_oneof![-8_i32..=-1, 1_i32..=16];
+        (
+            decimal(-MAX_MILLIONTHS..=MAX_MILLIONTHS),
+            decimal(1..=MAX_MILLIONTHS),
+            btree_map(ticks, (event, ext()), 0..6),
+        )
+            .prop_map(|(offset_seconds, bpm, mut events)| {
+                events.insert(0, (TimingKind::Bpm(bpm), Extensions::new()));
+                let events = events
+                    .into_iter()
+                    .map(|(k, (kind, ext))| TimingEvent {
+                        tick: Tick::new(16 * k),
+                        kind,
+                        ext,
+                    })
+                    .collect();
+                Timing {
+                    offset_seconds,
+                    events,
+                }
+            })
+            .boxed()
+    }
+
+    fn chart(name: String, samples: usize) -> BoxedStrategy<Chart> {
+        (0_i32..4)
+            .prop_flat_map(move |count| {
+                let objects: Vec<_> = (0..count).map(|i| object(1024 * i, samples)).collect();
+                (objects, settings(), option::of(timing()), ext())
+            })
+            .prop_map(move |(objects, settings, timing, ext)| Chart {
+                name: name.clone(),
+                lanes: LaneCount::new(LANES),
+                settings,
+                timing,
+                objects,
+                ext,
+            })
+            .boxed()
+    }
+
+    fn metadata() -> BoxedStrategy<Metadata> {
+        let preview = (
+            decimal::<AudioTime>(0..=MAX_MILLIONTHS),
+            option::of(decimal::<Seconds>(1..=MAX_MILLIONTHS)),
+        )
+            .prop_map(|(start_seconds, length_seconds)| Preview {
+                start_seconds,
+                length_seconds,
+            });
+        ("\\PC{0,8}", "\\PC{0,8}", option::of(preview), ext())
+            .prop_map(|(title, artist, preview, ext)| Metadata {
+                title,
+                artist,
+                audio: ResourcePath::new("song.ogg").unwrap(),
+                preview,
+                ext,
+            })
+            .boxed()
+    }
+
+    /// A document that passes every rule, built so by construction: sorted objects on distinct
+    /// ticks, lanes that fit, samples from the bank and every namespace the ruleset's.
+    fn document() -> BoxedStrategy<Document> {
+        (0_usize..3, 0_usize..3)
+            .prop_flat_map(|(samples, charts)| {
+                let charts: Vec<_> = (0..charts)
+                    .map(|c| chart(format!("c{c}"), samples))
+                    .collect();
+                let resolution = prop_oneof![Just(1_u16), Just(48), Just(960), Just(3840)];
+                (
+                    resolution,
+                    settings(),
+                    metadata(),
+                    timing(),
+                    charts,
+                    Just(samples),
+                )
+            })
+            .prop_map(
+                |(resolution, settings, metadata, timing, charts, samples)| Document {
+                    format_version: FORMAT_VERSION,
+                    ticks_per_beat: TicksPerBeat::new(resolution).unwrap(),
+                    ruleset: Ruleset {
+                        id: Namespace::new("test").unwrap(),
+                        version: "1".into(),
+                    },
+                    settings,
+                    plugins: BTreeMap::new(),
+                    metadata,
+                    samples: (0..samples)
+                        .map(|s| {
+                            let path = ResourcePath::new(format!("keysounds/s{s}.wav")).unwrap();
+                            (SampleId(format!("s{s}")), path)
+                        })
+                        .collect(),
+                    timing,
+                    charts,
+                },
+            )
+            .boxed()
+    }
+
+    proptest! {
+        #![proptest_config(crate::proptest_config())]
+
+        #[test]
+        fn every_valid_document_reads_back_as_itself(document in document()) {
+            let valid = ValidDocument::new(document).unwrap();
+            let read = ValidDocument::from_json(&valid.to_json().unwrap()).unwrap();
+            prop_assert_eq!(read, valid);
         }
     }
 }
