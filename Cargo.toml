@@ -16,6 +16,9 @@ serde = { version = "1.0.229", features = ["derive"] }
 # values survive a round trip, and the default parser drifts one value in ten.
 serde_json = { version = "1.0.151", features = ["float_roundtrip"] }
 thiserror = "2.0.20"
+# ponytail: std only; the fork and timeout features pull in a temp-file runner the sans-io tests
+# do not need.
+proptest = { version = "1.11.0", default-features = false, features = ["std"] }
 
 # ponytail: correctness enforced by the compiler, not by review.
 # Loosen an individual lint at the call site with #[allow], don't weaken it here.

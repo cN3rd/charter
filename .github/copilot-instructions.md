@@ -33,7 +33,9 @@ Every source file with logic tests itself in a `#[cfg(test)] mod tests` at its e
 
 Tests are sans-io: they build inputs in memory and feed bytes or values to the code under test,
 never touching files, the network or the clock. The format tests embed the format chapter's
-example with `include_str!`, which happens at compile time.
+example with `include_str!`, which happens at compile time. Property tests use proptest with
+`crate::proptest_config()`, a fixed seed and no regression files, so they repeat exactly and
+stay sans-io.
 
 Kani proofs sit in a `#[cfg(kani)] mod proofs` beside the tests. Keep each one small: CBMC
 bit-blasts floating-point arithmetic, and a proof mixing division, multiplication and rounding

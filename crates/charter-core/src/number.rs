@@ -2,7 +2,7 @@ use std::fmt;
 
 /// Most millionths a decimal holds: fifteen significant digits, few enough to survive a trip
 /// through a double.
-const MAX_MILLIONTHS: i64 = 999_999_999_999_999;
+pub(crate) const MAX_MILLIONTHS: i64 = 999_999_999_999_999;
 
 /// The whole millionths `value` holds, if it has at most six places and fifteen significant
 /// digits.

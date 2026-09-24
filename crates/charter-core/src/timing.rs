@@ -67,9 +67,17 @@ impl Timing {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::{BTreeMap, HashSet};
+    use std::mem::discriminant;
+    use std::num::NonZeroU16;
+
+    use proptest::collection::vec;
+    use proptest::prelude::*;
+
     use super::*;
     use crate::document::{DEFAULT_TICKS_PER_BEAT, TimingEvent, TimingKind};
-    use crate::unit::{Origin, Seconds, Ticks};
+    use crate::number::{MAX_MILLIONTHS, from_millionths};
+    use crate::unit::{Origin, Seconds, Ticks, TimeSignature};
 
     fn timing(events: &[(i32, TimingKind)]) -> Timing {
         Timing {
@@ -180,5 +188,154 @@ mod tests {
         let half = TicksPerBeat::new(480).unwrap();
         let seconds = t.seconds_at(half, Tick::new(480)).unwrap();
         assert!((seconds - 2.0).abs() < 1e-9, "{seconds}");
+    }
+
+    /// A timing map built from `first` and `events`, keeping only what validation accepts: one
+    /// event of each kind per tick, and warps that neither overlap nor end past the last tick.
+    fn valid_timing(offset: i64, first: (i32, Bpm), events: Vec<(i32, TimingKind)>) -> Timing {
+        let mut events: Vec<_> = std::iter::once((first.0, TimingKind::Bpm(first.1)))
+            .chain(events)
+            .collect();
+        events.sort_by_key(|(tick, _)| *tick);
+        let mut seen = HashSet::new();
+        let mut warp_end = None;
+        let mut kept = Vec::new();
+        for (tick, kind) in events {
+            let tick = Tick::new(tick);
+            if !seen.insert((tick, discriminant(&kind))) {
+                continue;
+            }
+            if let TimingKind::Warp(span) = kind {
+                match tick.checked_add(span) {
+                    Some(end) if warp_end.is_none_or(|last| tick >= last) => warp_end = Some(end),
+                    _ => continue,
+                }
+            }
+            kept.push(TimingEvent {
+                tick,
+                kind,
+                ext: BTreeMap::new(),
+            });
+        }
+        Timing {
+            offset_seconds: Origin::try_from(from_millionths(offset)).unwrap(),
+            events: kept,
+        }
+    }
+
+    /// The time of `tick` found by walking the map one tick at a time: the format chapter's
+    /// rules restated without segments.
+    fn walked(timing: &Timing, resolution: TicksPerBeat, tick: i32) -> f64 {
+        let bpms = || {
+            timing.events.iter().filter_map(|event| match event.kind {
+                TimingKind::Bpm(bpm) => Some((event.tick, bpm)),
+                _ => None,
+            })
+        };
+        let first = bpms().next().unwrap().1;
+        let bpm_at = |k: Tick| bpms().rev().find(|(at, _)| *at <= k).map_or(first, |b| b.1);
+        let warped = |k: Tick| {
+            timing.events.iter().any(|event| match event.kind {
+                TimingKind::Warp(span) => event.tick <= k && Some(k) < event.tick.checked_add(span),
+                _ => false,
+            })
+        };
+        let pauses = |k: Tick, stops: bool| -> f64 {
+            timing
+                .events
+                .iter()
+                .filter(|event| event.tick == k)
+                .map(|event| match event.kind {
+                    TimingKind::Stop(pause) if stops => pause.seconds(),
+                    TimingKind::Delay(pause) if !stops => pause.seconds(),
+                    _ => 0.0,
+                })
+                .sum()
+        };
+        let one = Ticks::new(1).unwrap();
+        let (from, to) = if tick >= 0 { (0, tick) } else { (tick, 0) };
+        let mut elapsed = 0.0;
+        for k in from..to {
+            // A stop on `k` holds after its objects; a delay on `k + 1` holds before its own.
+            elapsed += pauses(Tick::new(k), true);
+            if !warped(Tick::new(k)) {
+                elapsed += bpm_at(Tick::new(k)).seconds(one, resolution);
+            }
+            elapsed += pauses(Tick::new(k + 1), false);
+        }
+        let offset = timing.offset_seconds.seconds();
+        if tick >= 0 {
+            offset + elapsed
+        } else {
+            offset - elapsed
+        }
+    }
+
+    fn tempo(millionths: impl Strategy<Value = i64>) -> impl Strategy<Value = Bpm> {
+        millionths.prop_map(|m| Bpm::try_from(from_millionths(m)).unwrap())
+    }
+
+    fn pause(millionths: impl Strategy<Value = i64>) -> impl Strategy<Value = Seconds> {
+        millionths.prop_map(|m| Seconds::try_from(from_millionths(m)).unwrap())
+    }
+
+    fn kind(
+        tempos: impl Strategy<Value = i64>,
+        pauses: impl Strategy<Value = i64> + Clone,
+        warps: impl Strategy<Value = u32>,
+    ) -> impl Strategy<Value = TimingKind> {
+        let seven_eight = TimeSignature {
+            numerator: NonZeroU16::new(7).unwrap(),
+            denominator: NonZeroU16::new(8).unwrap(),
+        };
+        prop_oneof![
+            tempo(tempos).prop_map(TimingKind::Bpm),
+            pause(pauses.clone()).prop_map(TimingKind::Stop),
+            pause(pauses).prop_map(TimingKind::Delay),
+            warps.prop_map(|w| TimingKind::Warp(Ticks::new(w).unwrap())),
+            Just(TimingKind::TimeSignature(seven_eight)),
+        ]
+    }
+
+    /// Any tick, with the ends of the range and zero drawn often.
+    fn edge_tick() -> impl Strategy<Value = i32> {
+        prop_oneof![Just(i32::MIN), Just(i32::MAX), Just(0), any::<i32>()]
+    }
+
+    /// Any count of millionths from 1 up, with both ends drawn often.
+    fn edge_positive() -> impl Strategy<Value = i64> + Clone {
+        prop_oneof![Just(1), Just(MAX_MILLIONTHS), 1..=MAX_MILLIONTHS]
+    }
+
+    proptest! {
+        #![proptest_config(crate::proptest_config())]
+
+        #[test]
+        fn resolving_a_tick_agrees_with_walking_the_map_one_tick_at_a_time(
+            offset in -5_000_000_i64..=5_000_000,
+            resolution in 1_u16..=48,
+            first in (-150_i32..150, tempo(1_000_000_i64..=600_000_000)),
+            events in vec((-150_i32..150, kind(1_000_000_i64..=600_000_000, 1_i64..=5_000_000, 1_u32..=40)), 0..12),
+            tick in -200_i32..200,
+        ) {
+            let timing = valid_timing(offset, first, events);
+            let resolution = TicksPerBeat::new(resolution).unwrap();
+            let resolved = timing.seconds_at(resolution, Tick::new(tick)).unwrap();
+            let walked = walked(&timing, resolution, tick);
+            prop_assert!((resolved - walked).abs() <= 1e-9 * walked.abs().max(1.0), "{resolved} != {walked}");
+        }
+
+        #[test]
+        fn every_tick_of_every_valid_map_resolves_to_a_finite_time(
+            offset in -MAX_MILLIONTHS..=MAX_MILLIONTHS,
+            resolution in prop_oneof![Just(1_u16), Just(u16::MAX), 1_u16..],
+            first in (edge_tick(), tempo(edge_positive())),
+            events in vec((edge_tick(), kind(edge_positive(), edge_positive(), prop_oneof![Just(u32::MAX), 1_u32..])), 0..32),
+            tick in edge_tick(),
+        ) {
+            let timing = valid_timing(offset, first, events);
+            let resolved = timing.seconds_at(TicksPerBeat::new(resolution).unwrap(), Tick::new(tick));
+            prop_assert!(resolved.is_some_and(f64::is_finite), "{resolved:?}");
+        }
     }
 }

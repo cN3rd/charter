@@ -21,6 +21,17 @@ pub use ident::{Ease, Key, Kind, Name, Namespace};
 pub use json::{MAX_DOCUMENT_BYTES, ValidDocument};
 pub use number::Decimal;
 pub use path::ResourcePath;
+
+/// Property tests run from a fixed seed and keep no regression files, so they repeat exactly
+/// and touch no files.
+#[cfg(test)]
+fn proptest_config() -> proptest::test_runner::Config {
+    proptest::test_runner::Config {
+        failure_persistence: None,
+        rng_seed: proptest::test_runner::RngSeed::Fixed(0),
+        ..proptest::test_runner::Config::default()
+    }
+}
 pub use unit::{
     AudioTime, Bpm, LaneCount, LaneIndex, LaneSpan, Origin, Seconds, Tick, Ticks, TicksPerBeat,
     TimeSignature,
