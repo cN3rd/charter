@@ -12,9 +12,9 @@ use std::collections::BTreeMap;
 
 use charter_core::{
     Bpm, Chart as CoreChart, Document, Extensions, FORMAT_VERSION, InvalidValue, Key, Kind,
-    LaneCount, LaneIndex, Metadata, Name, Namespace, Object, Origin, Position, Ruleset, Settings,
-    Shape, Tick, Ticks, TicksPerBeat, TimeSignature, Timing, TimingEvent, TimingKind,
-    ValidDocument,
+    LaneCount, LaneIndex, Location, Metadata, Name, Namespace, Object, Origin, Position, Ruleset,
+    Settings, Shape, Stream, Tick, Ticks, TicksPerBeat, TimeSignature, Timing, TimingEvent,
+    TimingKind, ValidDocument,
 };
 
 /// The ruleset namespace.
@@ -105,19 +105,21 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("ruleset is {0:?}, not {ID:?}")]
-    WrongRuleset(String),
+    #[error("ruleset is \"{0}\", not {ID:?}")]
+    WrongRuleset(Namespace),
     #[error("a tap tap revenge song needs at least one chart")]
     NoCharts,
     #[error("{at}: not a tap tap revenge note")]
-    UnsupportedObject { at: String },
+    UnsupportedObject { at: Location },
     #[error("{at}: {what} are not part of tap tap revenge")]
-    Unsupported { at: String, what: &'static str },
-    #[error("{at}: {key:?} is not a tap tap revenge key")]
-    UnknownKey { at: String, key: String },
-    #[error("charts[{chart}] has {} lanes; every chart of a song has the same 3, 4 or 5", .lanes.map_or_else(|| "no".to_owned(), |lanes| lanes.to_string()))]
+    Unsupported { at: Location, what: &'static str },
+    #[error("{at}: \"{key}\" is not a tap tap revenge key")]
+    UnknownKey { at: Location, key: Key },
+    #[error("{at}: \"{key}\" is not a tap tap revenge setting")]
+    UnknownSetting { at: Location, key: String },
+    #[error("{at} has {} lanes; every chart of a song has the same 3, 4 or 5", .lanes.map_or_else(|| "no".to_owned(), |lanes| lanes.to_string()))]
     Lanes {
-        chart: usize,
+        at: Location,
         lanes: Option<LaneCount>,
     },
     #[error(transparent)]
@@ -284,13 +286,13 @@ impl TryFrom<&ValidDocument> for Song {
     fn try_from(valid: &ValidDocument) -> Result<Self, Error> {
         let doc = valid.document();
         if doc.ruleset.id.as_str() != ID {
-            return Err(Error::WrongRuleset(doc.ruleset.id.as_str().to_owned()));
+            return Err(Error::WrongRuleset(doc.ruleset.id.clone()));
         }
-        reject_keys(doc.settings.keys(), "settings")?;
-        reject_own_keys(&doc.metadata.ext, "metadata.ext")?;
+        reject_keys(doc.settings.keys(), Location::Settings)?;
+        reject_own_keys(&doc.metadata.ext, Location::MetadataExt)?;
         if !doc.samples.is_empty() {
             return Err(Error::Unsupported {
-                at: "samples".into(),
+                at: Location::Samples,
                 what: "keysounds",
             });
         }
@@ -308,7 +310,7 @@ impl TryFrom<&ValidDocument> for Song {
             },
             ticks_per_beat: doc.ticks_per_beat,
             lanes,
-            tempo: read_tempo(&doc.timing, "timing")?,
+            tempo: read_tempo(&doc.timing, Stream::Song)?,
             charts,
         })
     }
@@ -319,7 +321,7 @@ fn song_lanes(charts: &[CoreChart]) -> Result<Lanes, Error> {
     let lanes_of = |chart: &CoreChart| chart.lanes.and_then(Lanes::of);
     let first = charts.first().ok_or(Error::NoCharts)?;
     let first = lanes_of(first).ok_or(Error::Lanes {
-        chart: 0,
+        at: Location::Chart(0),
         lanes: first.lanes,
     })?;
     match charts
@@ -328,7 +330,7 @@ fn song_lanes(charts: &[CoreChart]) -> Result<Lanes, Error> {
         .find(|(_, chart)| lanes_of(chart) != Some(first))
     {
         Some((chart, other)) => Err(Error::Lanes {
-            chart,
+            at: Location::Chart(chart),
             lanes: other.lanes,
         }),
         None => Ok(first),
@@ -336,23 +338,22 @@ fn song_lanes(charts: &[CoreChart]) -> Result<Lanes, Error> {
 }
 
 fn read_chart(c: usize, chart: &CoreChart, lanes: Lanes) -> Result<Chart, Error> {
-    reject_keys(chart.settings.keys(), &format!("charts[{c}].settings"))?;
-    reject_own_keys(&chart.ext, &format!("charts[{c}].ext"))?;
+    reject_keys(chart.settings.keys(), Location::ChartSettings(c))?;
+    reject_own_keys(&chart.ext, Location::ChartExt(c))?;
     let notes = chart
         .objects
         .iter()
         .enumerate()
         .map(|(j, object)| {
-            let at = || format!("charts[{c}].objects[{j}]");
-            reject_own_keys(&object.ext, &at())?;
+            let at = Location::Object { chart: c, index: j };
+            reject_own_keys(&object.ext, at)?;
             if !object.children.is_empty() {
                 return Err(Error::Unsupported {
-                    at: at(),
+                    at,
                     what: "child objects",
                 });
             }
-            let kind =
-                read_note(object, lanes).ok_or_else(|| Error::UnsupportedObject { at: at() })?;
+            let kind = read_note(object, lanes).ok_or(Error::UnsupportedObject { at })?;
             Ok(Note {
                 tick: object.tick,
                 kind,
@@ -360,7 +361,7 @@ fn read_chart(c: usize, chart: &CoreChart, lanes: Lanes) -> Result<Chart, Error>
         })
         .collect::<Result<_, Error>>()?;
     let tempo = match &chart.timing {
-        Some(timing) => Some(read_tempo(timing, &format!("charts[{c}].timing"))?),
+        Some(timing) => Some(read_tempo(timing, Stream::Chart(c))?),
         None => None,
     };
     Ok(Chart {
@@ -402,12 +403,12 @@ fn read_note(object: &Object, lanes: Lanes) -> Option<NoteKind> {
     }
 }
 
-fn read_tempo(timing: &Timing, at: &str) -> Result<Tempo, Error> {
+fn read_tempo(timing: &Timing, stream: Stream) -> Result<Tempo, Error> {
     let mut changes = Vec::with_capacity(timing.events.len());
-    for (i, event) in timing.events.iter().enumerate() {
-        let at = || format!("{at}.events[{i}]");
-        reject_own_keys(&event.ext, &at())?;
-        let unsupported = |what| Error::Unsupported { at: at(), what };
+    for (index, event) in timing.events.iter().enumerate() {
+        let at = Location::Event { stream, index };
+        reject_own_keys(&event.ext, at)?;
+        let unsupported = |what| Error::Unsupported { at, what };
         let kind = match &event.kind {
             TimingKind::Bpm(bpm) => TempoKind::Bpm(*bpm),
             TimingKind::TimeSignature(meter) => TempoKind::TimeSignature(*meter),
@@ -416,8 +417,8 @@ fn read_tempo(timing: &Timing, at: &str) -> Result<Tempo, Error> {
             TimingKind::Warp(_) => return Err(unsupported("warps")),
             TimingKind::Other { name, .. } if name.namespace().as_str() == ID => {
                 return Err(Error::UnknownKey {
-                    at: at(),
-                    key: name.to_string(),
+                    at,
+                    key: name.clone(),
                 });
             }
             TimingKind::Other { .. } => continue,
@@ -434,10 +435,10 @@ fn read_tempo(timing: &Timing, at: &str) -> Result<Tempo, Error> {
 }
 
 /// Fails on the first key, since this ruleset defines no settings.
-fn reject_keys<'a>(mut keys: impl Iterator<Item = &'a String>, at: &str) -> Result<(), Error> {
+fn reject_keys<'a>(mut keys: impl Iterator<Item = &'a String>, at: Location) -> Result<(), Error> {
     match keys.next() {
-        Some(key) => Err(Error::UnknownKey {
-            at: at.to_owned(),
+        Some(key) => Err(Error::UnknownSetting {
+            at,
             key: key.clone(),
         }),
         None => Ok(()),
@@ -446,11 +447,11 @@ fn reject_keys<'a>(mut keys: impl Iterator<Item = &'a String>, at: &str) -> Resu
 
 /// Fails on a key in this ruleset's namespace, which defines none; other plugins' keys are
 /// theirs to read.
-fn reject_own_keys(ext: &Extensions, at: &str) -> Result<(), Error> {
+fn reject_own_keys(ext: &Extensions, at: Location) -> Result<(), Error> {
     match ext.keys().find(|key| key.namespace().as_str() == ID) {
         Some(key) => Err(Error::UnknownKey {
-            at: at.to_owned(),
-            key: key.to_string(),
+            at,
+            key: key.clone(),
         }),
         None => Ok(()),
     }
@@ -569,7 +570,7 @@ mod tests {
     fn a_song_of_another_ruleset_is_refused() {
         let mut value = document(json!([]));
         value["ruleset"]["id"] = json!("sm");
-        assert!(matches!(read(&value), Err(Error::WrongRuleset(id)) if id == "sm"));
+        assert!(matches!(read(&value), Err(Error::WrongRuleset(id)) if id.as_str() == "sm"));
     }
 
     #[test]
@@ -810,7 +811,10 @@ mod tests {
             let mut value = document(json!([lane_object(0, 0, 1, "tap")]));
             edit(&mut value);
             assert!(
-                matches!(read(&value), Err(Error::UnknownKey { .. })),
+                matches!(
+                    read(&value),
+                    Err(Error::UnknownKey { .. } | Error::UnknownSetting { .. })
+                ),
                 "{value}"
             );
         }
@@ -837,5 +841,22 @@ mod tests {
             written(&song),
             expected(written_objects(&plain["charts"][0]["objects"]))
         );
+    }
+
+    #[test]
+    fn errors_say_where_and_which_key() {
+        let mut value = document(json!([lane_object(0, 0, 1, "tap")]));
+        value["charts"][0]["objects"][0]["ext"] = json!({ "ttr.speed": 2 });
+        let speed: Key = "ttr.speed".parse().unwrap();
+        assert!(matches!(
+            read(&value),
+            Err(Error::UnknownKey { at: Location::Object { chart: 0, index: 0 }, key }) if key == speed
+        ));
+        let mut settings = document(json!([]));
+        settings["settings"] = json!({ "speed": 2 });
+        assert!(matches!(
+            read(&settings),
+            Err(Error::UnknownSetting { at: Location::Settings, key }) if key == "speed"
+        ));
     }
 }

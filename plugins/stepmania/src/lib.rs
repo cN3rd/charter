@@ -11,9 +11,10 @@ use std::collections::BTreeMap;
 
 use charter_core::{
     Bpm, Chart as CoreChart, Decimal, Document, Extensions, FORMAT_VERSION, InvalidValue, Key,
-    Kind, LaneCount, LaneIndex, Metadata, Name, Namespace, Object, Origin, Position, ResourcePath,
-    Ruleset, SampleId, Seconds, Settings, Shape, Tick, Ticks, TicksPerBeat, TimeSignature,
-    Timing as CoreTiming, TimingEvent as CoreEvent, TimingKind as CoreKind, ValidDocument,
+    Kind, LaneCount, LaneIndex, Location, Metadata, Name, Namespace, Object, Origin, Position,
+    ResourcePath, Ruleset, SampleId, Seconds, Settings, Shape, Stream, Tick, Ticks, TicksPerBeat,
+    TimeSignature, Timing as CoreTiming, TimingEvent as CoreEvent, TimingKind as CoreKind,
+    ValidDocument,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::Value;
@@ -382,24 +383,26 @@ impl Note {
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("ruleset is {0:?}, not {ID:?}")]
-    WrongRuleset(String),
+    #[error("ruleset is \"{0}\", not {ID:?}")]
+    WrongRuleset(Namespace),
     #[error("{at}: a {style} chart has {expected} lanes, not {}", .found.map_or_else(|| "none".to_owned(), |lanes| lanes.to_string()))]
     Lanes {
-        at: String,
+        at: Location,
         style: &'static str,
         expected: LaneCount,
         found: Option<LaneCount>,
     },
-    #[error("{at}: {key:?} is not a StepMania key")]
-    UnknownKey { at: String, key: String },
+    #[error("{at}: \"{key}\" is not a StepMania key")]
+    UnknownKey { at: Location, key: Key },
+    #[error("{at}: \"{key}\" is not a StepMania setting")]
+    UnknownSetting { at: Location, key: String },
     #[error("{at}: not a StepMania note")]
-    UnsupportedObject { at: String },
+    UnsupportedObject { at: Location },
     #[error("{at}: {what} are not part of StepMania")]
-    Unsupported { at: String, what: &'static str },
+    Unsupported { at: Location, what: &'static str },
     #[error("{at}: {source}")]
     Malformed {
-        at: String,
+        at: Location,
         source: serde_json::Error,
     },
     #[error(transparent)]
@@ -416,20 +419,20 @@ impl TryFrom<&ValidDocument> for Song {
     fn try_from(valid: &ValidDocument) -> Result<Self, Error> {
         let doc = valid.document();
         if doc.ruleset.id.as_str() != ID {
-            return Err(Error::WrongRuleset(doc.ruleset.id.as_str().to_owned()));
+            return Err(Error::WrongRuleset(doc.ruleset.id.clone()));
         }
         if let Some(key) = doc.settings.keys().next() {
-            return Err(Error::UnknownKey {
-                at: "settings".into(),
+            return Err(Error::UnknownSetting {
+                at: Location::Settings,
                 key: key.clone(),
             });
         }
-        reject_own_keys(&doc.metadata.ext, "metadata.ext")?;
+        reject_own_keys(&doc.metadata.ext, Location::MetadataExt)?;
         let charts = doc
             .charts
             .iter()
             .enumerate()
-            .map(|(c, chart)| read_chart(chart, &format!("charts[{c}]")))
+            .map(|(c, chart)| read_chart(chart, c))
             .collect::<Result<_, _>>()?;
         Ok(Self {
             metadata: Metadata {
@@ -438,23 +441,23 @@ impl TryFrom<&ValidDocument> for Song {
             },
             ticks_per_beat: doc.ticks_per_beat,
             samples: doc.samples.clone(),
-            timing: read_timing(&doc.timing, "timing")?,
+            timing: read_timing(&doc.timing, Stream::Song)?,
             charts,
         })
     }
 }
 
-fn read_chart(chart: &CoreChart, at: &str) -> Result<Chart, Error> {
-    reject_own_keys(&chart.ext, &format!("{at}.ext"))?;
+fn read_chart(chart: &CoreChart, c: usize) -> Result<Chart, Error> {
+    reject_own_keys(&chart.ext, Location::ChartExt(c))?;
     let settings = Value::Object(chart.settings.clone().into_iter().collect());
     let settings: ChartSettings =
         serde_json::from_value(settings).map_err(|source| Error::Malformed {
-            at: format!("{at}.settings"),
+            at: Location::ChartSettings(c),
             source,
         })?;
     if chart.lanes != Some(settings.style.lanes()) {
         return Err(Error::Lanes {
-            at: at.to_owned(),
+            at: Location::Chart(c),
             style: settings.style.name(),
             expected: settings.style.lanes(),
             found: chart.lanes,
@@ -464,7 +467,7 @@ fn read_chart(chart: &CoreChart, at: &str) -> Result<Chart, Error> {
         .objects
         .iter()
         .enumerate()
-        .map(|(j, object)| read_note(object, &format!("{at}.objects[{j}]")))
+        .map(|(j, object)| read_note(object, Location::Object { chart: c, index: j }))
         .collect::<Result<_, _>>()?;
     Ok(Chart {
         name: chart.name.clone(),
@@ -475,21 +478,21 @@ fn read_chart(chart: &CoreChart, at: &str) -> Result<Chart, Error> {
         timing: chart
             .timing
             .as_ref()
-            .map(|timing| read_timing(timing, &format!("{at}.timing")))
+            .map(|timing| read_timing(timing, Stream::Chart(c)))
             .transpose()?,
         notes,
     })
 }
 
-fn read_note(object: &Object, at: &str) -> Result<Note, Error> {
+fn read_note(object: &Object, at: Location) -> Result<Note, Error> {
     if !object.children.is_empty() {
         return Err(Error::Unsupported {
-            at: at.to_owned(),
+            at,
             what: "child objects",
         });
     }
     reject_own_keys(&object.ext, at)?;
-    let unsupported = || Error::UnsupportedObject { at: at.to_owned() };
+    let unsupported = || Error::UnsupportedObject { at };
     let Position::Lane { index, width } = object.position else {
         return Err(unsupported());
     };
@@ -518,10 +521,11 @@ fn read_note(object: &Object, at: &str) -> Result<Note, Error> {
     })
 }
 
-fn read_timing(timing: &CoreTiming, at: &str) -> Result<Timing, Error> {
+fn read_timing(timing: &CoreTiming, stream: Stream) -> Result<Timing, Error> {
     let mut events = Vec::with_capacity(timing.events.len());
-    for (i, event) in timing.events.iter().enumerate() {
-        reject_own_keys(&event.ext, &format!("{at}.events[{i}]"))?;
+    for (index, event) in timing.events.iter().enumerate() {
+        let at = Location::Event { stream, index };
+        reject_own_keys(&event.ext, at)?;
         let kind = match &event.kind {
             CoreKind::Bpm(bpm) => TimingKind::Bpm(*bpm),
             CoreKind::Stop(seconds) => TimingKind::Stop(*seconds),
@@ -530,16 +534,11 @@ fn read_timing(timing: &CoreTiming, at: &str) -> Result<Timing, Error> {
             CoreKind::TimeSignature(meter) => TimingKind::TimeSignature(*meter),
             CoreKind::Other { name, value } => match read_other(name, value) {
                 Some(Ok(kind)) => kind,
-                Some(Err(source)) => {
-                    return Err(Error::Malformed {
-                        at: format!("{at}.events[{i}]"),
-                        source,
-                    });
-                }
+                Some(Err(source)) => return Err(Error::Malformed { at, source }),
                 None if name.namespace().as_str() == ID => {
                     return Err(Error::UnknownKey {
-                        at: format!("{at}.events[{i}]"),
-                        key: name.to_string(),
+                        at,
+                        key: name.clone(),
                     });
                 }
                 None => continue,
@@ -574,11 +573,11 @@ fn read_other(name: &Key, value: &Value) -> Option<Result<TimingKind, serde_json
 
 /// Fails on a key in this ruleset's namespace, which defines none; other plugins' keys are
 /// theirs to read.
-fn reject_own_keys(ext: &Extensions, at: &str) -> Result<(), Error> {
+fn reject_own_keys(ext: &Extensions, at: Location) -> Result<(), Error> {
     match ext.keys().find(|key| key.namespace().as_str() == ID) {
         Some(key) => Err(Error::UnknownKey {
-            at: at.to_owned(),
-            key: key.to_string(),
+            at,
+            key: key.clone(),
         }),
         None => Ok(()),
     }
@@ -896,7 +895,7 @@ mod tests {
     fn a_song_of_another_ruleset_is_refused() {
         let mut value = document(json!([]));
         value["ruleset"]["id"] = json!("ttr");
-        assert!(matches!(read(&value), Err(Error::WrongRuleset(id)) if id == "ttr"));
+        assert!(matches!(read(&value), Err(Error::WrongRuleset(id)) if id.as_str() == "ttr"));
     }
 
     #[test]
@@ -940,7 +939,10 @@ mod tests {
             let mut value = document(json!([lane_object(0, 0, "tap")]));
             edit(&mut value);
             assert!(
-                matches!(read(&value), Err(Error::UnknownKey { .. })),
+                matches!(
+                    read(&value),
+                    Err(Error::UnknownKey { .. } | Error::UnknownSetting { .. })
+                ),
                 "{value}"
             );
         }
@@ -1000,5 +1002,23 @@ mod tests {
         assert_eq!(Style::named("dance-single"), Some(Style::DanceSingle));
         assert_eq!(Style::PumpRoutine.name(), "pump-routine");
         assert_eq!(Style::PumpRoutine.lanes(), LaneCount::new(20).unwrap());
+    }
+
+    #[test]
+    fn errors_say_where_and_which_key() {
+        let mut value = document(json!([]));
+        value["timing"]["events"][0]["ext"] = json!({ "sm.color": "red" });
+        let color: Key = "sm.color".parse().unwrap();
+        assert!(matches!(
+            read(&value),
+            Err(Error::UnknownKey { at: Location::Event { stream: Stream::Song, index: 0 }, key })
+                if key == color
+        ));
+        let mut settings = document(json!([]));
+        settings["settings"] = json!({ "speed": 2 });
+        assert!(matches!(
+            read(&settings),
+            Err(Error::UnknownSetting { at: Location::Settings, key }) if key == "speed"
+        ));
     }
 }
