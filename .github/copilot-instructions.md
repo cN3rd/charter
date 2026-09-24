@@ -16,6 +16,7 @@ cargo test -p charter-core -- --nocapture --exact json::tests::the_format_chapte
 cargo clippy --workspace --all-targets
 cargo fmt --all
 cargo run -p charter-app
+cargo kani -p charter-core               # Kani proofs; `cargo install --locked kani-verifier && cargo kani setup` once
 git submodule update --init              # required once, see .github/skills/README.md
 ```
 
@@ -33,6 +34,10 @@ Every source file with logic tests itself in a `#[cfg(test)] mod tests` at its e
 Tests are sans-io: they build inputs in memory and feed bytes or values to the code under test,
 never touching files, the network or the clock. The format tests embed the format chapter's
 example with `include_str!`, which happens at compile time.
+
+Kani proofs sit in a `#[cfg(kani)] mod proofs` beside the tests. Keep each one small: CBMC
+bit-blasts floating-point arithmetic, and a proof mixing division, multiplication and rounding
+did not finish in 15 minutes.
 
 - Newtype anything carrying a unit: ticks, beats, measures, seconds, samples, pixels, scroll
   offsets. Silently swapping two of them is a common bug class in charting tools. Make

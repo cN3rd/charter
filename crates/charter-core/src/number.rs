@@ -156,3 +156,18 @@ mod tests {
         assert_eq!(Decimal::from_millionths(-MAX_MILLIONTHS - 1), None);
     }
 }
+
+/// Proofs for Kani, run with `cargo kani -p charter-core`. The round trip from millionths to a
+/// double and back is tested instead: CBMC did not finish it in 15 minutes.
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+
+    #[kani::proof]
+    fn no_double_reads_as_a_count_out_of_range() {
+        let value: f64 = kani::any();
+        if let Some(millionths) = to_millionths(value) {
+            assert!((-MAX_MILLIONTHS..=MAX_MILLIONTHS).contains(&millionths));
+        }
+    }
+}
