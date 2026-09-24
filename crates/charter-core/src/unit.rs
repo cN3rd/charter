@@ -528,3 +528,96 @@ mod tests {
         assert!(origin < later);
     }
 }
+
+/// Proofs for Kani, run with `cargo kani -p charter-core`. Each input ranges over every value its
+/// type allows, and Kani also fails a proof on any arithmetic overflow.
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+
+    fn tick() -> Tick {
+        Tick(kani::any())
+    }
+
+    fn span() -> Ticks {
+        Ticks(kani::any())
+    }
+
+    fn lanes() -> LaneCount {
+        LaneCount(kani::any())
+    }
+
+    fn lane_span() -> LaneSpan {
+        LaneSpan::new(LaneIndex(kani::any()), lanes())
+    }
+
+    #[kani::proof]
+    fn a_tick_plus_a_span_is_a_tick_exactly_when_it_fits() {
+        let (start, span) = (tick(), span());
+        let sum = i64::from(start.0) + i64::from(span.0.get());
+        match start.checked_add(span) {
+            Some(end) => assert!(i64::from(end.0) == sum),
+            None => assert!(sum > i64::from(i32::MAX)),
+        }
+    }
+
+    #[kani::proof]
+    fn a_later_tick_is_the_span_that_reaches_it() {
+        let (from, to) = (tick(), tick());
+        match from.ticks_until(to) {
+            Some(span) => assert!(to > from && from.checked_add(span) == Some(to)),
+            None => assert!(to <= from),
+        }
+    }
+
+    #[kani::proof]
+    fn lane_spans_overlap_exactly_when_they_share_a_lane() {
+        let (a, b) = (lane_span(), lane_span());
+        let lane: u32 = kani::any();
+        let in_both = a.start <= lane && lane < a.end && b.start <= lane && lane < b.end;
+        if in_both {
+            assert!(a.overlaps(b));
+        }
+        if a.overlaps(b) {
+            let shared = a.start.max(b.start);
+            assert!(shared < a.end && shared < b.end);
+        }
+        assert!(a.overlaps(b) == b.overlaps(a));
+    }
+
+    #[kani::proof]
+    fn a_span_fits_exactly_when_its_last_lane_exists() {
+        let (span, lanes) = (lane_span(), lanes());
+        assert!(span.fits(lanes) == (span.end - 1 < u32::from(lanes.0.get())));
+    }
+
+    #[kani::proof]
+    fn the_middle_lane_is_never_past_the_last_and_the_last_exists() {
+        let lanes = lanes();
+        assert!(lanes.middle() <= lanes.last());
+        assert!(u32::from(lanes.last().0) < u32::from(lanes.0.get()));
+    }
+
+    #[kani::proof]
+    fn meters_over_one_two_or_four_are_whole_at_every_resolution() {
+        let denominator = match kani::any::<u8>() % 3 {
+            0 => NonZeroU16::MIN,
+            1 => NonZeroU16::MIN.saturating_add(1),
+            _ => NonZeroU16::MIN.saturating_add(3),
+        };
+        let meter = TimeSignature {
+            numerator: kani::any(),
+            denominator,
+        };
+        assert!(meter.measure_is_whole(TicksPerBeat(kani::any())));
+    }
+
+    #[kani::proof]
+    fn checking_any_meter_at_any_resolution_cannot_overflow() {
+        let meter = TimeSignature {
+            numerator: kani::any(),
+            denominator: kani::any(),
+        };
+        let _ = meter.measure_is_whole(TicksPerBeat(kani::any()));
+    }
+}
