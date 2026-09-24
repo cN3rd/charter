@@ -5,7 +5,7 @@ use std::collections::{BTreeSet, HashSet};
 use std::mem::discriminant;
 
 use crate::document::{
-    Chart, Document, Extensions, Object, PathPoint, Position, Shape, Timing, TimingKind,
+    Chart, Document, Extensions, Marker, Object, PathPoint, Position, Shape, Timing, TimingKind,
 };
 use crate::error::{Location, Rule, Stream, Violation};
 use crate::ident::{Key, Kind, Namespace};
@@ -14,6 +14,7 @@ use crate::unit::{LaneSpan, Tick, TicksPerBeat};
 pub(crate) fn validate(doc: &Document) -> Result<(), Violation> {
     let tpb = doc.ticks_per_beat;
     check_timing(&doc.timing, tpb).map_err(at(Location::Timing(Stream::Song)))?;
+    check_markers(&doc.markers)?;
     let mut names = HashSet::with_capacity(doc.charts.len());
     for (c, chart) in doc.charts.iter().enumerate() {
         if !names.insert(chart.name.as_str()) {
@@ -31,6 +32,26 @@ pub(crate) fn validate(doc: &Document) -> Result<(), Violation> {
         }
     }
     check_namespaces(doc).map_err(at(Location::Plugins))
+}
+
+/// Markers are sorted by tick, and at most one of each kind sits on a tick.
+fn check_markers(markers: &[Marker]) -> Result<(), Violation> {
+    if !markers.is_sorted_by_key(|marker| marker.tick) {
+        return Err(Violation {
+            at: Location::Markers,
+            rule: Rule::Unsorted,
+        });
+    }
+    let mut seen = HashSet::with_capacity(markers.len());
+    for (m, marker) in markers.iter().enumerate() {
+        if !seen.insert((marker.tick, &marker.kind)) {
+            return Err(Violation {
+                at: Location::Marker(m),
+                rule: Rule::DuplicateMarker { tick: marker.tick },
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Checks a chart's objects.
@@ -222,10 +243,16 @@ fn check_path(tick: Tick, position: &Position, shape: &Shape) -> Result<(), Rule
     Ok(())
 }
 
-/// Every namespace the document uses: in extension keys, kinds, easings and `other` names.
+/// Every namespace the document uses: in extension keys, kinds, easings, marker kinds and
+/// `other` names.
 fn used_namespaces(doc: &Document) -> BTreeSet<&Namespace> {
     let mut used = BTreeSet::new();
     add_keys(&mut used, &doc.metadata.ext);
+    used.extend(
+        doc.markers
+            .iter()
+            .filter_map(|marker| marker.kind.namespace()),
+    );
     let chart_timings = doc.charts.iter().filter_map(|chart| chart.timing.as_ref());
     for timing in std::iter::once(&doc.timing).chain(chart_timings) {
         for event in &timing.events {
@@ -647,5 +674,41 @@ mod tests {
             );
         });
         assert_eq!(broken_rule(&warp), Rule::SpanPastLastTick);
+    }
+
+    #[test]
+    fn markers_are_sorted_one_per_tick_and_kind_and_declare_their_namespace() {
+        let marker = |tick: i32, kind: &str| json!({ "tick": tick, "kind": kind, "text": "" });
+        let markers = |list: Value| with(|v| v["markers"] = list);
+        check(&markers(json!([
+            marker(0, "section"),
+            marker(0, "bookmark"),
+            marker(960, "section")
+        ])))
+        .unwrap();
+        assert_eq!(
+            check(&markers(json!([
+                marker(960, "section"),
+                marker(0, "section")
+            ]))),
+            Err(Violation {
+                at: Location::Markers,
+                rule: Rule::Unsorted
+            })
+        );
+        assert_eq!(
+            check(&markers(json!([
+                marker(0, "section"),
+                marker(0, "section")
+            ]))),
+            Err(Violation {
+                at: Location::Marker(1),
+                rule: Rule::DuplicateMarker { tick: Tick::new(0) }
+            })
+        );
+        assert_eq!(
+            broken_rule(&markers(json!([marker(0, "psk.fever")]))),
+            Rule::UndeclaredNamespace(Namespace::new("psk").unwrap())
+        );
     }
 }

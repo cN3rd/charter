@@ -25,6 +25,9 @@ pub enum Location {
     Plugins,
     Samples,
     MetadataExt,
+    /// The marker list as a whole.
+    Markers,
+    Marker(usize),
     /// A timing map.
     Timing(Stream),
     /// An event of a timing map.
@@ -57,6 +60,8 @@ impl fmt::Display for Location {
             Self::Plugins => f.write_str("plugins"),
             Self::Samples => f.write_str("samples"),
             Self::MetadataExt => f.write_str("metadata.ext"),
+            Self::Markers => f.write_str("markers"),
+            Self::Marker(m) => write!(f, "markers[{m}]"),
             Self::Timing(Stream::Song) => f.write_str("timing"),
             Self::Timing(Stream::Chart(c)) => write!(f, "charts[{c}].timing"),
             Self::Event { stream, index } => write!(f, "{}.events[{index}]", Self::Timing(stream)),
@@ -84,6 +89,8 @@ pub enum Rule {
     Unsorted,
     #[error("two timing events of one kind on tick {tick}")]
     DuplicateEvent { tick: Tick },
+    #[error("two markers of one kind on tick {tick}")]
+    DuplicateMarker { tick: Tick },
     #[error("timing has no bpm event")]
     NoBpm,
     #[error("a {0} measure is not a whole number of ticks")]
@@ -163,6 +170,8 @@ mod tests {
             (Location::Plugins, "plugins"),
             (Location::Samples, "samples"),
             (Location::MetadataExt, "metadata.ext"),
+            (Location::Markers, "markers"),
+            (Location::Marker(2), "markers[2]"),
             (Location::Timing(Stream::Song), "timing"),
             (Location::Timing(Stream::Chart(2)), "charts[2].timing"),
             (
