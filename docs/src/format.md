@@ -738,9 +738,13 @@ For it: serde-native, universal tooling, unambiguous unlike YAML. Against it: no
 10,000-note chart runs to roughly a megabyte.
 
 The file is [I-JSON](https://www.rfc-editor.org/rfc/rfc7493): UTF-8, no duplicate keys, and no
-number beyond the range or precision of an IEEE 754 double. A reader rejects a duplicate key
-instead of picking a winner, because parsers disagree on which one wins. The number rule reaches
-into opaque values too, so a plugin needing an exact 64-bit integer stores it as a string.
+number beyond the range or precision of an IEEE 754 double, so an integer lies within
+±(2^53 - 1). A reader rejects a duplicate key instead of picking a winner, because parsers disagree
+on which one wins. The number rule reaches into opaque values too, so a plugin needing an exact
+64-bit integer stores it as a string.
+
+Readers parse each number to the nearest double. serde_json does so only with its
+`float_roundtrip` feature; without it, about one full-precision value in ten comes back changed.
 
 A round trip preserves the document by value: key order, whitespace and number spelling may
 change, and values may not. Writers omit every field holding its default, such as an empty
