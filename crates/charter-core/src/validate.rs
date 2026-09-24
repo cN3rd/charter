@@ -7,37 +7,37 @@ use std::mem::discriminant;
 use crate::document::{
     Chart, Document, Extensions, Object, PathPoint, Position, Shape, Timing, TimingKind,
 };
-use crate::error::{Rule, Violation};
+use crate::error::{Location, Rule, Stream, Violation};
 use crate::ident::{Key, Kind, Namespace};
 use crate::unit::{LaneSpan, Tick, TicksPerBeat};
 
 pub(crate) fn validate(doc: &Document) -> Result<(), Violation> {
     let tpb = doc.ticks_per_beat;
-    check_timing(&doc.timing, tpb).map_err(at("timing"))?;
+    check_timing(&doc.timing, tpb).map_err(at(Location::Timing(Stream::Song)))?;
     let mut names = HashSet::with_capacity(doc.charts.len());
     for (c, chart) in doc.charts.iter().enumerate() {
         if !names.insert(chart.name.as_str()) {
             return Err(Violation {
-                at: format!("charts[{c}]"),
+                at: Location::Chart(c),
                 rule: Rule::DuplicateChartName(chart.name.clone()),
             });
         }
         check_objects(doc, c, chart)?;
         if let Some(timing) = &chart.timing {
             check_timing(timing, tpb).map_err(|rule| Violation {
-                at: format!("charts[{c}].timing"),
+                at: Location::Timing(Stream::Chart(c)),
                 rule,
             })?;
         }
     }
-    check_namespaces(doc).map_err(at("plugins"))
+    check_namespaces(doc).map_err(at(Location::Plugins))
 }
 
 /// Checks a chart's objects.
 fn check_objects(doc: &Document, c: usize, chart: &Chart) -> Result<(), Violation> {
     if !chart.objects.is_sorted_by_key(|o| o.tick) {
         return Err(Violation {
-            at: format!("charts[{c}].objects"),
+            at: Location::Objects(c),
             rule: Rule::Unsorted,
         });
     }
@@ -45,7 +45,7 @@ fn check_objects(doc: &Document, c: usize, chart: &Chart) -> Result<(), Violatio
     let mut taken: Vec<LaneSpan> = Vec::new();
     for (j, object) in chart.objects.iter().enumerate() {
         check_object(doc, chart, object).map_err(|rule| Violation {
-            at: format!("charts[{c}].objects[{j}]"),
+            at: Location::Object { chart: c, index: j },
             rule,
         })?;
         if group.is_none_or(|(tick, _)| tick != object.tick) {
@@ -107,11 +107,8 @@ fn check_namespaces(doc: &Document) -> Result<(), Rule> {
     Ok(())
 }
 
-fn at(location: &'static str) -> impl FnOnce(Rule) -> Violation {
-    move |rule| Violation {
-        at: location.to_owned(),
-        rule,
-    }
+fn at(location: Location) -> impl FnOnce(Rule) -> Violation {
+    move |rule| Violation { at: location, rule }
 }
 
 fn check_timing(timing: &Timing, ticks_per_beat: TicksPerBeat) -> Result<(), Rule> {
@@ -168,7 +165,10 @@ fn check_lane_group(
         .any(|pair| matches!(pair, [a, b] if a.overlaps(*b)))
     {
         return Err(Violation {
-            at: format!("charts[{c}].objects[{first}]"),
+            at: Location::Object {
+                chart: c,
+                index: first,
+            },
             rule: Rule::LaneTaken { tick },
         });
     }

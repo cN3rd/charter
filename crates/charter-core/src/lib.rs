@@ -16,7 +16,7 @@ pub use document::{
     PathPoint, Plugin, Points, Position, Preview, Ruleset, SampleId, Settings, Shape, Timing,
     TimingEvent, TimingKind,
 };
-pub use error::{Error, InvalidValue, Rule, Violation};
+pub use error::{Error, InvalidValue, Location, Rule, Stream, Violation};
 pub use ident::{Ease, Key, Kind, Name, Namespace};
 pub use json::{MAX_DOCUMENT_BYTES, Valid, ValidDocument};
 pub use number::Decimal;

@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::fmt::{self, Display};
 
 use crate::document::{FORMAT_VERSION, SampleId};
 use crate::ident::Namespace;
@@ -18,12 +18,62 @@ pub enum Error {
     Invalid(#[from] Violation),
 }
 
+/// A place in a document, shown as a path such as `charts[1].objects[4]`. Indices count from 0.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Location {
+    Settings,
+    Plugins,
+    Samples,
+    MetadataExt,
+    /// A timing map.
+    Timing(Stream),
+    /// An event of a timing map.
+    Event {
+        stream: Stream,
+        index: usize,
+    },
+    Chart(usize),
+    ChartSettings(usize),
+    ChartExt(usize),
+    /// A chart's object list as a whole.
+    Objects(usize),
+    Object {
+        chart: usize,
+        index: usize,
+    },
+}
+
+/// Which timing map a location lies in: the song's or a chart's own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stream {
+    Song,
+    Chart(usize),
+}
+
+impl fmt::Display for Location {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            Self::Settings => f.write_str("settings"),
+            Self::Plugins => f.write_str("plugins"),
+            Self::Samples => f.write_str("samples"),
+            Self::MetadataExt => f.write_str("metadata.ext"),
+            Self::Timing(Stream::Song) => f.write_str("timing"),
+            Self::Timing(Stream::Chart(c)) => write!(f, "charts[{c}].timing"),
+            Self::Event { stream, index } => write!(f, "{}.events[{index}]", Self::Timing(stream)),
+            Self::Chart(c) => write!(f, "charts[{c}]"),
+            Self::ChartSettings(c) => write!(f, "charts[{c}].settings"),
+            Self::ChartExt(c) => write!(f, "charts[{c}].ext"),
+            Self::Objects(c) => write!(f, "charts[{c}].objects"),
+            Self::Object { chart, index } => write!(f, "charts[{chart}].objects[{index}]"),
+        }
+    }
+}
+
 /// A broken rule relating values to each other, and where it broke.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 #[error("{at}: {rule}")]
 pub struct Violation {
-    /// Location in the document, such as `charts[1].objects[4]`.
-    pub at: String,
+    pub at: Location,
     pub rule: Rule,
 }
 
@@ -90,7 +140,7 @@ mod tests {
     #[test]
     fn a_violation_reads_as_its_location_then_its_rule() {
         let violation = Violation {
-            at: "charts[1].objects[4]".into(),
+            at: Location::Object { chart: 1, index: 4 },
             rule: Rule::MissingLanes,
         };
         assert_eq!(
@@ -104,5 +154,42 @@ mod tests {
         let message = InvalidValue::new("a finite number > 0", -2.5).to_string();
         assert!(message.contains("a finite number > 0"), "{message}");
         assert!(message.contains("-2.5"), "{message}");
+    }
+
+    #[test]
+    fn locations_show_as_document_paths() {
+        let shown = [
+            (Location::Settings, "settings"),
+            (Location::Plugins, "plugins"),
+            (Location::Samples, "samples"),
+            (Location::MetadataExt, "metadata.ext"),
+            (Location::Timing(Stream::Song), "timing"),
+            (Location::Timing(Stream::Chart(2)), "charts[2].timing"),
+            (
+                Location::Event {
+                    stream: Stream::Song,
+                    index: 3,
+                },
+                "timing.events[3]",
+            ),
+            (
+                Location::Event {
+                    stream: Stream::Chart(2),
+                    index: 3,
+                },
+                "charts[2].timing.events[3]",
+            ),
+            (Location::Chart(1), "charts[1]"),
+            (Location::ChartSettings(1), "charts[1].settings"),
+            (Location::ChartExt(1), "charts[1].ext"),
+            (Location::Objects(1), "charts[1].objects"),
+            (
+                Location::Object { chart: 1, index: 4 },
+                "charts[1].objects[4]",
+            ),
+        ];
+        for (location, path) in shown {
+            assert_eq!(location.to_string(), path);
+        }
     }
 }
