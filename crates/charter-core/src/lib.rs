@@ -18,7 +18,7 @@ pub use document::{
 };
 pub use error::{Error, InvalidValue, Rule, Violation};
 pub use ident::{Ease, Key, Kind, Name, Namespace};
-pub use json::{MAX_DOCUMENT_BYTES, ValidDocument};
+pub use json::{MAX_DOCUMENT_BYTES, Valid, ValidDocument};
 pub use number::Decimal;
 pub use path::ResourcePath;
 

@@ -239,7 +239,7 @@ impl Shape {
         match self {
             Self::Instant => Some(tick),
             Self::Sustain { duration } => tick.checked_add(*duration),
-            Self::Path { points } => Some(points.last().map_or(tick, |point| point.tick)),
+            Self::Path { points } => Some(points.last().tick),
         }
     }
 }
@@ -266,9 +266,13 @@ impl Points {
         &self.0
     }
 
+    /// # Panics
+    ///
+    /// Never: `new` refuses an empty list, and nothing else builds one.
     #[must_use]
-    pub fn last(&self) -> Option<&PathPoint> {
-        self.0.last()
+    #[allow(clippy::expect_used)] // see Panics
+    pub fn last(&self) -> &PathPoint {
+        self.0.last().expect("points are never empty")
     }
 }
 

@@ -253,19 +253,21 @@ impl LaneSpan {
 /// Ticks per beat: the resolution of a document's time base.
 ///
 /// ```
-/// # use charter_core::{LaneCount, Origin, Tick, TicksPerBeat, Timing};
-/// let timing = Timing { offset_seconds: Origin::try_from(0.0).unwrap(), events: Vec::new() };
+/// # use std::num::NonZeroU16;
+/// # use charter_core::{LaneCount, TicksPerBeat, TimeSignature};
+/// let seven_eight = TimeSignature { numerator: NonZeroU16::new(7).unwrap(), denominator: NonZeroU16::new(8).unwrap() };
 /// let resolution = TicksPerBeat::new(480).unwrap();
-/// let _ = timing.seconds_at(resolution, Tick::new(0));
+/// assert!(seven_eight.measure_is_whole(resolution));
 /// ```
 ///
 /// A lane count is not a resolution:
 ///
 /// ```compile_fail
-/// # use charter_core::{LaneCount, Origin, Tick, TicksPerBeat, Timing};
-/// let timing = Timing { offset_seconds: Origin::try_from(0.0).unwrap(), events: Vec::new() };
+/// # use std::num::NonZeroU16;
+/// # use charter_core::{LaneCount, TicksPerBeat, TimeSignature};
+/// let seven_eight = TimeSignature { numerator: NonZeroU16::new(7).unwrap(), denominator: NonZeroU16::new(8).unwrap() };
 /// let resolution = LaneCount::new(480).unwrap();
-/// let _ = timing.seconds_at(resolution, Tick::new(0));
+/// assert!(seven_eight.measure_is_whole(resolution));
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]

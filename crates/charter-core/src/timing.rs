@@ -2,14 +2,14 @@ use crate::document::{Timing, TimingKind};
 use crate::unit::{Bpm, ResolvedTime, Tick, TicksPerBeat};
 
 impl Timing {
-    /// Audio time in seconds of an object on `tick`.
-    ///
-    /// The time of a tick includes a `delay` on it and excludes a `stop` on it; warps take no
-    /// time, and the first `bpm` also rules earlier ticks. Events must be sorted by tick. `None`
-    /// means there is no `bpm` event or a warp ends past the last tick; a valid document rules
-    /// out both.
-    #[must_use]
-    pub fn seconds_at(&self, ticks_per_beat: TicksPerBeat, tick: Tick) -> Option<ResolvedTime> {
+    /// Audio time of an object on `tick`; see [`Valid::time_at`](crate::Valid::time_at). Events
+    /// must be sorted by tick. `None` means there is no `bpm` event or a warp ends past the last
+    /// tick, which a valid document rules out.
+    pub(crate) fn seconds_at(
+        &self,
+        ticks_per_beat: TicksPerBeat,
+        tick: Tick,
+    ) -> Option<ResolvedTime> {
         let offset = ResolvedTime::from(self.offset_seconds).seconds();
         let zero = Tick::new(0);
         Some(ResolvedTime::new(if tick >= zero {

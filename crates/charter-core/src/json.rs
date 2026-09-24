@@ -4,8 +4,9 @@ use std::fmt;
 use serde::Deserialize;
 use serde::de::{self, Deserializer, MapAccess, SeqAccess, Visitor};
 
-use crate::document::{Document, FORMAT_VERSION};
+use crate::document::{Chart, Child, Document, FORMAT_VERSION, Object, Shape, Timing};
 use crate::error::Error;
+use crate::unit::{ResolvedTime, Tick};
 use crate::validate::validate;
 
 /// Largest document a reader accepts.
@@ -61,6 +62,114 @@ impl ValidDocument {
     pub fn document(&self) -> &Document {
         &self.0
     }
+
+    /// The song's timing map.
+    #[must_use]
+    pub fn timing(&self) -> Valid<'_, Timing> {
+        Valid {
+            part: &self.0.timing,
+            document: &self.0,
+        }
+    }
+
+    /// Every chart, in order.
+    pub fn charts(&self) -> impl Iterator<Item = Valid<'_, Chart>> {
+        self.0.charts.iter().map(|part| Valid {
+            part,
+            document: &self.0,
+        })
+    }
+}
+
+/// A part of a [`ValidDocument`], so known to pass every rule. Derefs to the part.
+///
+/// Rules that relate a part to the rest of the document hold here, so what a raw part can only
+/// compute fallibly, a valid one computes outright: a time for every tick, an end for every span.
+#[derive(Debug)]
+pub struct Valid<'a, T> {
+    part: &'a T,
+    document: &'a Document,
+}
+
+impl<T> Clone for Valid<'_, T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for Valid<'_, T> {}
+
+impl<T> std::ops::Deref for Valid<'_, T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        self.part
+    }
+}
+
+impl<'a> Valid<'a, Chart> {
+    /// The timing map the chart's objects resolve through: its own, or the song's.
+    #[must_use]
+    pub fn timing(&self) -> Valid<'a, Timing> {
+        Valid {
+            part: self.part.timing.as_ref().unwrap_or(&self.document.timing),
+            document: self.document,
+        }
+    }
+
+    pub fn objects(&self) -> impl Iterator<Item = Valid<'a, Object>> + 'a {
+        let document = self.document;
+        self.part
+            .objects
+            .iter()
+            .map(move |part| Valid { part, document })
+    }
+}
+
+impl<'a> Valid<'a, Object> {
+    /// The tick where the object's span ends.
+    #[must_use]
+    pub fn end(&self) -> Tick {
+        span_end(self.part.tick, &self.part.shape)
+    }
+
+    pub fn children(&self) -> impl Iterator<Item = Valid<'a, Child>> + 'a {
+        let document = self.document;
+        self.part
+            .children
+            .iter()
+            .map(move |part| Valid { part, document })
+    }
+}
+
+impl Valid<'_, Child> {
+    /// The tick where the child's span ends.
+    #[must_use]
+    pub fn end(&self) -> Tick {
+        span_end(self.part.tick, &self.part.shape)
+    }
+}
+
+impl Valid<'_, Timing> {
+    /// Audio time of an object on `tick`, at the document's resolution. The time of a tick
+    /// includes a `delay` on it and excludes a `stop` on it; warps take no time, and the first
+    /// `bpm` also rules earlier ticks.
+    ///
+    /// # Panics
+    ///
+    /// Never: validation guarantees a `bpm` and warps that end on a tick.
+    #[must_use]
+    #[allow(clippy::expect_used)] // see Panics
+    pub fn time_at(&self, tick: Tick) -> ResolvedTime {
+        self.part
+            .seconds_at(self.document.ticks_per_beat, tick)
+            .expect("a valid timing map resolves every tick")
+    }
+}
+
+#[allow(clippy::expect_used)] // validation guarantees every span ends on a tick
+fn span_end(tick: Tick, shape: &Shape) -> Tick {
+    shape.end(tick).expect("a valid span ends on a tick")
 }
 
 /// Reads the version before anything else, so a newer file fails on its version rather than on
@@ -585,5 +694,31 @@ mod tests {
             let read = ValidDocument::from_json(&valid.to_json().unwrap()).unwrap();
             prop_assert_eq!(read, valid);
         }
+    }
+
+    #[test]
+    fn a_valid_document_resolves_times_and_span_ends_without_failing() {
+        let mut value = minimal();
+        let hold = json!({ "tick": 960, "position": { "lane": { "index": 0 } }, "kind": "hold",
+                           "shape": { "sustain": { "duration": 480 } },
+                           "children": [ { "tick": 1200, "position": { "lane": { "index": 0 } },
+                                           "kind": "tap", "shape": { "sustain": { "duration": 240 } } } ] });
+        let own =
+            json!({ "offset_seconds": 1.0, "events": [ { "tick": 0, "kind": { "bpm": 60.0 } } ] });
+        value["charts"] = json!([{ "name": "Easy", "lanes": 4 }, { "name": "Hard", "lanes": 4 }]);
+        value["charts"][0]["objects"] = json!([hold]);
+        value["charts"][1]["timing"] = own;
+        let valid = read(&value).unwrap();
+        let seconds = |s| ResolvedTime::from(AudioTime::try_from(s).unwrap());
+        let charts: Vec<_> = valid.charts().collect();
+        assert_eq!(valid.timing().time_at(Tick::new(960)), seconds(0.5));
+        assert_eq!(charts[0].timing().time_at(Tick::new(960)), seconds(0.5));
+        assert_eq!(charts[1].timing().time_at(Tick::new(960)), seconds(2.0));
+        let hold = charts[0].objects().next().unwrap();
+        let child = hold.children().next().unwrap();
+        assert_eq!(
+            (hold.end(), child.end()),
+            (Tick::new(1440), Tick::new(1440))
+        );
     }
 }
