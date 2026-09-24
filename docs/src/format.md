@@ -245,7 +245,7 @@ TimingKind =
   | Delay(Seconds)
   | Warp(Ticks)
   | TimeSignature(TimeSignature)            // written [numerator, denominator]
-  | Other { name: Ident, value: Value }
+  | Other { name: Key, value: Value }
 
 TimeSignature { numerator: NonZeroU16, denominator: NonZeroU16 }
 ```
@@ -418,7 +418,7 @@ One type covers taps, holds, slides and arcs.
 Object {
     tick:     Tick,
     position: Position,
-    kind:     Ident,
+    kind:     Kind,
     shape:    Shape,
     sample:   Option<SampleId>,   // keysound, from the bank
     children: Vec<Child>,
@@ -460,7 +460,7 @@ Shape =
   | Sustain { duration: Ticks }
   | Path    { points: Vec<PathPoint> }   // non-empty
 
-PathPoint { tick: Tick, position: Position, ease: Ident, ext: Extensions }
+PathPoint { tick: Tick, position: Position, ease: Ease, ext: Extensions }
 ```
 
 A path starts at the object's own `tick` and `position`, and `points`, which cannot be empty, are
@@ -484,33 +484,32 @@ inverted spans stop being representable.
 ### Identifiers
 
 ```
-Ident(String)    // "tap", "linear", "psk.flick", "arcaea.si"
+Kind = Tap | Hold | Roll | Mine | Lift | Fake | Other(Key)   // "tap", "psk.flick"
+Ease = Linear | Step | In | Out | InOut | Other(Key)         // "in_out", "arcaea.si"
+Key  { namespace: Namespace, name: Name }                    // "psk.flick"
 ```
 
-An `Ident` is either a word from the shared vocabulary below or `<namespace>.<name>`. It splits at
-the first `.`: the namespace matches `[a-z][a-z0-9_]*` and the name is the non-empty rest, so a
-name may contain dots and a namespace never does. Extension keys and `other` names use the same
-grammar but are always prefixed.
-
-One type covers both note kinds and easings, **because the core never branches on either**. An
-enum would privilege one game's vocabulary, StepMania's, over every other, then hand everything
-else to a catch-all variant anyway. An enum whose last variant is `Other(String)` is a string with
-extra steps.
-
-Easing was the clearest case. The core never needs to evaluate a curve: drawing a path and
-hit-testing it both require knowing how the playfield projects, which is the plugin's job.
-
-The shared vocabulary is closed, one list per role, and grows only with `format_version`.
-Rulesets should reuse it rather than reinvent it:
+Note kinds and easings each have a closed shared vocabulary, and every other value is a `Key`
+owned by the plugin of its namespace:
 
 - kinds: `tap`, `hold`, `roll`, `mine`, `lift`, `fake`
 - easings: `linear`, `step`, `in`, `out`, `in_out`
 
-A prefixed name belongs to the plugin of that namespace, exactly as extension keys do.
+The vocabulary grows only with `format_version`. Rulesets should reuse it rather than reinvent it.
 
-The plugin is where this becomes type-safe again. Its own vocabulary *is* closed, so it parses an
-`Ident` into a real enum at its boundary and fails loudly on anything else. The looseness is
-confined to the wire.
+A `Key` is written `<namespace>.<name>` and split at the first `.` when read: the namespace
+matches `[a-z][a-z0-9_]*` and the name is the non-empty rest, so a name may contain dots and a
+namespace never does. Extension keys and `other` names are always keys.
+
+Text exists only in the file. Code matches `Kind::Hold` instead of comparing strings, so a
+misspelled `Kind::Hodl` fails to compile where `kind == "hodl"` compiled and never matched, and a
+key's namespace is a field rather than something found again by splitting. `Other` holds a parsed
+`Key`, so a plugin turns the keys in its own namespace into its own closed enum at its boundary and
+fails loudly on anything else.
+
+The enums fix spelling, not meaning, which stays with the ruleset. The core never evaluates a
+curve, for instance: drawing a path and hit-testing it both require knowing how the playfield
+projects, which is the plugin's job.
 
 Kind and shape are independent. A roll and a hold share a shape and differ in kind.
 
@@ -734,7 +733,7 @@ games does.
 Metadata, charts, timing events, objects, children and path points each carry:
 
 ```
-Extensions = Map<String, Value>
+Extensions = Map<Key, Value>
 ```
 
 Keys are `<namespace>.<name>`, where the namespace is `ruleset.id` or a key in
