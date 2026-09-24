@@ -27,7 +27,8 @@ without the whole system becoming loose.
 | Decision | Position | Confidence |
 |---|---|---|
 | [Row resolution](research/topics/row-resolution.md) | 960 ticks/beat, configurable | High, derived arithmetically |
-| [Musical position](research/topics/musical-position.md) | Integer ticks in time, floats only in space | High |
+| [Musical position](research/topics/musical-position.md) | Integer ticks in time, six-place decimals in space | High |
+| [Numbers](#numbers) | No stored floats: integers and six-place decimals | Medium |
 | [Note type model](research/topics/note-type-model.md) | Structure in core, semantics in plugin | Medium |
 | Ruleset scope | Exactly one per file, structurally; other plugins unrestricted | Medium |
 | Keysounds | Core: a file-level bank objects reference | Medium |
@@ -142,7 +143,7 @@ Layout therefore stays per chart:
 ```
 Chart {
     name:     String,               // "Challenge", "Future", "Expert+"
-    lanes:    Option<NonZeroU16>,
+    lanes:    Option<LaneCount>,
     settings: Map<String, Value>,   // opaque, owned by the ruleset
     timing:   Option<Timing>,       // replaces the song's when present
     objects:  Vec<Object>,
@@ -193,9 +194,9 @@ chart, under a new `format_version`.
 
 ## Time base
 
-Musical position is an `i32` **tick**. Resolution is `ticks_per_beat`, a `NonZeroU16` defaulting
-to **960**. A beat is a quarter note whatever the meter, as in StepMania, `.chart` and MIDI, so
-`bpm` counts quarter notes too.
+Musical position is an `i32` **tick** (`Tick`). Resolution is `ticks_per_beat`, a `NonZeroU16`
+(`TicksPerBeat`) defaulting to **960**. A beat is a quarter note whatever the meter, as in
+StepMania, `.chart` and MIDI, so `bpm` counts quarter notes too.
 
 An "Nth note" spans `4/N` beats, so resolution `T` represents it exactly when `4T mod N == 0`:
 
@@ -215,8 +216,8 @@ It stays configurable because **no finite resolution covers every snap**: 960 ha
 (a 20th note is 192 ticks) but not septuplets.
 
 At 960, an `i32` tick reaches about 2.2 million beats either side of zero, over 600 hours at 60
-BPM, and even the finest `u16` resolution leaves over 32,000 beats. Spans are `u32`, and tick
-arithmetic is done in `i64`, where no tick plus span can overflow.
+BPM, and even the finest `u16` resolution leaves over 32,000 beats. Spans (`Ticks`) are `u32` and
+[end on a tick](#well-formedness), so a tick plus a span is always a tick.
 
 Negative ticks are legal, since charts have lead-ins and objects can precede beat 0. Source
 positions that do not land on the grid are rounded to the nearest tick on import, ties to even,
@@ -224,7 +225,7 @@ with the original preserved in `ext`. The loss is then visible and reversible. T
 source, not only millisecond-based ones.
 
 Time is integers because two musically identical positions must compare equal, and computed floats
-do not. Space is a different axis; see [positions](#positions).
+do not. Every other number is an exact [decimal](#numbers).
 
 ---
 
@@ -232,19 +233,21 @@ do not. Space is a different axis; see [positions](#positions).
 
 ```
 Timing {
-    offset_seconds: FiniteF64,          // audio time of tick 0
+    offset_seconds: Origin,             // audio time of tick 0
     events:         Vec<TimingEvent>,
 }
 
-TimingEvent { tick: i32, kind: TimingKind, ext: Extensions }
+TimingEvent { tick: Tick, kind: TimingKind, ext: Extensions }
 
 TimingKind =
-    Bpm(PositiveF64)                        // quarter notes per minute
-  | Stop(PositiveF64)                       // seconds
-  | Delay(PositiveF64)                      // seconds
-  | Warp(NonZeroU32)                        // ticks
-  | TimeSignature(NonZeroU16, NonZeroU16)   // numerator, denominator
+    Bpm(Bpm)                                // quarter notes per minute
+  | Stop(Seconds)
+  | Delay(Seconds)
+  | Warp(Ticks)
+  | TimeSignature(TimeSignature)            // written [numerator, denominator]
   | Other { name: Ident, value: Value }
+
+TimeSignature { numerator: NonZeroU16, denominator: NonZeroU16 }
 ```
 
 ### The origin
@@ -260,6 +263,9 @@ chart starts before the audio does, which silence-padded exports rely on.
 Deliberately defined as a position rather than a delta, because the surveyed formats disagree on
 the sign of their offset fields and inherit endless confusion from it. Adapters convert; charter
 has one unambiguous meaning.
+
+Its type is `Origin` rather than the `AudioTime` a preview uses, because only the origin may fall
+before the start of the file.
 
 ### Kinds
 
@@ -358,7 +364,7 @@ Metadata {
     ext:     Extensions,
 }
 
-Preview { start_seconds: NonNegativeF64, length_seconds: Option<PositiveF64> }
+Preview { start_seconds: AudioTime, length_seconds: Option<Seconds> }
 ```
 
 Each field is one the core uses: `audio` to load the file, `title` and `artist` to identify it in a
@@ -410,7 +416,7 @@ One type covers taps, holds, slides and arcs.
 
 ```
 Object {
-    tick:     i32,
+    tick:     Tick,
     position: Position,
     kind:     Ident,
     shape:    Shape,
@@ -424,18 +430,18 @@ Object {
 
 ```
 Position =
-    Lane  { index: u16, width: NonZeroU16 }   // discrete columns, width defaults to 1
-  | Plane { x: FiniteF64, y: FiniteF64 }      // continuous playfield
+    Lane  { index: LaneIndex, width: LaneCount }   // discrete columns, width defaults to 1
+  | Plane { x: Decimal, y: Decimal }               // continuous playfield
 ```
 
 `Lane` covers every VSRG. Lanes are numbered from 0, and a `Lane` position covers `width` of them
 starting at `index`. `width` exists because lane-based games such as Project Sekai give notes a
 span across several columns; games without widths leave it at 1.
 
-`Plane` covers continuous playfields, where position is a point rather than a column.
-
-Floats are right here and wrong in time. A continuous playfield has **no snapping convention**, so
-nothing ever needs to prove two x values are the same position. Ticks do.
+`Plane` covers continuous playfields, where position is a point rather than a column. Its
+coordinates are [decimals](#numbers) in units the ruleset defines. A continuous playfield has **no
+snapping convention**, so nothing needs to prove two x values are the same position, but an exact
+decimal still keeps an edited point from drifting.
 
 `index` is an index, nothing more. There is no ten-lane ceiling; StepMania's is an artifact of
 having ten digit keys, not of its data model.
@@ -451,10 +457,10 @@ break the moment both players hit the same panel together.
 ```
 Shape =
     Instant
-  | Sustain { duration: NonZeroU32 }     // ticks
+  | Sustain { duration: Ticks }
   | Path    { points: Vec<PathPoint> }   // non-empty
 
-PathPoint { tick: i32, position: Position, ease: Ident, ext: Extensions }
+PathPoint { tick: Tick, position: Position, ease: Ident, ext: Extensions }
 ```
 
 A path starts at the object's own `tick` and `position`, and `points`, which cannot be empty, are
@@ -527,14 +533,13 @@ need none.
 Deserialization checks each value on its own: the types, the [identifier grammar](#identifiers),
 [resource paths](#resource-paths) and [numeric bounds](#numbers). One validation pass then checks
 every rule relating values to each other: the rules below, the [namespace rules](#ownership), the
-[`bpm` requirement](#the-starting-state), [warp overlap](#resolving-time),
-[measure lengths](#measures) and [finite times](#numbers). No other code sees a document that
-failed either.
+[`bpm` requirement](#the-starting-state), [warp overlap](#resolving-time) and
+[measure lengths](#measures). No other code sees a document that failed either.
 
-Types remove most illegal states: a `Shape` cannot hold a duration and a path at once, `NonZeroU32`
-stops `Sustain` restating `Instant`, and containment cannot dangle. What is left is stated here
-rather than left to each implementation to guess, because an unstated rule is two implementations
-disagreeing.
+Types remove most illegal states: a `Shape` cannot hold a duration and a path at once, a nonzero
+`Ticks` stops `Sustain` restating `Instant`, and containment cannot dangle. What is left is stated
+here rather than left to each implementation to guess, because an unstated rule is two
+implementations disagreeing.
 
 **Ordering and uniqueness**
 
@@ -556,6 +561,8 @@ disagreeing.
 
 **Spans**
 
+- Every span ends on a tick: a sustain or warp at tick `t` with length `w` has
+  `t + w <= i32::MAX`, so adding a span to a tick never leaves the type.
 - `Path` points are strictly increasing in `tick`, and the first is later than the object's own
   tick.
 - All points of a `Path`, including the object's own position, are the **same** `Position` variant.
@@ -595,17 +602,29 @@ default recursion limit of 128 is one such cap.
 
 ### Numbers
 
-Every `f64` in the core schema is one of these newtypes, checked when deserialized:
+The core schema stores no floats. A number is an integer or a **decimal of at most six places**,
+held as a whole number of millionths, so `120.5` is `120_500_000`. Six places hold the sources
+exactly apart from derived tempos: StepMania 5.1 writes timing segments with three decimals and
+offsets with six, `.chart` stores tempo in thousandths of a BPM and anchors in microseconds, and
+osu! and MIDI count time in whole milliseconds and microseconds.
 
-| Type | Accepts |
-|---|---|
-| `FiniteF64` | Any finite value |
-| `NonNegativeF64` | Finite and `>= 0` |
-| `PositiveF64` | Finite and `> 0` |
+A decimal is an ordinary JSON number within ±999,999,999.999999. That is at most fifteen significant
+digits, which survive conversion to a double and back, so any [I-JSON](#serialization) reader keeps
+the value. A reader rejects a seventh decimal place, since rounding on read would change a value on
+a round trip. An importer rounds instead, to the nearest millionth with ties to even, and keeps the
+original in `ext`, as it does for [off-grid ticks](#time-base).
 
-NaN and the infinities never get in, because one NaN `bpm` turns every downstream tick-to-time
-result into NaN without raising anything. Integer bounds use the standard `NonZero` types the same
-way.
+Decimals keep edits exact: `0.1 + 0.2` is `0.3`, where a float gives `0.30000000000000004` and a
+writer would store it.
+
+osu! and MIDI store tempo as the length of a beat, in milliseconds and microseconds, and a BPM
+derived from that rarely ends as a decimal. A fraction would hold it exactly, but a fraction is not
+a JSON number, and the beat lengths are rounded already: osu!'s `342.857142857143` is 175 BPM,
+which six places hold as `175.000000` and write back as the same beat length. One that does not
+come back, such as `300.5`, keeps its original in `ext`.
+
+Resolved times are the only floats: `f64` seconds computed from the timing map and never stored.
+Every input is a bounded integer, so every resolved time is finite and no rule has to check it.
 
 `bpm` must be positive. Negative BPM is a StepMania time-skipping gimmick predating explicit warps,
 and charter has `warp` for that. Zero BPM would stop position advancing while time ran on, an
@@ -618,12 +637,27 @@ play the same. StepMania's
 turns negative BPMs and negative stops into warps and discards zero BPMs, zero stops and
 non-positive delays, so the `.sm` adapter does the same and keeps the original values in `ext`.
 
-**Finite fields do not guarantee finite times.** A subnormal `bpm` such as `5e-324` passes every
-bound above and still overflows `60 / bpm` to infinity, and two stops near `f64::MAX` overflow when
-summed. The validation pass therefore also resolves, for each timing stream, the earliest and
-latest ticks resolved through it, span ends included, and rejects the document if either time is
-not finite. Positive BPM makes time non-decreasing in ticks, so those two evaluations bound every
-other.
+### Units
+
+Numbers that mean different things get different types, so a tempo cannot be passed where a pause
+is expected. Each type keeps its number private and carries the operations the model needs, so
+raw numbers appear only at the edges: where a document is read or written, and where a value is
+shown.
+
+| Type | Holds | Meaning | Operations |
+|---|---|---|---|
+| `Tick` | `i32` | A musical position | Adding `Ticks` gives a `Tick`; a later `Tick` is `Ticks` away |
+| `Ticks` | `NonZeroU32` | A length in ticks | |
+| `TicksPerBeat` | `NonZeroU16` | The resolution of the time base | |
+| `TimeSignature` | Two `NonZeroU16` | A meter | Tells whether its measure is a whole number of ticks |
+| `Bpm` | `i64` millionths above 0 | Quarter notes per minute | Resolves `Ticks` at a `TicksPerBeat` to seconds |
+| `Seconds` | `i64` millionths above 0 | A length of time | Resolves to seconds |
+| `AudioTime` | `i64` millionths, 0 or more | A point in the audio file, from its start | Resolves to seconds |
+| `Origin` | `i64` millionths | The audio time of tick 0, negative before the file starts | Resolves to seconds |
+| `LaneIndex` | `u16` | A lane, counting from 0 | |
+| `LaneCount` | `NonZeroU16` | A number of lanes | Names its last and middle lanes |
+| `LaneSpan` | Two `u32` | The lanes a lane position covers | Tells whether it fits a chart or overlaps another span |
+| `Decimal` | `i64` millionths | A quantity the ruleset defines, such as a plane coordinate | |
 
 ---
 
