@@ -387,8 +387,9 @@ formats accumulate twenty optional strings nobody reads.
 samples: Map<SampleId, ResourcePath>     // file-level bank
 ```
 
-`Object.sample` names one. Keysounds could live in `ext`, preserved on disk but unplayable,
-because the editor cannot audition a sound it has no generic way to find.
+A `SampleId` is any non-empty text, and `Object.sample` names one. Keysounds could live in `ext`,
+preserved on disk but unplayable, because the editor cannot audition a sound it has no generic way
+to find.
 
 So this is core by the same test as everything else: **charter must compute with it.** Loading and
 scheduling audio is editor work. The ruleset decides what a keysound *means*; the editor still has

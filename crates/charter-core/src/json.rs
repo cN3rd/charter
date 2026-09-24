@@ -534,7 +534,8 @@ mod tests {
                 let sample = if samples == 0 {
                     Just(None).boxed()
                 } else {
-                    option::of((0..samples).prop_map(|s| SampleId(format!("s{s}")))).boxed()
+                    option::of((0..samples).prop_map(|s| SampleId::new(format!("s{s}")).unwrap()))
+                        .boxed()
                 };
                 let children = vec((0_i32..=1000, position(plane), kind(), ext()), 0..3);
                 (position(plane), kind(), shape, sample, children, ext())
@@ -675,7 +676,7 @@ mod tests {
                     samples: (0..samples)
                         .map(|s| {
                             let path = ResourcePath::new(format!("keysounds/s{s}.wav")).unwrap();
-                            (SampleId(format!("s{s}")), path)
+                            (SampleId::new(format!("s{s}")).unwrap(), path)
                         })
                         .collect(),
                     timing,

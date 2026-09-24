@@ -39,6 +39,12 @@ macro_rules! string_newtype {
             }
         }
 
+        impl ::std::fmt::Display for $name {
+            fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+                f.write_str(&self.0)
+            }
+        }
+
         impl ::std::borrow::Borrow<str> for $name {
             fn borrow(&self) -> &str {
                 &self.0

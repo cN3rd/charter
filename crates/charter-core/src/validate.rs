@@ -64,7 +64,7 @@ fn check_object(doc: &Document, chart: &Chart, object: &Object) -> Result<(), Ru
         std::iter::once(&object.sample).chain(object.children.iter().map(|child| &child.sample));
     for sample in samples.flatten() {
         if !doc.samples.contains_key(sample) {
-            return Err(Rule::UnknownSample(sample.0.clone()));
+            return Err(Rule::UnknownSample(sample.as_str().to_owned()));
         }
     }
     for position in positions(object) {

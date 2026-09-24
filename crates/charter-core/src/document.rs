@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::error::InvalidValue;
-use crate::ident::{Ease, Key, Kind, Namespace};
+use crate::ident::{Ease, Key, Kind, Namespace, string_newtype};
 use crate::number::Decimal;
 use crate::path::ResourcePath;
 use crate::unit::{
@@ -166,10 +166,10 @@ pub struct Object {
     pub ext: Extensions,
 }
 
-/// Key into the file-level sample bank.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct SampleId(pub String);
+string_newtype!(
+    /// Key into the file-level sample bank: any non-empty text.
+    SampleId, "a non-empty sample id", |v| !v.is_empty()
+);
 
 /// An object contained by another, with no children of its own.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -536,5 +536,16 @@ mod tests {
             points: Points::new(vec![point(Tick::new(10)), point(Tick::new(40))]).unwrap(),
         };
         assert_eq!(path.end(Tick::new(0)), Some(Tick::new(40)));
+    }
+
+    #[test]
+    fn sample_ids_are_non_empty_text_that_shows_as_itself() {
+        assert_eq!(
+            SampleId::new("kick").map(|id| id.to_string()),
+            Ok("kick".to_owned())
+        );
+        assert!(SampleId::new("").is_err());
+        let empty = with(|v| v["samples"] = json!({ "": "keysounds/kick.wav" }));
+        assert!(parse(&empty).is_err());
     }
 }

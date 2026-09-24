@@ -771,7 +771,7 @@ mod tests {
         let song = read(&value).unwrap();
         assert_eq!(
             song.charts[0].notes[0].keysound,
-            Some(charter_core::SampleId("clap".into()))
+            Some(charter_core::SampleId::new("clap").unwrap())
         );
         let mut out = expected(objects);
         out["samples"] = value["samples"].clone();
