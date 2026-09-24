@@ -6,7 +6,8 @@
 //!
 //! [`Song`] is the typed view of a document whose ruleset is [`ID`]. Reading one fails on
 //! anything Tap Tap Revenge cannot represent and skips data other plugins left behind;
-//! [`Song::to_document`] writes this ruleset's data alone.
+//! [`Song::to_document`] writes this ruleset's data alone. A song is checked when built, by
+//! reading or by [`Song::new`], so writing one cannot fail.
 
 use std::collections::BTreeMap;
 
@@ -20,13 +21,15 @@ use charter_core::{
 /// The ruleset namespace.
 pub const ID: &str = "ttr";
 
+/// A song, checked against this ruleset and every document rule when built, and unchangeable
+/// after.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Song {
-    pub metadata: Metadata,
-    pub ticks_per_beat: TicksPerBeat,
-    pub lanes: Lanes,
-    pub tempo: Tempo,
-    pub charts: Vec<Chart>,
+    metadata: Metadata,
+    ticks_per_beat: TicksPerBeat,
+    lanes: Lanes,
+    tempo: Tempo,
+    charts: Vec<Chart>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -129,12 +132,77 @@ pub enum Error {
 }
 
 impl Song {
-    /// Writes the song as a document holding only this ruleset's data.
+    /// A song of `charts`, each with `lanes` lanes.
     ///
     /// # Errors
     ///
-    /// Fails if the song breaks a document rule.
-    pub fn to_document(&self) -> Result<ValidDocument, Error> {
+    /// Returns [`Error::NoCharts`] without a chart, [`Error::UnknownKey`] for metadata extension
+    /// data, which this ruleset does not keep, or [`Error::Document`] for the first document rule
+    /// the song breaks, such as a tap in a lane the song does not have.
+    pub fn new(
+        metadata: Metadata,
+        ticks_per_beat: TicksPerBeat,
+        lanes: Lanes,
+        tempo: Tempo,
+        charts: Vec<Chart>,
+    ) -> Result<Self, Error> {
+        if charts.is_empty() {
+            return Err(Error::NoCharts);
+        }
+        if let Some(key) = metadata.ext.keys().next() {
+            return Err(Error::UnknownKey {
+                at: Location::MetadataExt,
+                key: key.clone(),
+            });
+        }
+        let song = Self {
+            metadata,
+            ticks_per_beat,
+            lanes,
+            tempo,
+            charts,
+        };
+        song.build()?;
+        Ok(song)
+    }
+
+    #[must_use]
+    pub fn metadata(&self) -> &Metadata {
+        &self.metadata
+    }
+
+    #[must_use]
+    pub fn ticks_per_beat(&self) -> TicksPerBeat {
+        self.ticks_per_beat
+    }
+
+    #[must_use]
+    pub fn lanes(&self) -> Lanes {
+        self.lanes
+    }
+
+    #[must_use]
+    pub fn tempo(&self) -> &Tempo {
+        &self.tempo
+    }
+
+    #[must_use]
+    pub fn charts(&self) -> &[Chart] {
+        &self.charts
+    }
+
+    /// Writes the song as a document holding only this ruleset's data.
+    ///
+    /// # Panics
+    ///
+    /// Never: [`Song::new`] checked the same document, and a song cannot change.
+    #[must_use]
+    #[allow(clippy::expect_used)] // see Panics
+    pub fn to_document(&self) -> ValidDocument {
+        self.build().expect("a song was checked when built")
+    }
+
+    fn build(&self) -> Result<ValidDocument, Error> {
         let charts = self
             .charts
             .iter()
@@ -303,16 +371,12 @@ impl TryFrom<&ValidDocument> for Song {
             .enumerate()
             .map(|(c, chart)| read_chart(c, chart, lanes))
             .collect::<Result<_, _>>()?;
-        Ok(Self {
-            metadata: Metadata {
-                ext: Extensions::new(),
-                ..doc.metadata.clone()
-            },
-            ticks_per_beat: doc.ticks_per_beat,
-            lanes,
-            tempo: read_tempo(&doc.timing, Stream::Song)?,
-            charts,
-        })
+        let metadata = Metadata {
+            ext: Extensions::new(),
+            ..doc.metadata.clone()
+        };
+        let tempo = read_tempo(&doc.timing, Stream::Song)?;
+        Self::new(metadata, doc.ticks_per_beat, lanes, tempo, charts)
     }
 }
 
@@ -488,16 +552,16 @@ mod tests {
     #[test]
     fn reads_taps_in_a_three_lane_song() {
         let song = read(&document(json!([lane_object(0, 1, 1, "tap")]))).unwrap();
-        assert_eq!(song.lanes, Lanes::Three);
+        assert_eq!(song.lanes(), Lanes::Three);
         assert_eq!(
-            song.tempo.changes,
+            song.tempo().changes,
             [TempoChange {
                 tick: Tick::new(0),
                 kind: TempoKind::Bpm(Bpm::try_from(150.0).unwrap())
             }]
         );
         assert_eq!(
-            song.charts,
+            song.charts(),
             [Chart {
                 name: "Easy".into(),
                 tempo: None,
@@ -512,7 +576,7 @@ mod tests {
     }
 
     fn written(song: &Song) -> Value {
-        serde_json::from_slice(&song.to_document().unwrap().to_json().unwrap()).unwrap()
+        serde_json::from_slice(&song.to_document().to_json().unwrap()).unwrap()
     }
 
     /// What `song` writes: `document` stamped with this plugin's version.
@@ -542,7 +606,7 @@ mod tests {
     fn a_song_has_three_four_or_five_lanes() {
         for (count, lanes) in [(3, Lanes::Three), (4, Lanes::Four), (5, Lanes::Five)] {
             let song = read(&with_lanes(count)).unwrap();
-            assert_eq!(song.lanes, lanes);
+            assert_eq!(song.lanes(), lanes);
             assert_eq!(written(&song)["charts"][0]["lanes"], json!(count));
         }
     }
@@ -580,7 +644,7 @@ mod tests {
         let song = read(&document(json!([hold]))).unwrap();
         let duration = Ticks::new(480).unwrap();
         assert_eq!(
-            song.charts[0].notes,
+            song.charts()[0].notes,
             [Note {
                 tick: Tick::new(0),
                 kind: NoteKind::Hold {
@@ -605,7 +669,11 @@ mod tests {
             let mut value = document(shakes.clone());
             value["charts"][0]["lanes"] = json!(lanes);
             let song = read(&value).unwrap();
-            let kinds: Vec<NoteKind> = song.charts[0].notes.iter().map(|note| note.kind).collect();
+            let kinds: Vec<NoteKind> = song.charts()[0]
+                .notes
+                .iter()
+                .map(|note| note.kind)
+                .collect();
             assert_eq!(
                 kinds,
                 [
@@ -644,7 +712,11 @@ mod tests {
         let mut value = document(slices.clone());
         value["charts"][0]["lanes"] = json!(4);
         let song = read(&value).unwrap();
-        let kinds: Vec<NoteKind> = song.charts[0].notes.iter().map(|note| note.kind).collect();
+        let kinds: Vec<NoteKind> = song.charts()[0]
+            .notes
+            .iter()
+            .map(|note| note.kind)
+            .collect();
         assert_eq!(kinds, [NoteKind::Slice(Left), NoteKind::Slice(Right)]);
         let mut out = expected(written_objects(&slices));
         out["charts"][0]["lanes"] = json!(4);
@@ -656,9 +728,9 @@ mod tests {
         let mega = json!([lane_object(0, 0, 5, "ttr.mega_tap")]);
         let mut value = document(mega.clone());
         value["charts"][0]["lanes"] = json!(5);
-        let mut song = read(&value).unwrap();
+        let song = read(&value).unwrap();
         assert_eq!(
-            song.charts[0].notes,
+            song.charts()[0].notes,
             [Note {
                 tick: Tick::new(0),
                 kind: NoteKind::MegaTap
@@ -668,13 +740,21 @@ mod tests {
         out["charts"][0]["lanes"] = json!(5);
         assert_eq!(written(&song), out);
 
-        song.charts[0].notes.push(Note {
+        let mut charts = song.charts().to_vec();
+        charts[0].notes.push(Note {
             tick: Tick::new(0),
             kind: NoteKind::Tap {
                 lane: LaneIndex::new(4),
             },
         });
-        assert!(matches!(song.to_document(), Err(Error::Document(_))));
+        let crowded = Song::new(
+            song.metadata().clone(),
+            song.ticks_per_beat(),
+            song.lanes(),
+            song.tempo().clone(),
+            charts,
+        );
+        assert!(matches!(crowded, Err(Error::Document(_))));
     }
 
     #[test]
@@ -735,7 +815,7 @@ mod tests {
         let song = read(&value).unwrap();
         let meter = |n| std::num::NonZeroU16::new(n).unwrap();
         assert_eq!(
-            song.tempo.changes,
+            song.tempo().changes,
             [
                 TempoChange {
                     tick: Tick::new(0),
@@ -780,7 +860,7 @@ mod tests {
         let mut value = document(json!([]));
         value["charts"][0]["timing"] = own.clone();
         let song = read(&value).unwrap();
-        let tempo = song.charts[0].tempo.as_ref().unwrap();
+        let tempo = song.charts()[0].tempo.as_ref().unwrap();
         assert_eq!(tempo.offset_seconds, Origin::try_from(0.5).unwrap());
         assert_eq!(
             tempo.changes,
@@ -857,6 +937,53 @@ mod tests {
         assert!(matches!(
             read(&settings),
             Err(Error::UnknownSetting { at: Location::Settings, key }) if key == "speed"
+        ));
+    }
+
+    #[test]
+    fn a_song_is_checked_when_built() {
+        let song = read(&document(json!([lane_object(0, 1, 1, "tap")]))).unwrap();
+        let build = |metadata: Metadata, charts: Vec<Chart>| {
+            Song::new(
+                metadata,
+                song.ticks_per_beat(),
+                song.lanes(),
+                song.tempo().clone(),
+                charts,
+            )
+        };
+        assert_eq!(
+            build(song.metadata().clone(), song.charts().to_vec()).unwrap(),
+            song
+        );
+        let outside = Chart {
+            name: "Hard".into(),
+            tempo: None,
+            notes: vec![Note {
+                tick: Tick::new(0),
+                kind: NoteKind::Tap {
+                    lane: LaneIndex::new(3),
+                },
+            }],
+        };
+        let mut tagged = song.metadata().clone();
+        tagged
+            .ext
+            .insert("ttr.genre".parse().unwrap(), json!("rock"));
+        assert!(matches!(
+            build(song.metadata().clone(), vec![outside]),
+            Err(Error::Document(_))
+        ));
+        assert!(matches!(
+            build(song.metadata().clone(), Vec::new()),
+            Err(Error::NoCharts)
+        ));
+        assert!(matches!(
+            build(tagged, song.charts().to_vec()),
+            Err(Error::UnknownKey {
+                at: Location::MetadataExt,
+                ..
+            })
         ));
     }
 }
