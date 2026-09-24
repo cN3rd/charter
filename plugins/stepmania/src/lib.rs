@@ -12,10 +12,10 @@ use std::collections::BTreeMap;
 
 use charter_core::{
     Bpm, Chart as CoreChart, Decimal, Document, Extensions, FORMAT_VERSION, InvalidValue, Key,
-    Kind, LaneCount, LaneIndex, Location, Metadata, Name, Namespace, Object, Origin, Position,
-    ResourcePath, Ruleset, SampleId, Seconds, Settings, Shape, Stream, Tick, Ticks, TicksPerBeat,
-    TimeSignature, Timing as CoreTiming, TimingEvent as CoreEvent, TimingKind as CoreKind,
-    ValidDocument,
+    Kind, LaneCount, LaneIndex, Location, Marker, MarkerKind, Metadata, Name, Namespace, Object,
+    Origin, Position, ResourcePath, Ruleset, SampleId, Seconds, Settings, Shape, Stream, Tick,
+    Ticks, TicksPerBeat, TimeSignature, Timing as CoreTiming, TimingEvent as CoreEvent,
+    TimingKind as CoreKind, ValidDocument,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::Value;
@@ -31,6 +31,7 @@ pub struct Song {
     ticks_per_beat: TicksPerBeat,
     samples: BTreeMap<SampleId, ResourcePath>,
     timing: Timing,
+    markers: Vec<Marker>,
     charts: Vec<Chart>,
 }
 
@@ -278,8 +279,22 @@ impl Song {
         ticks_per_beat: TicksPerBeat,
         samples: BTreeMap<SampleId, ResourcePath>,
         timing: Timing,
+        markers: Vec<Marker>,
         charts: Vec<Chart>,
     ) -> Result<Self, Error> {
+        let own = markers
+            .iter()
+            .enumerate()
+            .find_map(|(m, marker)| match &marker.kind {
+                MarkerKind::Other(key) if key.namespace().as_str() == ID => Some((m, key)),
+                _ => None,
+            });
+        if let Some((m, key)) = own {
+            return Err(Error::UnknownKey {
+                at: Location::Marker(m),
+                key: key.clone(),
+            });
+        }
         if let Some(key) = metadata.ext.keys().next() {
             return Err(Error::UnknownKey {
                 at: Location::MetadataExt,
@@ -291,6 +306,7 @@ impl Song {
             ticks_per_beat,
             samples,
             timing,
+            markers,
             charts,
         };
         song.build()?;
@@ -323,6 +339,12 @@ impl Song {
         &self.charts
     }
 
+    /// Song-wide markers of the shared kinds.
+    #[must_use]
+    pub fn markers(&self) -> &[Marker] {
+        &self.markers
+    }
+
     /// Writes the song as a document holding only this ruleset's data.
     ///
     /// # Panics
@@ -352,7 +374,7 @@ impl Song {
             metadata: self.metadata.clone(),
             samples: self.samples.clone(),
             timing: self.timing.to_core()?,
-            markers: Vec::new(),
+            markers: self.markers.clone(),
             charts,
         };
         Ok(ValidDocument::new(doc)?)
@@ -504,12 +526,19 @@ impl TryFrom<&ValidDocument> for Song {
             ext: Extensions::new(),
             ..doc.metadata.clone()
         };
+        let markers = doc
+            .markers
+            .iter()
+            .filter(|marker| marker.kind.namespace().is_none_or(|ns| ns.as_str() == ID))
+            .cloned()
+            .collect();
         let timing = read_timing(&doc.timing, Stream::Song)?;
         Self::new(
             metadata,
             doc.ticks_per_beat,
             doc.samples.clone(),
             timing,
+            markers,
             charts,
         )
     }
@@ -1109,6 +1138,7 @@ mod tests {
                 song.ticks_per_beat(),
                 song.samples().clone(),
                 song.timing().clone(),
+                song.markers().to_vec(),
                 charts,
             )
         };
@@ -1130,6 +1160,31 @@ mod tests {
             build(tagged, song.charts().to_vec()),
             Err(Error::UnknownKey {
                 at: Location::MetadataExt,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn shared_markers_are_kept_and_other_plugins_markers_skipped() {
+        let mut value = document(json!([]));
+        value["plugins"] = json!({ "swing": { "version": "1" } });
+        value["markers"] = json!([
+            { "tick": 0, "kind": "section", "text": "Intro" },
+            { "tick": 960, "kind": "bookmark", "text": "fix" },
+            { "tick": 960, "kind": "swing.accent", "text": "" }
+        ]);
+        let song = read(&value).unwrap();
+        let mut out = expected(json!([]));
+        out["charts"][0].as_object_mut().unwrap().remove("objects");
+        out["markers"] = json!(value["markers"].as_array().unwrap()[..2]);
+        assert_eq!(written(&song), out);
+        let mut own = document(json!([]));
+        own["markers"] = json!([{ "tick": 0, "kind": "sm.drop", "text": "" }]);
+        assert!(matches!(
+            read(&own),
+            Err(Error::UnknownKey {
+                at: Location::Marker(0),
                 ..
             })
         ));
