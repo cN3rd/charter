@@ -1,6 +1,7 @@
 use std::fmt::Display;
 
-use crate::document::FORMAT_VERSION;
+use crate::document::{FORMAT_VERSION, SampleId};
+use crate::ident::Namespace;
 use crate::json::MAX_DOCUMENT_BYTES;
 use crate::unit::{LaneCount, Tick, TimeSignature};
 
@@ -45,8 +46,8 @@ pub enum Rule {
     LaneTaken { tick: Tick },
     #[error("chart name {0:?} is used twice")]
     DuplicateChartName(String),
-    #[error("sample {0:?} is not in the bank")]
-    UnknownSample(String),
+    #[error("sample \"{0}\" is not in the bank")]
+    UnknownSample(SampleId),
     #[error("position covers a lane past the last of {lanes}")]
     LaneOutOfRange { lanes: LaneCount },
     #[error("lane position in a chart without lanes")]
@@ -57,12 +58,12 @@ pub enum Rule {
     MixedPath,
     #[error("child lies outside its parent's span")]
     ChildOutsideParent,
-    #[error("namespace {0:?} is neither the ruleset nor a declared plugin")]
-    UndeclaredNamespace(String),
-    #[error("plugin {0:?} is declared but leaves no data")]
-    UnusedPlugin(String),
-    #[error("ruleset {0:?} is also declared as a plugin")]
-    RulesetInPlugins(String),
+    #[error("namespace \"{0}\" is neither the ruleset nor a declared plugin")]
+    UndeclaredNamespace(Namespace),
+    #[error("plugin \"{0}\" is declared but leaves no data")]
+    UnusedPlugin(Namespace),
+    #[error("ruleset \"{0}\" is also declared as a plugin")]
+    RulesetInPlugins(Namespace),
 }
 
 /// A value outside its type's bounds, such as a zero BPM or an absolute path.

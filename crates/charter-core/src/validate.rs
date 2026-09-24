@@ -8,7 +8,7 @@ use crate::document::{
     Chart, Document, Extensions, Object, PathPoint, Position, Shape, Timing, TimingKind,
 };
 use crate::error::{Rule, Violation};
-use crate::ident::{Kind, Namespace};
+use crate::ident::{Key, Kind, Namespace};
 use crate::unit::{LaneSpan, Tick, TicksPerBeat};
 
 pub(crate) fn validate(doc: &Document) -> Result<(), Violation> {
@@ -64,7 +64,7 @@ fn check_object(doc: &Document, chart: &Chart, object: &Object) -> Result<(), Ru
         std::iter::once(&object.sample).chain(object.children.iter().map(|child| &child.sample));
     for sample in samples.flatten() {
         if !doc.samples.contains_key(sample) {
-            return Err(Rule::UnknownSample(sample.as_str().to_owned()));
+            return Err(Rule::UnknownSample(sample.clone()));
         }
     }
     for position in positions(object) {
@@ -86,23 +86,23 @@ fn check_object(doc: &Document, chart: &Chart, object: &Object) -> Result<(), Ru
 }
 
 fn check_namespaces(doc: &Document) -> Result<(), Rule> {
-    let ruleset = doc.ruleset.id.as_str();
+    let ruleset = &doc.ruleset.id;
     if doc.plugins.contains_key(ruleset) {
-        return Err(Rule::RulesetInPlugins(ruleset.to_owned()));
+        return Err(Rule::RulesetInPlugins(ruleset.clone()));
     }
     let used = used_namespaces(doc);
     if let Some(undeclared) = used
         .iter()
         .find(|namespace| **namespace != ruleset && !doc.plugins.contains_key(**namespace))
     {
-        return Err(Rule::UndeclaredNamespace((*undeclared).to_owned()));
+        return Err(Rule::UndeclaredNamespace((*undeclared).clone()));
     }
     if let Some(unused) = doc
         .plugins
         .keys()
-        .find(|namespace| !used.contains(namespace.as_str()))
+        .find(|namespace| !used.contains(namespace))
     {
-        return Err(Rule::UnusedPlugin(unused.as_str().to_owned()));
+        return Err(Rule::UnusedPlugin(unused.clone()));
     }
     Ok(())
 }
@@ -223,7 +223,7 @@ fn check_path(tick: Tick, position: &Position, shape: &Shape) -> Result<(), Rule
 }
 
 /// Every namespace the document uses: in extension keys, kinds, easings and `other` names.
-fn used_namespaces(doc: &Document) -> BTreeSet<&str> {
+fn used_namespaces(doc: &Document) -> BTreeSet<&Namespace> {
     let mut used = BTreeSet::new();
     add_keys(&mut used, &doc.metadata.ext);
     let chart_timings = doc.charts.iter().filter_map(|chart| chart.timing.as_ref());
@@ -231,7 +231,7 @@ fn used_namespaces(doc: &Document) -> BTreeSet<&str> {
         for event in &timing.events {
             add_keys(&mut used, &event.ext);
             if let TimingKind::Other { name, .. } = &event.kind {
-                used.insert(name.namespace().as_str());
+                used.insert(name.namespace());
             }
         }
     }
@@ -247,20 +247,20 @@ fn used_namespaces(doc: &Document) -> BTreeSet<&str> {
     used
 }
 
-fn add_keys<'a>(used: &mut BTreeSet<&'a str>, ext: &'a Extensions) {
-    used.extend(ext.keys().map(|key| key.namespace().as_str()));
+fn add_keys<'a>(used: &mut BTreeSet<&'a Namespace>, ext: &'a Extensions) {
+    used.extend(ext.keys().map(Key::namespace));
 }
 
 fn add_item<'a>(
-    used: &mut BTreeSet<&'a str>,
+    used: &mut BTreeSet<&'a Namespace>,
     kind: &'a Kind,
     shape: &'a Shape,
     ext: &'a Extensions,
 ) {
-    used.extend(kind.namespace().map(Namespace::as_str));
+    used.extend(kind.namespace());
     add_keys(used, ext);
     for point in path_points(shape) {
-        used.extend(point.ease.namespace().map(Namespace::as_str));
+        used.extend(point.ease.namespace());
         add_keys(used, &point.ext);
     }
 }
@@ -270,6 +270,7 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::*;
+    use crate::document::SampleId;
     use crate::unit::{LaneCount, TimeSignature};
 
     fn minimal() -> Value {
@@ -458,7 +459,10 @@ mod tests {
         parent["children"] = json!([child]);
         for objects in [json!([tap]), json!([parent])] {
             let value = chart_of(objects);
-            assert_eq!(broken_rule(&value), Rule::UnknownSample("snare".into()));
+            assert_eq!(
+                broken_rule(&value),
+                Rule::UnknownSample(SampleId::new("snare").unwrap())
+            );
         }
     }
 
@@ -592,7 +596,10 @@ mod tests {
             chart_of(json!([point_ext])),
         ];
         for value in places {
-            assert_eq!(broken_rule(&value), Rule::UndeclaredNamespace("psk".into()));
+            assert_eq!(
+                broken_rule(&value),
+                Rule::UndeclaredNamespace(Namespace::new("psk").unwrap())
+            );
             let mut declared = value;
             declared["plugins"] = json!({ "psk": { "version": "1" } });
             check(&declared).unwrap();
@@ -602,7 +609,10 @@ mod tests {
     #[test]
     fn a_declared_plugin_must_leave_data() {
         let value = with(|v| v["plugins"] = json!({ "swing": { "version": "0.2.0" } }));
-        assert_eq!(broken_rule(&value), Rule::UnusedPlugin("swing".into()));
+        assert_eq!(
+            broken_rule(&value),
+            Rule::UnusedPlugin(Namespace::new("swing").unwrap())
+        );
     }
 
     #[test]
@@ -611,7 +621,10 @@ mod tests {
             v["plugins"] = json!({ "test": { "version": "1" } });
             v["metadata"]["ext"] = json!({ "test.x": 1 });
         });
-        assert_eq!(broken_rule(&value), Rule::RulesetInPlugins("test".into()));
+        assert_eq!(
+            broken_rule(&value),
+            Rule::RulesetInPlugins(Namespace::new("test").unwrap())
+        );
     }
 
     #[test]
