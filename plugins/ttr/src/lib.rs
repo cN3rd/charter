@@ -987,3 +987,61 @@ mod tests {
         ));
     }
 }
+
+/// Proofs for Kani, run with `cargo kani -p charter-ttr`.
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+
+    fn lanes() -> Lanes {
+        match kani::any::<u8>() % 3 {
+            0 => Lanes::Three,
+            1 => Lanes::Four,
+            _ => Lanes::Five,
+        }
+    }
+
+    fn fits(lanes: Lanes, kind: NoteKind) -> bool {
+        lanes
+            .position(kind)
+            .lanes()
+            .is_some_and(|span| span.fits(lanes.width()))
+    }
+
+    #[kani::proof]
+    fn a_tap_or_hold_fits_exactly_when_its_lane_exists() {
+        let (lanes, lane) = (lanes(), LaneIndex::new(kani::any()));
+        let duration = Ticks::new(kani::any());
+        kani::assume(duration.is_some());
+        let kind = if kani::any() {
+            NoteKind::Tap { lane }
+        } else {
+            NoteKind::Hold {
+                lane,
+                duration: duration.unwrap(),
+            }
+        };
+        assert!(fits(lanes, kind) == (lane <= lanes.width().last()));
+    }
+
+    #[kani::proof]
+    #[kani::unwind(8)]
+    fn shakes_slices_and_mega_taps_fit_and_differ_by_direction() {
+        use NoteKind::{MegaTap, Shake as S, Slice};
+        let lanes = lanes();
+        for kind in [
+            S(Shake::Left),
+            S(Shake::Right),
+            S(Shake::Down),
+            Slice(Side::Left),
+            Slice(Side::Right),
+            MegaTap,
+        ] {
+            assert!(fits(lanes, kind));
+        }
+        let [left, right, down] =
+            [Shake::Left, Shake::Right, Shake::Down].map(|d| lanes.position(S(d)));
+        assert!(left != right && right != down && left != down);
+        assert!(lanes.position(Slice(Side::Left)) != lanes.position(Slice(Side::Right)));
+    }
+}

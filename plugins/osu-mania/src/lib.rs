@@ -941,3 +941,23 @@ mod tests {
         ));
     }
 }
+
+/// Proofs for Kani, run with `cargo kani -p charter-osu-mania`.
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+
+    #[kani::proof]
+    #[kani::unwind(17)]
+    fn osu_plays_one_to_ten_keys_or_an_even_count_up_to_twenty() {
+        let count: u16 = kani::any();
+        let Some(lanes) = LaneCount::new(count) else {
+            return;
+        };
+        let playable = count <= 10 || (count <= 20 && count % 2 == 0);
+        assert!(Keys::of(lanes).is_some() == playable);
+        if let Some(keys) = Keys::of(lanes) {
+            assert!(keys.lanes() == lanes);
+        }
+    }
+}
