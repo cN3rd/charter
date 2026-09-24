@@ -12,12 +12,12 @@ mod unit;
 mod validate;
 
 pub use document::{
-    Chart, Child, DEFAULT_TICKS_PER_BEAT, Document, Extensions, FORMAT_VERSION, Metadata, Object,
-    PathPoint, Plugin, Points, Position, Preview, Ruleset, SampleId, Settings, Shape, Timing,
-    TimingEvent, TimingKind,
+    Chart, Child, DEFAULT_TICKS_PER_BEAT, Document, Extensions, FORMAT_VERSION, Marker, Metadata,
+    Object, PathPoint, Plugin, Points, Position, Preview, Ruleset, SampleId, Settings, Shape,
+    Timing, TimingEvent, TimingKind,
 };
 pub use error::{Error, InvalidValue, Location, Rule, Stream, Violation};
-pub use ident::{Ease, Key, Kind, Name, Namespace};
+pub use ident::{Ease, Key, Kind, MarkerKind, Name, Namespace};
 pub use json::{MAX_DOCUMENT_BYTES, Valid, ValidDocument};
 pub use number::Decimal;
 pub use path::ResourcePath;

@@ -209,6 +209,14 @@ vocabulary!(
     }
 );
 
+vocabulary!(
+    /// A marker kind: a shared word, or a plugin's own under its namespace.
+    MarkerKind, "a shared marker kind or <namespace>.<name>", {
+        Section => "section",
+        Bookmark => "bookmark",
+    }
+);
+
 /// Splits `<namespace>.<name>` at the first dot, if `value` has that shape.
 fn split(value: &str) -> Option<(&str, &str)> {
     value

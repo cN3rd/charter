@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::error::InvalidValue;
-use crate::ident::{Ease, Key, Kind, Namespace, string_newtype};
+use crate::ident::{Ease, Key, Kind, MarkerKind, Namespace, string_newtype};
 use crate::number::Decimal;
 use crate::path::ResourcePath;
 use crate::unit::{
@@ -23,6 +23,16 @@ pub const DEFAULT_TICKS_PER_BEAT: TicksPerBeat = match TicksPerBeat::new(960) {
 
 /// Plugin data keyed by `<namespace>.<name>`, opaque to the core.
 pub type Extensions = BTreeMap<Key, Value>;
+
+/// A named point in the song, such as the start of a section.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Marker {
+    pub tick: Tick,
+    pub kind: MarkerKind,
+    /// What the editor shows. May be empty.
+    pub text: String,
+}
 
 /// Ruleset configuration under the ruleset's own unprefixed keys, opaque to the core.
 pub type Settings = BTreeMap<String, Value>;
@@ -46,6 +56,8 @@ pub struct Document {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub samples: BTreeMap<SampleId, ResourcePath>,
     pub timing: Timing,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub markers: Vec<Marker>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub charts: Vec<Chart>,
 }
@@ -547,5 +559,24 @@ mod tests {
         assert!(SampleId::new("").is_err());
         let empty = with(|v| v["samples"] = json!({ "": "keysounds/kick.wav" }));
         assert!(parse(&empty).is_err());
+    }
+
+    #[test]
+    fn markers_of_every_kind_survive_a_round_trip() {
+        let value = with(|v| {
+            v["markers"] = json!([
+                { "tick": 0, "kind": "section", "text": "Intro" },
+                { "tick": 3840, "kind": "bookmark", "text": "" },
+                { "tick": 3840, "kind": "test.fever", "text": "Fever" }
+            ]);
+        });
+        assert_eq!(round_trip(&value), value);
+        let kinds: Vec<MarkerKind> = parse(&value)
+            .unwrap()
+            .markers
+            .into_iter()
+            .map(|m| m.kind)
+            .collect();
+        assert_eq!(kinds[..2], [MarkerKind::Section, MarkerKind::Bookmark]);
     }
 }

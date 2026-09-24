@@ -268,11 +268,11 @@ mod tests {
 
     use super::*;
     use crate::document::{
-        Chart, Child, Extensions, Metadata, Object, PathPoint, Points, Position, Preview, Ruleset,
-        SampleId, Settings, Shape, Timing, TimingEvent, TimingKind,
+        Chart, Child, Extensions, Marker, Metadata, Object, PathPoint, Points, Position, Preview,
+        Ruleset, SampleId, Settings, Shape, Timing, TimingEvent, TimingKind,
     };
     use crate::error::{InvalidValue, Rule, Violation};
-    use crate::ident::{Ease, Key, Kind, Namespace};
+    use crate::ident::{Ease, Key, Kind, MarkerKind, Namespace};
     use crate::number::{MAX_MILLIONTHS, from_millionths};
     use crate::path::ResourcePath;
     use crate::unit::{
@@ -644,6 +644,27 @@ mod tests {
             .boxed()
     }
 
+    /// Markers on distinct ticks, so sorted and one per tick and kind.
+    fn markers() -> BoxedStrategy<Vec<Marker>> {
+        let kind = prop_oneof![
+            Just(MarkerKind::Section),
+            Just(MarkerKind::Bookmark),
+            key().prop_map(MarkerKind::Other),
+        ];
+        btree_map(-64_i32..=64, (kind, "\\PC{0,8}"), 0..4)
+            .prop_map(|markers| {
+                markers
+                    .into_iter()
+                    .map(|(tick, (kind, text))| Marker {
+                        tick: Tick::new(tick),
+                        kind,
+                        text,
+                    })
+                    .collect()
+            })
+            .boxed()
+    }
+
     /// A document that passes every rule, built so by construction: sorted objects on distinct
     /// ticks, lanes that fit, samples from the bank and every namespace the ruleset's.
     fn document() -> BoxedStrategy<Document> {
@@ -658,12 +679,13 @@ mod tests {
                     settings(),
                     metadata(),
                     timing(),
+                    markers(),
                     charts,
                     Just(samples),
                 )
             })
             .prop_map(
-                |(resolution, settings, metadata, timing, charts, samples)| Document {
+                |(resolution, settings, metadata, timing, markers, charts, samples)| Document {
                     format_version: FORMAT_VERSION,
                     ticks_per_beat: TicksPerBeat::new(resolution).unwrap(),
                     ruleset: Ruleset {
@@ -680,6 +702,7 @@ mod tests {
                         })
                         .collect(),
                     timing,
+                    markers,
                     charts,
                 },
             )

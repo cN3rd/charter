@@ -316,6 +316,7 @@ impl Song {
             metadata: self.metadata.clone(),
             samples: self.samples.clone(),
             timing: self.timing.to_core()?,
+            markers: Vec::new(),
             charts,
         };
         Ok(ValidDocument::new(doc)?)

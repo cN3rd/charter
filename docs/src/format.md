@@ -854,6 +854,10 @@ not where a draft should start.
       { "tick": 61440, "kind": { "other": { "name": "swing.groove", "value": 0.62 } } }
     ]
   },
+  "markers": [
+    { "tick": 0,     "kind": "section", "text": "Intro" },
+    { "tick": 61440, "kind": "section", "text": "Drop" }
+  ],
   "charts": [
     {
       "name": "Future",

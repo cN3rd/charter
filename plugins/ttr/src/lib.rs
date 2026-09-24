@@ -220,6 +220,7 @@ impl Song {
             metadata: self.metadata.clone(),
             samples: BTreeMap::new(),
             timing: self.tempo.to_timing(),
+            markers: Vec::new(),
             charts,
         };
         Ok(ValidDocument::new(doc)?)
