@@ -16,7 +16,7 @@ cargo test -p charter-core -- --nocapture --exact json::tests::the_format_chapte
 cargo clippy --workspace --all-targets
 cargo fmt --all
 cargo run -p charter-app
-cargo kani -p charter-core               # Kani proofs; `cargo install --locked kani-verifier && cargo kani setup` once
+cargo kani -p charter-core               # Kani proofs, also in charter-ttr and charter-osu-mania; `cargo install --locked kani-verifier && cargo kani setup` once
 git submodule update --init              # required once, see .github/skills/README.md
 ```
 

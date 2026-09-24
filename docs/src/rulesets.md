@@ -18,6 +18,8 @@ how plugins are loaded is still [open](research/topics/plugins.md).
   read.
 - Writing produces a validated document holding the ruleset's own data. The typed model is a
   view, so reading and writing back drops other plugins' data.
+- A song is checked when built, by reading or by `Song::new`, against the ruleset and every
+  document rule, and cannot change after. Writing one therefore cannot fail.
 
 | Ruleset | Namespace | Kinds | Timing | Chart settings |
 |---|---|---|---|---|
