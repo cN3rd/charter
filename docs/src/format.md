@@ -32,6 +32,7 @@ without the whole system becoming loose.
 | [Note type model](research/topics/note-type-model.md) | Structure in core, semantics in plugin | Medium |
 | Ruleset scope | Exactly one per file, structurally; other plugins unrestricted | Medium |
 | Keysounds | Core: a file-level bank objects reference | Medium |
+| [Markers](#markers) | Core: song-wide sections and bookmarks on ticks | Medium |
 | Multi-player | Modelled as extra lanes; exporters fold them back | Medium |
 | Grouping | Value-keyed, so objects need no identity | Medium |
 | [Internal model richness](research/topics/internal-model-richness.md) | Five interpreted timing kinds, rest carried | Medium |
@@ -94,7 +95,8 @@ two rulesets. Every other contributor, such as a timing plugin or an import adap
 behind, goes in `plugins`, where any number may appear.
 
 A namespace identifies its owner everywhere a plugin can leave data, always as
-`<namespace>.<name>`: extension keys, note kinds, easings, and timing `other` names. Unprefixed
+`<namespace>.<name>`: extension keys, note kinds, easings, marker kinds, and timing `other` names.
+Unprefixed
 names belong to the shared vocabulary and to no plugin. The grammar is under
 [identifiers](#identifiers).
 
@@ -282,7 +284,7 @@ A kind is **interpreted** only if charter must compute with it:
 `stop` and `delay` differ only in where the objects on their own tick fall. That is a difference
 in time, so charter needs both even though it never judges anything.
 
-Everything else, such as scroll, speed, tick count, combo multipliers, labels and fake regions, is
+Everything else, such as scroll, speed, tick count, combo multipliers and fake regions, is
 `other { name, value }`, carried faithfully and never interpreted. Its name is always prefixed by
 the plugin that owns it. This is [gimmick coverage](research/topics/gimmick-coverage.md) resolved
 by preserving everything and interpreting almost nothing.
@@ -411,6 +413,32 @@ carries them, so they are project state rather than chart data.
 
 ---
 
+## Markers
+
+```
+markers: Vec<Marker>     // song-wide, sorted by tick
+
+Marker { tick: Tick, kind: MarkerKind, text: String }
+
+MarkerKind = Section | Bookmark | Other(Key)   // "section", "bookmark", "psk.fever"
+```
+
+A marker names a point in the song. A `section` starts a part such as a verse or a drop, and a
+`bookmark` is a place the author wants to find again. `text` is what the editor shows, and may be
+empty. Any other kind is a [key](#identifiers) owned by the plugin of its namespace, as a note kind
+is.
+
+Markers are core because the editor must find them without the ruleset: it draws them on the
+timeline and jumps between them. The surveyed formats carry them. `.chart` puts sections in its
+`[Events]` track, StepMania writes `#LABELS`, and osu! keeps bookmarks in the beatmap's `[Editor]`
+section.
+
+A marker sits on a tick, like everything musical, so it keeps its place in the music when the tempo
+changes. Markers are song-wide. `.ssc` and osu! can keep a different set per difficulty, and an
+importer merges them into the song's list.
+
+---
+
 ## Objects
 
 One type covers taps, holds, slides and arcs.
@@ -490,11 +518,12 @@ Ease = Linear | Step | In | Out | InOut | Other(Key)         // "in_out", "arcae
 Key  { namespace: Namespace, name: Name }                    // "psk.flick"
 ```
 
-Note kinds and easings each have a closed shared vocabulary, and every other value is a `Key`
-owned by the plugin of its namespace:
+Note kinds, easings and [marker kinds](#markers) each have a closed shared vocabulary, and every
+other value is a `Key` owned by the plugin of its namespace:
 
 - kinds: `tap`, `hold`, `roll`, `mine`, `lift`, `fake`
 - easings: `linear`, `step`, `in`, `out`, `in_out`
+- marker kinds: `section`, `bookmark`
 
 The vocabulary grows only with `format_version`. Rulesets should reuse it rather than reinvent it.
 
@@ -543,14 +572,16 @@ implementations disagreeing.
 
 **Ordering and uniqueness**
 
-- `objects` and timing `events` are sorted by `tick`. Order among items on one tick carries no
-  meaning, and writers preserve it. Sorted order makes diffs stable and lets range queries be a
-  binary search, which is how Moonscraper queries the visible window.
+- `objects`, timing `events` and `markers` are sorted by `tick`. Order among items on one tick
+  carries no meaning, and writers preserve it. Sorted order makes diffs stable and lets range
+  queries be a binary search, which is how Moonscraper queries the visible window.
 - No two top-level objects on one tick cover a common lane. Two taps in one lane at one instant is
   universally invalid, and it is cheap to check. The rule stops there: two `Plane` points may
   legitimately coincide, and where children may sit is the ruleset's judgement.
 - At most one timing event per `tick` and kind; `other` events are keyed by `tick` and name. Import
   adapters resolve duplicates rather than passing them on.
+- At most one marker per `tick` and kind, since two sections starting on one tick name one part
+  twice.
 - Chart names are unique, since the editor tells charts apart by name.
 
 **References**
