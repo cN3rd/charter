@@ -1,5 +1,5 @@
 use crate::document::{Timing, TimingKind};
-use crate::unit::{Bpm, Tick, TicksPerBeat};
+use crate::unit::{Bpm, ResolvedTime, Tick, TicksPerBeat};
 
 impl Timing {
     /// Audio time in seconds of an object on `tick`.
@@ -9,14 +9,14 @@ impl Timing {
     /// means there is no `bpm` event or a warp ends past the last tick; a valid document rules
     /// out both.
     #[must_use]
-    pub fn seconds_at(&self, ticks_per_beat: TicksPerBeat, tick: Tick) -> Option<f64> {
-        let offset = self.offset_seconds.seconds();
+    pub fn seconds_at(&self, ticks_per_beat: TicksPerBeat, tick: Tick) -> Option<ResolvedTime> {
+        let offset = ResolvedTime::from(self.offset_seconds).seconds();
         let zero = Tick::new(0);
-        Some(if tick >= zero {
+        Some(ResolvedTime::new(if tick >= zero {
             offset + self.elapsed(ticks_per_beat, zero, tick)?
         } else {
             offset - self.elapsed(ticks_per_beat, tick, zero)?
-        })
+        }))
     }
 
     /// Seconds between objects on `from` and on `to`, where `from <= to`.
@@ -101,7 +101,8 @@ mod tests {
     fn assert_time(timing: &Timing, tick: i32, expected: f64) {
         let actual = timing
             .seconds_at(DEFAULT_TICKS_PER_BEAT, Tick::new(tick))
-            .unwrap();
+            .unwrap()
+            .seconds();
         assert!(
             (actual - expected).abs() < 1e-9,
             "tick {tick}: {actual} != {expected}"
@@ -186,7 +187,7 @@ mod tests {
     fn the_resolution_sets_how_many_ticks_make_a_beat() {
         let t = timing(&[(0, bpm(60.0))]);
         let half = TicksPerBeat::new(480).unwrap();
-        let seconds = t.seconds_at(half, Tick::new(480)).unwrap();
+        let seconds = t.seconds_at(half, Tick::new(480)).unwrap().seconds();
         assert!((seconds - 2.0).abs() < 1e-9, "{seconds}");
     }
 
@@ -263,7 +264,7 @@ mod tests {
             }
             elapsed += pauses(Tick::new(k + 1), false);
         }
-        let offset = timing.offset_seconds.seconds();
+        let offset = ResolvedTime::from(timing.offset_seconds).seconds();
         if tick >= 0 {
             offset + elapsed
         } else {
@@ -320,7 +321,7 @@ mod tests {
         ) {
             let timing = valid_timing(offset, first, events);
             let resolution = TicksPerBeat::new(resolution).unwrap();
-            let resolved = timing.seconds_at(resolution, Tick::new(tick)).unwrap();
+            let resolved = timing.seconds_at(resolution, Tick::new(tick)).unwrap().seconds();
             let walked = walked(&timing, resolution, tick);
             prop_assert!((resolved - walked).abs() <= 1e-9 * walked.abs().max(1.0), "{resolved} != {walked}");
         }
@@ -335,7 +336,7 @@ mod tests {
         ) {
             let timing = valid_timing(offset, first, events);
             let resolved = timing.seconds_at(TicksPerBeat::new(resolution).unwrap(), Tick::new(tick));
-            prop_assert!(resolved.is_some_and(f64::is_finite), "{resolved:?}");
+            prop_assert!(resolved.is_some_and(|time| time.seconds().is_finite()), "{resolved:?}");
         }
     }
 }

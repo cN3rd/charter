@@ -33,6 +33,6 @@ fn proptest_config() -> proptest::test_runner::Config {
     }
 }
 pub use unit::{
-    AudioTime, Bpm, LaneCount, LaneIndex, LaneSpan, Origin, Seconds, Tick, Ticks, TicksPerBeat,
-    TimeSignature,
+    AudioTime, Bpm, LaneCount, LaneIndex, LaneSpan, Origin, ResolvedTime, Seconds, Tick, Ticks,
+    TicksPerBeat, TimeSignature,
 };

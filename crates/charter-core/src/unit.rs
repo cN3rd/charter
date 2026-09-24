@@ -28,8 +28,7 @@ decimal!(
 
 impl Bpm {
     /// Seconds that `ticks` last at this tempo and `resolution`.
-    #[must_use]
-    pub fn seconds(self, ticks: Ticks, resolution: TicksPerBeat) -> f64 {
+    pub(crate) fn seconds(self, ticks: Ticks, resolution: TicksPerBeat) -> f64 {
         f64::from(ticks.0.get()) * 60.0 / (from_millionths(self.0) * f64::from(resolution.0.get()))
     }
 }
@@ -54,8 +53,7 @@ decimal!(
 );
 
 impl Seconds {
-    #[must_use]
-    pub fn seconds(self) -> f64 {
+    pub(crate) fn seconds(self) -> f64 {
         from_millionths(self.0)
     }
 }
@@ -71,17 +69,40 @@ decimal!(
     Origin, "a time of at most six places", |_m| true
 );
 
-impl AudioTime {
+/// An audio time in seconds, resolved from a timing map rather than stored, so a float.
+/// Negative before the audio starts.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+pub struct ResolvedTime(f64);
+
+impl ResolvedTime {
+    pub(crate) fn new(seconds: f64) -> Self {
+        Self(seconds)
+    }
+
+    /// Seconds from the start of the audio file, for an audio API or a display.
     #[must_use]
     pub fn seconds(self) -> f64 {
-        from_millionths(self.0)
+        self.0
     }
 }
 
-impl Origin {
-    #[must_use]
-    pub fn seconds(self) -> f64 {
-        from_millionths(self.0)
+impl From<Origin> for ResolvedTime {
+    fn from(origin: Origin) -> Self {
+        Self(from_millionths(origin.0))
+    }
+}
+
+impl From<AudioTime> for ResolvedTime {
+    fn from(time: AudioTime) -> Self {
+        Self(from_millionths(time.0))
+    }
+}
+
+impl std::ops::Add<Seconds> for ResolvedTime {
+    type Output = Self;
+
+    fn add(self, length: Seconds) -> Self {
+        Self(self.0 + length.seconds())
     }
 }
 
@@ -492,5 +513,16 @@ mod tests {
         let coarse = TicksPerBeat::new(48).unwrap();
         assert!(meter(7, 8).measure_is_whole(fine) && meter(1, 64).measure_is_whole(coarse));
         assert!(!meter(1, 128).measure_is_whole(coarse));
+    }
+
+    #[test]
+    fn resolved_times_start_at_stored_points_and_move_by_lengths() {
+        let origin = ResolvedTime::from(Origin::try_from(-0.25).unwrap());
+        let later = origin + Seconds::try_from(1.5).unwrap();
+        assert_eq!(
+            later,
+            ResolvedTime::from(AudioTime::try_from(1.25).unwrap())
+        );
+        assert!(origin < later);
     }
 }

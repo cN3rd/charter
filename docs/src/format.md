@@ -622,8 +622,9 @@ a JSON number, and the beat lengths are rounded already: osu!'s `342.85714285714
 which six places hold as `175.000000` and write back as the same beat length. One that does not
 come back, such as `300.5`, keeps its original in `ext`.
 
-Resolved times are the only floats: `f64` seconds computed from the timing map and never stored.
-Every input is a bounded integer, so every resolved time is finite and no rule has to check it.
+Resolved times are the only floats: `ResolvedTime` seconds computed from the timing map and never
+stored. Every input is a bounded integer, so every resolved time is finite and no rule has to check
+it.
 
 `bpm` must be positive. Negative BPM is a StepMania time-skipping gimmick predating explicit warps,
 and charter has `warp` for that. Zero BPM would stop position advancing while time ran on, an
@@ -650,9 +651,10 @@ shown.
 | `TicksPerBeat` | `NonZeroU16` | The resolution of the time base | |
 | `TimeSignature` | Two `NonZeroU16` | A meter | Tells whether its measure is a whole number of ticks |
 | `Bpm` | `i64` millionths above 0 | Quarter notes per minute | Resolves `Ticks` at a `TicksPerBeat` to seconds |
-| `Seconds` | `i64` millionths above 0 | A length of time | Resolves to seconds |
-| `AudioTime` | `i64` millionths, 0 or more | A point in the audio file, from its start | Resolves to seconds |
-| `Origin` | `i64` millionths | The audio time of tick 0, negative before the file starts | Resolves to seconds |
+| `Seconds` | `i64` millionths above 0 | A length of time | Moves a `ResolvedTime` later |
+| `AudioTime` | `i64` millionths, 0 or more | A point in the audio file, from its start | Converts to a `ResolvedTime` |
+| `Origin` | `i64` millionths | The audio time of tick 0, negative before the file starts | Converts to a `ResolvedTime` |
+| `ResolvedTime` | `f64` | An audio time resolved from a timing map, never stored | Compares; gives seconds for an audio API or a display |
 | `LaneIndex` | `u16` | A lane, counting from 0 | |
 | `LaneCount` | `NonZeroU16` | A number of lanes | Names its last and middle lanes |
 | `LaneSpan` | Two `u32` | The lanes a lane position covers | Tells whether it fits a chart or overlaps another span |
