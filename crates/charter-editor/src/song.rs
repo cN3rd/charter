@@ -440,6 +440,53 @@ impl Song {
         Ok(())
     }
 
+    /// Where the open chart's last note ends, or tick 0 when it has none.
+    #[must_use]
+    pub fn end(&self) -> Tick {
+        self.chart()
+            .and_then(|chart| chart.objects().map(|object| object.end()).max())
+            .unwrap_or(Tick::new(0))
+    }
+
+    /// The tick of the nearest section past the cursor that way, if there is one.
+    #[must_use]
+    pub fn section_from(&self, step: Step) -> Option<Tick> {
+        let sections = self
+            .document
+            .document()
+            .markers
+            .iter()
+            .filter(|marker| marker.kind == MarkerKind::Section)
+            .map(|marker| marker.tick);
+        match step {
+            Step::Later => sections.filter(|tick| *tick > self.cursor).min(),
+            Step::Earlier => sections.filter(|tick| *tick < self.cursor).max(),
+        }
+    }
+
+    /// Adds a bookmark at the cursor, or removes the one there, as one step.
+    ///
+    /// # Errors
+    ///
+    /// Refuses on a read-only song.
+    pub fn toggle_bookmark(&mut self) -> Result<(), Refusal> {
+        let at = self.cursor;
+        let mut new = self.document.document().markers.clone();
+        let here = |marker: &Marker| marker.tick == at && marker.kind == MarkerKind::Bookmark;
+        if let Some(index) = new.iter().position(here) {
+            new.remove(index);
+        } else {
+            let index = new.partition_point(|marker| marker.tick <= at);
+            let bookmark = Marker {
+                tick: at,
+                kind: MarkerKind::Bookmark,
+                text: String::new(),
+            };
+            new.insert(index, bookmark);
+        }
+        self.remark(new)
+    }
+
     /// The object of the open chart that starts at `tick` and covers `lane`, and where it is.
     fn starting(&self, tick: Tick, lane: LaneIndex) -> Option<(usize, &Object)> {
         let objects = &self.document.document().charts.get(self.chart)?.objects;
@@ -1546,6 +1593,46 @@ mod tests {
         let mut song = Song::new(document, &[]);
         assert!(matches!(song.set_section("x"), Err(Refusal::ReadOnly)));
         assert!(matches!(song.remove_marker(0), Err(Refusal::ReadOnly)));
+    }
+
+    #[test]
+    fn the_end_is_where_the_open_charts_last_note_ends() {
+        let taps = json!([
+            object(0, 0, "tap"),
+            hold(480, 1, 960),
+            object(960, 2, "tap")
+        ]);
+        let song = Song::new(document(taps), EDITABLE);
+        assert_eq!(song.end(), Tick::new(1440));
+        let empty = Song::new(document(json!([])), EDITABLE);
+        assert_eq!(empty.end(), Tick::new(0));
+    }
+
+    #[test]
+    fn the_next_and_previous_sections_are_found_from_the_cursor() {
+        let mut song = marked(&json!([
+            marker(0, "section", "A"),
+            marker(480, "bookmark", "b"),
+            marker(960, "section", "B")
+        ]));
+        assert_eq!(song.section_from(Step::Later), Some(Tick::new(960)));
+        assert_eq!(song.section_from(Step::Earlier), None);
+        song.jump_to(Tick::new(600));
+        assert_eq!(song.section_from(Step::Earlier), Some(Tick::new(0)));
+        song.jump_to(Tick::new(960));
+        assert_eq!(song.section_from(Step::Later), None);
+    }
+
+    #[test]
+    fn a_bookmark_toggled_at_the_cursor_comes_and_goes() {
+        let mut song = marked(&json!([marker(0, "section", "A")]));
+        song.toggle_bookmark().unwrap();
+        assert_eq!(
+            markers(&song),
+            json!([marker(0, "section", "A"), marker(0, "bookmark", "")])
+        );
+        song.toggle_bookmark().unwrap();
+        assert_eq!(markers(&song), json!([marker(0, "section", "A")]));
     }
 
     #[test]
