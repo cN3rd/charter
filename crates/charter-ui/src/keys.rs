@@ -227,3 +227,59 @@ fn command(key: Key, modifiers: Modifiers) -> Option<Action> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const NONE: Modifiers = Modifiers::NONE;
+
+    #[test]
+    fn modifiers_choose_between_moving_the_snap_the_rate_and_sections() {
+        let shift = Modifiers::SHIFT;
+        let both = Modifiers::COMMAND.plus(Modifiers::SHIFT);
+        let cases = [
+            (Key::ArrowRight, NONE, Some(Action::FinerSnap)),
+            (Key::ArrowLeft, NONE, Some(Action::CoarserSnap)),
+            (Key::ArrowRight, shift, Some(Action::NudgeRate(0.1))),
+            (Key::ArrowLeft, shift, Some(Action::NudgeRate(-0.1))),
+            (Key::ArrowRight, both, Some(Action::NudgeRate(0.01))),
+            (
+                Key::ArrowDown,
+                Modifiers::ALT,
+                Some(Action::JumpSection(Step::Later)),
+            ),
+            (
+                Key::ArrowUp,
+                Modifiers::ALT,
+                Some(Action::JumpSection(Step::Earlier)),
+            ),
+            (Key::ArrowDown, NONE, Some(Action::Move(Step::Later))),
+            (Key::Z, both, Some(Action::Redo)),
+            (Key::Z, Modifiers::COMMAND, Some(Action::Undo)),
+            (Key::S, both, Some(Action::SaveAs)),
+            (Key::Space, NONE, Some(Action::TogglePlay)),
+            (Key::A, Modifiers::ALT, None),
+        ];
+        for (key, modifiers, expected) in cases {
+            assert_eq!(command(key, modifiers), expected, "{key:?} {modifiers:?}");
+        }
+    }
+
+    #[test]
+    fn a_lane_key_under_alt_places_nothing_and_ends_no_chord() {
+        let mut keys = LaneKeys::default();
+        let mut actions = Vec::new();
+        keys.went(0, true, Modifiers::ALT, 4, &mut actions);
+        keys.went(0, false, NONE, 4, &mut actions);
+        assert_eq!(actions, []);
+    }
+
+    #[test]
+    fn a_lane_key_past_the_charts_lanes_places_nothing() {
+        let mut keys = LaneKeys::default();
+        let mut actions = Vec::new();
+        keys.went(5, true, NONE, 4, &mut actions);
+        assert_eq!(actions, []);
+    }
+}

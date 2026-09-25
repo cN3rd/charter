@@ -8,7 +8,7 @@ use charter_editor::SNAPS;
 
 use crate::flip::Direction;
 use crate::panels::ordinal;
-use crate::style::table;
+use crate::style::{heading, table};
 
 /// A sound the editor can make while a song plays.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -128,79 +128,87 @@ pub fn show(ctx: &egui::Context, settings: &mut Settings, open: &mut bool) {
         .pivot(egui::Align2::CENTER_CENTER)
         .default_pos(ctx.content_rect().center())
         .show(ctx, |ui| {
-            table(ui, "settings", |ui| {
-                ui.weak("Note entry");
-                ui.checkbox(
-                    &mut settings.auto_jump,
-                    "Move on a snap after placing a note",
-                );
-                ui.end_row();
-                ui.weak("Songs open on");
-                egui::ComboBox::from_id_salt("snap")
-                    .selected_text(format!("{} snap", ordinal(settings.snap)))
-                    .show_ui(ui, |ui| {
-                        for snap in SNAPS.into_iter().filter_map(NonZeroU16::new) {
-                            let text = format!("{} snap", ordinal(snap));
-                            ui.selectable_value(&mut settings.snap, snap, text);
-                        }
-                    });
-                ui.end_row();
-                ui.weak("Songs open at");
-                let zoom = egui::Slider::new(&mut settings.zoom, 25.0..=400.0).suffix("% zoom");
-                ui.add(zoom);
-                ui.end_row();
-                ui.weak("Interface size");
-                egui::ComboBox::from_id_salt("scale")
-                    .selected_text(percent(settings.scale))
-                    .show_ui(ui, |ui| {
-                        for scale in SCALES {
-                            ui.selectable_value(&mut settings.scale, scale, percent(scale));
-                        }
-                    });
-                ui.end_row();
-                let caption = ui.weak("Notefield");
-                egui::ComboBox::from_id_salt("direction")
-                    .selected_text(settings.direction.name())
-                    .show_ui(ui, |ui| {
-                        for direction in Direction::ALL {
-                            ui.selectable_value(
-                                &mut settings.direction,
-                                direction,
-                                direction.name(),
-                            );
-                        }
-                    })
-                    .response
-                    .labelled_by(caption.id);
-                ui.end_row();
-                ui.weak("Autosave");
-                ui.horizontal(|ui| {
-                    ui.checkbox(&mut settings.autosave, "Autosave unsaved changes");
-                    let wait = egui::DragValue::new(&mut settings.autosave_seconds)
-                        .range(AUTOSAVE_SECONDS.0..=AUTOSAVE_SECONDS.1)
-                        .prefix("after ")
-                        .suffix(" s");
-                    ui.add_enabled(settings.autosave, wait);
-                });
-                ui.end_row();
-                for (label, id, sound) in [
-                    ("Tick sound", "tick sound", &mut settings.tick_sound),
-                    ("Metronome", "metronome", &mut settings.metronome),
-                ] {
-                    let caption = ui.weak(label);
-                    egui::ComboBox::from_id_salt(id)
-                        .selected_text(sound.name())
-                        .show_ui(ui, |ui| {
-                            for choice in Sound::ALL {
-                                ui.selectable_value(sound, choice, choice.name());
-                            }
-                        })
-                        .response
-                        .labelled_by(caption.id);
-                    ui.end_row();
-                }
+            heading(ui, "Editing");
+            table(ui, "editing", |ui| editing(ui, settings));
+            heading(ui, "View");
+            table(ui, "view", |ui| view(ui, settings));
+            heading(ui, "Playback");
+            table(ui, "playback", |ui| playback(ui, settings));
+            heading(ui, "Autosave");
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut settings.autosave, "Autosave unsaved changes");
+                let wait = egui::DragValue::new(&mut settings.autosave_seconds)
+                    .range(AUTOSAVE_SECONDS.0..=AUTOSAVE_SECONDS.1)
+                    .prefix("after ")
+                    .suffix(" s");
+                ui.add_enabled(settings.autosave, wait);
             });
         });
+}
+
+fn editing(ui: &mut egui::Ui, settings: &mut Settings) {
+    ui.weak("Note entry");
+    ui.checkbox(
+        &mut settings.auto_jump,
+        "Move on a snap after placing a note",
+    );
+    ui.end_row();
+    ui.weak("Default snap");
+    egui::ComboBox::from_id_salt("snap")
+        .selected_text(format!("{} snap", ordinal(settings.snap)))
+        .show_ui(ui, |ui| {
+            for snap in SNAPS.into_iter().filter_map(NonZeroU16::new) {
+                let text = format!("{} snap", ordinal(snap));
+                ui.selectable_value(&mut settings.snap, snap, text);
+            }
+        });
+    ui.end_row();
+    ui.weak("Default zoom");
+    let zoom = egui::Slider::new(&mut settings.zoom, 25.0..=400.0).suffix("%");
+    ui.add(zoom);
+    ui.end_row();
+}
+
+fn view(ui: &mut egui::Ui, settings: &mut Settings) {
+    ui.weak("Interface size");
+    egui::ComboBox::from_id_salt("scale")
+        .selected_text(percent(settings.scale))
+        .show_ui(ui, |ui| {
+            for scale in SCALES {
+                ui.selectable_value(&mut settings.scale, scale, percent(scale));
+            }
+        });
+    ui.end_row();
+    let caption = ui.weak("Notefield");
+    egui::ComboBox::from_id_salt("direction")
+        .selected_text(settings.direction.name())
+        .show_ui(ui, |ui| {
+            for direction in Direction::ALL {
+                ui.selectable_value(&mut settings.direction, direction, direction.name());
+            }
+        })
+        .response
+        .labelled_by(caption.id);
+    ui.end_row();
+}
+
+fn playback(ui: &mut egui::Ui, settings: &mut Settings) {
+    for (label, id, sound) in [
+        ("Note ticks", "note ticks", &mut settings.tick_sound),
+        ("Metronome", "metronome", &mut settings.metronome),
+    ] {
+        let caption = ui.weak(label);
+        egui::ComboBox::from_id_salt(id)
+            .selected_text(sound.name())
+            .show_ui(ui, |ui| {
+                for choice in Sound::ALL {
+                    ui.selectable_value(sound, choice, choice.name());
+                }
+            })
+            .response
+            .labelled_by(caption.id);
+        ui.end_row();
+    }
 }
 
 fn percent(factor: f32) -> String {
@@ -240,6 +248,20 @@ mod tests {
         };
         assert_eq!(settings(0).autosave_after(), Some(5.0));
         assert_eq!(settings(100_000).autosave_after(), Some(600.0));
+    }
+
+    #[test]
+    fn a_stored_interface_size_is_kept_to_what_the_window_can_draw() {
+        let size = |scale| {
+            Settings {
+                scale,
+                ..Settings::default()
+            }
+            .scale()
+        };
+        assert!((size(f32::INFINITY) - 1.0).abs() < f32::EPSILON);
+        assert!((size(0.1) - 0.5).abs() < f32::EPSILON);
+        assert!((size(9.0) - 3.0).abs() < f32::EPSILON);
     }
 
     #[test]

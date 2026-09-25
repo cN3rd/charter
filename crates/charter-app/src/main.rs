@@ -5,11 +5,13 @@
 
 use std::path::{Path, PathBuf};
 
+mod disk;
 mod player;
 
 use charter_core::RulesetPlugin;
 use charter_ui::{Request, Saved, Settings, Window};
 
+use crate::disk::Disk;
 use crate::player::Player;
 
 /// The ruleset plugins built into charter.
@@ -31,6 +33,7 @@ struct Host {
     /// Where the autosave is kept, when the user's data folder is known.
     recovery: Option<PathBuf>,
     player: Player,
+    disk: Box<dyn Disk>,
 }
 
 impl eframe::App for Host {
@@ -41,10 +44,6 @@ impl eframe::App for Host {
         self.window.ui(ui);
         for request in self.window.take_requests() {
             match request {
-                Request::Play { .. } | Request::Pause | Request::Seek(_) | Request::Rate(_) => {
-                    self.player.answer(&request, &mut self.window);
-                }
-                Request::Write { path, bytes } => self.write(path, &bytes),
                 Request::SaveAs { name, bytes } => {
                     match song_dialog().set_file_name(name).save_file() {
                         Some(path) => self.write(path, &bytes),
@@ -56,23 +55,18 @@ impl eframe::App for Host {
                         self.read(&path);
                     }
                 }
-                Request::Autosave { bytes } => self.autosave(&bytes),
-                Request::CopyAudio { from, to } => {
-                    // A file already there is taken to be the song's audio.
-                    if !to.exists()
-                        && let Err(error) = std::fs::copy(&from, &to)
-                    {
-                        let why = format!("{} to {}: {error}", from.display(), to.display());
-                        self.window.audio_not_copied(&why);
+                Request::ChooseAudio => {
+                    let audio = rfd::FileDialog::new()
+                        .add_filter("audio", &["ogg", "mp3", "wav", "flac"])
+                        .pick_file();
+                    if let Some(path) = audio {
+                        self.window.use_audio(&path);
                     }
                 }
-                Request::DropAutosave => {
-                    if let Some(recovery) = &self.recovery {
-                        // Nothing to remove is fine, and a file left over is offered, then
-                        // removed, on the next run.
-                        let _ = std::fs::remove_file(recovery);
-                    }
+                Request::Play { .. } | Request::Pause | Request::Seek(_) | Request::Rate(_) => {
+                    self.player.answer(&request, &mut self.window);
                 }
+                files => self.answer(files),
             }
         }
     }
@@ -83,15 +77,40 @@ impl eframe::App for Host {
 }
 
 impl Host {
+    /// Does what the window asked of the files; dialogs and playback are the caller's.
+    fn answer(&mut self, request: Request) {
+        match request {
+            Request::Write { path, bytes } => self.write(path, &bytes),
+            Request::Autosave { bytes } => self.autosave(&bytes),
+            Request::CopyAudio { from, to } => {
+                // A file already there is taken to be the song's audio.
+                if !self.disk.exists(&to)
+                    && let Err(error) = self.disk.copy(&from, &to)
+                {
+                    let why = format!("{} to {}: {error}", from.display(), to.display());
+                    self.window.audio_not_copied(&why);
+                }
+            }
+            Request::DropAutosave => {
+                if let Some(recovery) = &self.recovery {
+                    // Nothing to remove is fine, and a file left over is offered, then
+                    // removed, on the next run.
+                    let _ = self.disk.remove(recovery);
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn read(&mut self, path: &Path) {
-        match std::fs::read(path) {
+        match self.disk.read(path) {
             Ok(bytes) => self.window.open(path, &bytes),
             Err(error) => self.window.refuse(path, &error),
         }
     }
 
     fn write(&mut self, path: PathBuf, bytes: &[u8]) {
-        let saved = match write_whole(&path, bytes) {
+        let saved = match disk::write_whole(self.disk.as_ref(), &path, bytes) {
             Ok(()) => Saved::To(path),
             Err(error) => Saved::Failed(format!("{}: {error}", path.display())),
         };
@@ -106,8 +125,8 @@ impl Host {
         };
         let kept = recovery
             .parent()
-            .map_or(Ok(()), std::fs::create_dir_all)
-            .and_then(|()| write_whole(recovery, bytes));
+            .map_or(Ok(()), |folder| self.disk.make_folder(folder))
+            .and_then(|()| disk::write_whole(self.disk.as_ref(), recovery, bytes));
         if let Err(error) = kept {
             let why = format!("{}: {error}", recovery.display());
             self.window.autosave_failed(&why);
@@ -119,31 +138,10 @@ impl Host {
         let Some(recovery) = &self.recovery else {
             return;
         };
-        if let Ok(bytes) = std::fs::read(recovery) {
+        if let Ok(bytes) = self.disk.read(recovery) {
             self.window.recover(&bytes);
         }
     }
-}
-
-/// Writes `bytes` beside `path`, then moves them over the file at `path`, so a failed write never
-/// leaves the file half written.
-fn write_whole(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    let mut beside = path.as_os_str().to_owned();
-    beside.push(".partial");
-    let beside = PathBuf::from(beside);
-    let written = write_then_move(&beside, path, bytes);
-    if written.is_err() {
-        // The write already failed; a partial file left over is the lesser problem.
-        let _ = std::fs::remove_file(&beside);
-    }
-    written
-}
-
-// ponytail: no fsync, since some filesystems refuse it. The autosave covers a crash; sync here if
-// saves on power loss turn out to matter.
-fn write_then_move(beside: &Path, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    std::fs::write(beside, bytes)?;
-    std::fs::rename(beside, path)
 }
 
 /// A native file dialog for charter songs.
@@ -168,6 +166,7 @@ fn main() -> eframe::Result {
                 window: Window::new(PLUGINS).with_settings(settings),
                 recovery: eframe::storage_dir(APP).map(|folder| folder.join("recovery.json")),
                 player: Player::default(),
+                disk: Box::new(disk::Real),
             };
             if let Some(path) = std::env::args_os().nth(1) {
                 host.read(Path::new(&path));
@@ -176,4 +175,127 @@ fn main() -> eframe::Result {
             Ok(Box::new(host))
         }),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::disk::memory::Memory;
+
+    /// A song in `sm`, which needs no plugin to open read-only, naming `a.ogg`.
+    const SONG: &[u8] = br#"{ "format_version": 0, "ruleset": { "id": "sm", "version": "0" },
+        "metadata": { "title": "t", "artist": "a", "audio": "a.ogg" },
+        "timing": { "offset_seconds": 0.0, "events": [ { "tick": 0, "kind": { "bpm": 120.0 } } ] },
+        "charts": [ { "name": "Easy", "lanes": 4 } ] }"#;
+
+    fn host(disk: Memory) -> Host {
+        Host {
+            window: Window::new(&[]),
+            recovery: Some(PathBuf::from("/data/recovery.json")),
+            player: Player::default(),
+            disk: Box::new(disk),
+        }
+    }
+
+    fn files(host: &Host, path: &str) -> bool {
+        host.disk.exists(Path::new(path))
+    }
+
+    #[test]
+    fn audio_is_copied_beside_the_song_unless_a_file_is_already_there() {
+        let mut host = host(Memory::with(&[
+            ("/m/a.ogg", b"audio"),
+            ("/s/b.ogg", b"mine"),
+        ]));
+        host.answer(Request::CopyAudio {
+            from: PathBuf::from("/m/a.ogg"),
+            to: PathBuf::from("/s/a.ogg"),
+        });
+        assert!(files(&host, "/s/a.ogg"));
+        host.answer(Request::CopyAudio {
+            from: PathBuf::from("/m/a.ogg"),
+            to: PathBuf::from("/s/b.ogg"),
+        });
+        assert_eq!(host.disk.read(Path::new("/s/b.ogg")).unwrap(), b"mine");
+        assert_eq!(host.window.message(), None);
+    }
+
+    #[test]
+    fn audio_that_cannot_be_copied_says_why() {
+        let mut host = host(Memory::default());
+        host.answer(Request::CopyAudio {
+            from: PathBuf::from("/m/gone.ogg"),
+            to: PathBuf::from("/s/gone.ogg"),
+        });
+        assert!(
+            host.window
+                .message()
+                .unwrap()
+                .contains("gone.ogg is not there")
+        );
+    }
+
+    #[test]
+    fn a_write_that_fails_says_why() {
+        let mut host = host(Memory {
+            unwritable: vec![PathBuf::from("/s/song.json.partial")],
+            ..Memory::default()
+        });
+        host.answer(Request::Write {
+            path: PathBuf::from("/s/song.json"),
+            bytes: b"{}".to_vec(),
+        });
+        assert!(host.window.message().unwrap().contains("the disk is full"));
+    }
+
+    #[test]
+    fn the_autosave_is_kept_in_the_data_folder_and_dropped_on_request() {
+        let mut host = host(Memory::default());
+        host.answer(Request::Autosave {
+            bytes: b"kept".to_vec(),
+        });
+        assert!(files(&host, "/data/recovery.json"));
+        host.answer(Request::DropAutosave);
+        assert!(!files(&host, "/data/recovery.json"));
+        host.answer(Request::DropAutosave);
+        assert_eq!(host.window.message(), None);
+    }
+
+    #[test]
+    fn an_autosave_that_cannot_be_kept_says_why() {
+        let mut host = host(Memory {
+            unwritable: vec![PathBuf::from("/data/recovery.json.partial")],
+            ..Memory::default()
+        });
+        host.answer(Request::Autosave {
+            bytes: b"kept".to_vec(),
+        });
+        assert!(
+            host.window
+                .message()
+                .unwrap()
+                .starts_with("Autosave failed")
+        );
+    }
+
+    #[test]
+    fn a_recovery_file_left_behind_is_offered_and_a_damaged_one_says_so() {
+        let mut host = host(Memory::with(&[("/data/recovery.json", b"{ damaged")]));
+        host.recover();
+        assert!(
+            host.window
+                .message()
+                .unwrap()
+                .contains("could not be restored")
+        );
+    }
+
+    #[test]
+    fn a_song_read_from_the_disk_opens_and_one_missing_says_why() {
+        let mut host = host(Memory::with(&[("/s/song.json", SONG)]));
+        host.read(Path::new("/s/song.json"));
+        assert_eq!(host.window.title(), "song.json - charter");
+        host.read(Path::new("/s/other.json"));
+        assert!(host.window.message().unwrap().contains("did not open"));
+    }
 }

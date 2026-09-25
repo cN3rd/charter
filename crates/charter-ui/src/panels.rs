@@ -3,11 +3,11 @@
 
 use std::num::NonZeroU16;
 
-use charter_core::{Bpm, MarkerKind, Object, Position, ResolvedTime, Shape};
+use charter_core::{Bpm, MarkerKind, Object, Position, ResolvedTime, Shape, Tick};
 use egui::{self, Align, Layout, RichText, Ui};
 use serde_json::Value;
 
-use charter_editor::Song;
+use charter_editor::{Song, Step};
 
 use crate::Action;
 use crate::keys::{HELP, NEW_SONG, OPEN, REDO, SAVE, SAVE_AS, SETTINGS, UNDO};
@@ -15,6 +15,7 @@ use crate::notefield::Zoom;
 use crate::style::{fields, heading, table};
 use crate::window::Rate;
 
+#[allow(clippy::too_many_lines)] // the menus in the order they show
 pub fn menu_bar(ui: &mut Ui, song: Option<&Song>, playing: bool, actions: &mut Vec<Action>) {
     let song_open = song.is_some();
     egui::MenuBar::new().ui(ui, |ui| {
@@ -55,6 +56,37 @@ pub fn menu_bar(ui: &mut Ui, song: Option<&Song>, playing: bool, actions: &mut V
                     actions.push(action);
                 }
             }
+            ui.separator();
+            menu_items(
+                ui,
+                song_open,
+                actions,
+                [
+                    ("Select all", "Ctrl+A", Action::SelectAll),
+                    ("Select none", "Escape", Action::ClearSelection),
+                    ("Delete the selection", "Delete", Action::DeleteSelection),
+                ],
+            );
+        });
+        ui.menu_button("Timing", |ui| {
+            menu_items(
+                ui,
+                song_open,
+                actions,
+                [
+                    ("Raise the tempo by 1 BPM", "F8", Action::NudgeBpm(1.0)),
+                    ("Lower the tempo by 1 BPM", "F7", Action::NudgeBpm(-1.0)),
+                    ("Add or remove a bookmark", "Ctrl+B", Action::ToggleBookmark),
+                    (
+                        "Previous section",
+                        "Alt+Up",
+                        Action::JumpSection(Step::Earlier),
+                    ),
+                    ("Next section", "Alt+Down", Action::JumpSection(Step::Later)),
+                    ("Jump to the start", "Home", Action::JumpTo(Tick::new(0))),
+                    ("Jump to the end", "End", Action::JumpEnd),
+                ],
+            );
         });
         ui.menu_button("View", |ui| {
             let items = [
@@ -79,17 +111,17 @@ pub fn menu_bar(ui: &mut Ui, song: Option<&Song>, playing: bool, actions: &mut V
                 actions.push(Action::TogglePlay);
             }
             ui.separator();
-            for (label, shortcut, action) in [
-                ("Faster", "Shift+Right", Action::NudgeRate(0.1)),
-                ("Slower", "Shift+Left", Action::NudgeRate(-0.1)),
-            ] {
-                if ui
-                    .add(egui::Button::new(label).shortcut_text(shortcut))
-                    .clicked()
-                {
-                    actions.push(action);
-                }
-            }
+            menu_items(
+                ui,
+                true,
+                actions,
+                [
+                    ("Faster", "Shift+Right", Action::NudgeRate(0.1)),
+                    ("Slower", "Shift+Left", Action::NudgeRate(-0.1)),
+                    ("Metronome on or off", "F3", Action::ToggleMetronome),
+                    ("Note ticks on or off", "F4", Action::ToggleTicks),
+                ],
+            );
             for factor in [0.5, 0.75, 1.0] {
                 if ui.button(format!("{:.0}% speed", factor * 100.0)).clicked() {
                     actions.push(Action::SetRate(factor));
@@ -106,8 +138,23 @@ pub fn menu_bar(ui: &mut Ui, song: Option<&Song>, playing: bool, actions: &mut V
     });
 }
 
-/// The keyboard shortcuts, while `open` is set.
-pub fn shortcuts(ctx: &egui::Context, open: &mut bool) {
+/// Menu items, each with the shortcut that does the same.
+fn menu_items<const N: usize>(
+    ui: &mut Ui,
+    enabled: bool,
+    actions: &mut Vec<Action>,
+    items: [(&str, &str, Action); N],
+) {
+    for (label, shortcut, action) in items {
+        let item = egui::Button::new(label).shortcut_text(shortcut);
+        if ui.add_enabled(enabled, item).clicked() {
+            actions.push(action);
+        }
+    }
+}
+
+/// The keyboard shortcuts, grouped, while `open` is set, showing those that match `filter`.
+pub fn shortcuts(ctx: &egui::Context, open: &mut bool, filter: &mut String) {
     egui::Window::new("Keyboard shortcuts")
         .open(open)
         .collapsible(false)
@@ -115,59 +162,105 @@ pub fn shortcuts(ctx: &egui::Context, open: &mut bool) {
         .pivot(egui::Align2::CENTER_CENTER)
         .default_pos(ctx.content_rect().center())
         .show(ctx, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                table(ui, "keys", |ui| {
-                    for (keys, does) in KEYS {
-                        ui.monospace(keys);
-                        ui.label(does);
-                        ui.end_row();
+            ui.horizontal(|ui| {
+                let caption = ui.weak("Filter");
+                ui.add(egui::TextEdit::singleline(filter).hint_text("a key or what it does"))
+                    .labelled_by(caption.id);
+            });
+            let wanted = filter.trim().to_lowercase();
+            let shown = |entry: &&(&str, &str)| {
+                wanted.is_empty()
+                    || entry.0.to_lowercase().contains(&wanted)
+                    || entry.1.to_lowercase().contains(&wanted)
+            };
+            egui::ScrollArea::vertical()
+                .max_height(480.0)
+                .show(ui, |ui| {
+                    for (group, keys) in KEYS {
+                        let keys: Vec<_> = keys.iter().filter(shown).collect();
+                        if keys.is_empty() {
+                            continue;
+                        }
+                        heading(ui, group);
+                        table(ui, group, |ui| {
+                            for (keys, does) in keys {
+                                ui.monospace(*keys);
+                                ui.label(*does);
+                                ui.end_row();
+                            }
+                        });
                     }
                 });
-            });
         });
 }
 
-/// The keys and gestures the notefield answers to, and what each does.
-const KEYS: [(&str, &str); 30] = [
-    ("1 to 9, 0", "Place or remove a tap on lanes 1 to 10"),
-    ("Hold 1 to 0, move", "Draw a hold"),
-    ("Shift+1 to 0", "Place or remove a mine"),
-    ("Ctrl+Click", "Place or remove a tap"),
-    ("Ctrl+Shift+Click", "Place or remove a mine"),
-    ("Ctrl+Drag", "Draw a hold"),
-    ("Click, Drag", "Select notes"),
-    ("Shift+Click, Shift+Drag", "Add to the selection"),
-    ("Alt+Click, Alt+Drag", "Take from the selection"),
-    ("Ctrl+A, Escape", "Select every note, or none"),
-    ("Delete, Backspace", "Delete the selection"),
-    ("Ctrl+Z", "Undo"),
-    ("Ctrl+Shift+Z, Ctrl+Y", "Redo"),
-    ("Ctrl+N", "New song"),
-    ("Ctrl+O, Ctrl+S, Ctrl+Shift+S", "Open, save, save as"),
-    ("Ctrl+Comma", "Settings"),
-    ("Up, Down, Wheel", "Move the cursor by the snap"),
-    ("Page Up, Page Down", "Move the cursor by a measure"),
+/// The keys and gestures the editor answers to, grouped, and what each does.
+const KEYS: [(&str, &[(&str, &str)]); 6] = [
     (
-        "Home, End",
-        "Jump to the start, or to where the last note ends",
+        "Note entry",
+        &[
+            ("1 to 9, 0", "Place or remove a tap on lanes 1 to 10"),
+            ("Hold 1 to 0, move", "Draw a hold"),
+            ("Shift+1 to 0", "Place or remove a mine"),
+            ("Ctrl+Click", "Place or remove a tap"),
+            ("Ctrl+Shift+Click", "Place or remove a mine"),
+            ("Ctrl+Drag", "Draw a hold"),
+        ],
     ),
-    ("Alt+Up, Alt+Down", "Jump to the previous or next section"),
-    ("Ctrl+B", "Add or remove a bookmark at the cursor"),
-    ("F7, F8", "Lower or raise the tempo at the cursor by 1 BPM"),
-    ("Left, Right", "Coarser or finer snap"),
-    ("Ctrl+Wheel", "Zoom"),
-    ("Ctrl+Plus, Ctrl+Minus", "Zoom"),
-    ("Space", "Play from the cursor, or pause"),
     (
-        "F3, F4",
-        "Turn the metronome or the tick on each note on or off",
+        "Selection",
+        &[
+            ("Click, Drag", "Select notes"),
+            ("Shift+Click, Shift+Drag", "Add to the selection"),
+            ("Alt+Click, Alt+Drag", "Take from the selection"),
+            ("Ctrl+A, Escape", "Select every note, or none"),
+            ("Delete, Backspace", "Delete the selection"),
+            ("Ctrl+Z", "Undo"),
+            ("Ctrl+Shift+Z, Ctrl+Y", "Redo"),
+        ],
     ),
-    ("Shift+Left, Shift+Right", "Play slower or faster by 10%"),
     (
-        "Ctrl+Shift+Left, Ctrl+Shift+Right",
-        "Play slower or faster by 1%",
+        "Moving around",
+        &[
+            ("Up, Down, Wheel", "Move the cursor by the snap"),
+            ("Page Up, Page Down", "Move the cursor by a measure"),
+            (
+                "Home, End",
+                "Jump to the start, or to where the last note ends",
+            ),
+            ("Alt+Up, Alt+Down", "Jump to the previous or next section"),
+            ("Left, Right", "Coarser or finer snap"),
+            ("Ctrl+Wheel, Ctrl+Plus, Ctrl+Minus", "Zoom"),
+        ],
     ),
-    ("F1", "Keyboard shortcuts"),
+    (
+        "Timing",
+        &[
+            ("Ctrl+B", "Add or remove a bookmark at the cursor"),
+            ("F7, F8", "Lower or raise the tempo at the cursor by 1 BPM"),
+        ],
+    ),
+    (
+        "Playback",
+        &[
+            ("Space", "Play from the cursor, or pause"),
+            ("Shift+Left, Shift+Right", "Play slower or faster by 10%"),
+            (
+                "Ctrl+Shift+Left, Ctrl+Shift+Right",
+                "Play slower or faster by 1%",
+            ),
+            ("F3, F4", "Turn the metronome or the note ticks on or off"),
+        ],
+    ),
+    (
+        "Files and windows",
+        &[
+            ("Ctrl+N", "New song"),
+            ("Ctrl+O, Ctrl+S, Ctrl+Shift+S", "Open, save, save as"),
+            ("Ctrl+Comma", "Settings"),
+            ("F1", "Keyboard shortcuts"),
+        ],
+    ),
 ];
 
 pub fn song_panel(ui: &mut Ui, song: &Song, actions: &mut Vec<Action>) {
@@ -214,22 +307,31 @@ pub fn song_panel(ui: &mut Ui, song: &Song, actions: &mut Vec<Action>) {
             ui.end_row();
         }
     });
+}
+
+/// What is read more than changed while charting: the open chart's settings and the song's
+/// keysound bank, folded away until wanted.
+pub fn details(ui: &mut Ui, song: &Song) {
     if let Some(chart) = song.chart() {
-        heading(ui, "Chart settings");
-        let settings: Vec<_> = chart
-            .settings
-            .iter()
-            .map(|(key, value)| (key.as_str(), shown(value)))
-            .collect();
-        fields(ui, "settings", &settings, "No chart settings");
+        egui::CollapsingHeader::new("Chart settings").show(ui, |ui| {
+            let settings: Vec<_> = chart
+                .settings
+                .iter()
+                .map(|(key, value)| (key.as_str(), shown(value)))
+                .collect();
+            fields(ui, "settings", &settings, "No chart settings");
+        });
     }
-    heading(ui, "Samples");
-    let samples: Vec<_> = document
-        .samples
-        .iter()
-        .map(|(id, path)| (id.as_str(), path.to_string()))
-        .collect();
-    fields(ui, "samples", &samples, "No samples");
+    egui::CollapsingHeader::new("Samples").show(ui, |ui| {
+        let samples: Vec<_> = song
+            .document()
+            .document()
+            .samples
+            .iter()
+            .map(|(id, path)| (id.as_str(), path.to_string()))
+            .collect();
+        fields(ui, "samples", &samples, "No samples");
+    });
 }
 
 /// The song's markers, each of which jumps the cursor to it when clicked. In a song open for
@@ -282,7 +384,9 @@ pub fn markers(ui: &mut Ui, song: &Song, draft: &mut Option<String>, actions: &m
                 actions.push(Action::JumpTo(marker.tick));
             }
             if editable {
-                let remove = ui.small_button("✕");
+                let remove = ui
+                    .small_button("Remove")
+                    .on_hover_text("Remove this marker; Ctrl+Z brings it back");
                 let label = format!("Remove marker {text}");
                 remove.widget_info(|| {
                     egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label)
@@ -318,6 +422,7 @@ pub fn inspector(ui: &mut Ui, song: &Song) {
         .collect();
     if selected.is_empty() {
         ui.weak("Nothing selected");
+        ui.weak("Click or drag over notes to select them; Delete removes them.");
         return;
     }
     let count = match selected.len() {
@@ -404,13 +509,20 @@ pub fn tempo(
         ui.weak(format!("since {}", song.timing().grid_position(at)));
         ui.end_row();
     });
-    if editable && at == song.cursor() && ui.button("Remove this BPM change").clicked() {
+    ui.add_space(4.0);
+    if editable && at == song.cursor() && ui.small_button("Remove this BPM change").clicked() {
         actions.push(Action::RemoveBpm);
     }
     refused
 }
 
-pub fn status_bar(ui: &mut Ui, song: Option<&Song>, zoom: Zoom, rate: Rate, playing: bool) {
+pub fn status_bar(
+    ui: &mut Ui,
+    song: Option<&Song>,
+    zoom: Zoom,
+    rate: Rate,
+    (audio, playing): (&str, bool),
+) {
     ui.horizontal(|ui| {
         let Some(song) = song else {
             ui.weak("No song open");
@@ -429,10 +541,10 @@ pub fn status_bar(ui: &mut Ui, song: Option<&Song>, zoom: Zoom, rate: Rate, play
         }
         ui.label(format!("Snap {}", ordinal(song.snap())));
         ui.label(format!("Zoom {:.0}%", zoom.percent()));
-        ui.label(format!("Rate {:.0}%", rate.percent()));
-        if playing {
-            ui.label("Playing");
-        }
+        ui.separator();
+        ui.label(if playing { "Playing" } else { "Paused" });
+        ui.label(format!("Speed {:.0}%", rate.percent()));
+        ui.weak(audio);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if song.read_only().is_some() {
                 ui.weak("Read only");
@@ -480,6 +592,9 @@ pub fn empty(ui: &mut Ui, actions: &mut Vec<Action>) {
             "Drop a charter song (.json) on this window, or give its path when you start charter.",
         );
         ui.add_space(8.0);
+        if ui.button("Open song…").clicked() {
+            actions.push(Action::Open);
+        }
         if ui.button("New song").clicked() {
             actions.push(Action::NewSong);
         }
@@ -490,10 +605,15 @@ pub fn empty(ui: &mut Ui, actions: &mut Vec<Action>) {
 }
 
 /// That the open song has no audio yet, and how to give it some.
-pub fn no_audio(ui: &mut Ui) {
-    let colour = ui.visuals().warn_fg_color;
-    let text = "No audio yet: drop an audio file (.ogg, .mp3, .wav, .flac) on the window.";
-    ui.label(RichText::new(text).color(colour));
+pub fn no_audio(ui: &mut Ui, actions: &mut Vec<Action>) {
+    ui.horizontal(|ui| {
+        let colour = ui.visuals().warn_fg_color;
+        let text = "No audio yet: drop an audio file (.ogg, .mp3, .wav, .flac) on the window, or";
+        ui.label(RichText::new(text).color(colour));
+        if ui.button("Choose audio…").clicked() {
+            actions.push(Action::ChooseAudio);
+        }
+    });
 }
 
 /// What to do with unsaved changes that are about to be lost.
@@ -550,9 +670,14 @@ pub fn ask_to_restore(ui: &Ui, name: &str) -> Option<bool> {
 }
 
 /// Why the last file did not open, or the last edit was refused.
-pub fn failure(ui: &mut Ui, message: &str) {
-    let colour = ui.visuals().warn_fg_color;
-    ui.label(RichText::new(message).color(colour));
+/// Says whether the user dismissed it.
+pub fn failure(ui: &mut Ui, message: &str) -> bool {
+    ui.horizontal(|ui| {
+        let colour = ui.visuals().warn_fg_color;
+        ui.label(RichText::new(message).color(colour));
+        ui.small_button("Dismiss").clicked()
+    })
+    .inner
 }
 
 /// Why the open song cannot be edited.

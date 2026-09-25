@@ -78,6 +78,15 @@ mod tests {
     }
 
     #[test]
+    fn an_autosave_with_fields_it_does_not_know_is_refused() {
+        let song = demo::song();
+        let bytes = write(None, song.document()).unwrap();
+        let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        value["later"] = serde_json::json!(true);
+        assert!(read(&serde_json::to_vec(&value).unwrap(), &[]).is_err());
+    }
+
+    #[test]
     fn a_damaged_autosave_is_refused() {
         assert!(read(b"", &[]).is_err());
         assert!(read(br#"{ "path": null, "song": { "format_version": 0 } }"#, &[]).is_err());

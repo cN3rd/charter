@@ -25,10 +25,15 @@ user chooses, including which way the notefield runs and the tick on each note a
 each beat, which play over the audio and which F3 and F4 turn on and off. The inspector shows the
 selection but cannot change it yet. A new song takes its game, the layout every chart shares, its
 title, artist and chart names from a dialog, and asks for audio until an audio file is dropped on
-the window; saving copies that file beside the song. Space plays the song's audio from the cursor
-and pauses it, the cursor follows the playback, and moving the cursor while playing seeks.
-Shift+Left and Shift+Right, or the Playback menu, play slower or faster from 10% to 400%, which
-changes the audio's pitch with its speed and leaves the chart alone.
+the window or chosen from the banner that asks for it; saving copies that file beside the song.
+Space plays the song's audio from the cursor and pauses it, the cursor follows the playback, and
+moving the cursor while playing seeks. Shift+Left and Shift+Right, or the Playback menu, play slower
+or faster from 10% to 400%, which changes the audio's pitch with its speed and leaves the chart
+alone. The status bar says whether the audio is ready, loading, missing or unreadable, and every
+message has a Dismiss button. The Edit, Timing and Playback menus carry the selection, tempo, marker
+and playback commands with their keys, F1 lists every key by group with a filter, and saving,
+opening, settings and help keep working while a text field has the keyboard. With no song open the
+centre offers Open song…, New song and the demo.
 
 ## Main window
 

@@ -135,7 +135,8 @@ pub fn show(ui: &Ui, plugins: &[&'static dyn RulesetPlugin], draft: &mut Draft) 
         let mut removed = None;
         for (index, name) in draft.charts.iter_mut().enumerate() {
             ui.horizontal(|ui| {
-                ui.text_edit_singleline(name);
+                let caption = ui.weak(format!("Chart {}", index + 1));
+                ui.text_edit_singleline(name).labelled_by(caption.id);
                 let remove = ui.small_button("✕");
                 let label = format!("Remove {name}");
                 remove.widget_info(|| {
@@ -154,6 +155,8 @@ pub fn show(ui: &Ui, plugins: &[&'static dyn RulesetPlugin], draft: &mut Draft) 
                 .charts
                 .push(format!("Chart {}", draft.charts.len() + 1));
         }
+        ui.add_space(8.0);
+        ui.weak("Once the song is open, drop its audio file on the window, or choose it there.");
         ui.add_space(8.0);
         ui.horizontal(|ui| {
             let song = draft.song();

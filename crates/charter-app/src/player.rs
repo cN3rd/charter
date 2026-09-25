@@ -14,20 +14,41 @@ use kira::{AudioManager, AudioManagerSettings, DefaultBackend, Frame, Tween};
 type Loading = (PathBuf, Receiver<Result<Track, String>>);
 
 /// The audio device, the song's audio and the sound playing it.
-#[derive(Default)]
 pub struct Player {
     /// The output, opened on first use; the error when it would not open.
     device: Option<Result<AudioManager<DefaultBackend>, String>>,
+    /// Reads and decodes an audio file.
+    load: fn(&Path) -> Result<Track, String>,
+    /// Whether loading happens on the caller's thread, as in tests, rather than on its own.
+    inline: bool,
     loading: Option<Loading>,
-    loaded: Option<(PathBuf, Track)>,
+    /// The audio, decoded and as sound kira plays.
+    loaded: Option<(PathBuf, Track, StaticSoundData)>,
+    /// Audio that failed to load, which is not tried again until the window wants other audio.
+    failed: Option<PathBuf>,
     playing: Option<StaticSoundHandle>,
+}
+
+impl Default for Player {
+    fn default() -> Self {
+        Self {
+            device: None,
+            load,
+            inline: false,
+            loading: None,
+            loaded: None,
+            failed: None,
+            playing: None,
+        }
+    }
 }
 
 impl std::fmt::Debug for Player {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Player")
             .field("loading", &self.loading.as_ref().map(|(path, _)| path))
-            .field("loaded", &self.loaded.as_ref().map(|(path, _)| path))
+            .field("loaded", &self.loaded.as_ref().map(|(path, ..)| path))
+            .field("failed", &self.failed)
             .field("playing", &self.playing.is_some())
             .finish_non_exhaustive()
     }
@@ -42,17 +63,27 @@ impl Player {
             .loading
             .as_ref()
             .map(|(path, _)| path)
-            .or(self.loaded.as_ref().map(|(path, _)| path));
+            .or(self.loaded.as_ref().map(|(path, ..)| path))
+            .or(self.failed.as_ref());
         if have != wanted.as_ref() {
-            self.stop();
+            if self.playing.is_some() {
+                self.stop();
+                window.playback_ended();
+            }
             self.loaded = None;
+            self.failed = None;
+            let (load, inline) = (self.load, self.inline);
             self.loading = wanted.map(|path| {
                 let (send, receive) = std::sync::mpsc::channel();
                 let file = path.clone();
-                std::thread::spawn(move || {
-                    // The window has moved on if nobody is listening; that is fine.
+                // The window has moved on if nobody is listening; that is fine.
+                if inline {
                     let _ = send.send(load(&file));
-                });
+                } else {
+                    std::thread::spawn(move || {
+                        let _ = send.send(load(&file));
+                    });
+                }
                 (path, receive)
             });
         }
@@ -60,16 +91,19 @@ impl Player {
             match receive.try_recv() {
                 Ok(Ok(track)) => {
                     window.audio_ready(path, track.seconds());
-                    self.loaded = Some((path.clone(), track));
+                    let data = sound(&track);
+                    self.loaded = Some((path.clone(), track, data));
                     self.loading = None;
                 }
                 Ok(Err(why)) => {
                     window.audio_failed(path, &why);
+                    self.failed = Some(path.clone());
                     self.loading = None;
                 }
                 Err(TryRecvError::Empty) => {}
                 Err(TryRecvError::Disconnected) => {
                     window.audio_failed(path, "loading stopped");
+                    self.failed = Some(path.clone());
                     self.loading = None;
                 }
             }
@@ -95,14 +129,17 @@ impl Player {
                 ref clicks,
             } => {
                 self.stop();
-                let Some((path, track)) = &self.loaded else {
+                let Some((path, track, data)) = &self.loaded else {
+                    window.playback_ended();
                     return;
                 };
                 let settings = StaticSoundSettings::new()
                     .start_position(from.max(0.0))
                     .playback_rate(rate);
+                // ponytail: clicks mix into a copy of the whole track on each play, tens of
+                // milliseconds for a long song; play them as sounds of their own if that shows.
                 let data = if clicks.is_empty() {
-                    sound(track)
+                    data.clone()
                 } else {
                     sound(&charter_audio::mix(track, clicks))
                 };
@@ -174,6 +211,78 @@ fn sound(track: &Track) -> StaticSoundData {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// A song in `sm`, which opens read-only without its plugin, naming `a.wav`.
+    const SONG: &[u8] = br#"{ "format_version": 0, "ruleset": { "id": "sm", "version": "0" },
+        "metadata": { "title": "t", "artist": "a", "audio": "a.wav" },
+        "timing": { "offset_seconds": 0.0, "events": [ { "tick": 0, "kind": { "bpm": 120.0 } } ] },
+        "charts": [ { "name": "Easy", "lanes": 4 } ] }"#;
+
+    fn song_window() -> Window {
+        let mut window = Window::new(&[]);
+        window.open(Path::new("/s/song.json"), SONG);
+        window
+    }
+
+    static FAILED_LOADS: AtomicUsize = AtomicUsize::new(0);
+
+    fn failing(_: &Path) -> Result<Track, String> {
+        FAILED_LOADS.fetch_add(1, Ordering::SeqCst);
+        Err("no such file".to_owned())
+    }
+
+    #[allow(clippy::unnecessary_wraps)] // a loader's signature
+    fn silent(_: &Path) -> Result<Track, String> {
+        Ok(Track::silence(1000, 2000))
+    }
+
+    fn player(load: fn(&Path) -> Result<Track, String>) -> Player {
+        Player {
+            load,
+            inline: true,
+            ..Player::default()
+        }
+    }
+
+    #[test]
+    fn audio_that_fails_to_load_is_reported_once_and_not_loaded_again() {
+        let mut player = player(failing);
+        let mut window = song_window();
+        let before = FAILED_LOADS.load(Ordering::SeqCst);
+        for _ in 0..5 {
+            player.update(&mut window);
+        }
+        assert_eq!(FAILED_LOADS.load(Ordering::SeqCst) - before, 1);
+        assert!(window.message().unwrap().contains("no such file"));
+    }
+
+    #[test]
+    fn audio_that_loads_is_kept_as_sound_ready_to_play() {
+        let mut player = player(silent);
+        let mut window = song_window();
+        player.update(&mut window);
+        player.update(&mut window);
+        let (path, _, data) = player.loaded.as_ref().unwrap();
+        assert_eq!(path, Path::new("/s/a.wav"));
+        assert_eq!(data.frames.len(), 2000);
+        assert_eq!(window.message(), None);
+    }
+
+    #[test]
+    fn play_with_nothing_loaded_ends_playback_at_once() {
+        let mut player = player(silent);
+        let mut window = song_window();
+        let play = Request::Play {
+            from: 0.0,
+            rate: 1.0,
+            clicks: Vec::new(),
+        };
+        player.answer(&play, &mut window);
+        assert!(player.playing.is_none());
+        assert!(!window.is_playing());
+    }
 
     #[test]
     fn a_track_becomes_sound_of_the_same_frames_and_rate() {

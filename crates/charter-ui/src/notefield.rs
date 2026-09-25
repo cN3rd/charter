@@ -462,12 +462,15 @@ fn pointer(
     {
         *gesture = if modifiers.command {
             spot(origin).map(|(lane, from)| {
-                let note = Note::Tap;
-                actions.push(Action::Place {
-                    tick: from,
-                    lane,
-                    note,
-                });
+                // A note already there is stretched as it is, rather than toggled away.
+                if !song.starts_at(from, lane) {
+                    let note = Note::Tap;
+                    actions.push(Action::Place {
+                        tick: from,
+                        lane,
+                        note,
+                    });
+                }
                 Gesture::Hold { lane, from }
             })
         } else {
@@ -966,6 +969,22 @@ mod tests {
         let now = song().timing().time_at(Tick::new(0));
         let field = Field::new(area, 0, now, Zoom::START);
         assert_eq!(field.lanes_between(0.0, 800.0), None);
+    }
+
+    #[test]
+    fn a_box_past_either_side_of_the_lanes_reaches_the_lane_on_that_side() {
+        let area = Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0));
+        let now = song().timing().time_at(Tick::new(0));
+        let field = Field::new(area, 4, now, Zoom::START);
+        let lanes = field.columns.lanes;
+        let (first, last) = (LaneIndex::new(0), LaneIndex::new(3));
+        assert_eq!(field.lanes_between(0.0, 800.0), Some((first, last)));
+        assert_eq!(
+            field.lanes_between(lanes.max, lanes.max + 5.0),
+            Some((last, last))
+        );
+        assert_eq!(field.lanes_between(0.0, lanes.min - 1.0), None);
+        assert_eq!(field.lanes_between(lanes.max + 1.0, 800.0), None);
     }
 
     #[test]
