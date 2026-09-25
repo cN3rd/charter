@@ -169,24 +169,70 @@ pub fn song_panel(ui: &mut Ui, song: &Song, actions: &mut Vec<Action>) {
         .map(|(id, path)| (id.as_str(), path.to_string()))
         .collect();
     fields(ui, "samples", &samples, "No samples");
+}
+
+/// The song's markers, each of which jumps the cursor to it when clicked. In a song open for
+/// editing a name typed and entered names the section at the cursor, starting one there if
+/// there is none, and each marker can be removed.
+pub fn markers(ui: &mut Ui, song: &Song, draft: &mut Option<String>, actions: &mut Vec<Action>) {
     heading(ui, "Markers");
-    let markers: Vec<_> = document
-        .markers
-        .iter()
-        .map(|marker| {
+    let editable = song.read_only().is_none();
+    if editable {
+        table(ui, "section here", |ui| {
+            let caption = ui.weak("Section here");
+            let mut text = draft
+                .take()
+                .unwrap_or_else(|| song.section().unwrap_or_default().to_owned());
+            let field = ui
+                .add(egui::TextEdit::singleline(&mut text).hint_text("none"))
+                .labelled_by(caption.id);
+            let entered =
+                field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
+            if field.has_focus() {
+                *draft = Some(text);
+            } else if entered {
+                actions.push(Action::SetSection(text.trim().to_owned()));
+            }
+            ui.end_row();
+        });
+    }
+    let document = song.document().document();
+    if document.markers.is_empty() {
+        ui.weak("No markers");
+        return;
+    }
+    let timing = song.timing();
+    table(ui, "markers", |ui| {
+        for (index, marker) in document.markers.iter().enumerate() {
+            ui.monospace(timing.grid_position(marker.tick).to_string());
             let kind = match &marker.kind {
-                MarkerKind::Section => "Section".to_owned(),
-                MarkerKind::Bookmark => "Bookmark".to_owned(),
+                MarkerKind::Section => "section".to_owned(),
+                MarkerKind::Bookmark => "bookmark".to_owned(),
                 MarkerKind::Other(key) => key.to_string(),
             };
-            (kind, marker.text.clone())
-        })
-        .collect();
-    let markers: Vec<_> = markers
-        .iter()
-        .map(|(kind, text)| (kind.as_str(), text.clone()))
-        .collect();
-    fields(ui, "markers", &markers, "No markers");
+            ui.weak(kind);
+            let text = if marker.text.is_empty() {
+                "(unnamed)"
+            } else {
+                marker.text.as_str()
+            };
+            let here = marker.tick == song.cursor();
+            if ui.selectable_label(here, text).clicked() {
+                actions.push(Action::JumpTo(marker.tick));
+            }
+            if editable {
+                let remove = ui.small_button("✕");
+                let label = format!("Remove marker {text}");
+                remove.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label)
+                });
+                if remove.clicked() {
+                    actions.push(Action::RemoveMarker(index));
+                }
+            }
+            ui.end_row();
+        }
+    });
 }
 
 /// A setting's value as text: strings bare, anything else as JSON.
@@ -310,7 +356,11 @@ pub fn status_bar(ui: &mut Ui, song: Option<&Song>, zoom: Zoom) {
             return;
         };
         let timing = song.timing();
-        ui.monospace(timing.grid_position(song.cursor()).to_string());
+        let at = timing.grid_position(song.cursor()).to_string();
+        let cursor = ui.monospace(&at);
+        cursor.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Label, true, format!("Cursor at {at}"))
+        });
         ui.monospace(clock(timing.time_at(song.cursor())));
         ui.separator();
         if let Some((_, bpm)) = song.bpm() {

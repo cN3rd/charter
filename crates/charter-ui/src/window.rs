@@ -108,7 +108,7 @@ impl Note {
 }
 
 /// Something a panel, key or gesture asks the editor to do.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Action {
     OpenDemo,
     OpenChart(usize),
@@ -162,6 +162,12 @@ pub(crate) enum Action {
     SetBpm(charter_core::Bpm),
     /// Removes the BPM change at the cursor.
     RemoveBpm,
+    /// Puts the cursor on this tick.
+    JumpTo(Tick),
+    /// Names the section at the cursor this, starting one there if none does.
+    SetSection(String),
+    /// Removes the song's marker at this index.
+    RemoveMarker(usize),
 }
 
 /// The editor window's state.
@@ -215,6 +221,8 @@ pub struct Window {
     new_song: Option<new_song::Draft>,
     /// A BPM being typed, while its field has the keyboard.
     bpm_draft: Option<String>,
+    /// A section name being typed, while its field has the keyboard.
+    section_draft: Option<String>,
     /// The audio file dropped on the song, which is copied beside the song when it is saved
     /// elsewhere.
     audio_file: Option<PathBuf>,
@@ -621,6 +629,9 @@ impl Window {
             }
             Action::SetBpm(bpm) => self.failure = refused(song.set_bpm(bpm).err()),
             Action::RemoveBpm => self.failure = refused(song.remove_bpm().err()),
+            Action::JumpTo(tick) => song.jump_to(tick),
+            Action::SetSection(text) => self.failure = refused(song.set_section(&text).err()),
+            Action::RemoveMarker(index) => self.failure = refused(song.remove_marker(index).err()),
             Action::SelectAll => song.select_all(),
             Action::DeleteSelection => self.failure = refused(song.delete_selection().err()),
         }
@@ -716,11 +727,17 @@ impl Window {
             panels::status_bar(ui, self.song.as_ref(), self.zoom);
         });
         if let Some(song) = &self.song {
-            let draft = &mut self.bpm_draft;
+            let (bpm, section) = (&mut self.bpm_draft, &mut self.section_draft);
             let refused = egui::Panel::left("song")
                 .show(ui, |ui| {
-                    panels::song_panel(ui, song, &mut actions);
-                    panels::tempo(ui, song, draft, &mut actions)
+                    egui::ScrollArea::vertical()
+                        .show(ui, |ui| {
+                            panels::song_panel(ui, song, &mut actions);
+                            let refused = panels::tempo(ui, song, bpm, &mut actions);
+                            panels::markers(ui, song, section, &mut actions);
+                            refused
+                        })
+                        .inner
                 })
                 .inner;
             if refused.is_some() {
@@ -923,7 +940,9 @@ mod tests {
     }
 
     fn cursor_shows(harness: &Harness<'_, Window>, position: &str) -> bool {
-        harness.query_by_label(position).is_some()
+        harness
+            .query_by_label(&format!("Cursor at {position}"))
+            .is_some()
     }
 
     #[test]
@@ -1866,6 +1885,91 @@ mod tests {
         assert!(harness.query_by_label("150 BPM").is_some());
     }
 
+    fn section_field<'a>(harness: &'a Harness<'_, Window>) -> egui_kittest::Node<'a> {
+        harness.get_by_role_and_label(Role::TextInput, "Section here")
+    }
+
+    /// Types `text` over whatever the section field holds, then presses `key`.
+    fn enter_section(harness: &mut Harness<'_, Window>, text: &str, key: egui::Key) {
+        section_field(harness).focus();
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        section_field(harness).type_text(text);
+        harness.run();
+        harness.key_press(key);
+        harness.run();
+    }
+
+    fn marker_texts(harness: &Harness<'_, Window>) -> Vec<String> {
+        let song = harness.state().song.as_ref().unwrap();
+        let markers = &song.document().document().markers;
+        markers.iter().map(|marker| marker.text.clone()).collect()
+    }
+
+    #[test]
+    fn clicking_a_marker_in_the_list_jumps_there() {
+        let mut harness = editable_demo();
+        harness.get_by_label("Chorus").click();
+        harness.run();
+        assert!(cursor_shows(&harness, "16:0:0"));
+        assert_eq!(section_field(&harness).value().as_deref(), Some("Chorus"));
+    }
+
+    #[test]
+    fn a_section_named_at_the_cursor_is_added_and_listed() {
+        let mut harness = editable_demo();
+        harness.key_press(egui::Key::PageDown);
+        harness.run();
+        assert_eq!(section_field(&harness).value().as_deref(), Some(""));
+        enter_section(&mut harness, "Build", egui::Key::Enter);
+        assert_eq!(marker_texts(&harness)[1], "Build");
+        assert!(harness.query_by_label("Build").is_some());
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.run();
+        assert!(!marker_texts(&harness).contains(&"Build".to_owned()));
+    }
+
+    #[test]
+    fn a_section_renamed_at_the_cursor_keeps_its_place() {
+        let mut harness = editable_demo();
+        enter_section(&mut harness, "Opening", egui::Key::Enter);
+        assert_eq!(marker_texts(&harness)[0], "Opening");
+    }
+
+    #[test]
+    fn a_section_name_left_with_escape_changes_nothing() {
+        let mut harness = editable_demo();
+        enter_section(&mut harness, "Opening", egui::Key::Escape);
+        assert_eq!(marker_texts(&harness)[0], "Intro");
+    }
+
+    #[test]
+    fn a_marker_can_be_removed_from_the_list() {
+        let mut harness = editable_demo();
+        harness
+            .get_by_label("Remove marker Check the stream")
+            .click();
+        harness.run();
+        assert!(!marker_texts(&harness).contains(&"Check the stream".to_owned()));
+        assert!(harness.query_by_label("Check the stream").is_none());
+    }
+
+    #[test]
+    fn a_read_only_song_jumps_to_markers_without_editing_them() {
+        let mut harness = window(Window::new(&[]));
+        harness.state_mut().open_demo();
+        harness.run();
+        harness.get_by_label("Verse").click();
+        harness.run();
+        assert!(cursor_shows(&harness, "8:0:0"));
+        assert!(
+            harness
+                .query_by_role_and_label(Role::TextInput, "Section here")
+                .is_none()
+        );
+        assert!(harness.query_by_label("Remove marker Verse").is_none());
+    }
+
     #[test]
     fn turning_auto_jump_off_keeps_the_cursor_where_notes_go() {
         let mut harness = editable_demo();
@@ -2286,13 +2390,13 @@ mod tests {
             harness.key_press(egui::Key::ArrowDown);
         }
         harness.run();
-        assert!(harness.query_by_label("0:1:0").is_some());
+        assert!(cursor_shows(&harness, "0:1:0"));
         harness.key_press(egui::Key::ArrowRight);
         harness.run();
         assert!(harness.query_by_label("Snap 24th").is_some());
         harness.key_press(egui::Key::PageDown);
         harness.run();
-        assert!(harness.query_by_label("1:0:0").is_some());
+        assert!(cursor_shows(&harness, "1:0:0"));
     }
 
     #[test]

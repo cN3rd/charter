@@ -16,13 +16,15 @@ glyphs, since no ruleset plugin draws yet, and starts and edits songs of the bui
 keys and Ctrl with the mouse place taps, holds and mines; the mouse selects and Delete removes the
 selection; undo and redo return to where each edit was made. The song panel shows the tempo at the
 cursor: a BPM typed there and entered changes the tempo from the cursor on, as one step, and the BPM
-change at the cursor can be removed, unless it is the only one. Songs open and save through native
-file dialogs, unsaved changes are asked about before they are lost and autosaved half a minute after
-they are made, and a settings window holds what the user chooses, including which way the notefield
-runs and the tick and metronome sounds, which play once charter plays audio. The inspector shows the
-selection but cannot change it yet. A new song takes its game, the layout every chart shares, its
-title, artist and chart names from a dialog, and asks for audio until an audio file is dropped on
-the window; saving copies that file beside the song.
+change at the cursor can be removed, unless it is the only one. Below it the song's markers are
+listed; clicking one jumps the cursor there, a name typed and entered names the section at the
+cursor or starts one, and any marker can be removed, each as one step. Songs open and save through
+native file dialogs, unsaved changes are asked about before they are lost and autosaved half a
+minute after they are made, and a settings window holds what the user chooses, including which way
+the notefield runs and the tick and metronome sounds, which play once charter plays audio. The
+inspector shows the selection but cannot change it yet. A new song takes its game, the layout every
+chart shares, its title, artist and chart names from a dialog, and asks for audio until an audio
+file is dropped on the window; saving copies that file beside the song.
 
 ## Main window
 
