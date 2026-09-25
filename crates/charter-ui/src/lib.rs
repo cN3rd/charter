@@ -8,5 +8,5 @@ mod panels;
 mod style;
 mod window;
 
-use window::Action;
 pub use window::Window;
+use window::{Action, Note};

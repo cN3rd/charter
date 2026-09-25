@@ -2,13 +2,29 @@
 
 use std::path::Path;
 
-use charter_core::{Kind, LaneIndex, RulesetPlugin};
+use charter_core::{Kind, LaneIndex, RulesetPlugin, Tick};
 use egui::Ui;
 
 use charter_editor::{Refusal, Song, Step, Toggled, demo};
 
 use crate::notefield::{self, Zoom};
 use crate::{keys, panels, style};
+
+/// A note a lane key places.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Note {
+    Tap,
+    Mine,
+}
+
+impl Note {
+    fn kind(self) -> Kind {
+        match self {
+            Self::Tap => Kind::Tap,
+            Self::Mine => Kind::Mine,
+        }
+    }
+}
 
 /// Something a panel, key or gesture asks the editor to do.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -20,8 +36,10 @@ pub(crate) enum Action {
     FinerSnap,
     CoarserSnap,
     ZoomBy(f32),
-    /// Places a tap on the lane at the cursor, or removes what starts there.
-    Toggle(LaneIndex),
+    /// Places a note on the lane at the cursor, or removes what starts there.
+    Toggle(LaneIndex, Note),
+    /// The lane key of a lane that toggled came up.
+    LaneUp(LaneIndex),
     /// Every lane key that toggled is up again.
     LanesReleased,
     Undo,
@@ -45,6 +63,9 @@ pub struct Window {
     /// Whether a lane key placed a note that the cursor has not moved on from, which it does once
     /// every lane key is up, so the keys of a chord place it on one tick.
     placed: bool,
+    /// Taps placed by lane keys still down, by lane and tick. Each stretches into a hold to the
+    /// cursor as it moves.
+    holding: Vec<(LaneIndex, Tick)>,
 }
 
 impl Window {
@@ -82,6 +103,7 @@ impl Window {
         self.zoom = Zoom::START;
         self.failure = None;
         self.placed = false;
+        self.holding.clear();
     }
 
     fn apply(&mut self, action: Action) {
@@ -94,19 +116,32 @@ impl Window {
             return;
         };
         match action {
-            Action::OpenChart(index) => song.open_chart(index),
-            Action::Move(step) => song.step(step),
-            Action::MoveMeasure(step) => song.step_measure(step),
+            Action::OpenChart(index) => {
+                song.open_chart(index);
+                self.holding.clear();
+            }
+            Action::Move(step) => {
+                song.step(step);
+                self.failure = stretch(song, &self.holding).or(self.failure.take());
+            }
+            Action::MoveMeasure(step) => {
+                song.step_measure(step);
+                self.failure = stretch(song, &self.holding).or(self.failure.take());
+            }
             Action::FinerSnap => song.finer_snap(),
             Action::CoarserSnap => song.coarser_snap(),
             Action::ZoomBy(factor) => self.zoom = self.zoom.by(factor),
-            Action::Toggle(lane) => {
-                let toggled = song.toggle(song.cursor(), lane, Kind::Tap);
+            Action::Toggle(lane, note) => {
+                let toggled = song.toggle(song.cursor(), lane, note.kind());
                 if let Ok(Toggled::Placed) = toggled {
                     self.placed = true;
+                    if note == Note::Tap {
+                        self.holding.push((lane, song.cursor()));
+                    }
                 }
                 self.failure = refused(toggled.err());
             }
+            Action::LaneUp(lane) => self.holding.retain(|(held, _)| *held != lane),
             Action::LanesReleased => {
                 if std::mem::take(&mut self.placed) {
                     song.step(Step::Later);
@@ -114,10 +149,12 @@ impl Window {
             }
             Action::Undo => {
                 self.placed = false;
+                self.holding.clear();
                 self.failure = refused(song.undo().err());
             }
             Action::Redo => {
                 self.placed = false;
+                self.holding.clear();
                 self.failure = refused(song.redo().err());
             }
             Action::OpenDemo => {}
@@ -147,7 +184,8 @@ impl Window {
             let asked = ui.input(|input| keys::key_actions(input, lanes, lane_keys));
             // A focused widget takes the keyboard, but a lane key coming up still ends its chord.
             let busy = ui.ctx().egui_wants_keyboard_input();
-            let ends_a_chord = |action: &Action| *action == Action::LanesReleased;
+            let ends_a_chord =
+                |action: &Action| matches!(action, Action::LaneUp(_) | Action::LanesReleased);
             actions.extend(
                 asked
                     .into_iter()
@@ -191,6 +229,16 @@ fn editable_lanes(song: &Song) -> u16 {
     song.chart()
         .and_then(|chart| chart.lanes)
         .map_or(0, u16::from)
+}
+
+/// Stretches each tap a held lane key placed into a hold to the cursor, and says why if the song
+/// refuses one.
+fn stretch(song: &mut Song, holding: &[(LaneIndex, Tick)]) -> Option<String> {
+    let cursor = song.cursor();
+    let refusals = holding
+        .iter()
+        .filter_map(|&(lane, from)| song.stretch(lane, from, cursor).err());
+    refused(refusals.last())
 }
 
 /// What to say about a refused edit, or nothing when the edit went through.
@@ -462,6 +510,17 @@ mod tests {
     }
 
     #[test]
+    fn a_lane_key_held_through_shift_coming_up_repeats_without_toggling() {
+        let mut harness = editable_demo();
+        shift_down(&harness, egui::Key::Exclamationmark, egui::Key::Num1);
+        harness.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+        let none = egui::Modifiers::NONE;
+        harness.event(keyboard(egui::Key::Num1, egui::Key::Num1, true, none));
+        harness.run();
+        assert_eq!(note_at(&harness, 0, 0), Some(mine()));
+    }
+
+    #[test]
     fn ctrl_minus_zooms_out_where_the_layout_puts_minus_on_a_digit_key() {
         let mut harness = editable_demo();
         let command = egui::Modifiers::COMMAND;
@@ -532,6 +591,111 @@ mod tests {
         harness.key_up(egui::Key::Num1);
         harness.run();
         assert!(cursor_shows(&harness, "0:0:0"));
+    }
+
+    /// What starts on `lane` at `tick` in the open chart, as the format writes it.
+    fn note_at(harness: &Harness<'_, Window>, tick: i32, lane: u16) -> Option<serde_json::Value> {
+        let song = harness.state().song.as_ref().unwrap();
+        let chart = song.chart().unwrap();
+        chart
+            .objects
+            .iter()
+            .find(|object| {
+                object.tick == Tick::new(tick)
+                    && matches!(object.position, Position::Lane { index, .. } if index == LaneIndex::new(lane))
+            })
+            .map(|object| serde_json::json!({ "kind": object.kind.to_string(), "shape": object.shape }))
+    }
+
+    fn tap() -> serde_json::Value {
+        serde_json::json!({ "kind": "tap", "shape": "instant" })
+    }
+
+    fn hold(duration: u32) -> serde_json::Value {
+        serde_json::json!({ "kind": "hold", "shape": { "sustain": { "duration": duration } } })
+    }
+
+    fn mine() -> serde_json::Value {
+        serde_json::json!({ "kind": "mine", "shape": "instant" })
+    }
+
+    /// Presses the lane key for `lane` under Shift, which a US layout reports as a symbol.
+    fn shift_down(harness: &Harness<'_, Window>, symbol: egui::Key, place: egui::Key) {
+        let shift = egui::Modifiers::SHIFT;
+        harness.event(egui::Event::ModifiersChanged(shift));
+        harness.event(keyboard(symbol, place, true, shift));
+    }
+
+    #[test]
+    fn shift_and_a_lane_key_place_a_mine_and_move_on() {
+        let mut harness = editable_demo();
+        shift_down(&harness, egui::Key::Exclamationmark, egui::Key::Num1);
+        harness.event(keyboard(
+            egui::Key::Exclamationmark,
+            egui::Key::Num1,
+            false,
+            egui::Modifiers::SHIFT,
+        ));
+        harness.run();
+        assert_eq!(note_at(&harness, 0, 0), Some(mine()));
+        assert!(cursor_shows(&harness, "0:0:240"));
+    }
+
+    #[test]
+    fn holding_a_lane_key_while_the_cursor_moves_draws_a_hold() {
+        let mut harness = editable_demo();
+        harness.key_down(egui::Key::Num1);
+        harness.key_press(egui::Key::ArrowDown);
+        harness.key_press(egui::Key::ArrowDown);
+        harness.run();
+        assert_eq!(note_at(&harness, 0, 0), Some(hold(480)));
+        harness.key_up(egui::Key::Num1);
+        harness.run();
+        assert!(cursor_shows(&harness, "0:0:720"));
+    }
+
+    #[test]
+    fn a_hold_drawn_with_a_lane_key_undoes_in_one_step() {
+        let mut harness = editable_demo();
+        harness.key_down(egui::Key::Num1);
+        harness.key_press(egui::Key::ArrowDown);
+        harness.key_up(egui::Key::Num1);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.run();
+        assert_eq!(note_at(&harness, 0, 0), None);
+        assert!(cursor_shows(&harness, "0:0:0"));
+    }
+
+    #[test]
+    fn moving_back_to_where_the_key_went_down_makes_the_hold_a_tap_again() {
+        let mut harness = editable_demo();
+        harness.key_down(egui::Key::Num1);
+        harness.key_press(egui::Key::ArrowDown);
+        harness.key_press(egui::Key::ArrowUp);
+        harness.run();
+        assert_eq!(note_at(&harness, 0, 0), Some(tap()));
+    }
+
+    #[test]
+    fn a_mine_does_not_stretch() {
+        let mut harness = editable_demo();
+        shift_down(&harness, egui::Key::Exclamationmark, egui::Key::Num1);
+        harness.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+        harness.key_press(egui::Key::ArrowDown);
+        harness.run();
+        assert_eq!(note_at(&harness, 0, 0), Some(mine()));
+    }
+
+    #[test]
+    fn a_lane_key_held_across_a_chart_switch_leaves_the_other_chart_alone() {
+        let mut harness = editable_demo();
+        harness.key_down(egui::Key::Num1);
+        harness.run();
+        harness.get_by_label("Hard").click();
+        harness.run();
+        harness.key_press(egui::Key::ArrowDown);
+        harness.run();
+        assert_eq!(note_at(&harness, 0, 0), Some(tap()));
     }
 
     #[test]

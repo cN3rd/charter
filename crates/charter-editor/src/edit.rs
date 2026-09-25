@@ -5,8 +5,19 @@ use charter_core::Object;
 /// One change to one object of a chart.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Op {
-    Insert { index: usize, object: Object },
-    Remove { index: usize, object: Object },
+    Insert {
+        index: usize,
+        object: Object,
+    },
+    Remove {
+        index: usize,
+        object: Object,
+    },
+    Replace {
+        index: usize,
+        old: Object,
+        new: Object,
+    },
 }
 
 impl Op {
@@ -19,6 +30,11 @@ impl Op {
             Self::Remove { index, object } => Self::Insert {
                 index: *index,
                 object: object.clone(),
+            },
+            Self::Replace { index, old, new } => Self::Replace {
+                index: *index,
+                old: new.clone(),
+                new: old.clone(),
             },
         }
     }
@@ -44,14 +60,39 @@ impl Edit {
                 Op::Remove { index, .. } => {
                     objects.remove(*index);
                 }
+                Op::Replace { index, new, .. } => {
+                    objects.splice(*index..=*index, [new.clone()]);
+                }
             }
         }
+    }
+
+    /// Folds `next` into this edit when all `next` does is change the one object this edit
+    /// inserted, so the two undo as one step. Says whether it did.
+    pub(crate) fn absorb(&mut self, next: &Self) -> bool {
+        if let (
+            [Op::Insert { index, object }],
+            [
+                Op::Replace {
+                    index: at,
+                    old,
+                    new,
+                },
+            ],
+        ) = (self.0.as_mut_slice(), next.0.as_slice())
+            && index == at
+            && object == old
+        {
+            *object = new.clone();
+            return true;
+        }
+        false
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use charter_core::{Extensions, Kind, LaneCount, LaneIndex, Position, Shape, Tick};
+    use charter_core::{Extensions, Kind, LaneCount, LaneIndex, Position, Shape, Tick, Ticks};
 
     use super::*;
 
@@ -74,6 +115,11 @@ mod tests {
         object(tick, Kind::Tap, Shape::Instant)
     }
 
+    fn hold(tick: i32, duration: u32) -> Object {
+        let duration = Ticks::new(duration).unwrap();
+        object(tick, Kind::Hold, Shape::Sustain { duration })
+    }
+
     #[test]
     fn an_edit_then_its_inverse_leave_the_objects_as_they_were() {
         let before = vec![tap(0), tap(240), tap(480)];
@@ -86,6 +132,11 @@ mod tests {
                 index: 0,
                 object: tap(0),
             },
+            Op::Replace {
+                index: 0,
+                old: tap(240),
+                new: hold(240, 240),
+            },
             Op::Insert {
                 index: 1,
                 object: tap(720),
@@ -93,8 +144,45 @@ mod tests {
         ]);
         let mut objects = before.clone();
         edit.apply(&mut objects);
-        assert_eq!(objects, [tap(240), tap(720)]);
+        assert_eq!(objects, [hold(240, 240), tap(720)]);
         edit.inverse().apply(&mut objects);
         assert_eq!(objects, before);
+    }
+
+    #[test]
+    fn changing_what_an_insert_placed_folds_into_the_insert() {
+        let mut placed = Edit(vec![Op::Insert {
+            index: 1,
+            object: tap(240),
+        }]);
+        let stretched = Edit(vec![Op::Replace {
+            index: 1,
+            old: tap(240),
+            new: hold(240, 480),
+        }]);
+        assert!(placed.absorb(&stretched));
+        assert_eq!(
+            placed,
+            Edit(vec![Op::Insert {
+                index: 1,
+                object: hold(240, 480)
+            }])
+        );
+    }
+
+    #[test]
+    fn changing_anything_else_is_not_folded_in() {
+        let placed = Edit(vec![Op::Insert {
+            index: 1,
+            object: tap(240),
+        }]);
+        let elsewhere = Edit(vec![Op::Replace {
+            index: 0,
+            old: tap(0),
+            new: hold(0, 480),
+        }]);
+        let mut unchanged = placed.clone();
+        assert!(!unchanged.absorb(&elsewhere));
+        assert_eq!(unchanged, placed);
     }
 }

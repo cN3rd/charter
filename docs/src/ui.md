@@ -13,7 +13,7 @@ draws on are all still open. `cargo run -p charter-ui --example mock` shows it a
 mock, with a made-up song in each of StepMania, Tap Tap Revenge, osu!mania, Project Sekai and
 Arcaea. `cargo run -p charter-app` is the editor so far. It draws charts in the shared vocabulary's
 glyphs, since no ruleset plugin draws yet, and edits songs of the built-in rulesets. Lane keys
-place and remove taps, and undo and redo return to where each edit was made.
+place taps, holds and mines, and undo and redo return to where each edit was made.
 
 ## Main window
 
@@ -75,7 +75,7 @@ dark playfield, often in a dim room, and notes read best as bright shapes on dar
   at the cursor, and the mouse selects, with Shift adding to a marquee and Alt subtracting.
 - Undo takes back one edit at a time and returns to the chart and the cursor it was made at, as
   Moonscraper's returns its camera ([undo model](research/topics/undo-model.md)). One lane key
-  press is one step.
+  press is one step, and so is a hold drawn from the note it grew out of.
 - The problems strip lists warnings about a valid document, such as the unreachable notes the
   format flags inside a warp, and clicking one jumps there. It never lists errors, because the
   editor never holds an invalid document. A file that breaks a rule does not open, and the message
@@ -134,7 +134,8 @@ dark playfield, often in a dim room, and notes read best as bright shapes on dar
   and auto-jump then moves it one snap, so each note of a stream takes one keystroke
   ([note entry](research/topics/note-entry.md)). The cursor moves on once every lane key is up, so
   keys held together place a chord on one tick. A lane key on a note removes it and leaves the
-  cursor where it is.
+  cursor where it is. Holding a lane key while the cursor moves stretches its tap into a hold to
+  the cursor, and Shift with a lane key places a mine.
 - The waveform has its own strip. ArrowVortex draws it behind the notes; a strip keeps one width
   whether the chart has 3 lanes or 20, and leaves the lanes column to the ruleset. A spectrogram
   can sit beside it as another strip. Measure and beat lines cross the lanes and the waveform

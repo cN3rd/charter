@@ -65,8 +65,10 @@ pub fn menu_bar(ui: &mut Ui, song: Option<&Song>, actions: &mut Vec<Action>) {
 }
 
 /// The keys and gestures the notefield answers to, and what each does.
-const KEYS: [(&str, &str); 8] = [
+const KEYS: [(&str, &str); 10] = [
     ("1 to 9, 0", "Place or remove a tap on lanes 1 to 10"),
+    ("Hold 1 to 0, move", "Draw a hold"),
+    ("Shift+1 to 0", "Place or remove a mine"),
     ("Ctrl+Z", "Undo"),
     ("Ctrl+Shift+Z, Ctrl+Y", "Redo"),
     ("Up, Down, Wheel", "Move the cursor by the snap"),

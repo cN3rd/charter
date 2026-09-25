@@ -6,8 +6,8 @@ use egui::{Key, KeyboardShortcut, Modifiers};
 
 use charter_editor::Step;
 
-use crate::Action;
 use crate::notefield::Zoom;
+use crate::{Action, Note};
 
 pub(crate) const UNDO: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Z);
 pub(crate) const REDO: KeyboardShortcut =
@@ -49,7 +49,7 @@ pub struct LaneKeys([LaneKey; LANE_KEYS.len()]);
 
 impl LaneKeys {
     /// Pushes what the lane key at `lane` going down or up asks for: alone it places or removes a
-    /// tap. A key already down is repeating, whatever egui calls it, and
+    /// tap, and under Shift a mine. A key already down is repeating, whatever egui calls it, and
     /// toggles nothing.
     fn went(
         &mut self,
@@ -64,26 +64,38 @@ impl LaneKeys {
         };
         let index = LaneIndex::new(index);
         if !pressed {
-            if std::mem::take(key) == LaneKey::Toggled && !self.0.contains(&LaneKey::Toggled) {
-                actions.push(Action::LanesReleased);
+            if std::mem::take(key) == LaneKey::Toggled {
+                actions.push(Action::LaneUp(index));
+                if !self.0.contains(&LaneKey::Toggled) {
+                    actions.push(Action::LanesReleased);
+                }
             }
             return;
         }
         if *key != LaneKey::Up {
             return;
         }
-        if modifiers == Modifiers::NONE && u16::from(index) < lanes {
-            *key = LaneKey::Toggled;
-            actions.push(Action::Toggle(index));
+        let note = match modifiers {
+            _ if u16::from(index) >= lanes => None,
+            Modifiers::NONE => Some(Note::Tap),
+            Modifiers::SHIFT => Some(Note::Mine),
+            _ => None,
+        };
+        *key = if note.is_some() {
+            LaneKey::Toggled
         } else {
-            *key = LaneKey::Down;
-        }
+            LaneKey::Down
+        };
+        actions.extend(note.map(|note| Action::Toggle(index, note)));
     }
 
     /// Marks every lane key up, pushing what that asks for.
     fn release_all(&mut self, actions: &mut Vec<Action>) {
         let was = std::mem::take(&mut self.0);
-        if was.contains(&LaneKey::Toggled) {
+        let toggled = (0..).zip(was).filter(|(_, key)| *key == LaneKey::Toggled);
+        let before = actions.len();
+        actions.extend(toggled.map(|(lane, _)| Action::LaneUp(LaneIndex::new(lane))));
+        if actions.len() > before {
             actions.push(Action::LanesReleased);
         }
     }

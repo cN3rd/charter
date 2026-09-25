@@ -118,12 +118,12 @@ atomic commits with `/commit`. `.github/skills/README.md` lists every skill and 
 
 ## Current state
 
-`charter-core` implements the format chapter, and the three ruleset plugins model their games on top
-of it without file import or export. The editor draws charts generically, moves the cursor by snap
-and by measure, and edits a song whose ruleset plugin accepts it: lane keys place and remove taps,
-every edit is checked by the format and the plugin, and undo and redo return to where each edit was
-made. A song without its plugin is read-only. Songs open from the command line or by dropping them
-on the window. `charter-editor` holds that state without drawing it, `charter-ui` draws it in egui
-and never touches a file, and `charter-app` registers the plugins, opens the window and reads the
-file it is given. `charter-ui`'s `mock` example is the static mock of the book's UI draft. No DSP
-crate exists yet. Ask before inventing a crate boundary.
+`charter-core` implements the format chapter, and the three ruleset plugins model their games on
+top of it without file import or export. The editor draws charts generically, moves the cursor by
+snap and by measure, and edits a song whose ruleset plugin accepts it: lane keys place taps, holds
+and mines, every edit is checked by the format and the plugin, and undo and redo return to where each edit was made. A
+song without its plugin is read-only. Songs open from the command line or by dropping them on the
+window.
+`charter-editor` holds that state without drawing it, `charter-ui` draws it in egui and never
+touches a file, and `charter-app` registers the plugins, opens the window and reads the file it is given. `charter-ui`'s `mock` example is the static mock of the book's
+UI draft. No DSP crate exists yet. Ask before inventing a crate boundary.

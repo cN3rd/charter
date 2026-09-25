@@ -194,6 +194,36 @@ impl Song {
         Ok(toggled)
     }
 
+    /// Makes the tap or hold that starts on `lane` at `from` end at `to`: a hold when `to` is
+    /// later, a tap otherwise. When the edit before placed that note, the two undo as one step.
+    /// Does nothing when no tap or hold starts there.
+    ///
+    /// # Errors
+    ///
+    /// Refuses when the note's new length would break a rule of the format or of the song's
+    /// game.
+    pub fn stretch(&mut self, lane: LaneIndex, from: Tick, to: Tick) -> Result<(), Refusal> {
+        let Some((index, old)) = self.starting(from, lane) else {
+            return Ok(());
+        };
+        if !matches!(old.kind, Kind::Tap | Kind::Hold) {
+            return Ok(());
+        }
+        let mut new = old.clone();
+        (new.kind, new.shape) = match from.ticks_until(to) {
+            Some(duration) => (Kind::Hold, Shape::Sustain { duration }),
+            None => (Kind::Tap, Shape::Instant),
+        };
+        if new == *old {
+            return Ok(());
+        }
+        let old = old.clone();
+        let edit = Edit(vec![Op::Replace { index, old, new }]);
+        self.document = self.edited(self.chart, &edit)?;
+        self.record(edit);
+        Ok(())
+    }
+
     /// The object of the open chart that starts at `tick` and covers `lane`, and where it is.
     fn starting(&self, tick: Tick, lane: LaneIndex) -> Option<(usize, &Object)> {
         let objects = &self.document.document().charts.get(self.chart)?.objects;
@@ -211,9 +241,16 @@ impl Song {
     }
 
     /// Keeps `edit`, made to the open chart, as the newest step of the history, dropping what
-    /// could have been redone.
+    /// could have been redone. An edit that only changes what the step before placed joins that
+    /// step.
     fn record(&mut self, edit: Edit) {
         self.history.truncate(self.done);
+        if let Some(last) = self.history.last_mut()
+            && last.chart == self.chart
+            && last.edit.absorb(&edit)
+        {
+            return;
+        }
         self.history.push(Change {
             chart: self.chart,
             cursor: self.cursor,
@@ -427,6 +464,28 @@ mod tests {
         }
     }
 
+    /// Refuses sustained notes, as a game without holds would.
+    #[derive(Debug)]
+    struct NoHolds;
+
+    impl RulesetPlugin for NoHolds {
+        fn id(&self) -> &'static str {
+            "test"
+        }
+
+        fn check(&self, document: &ValidDocument) -> Result<(), Box<dyn Error + Send + Sync>> {
+            let held = |chart: Valid<'_, Chart>| {
+                chart
+                    .objects()
+                    .any(|object| matches!(object.shape, Shape::Sustain { .. }))
+            };
+            if document.charts().any(held) {
+                return Err("a hold".into());
+            }
+            Ok(())
+        }
+    }
+
     /// A plugin for another game, which has no say over `test` documents.
     #[derive(Debug)]
     struct Elsewhere;
@@ -534,6 +593,63 @@ mod tests {
         song.step(Step::Later);
         song.undo().unwrap();
         assert_eq!(song.cursor(), at(0));
+    }
+
+    fn hold(tick: i32, lane: u16, duration: u32) -> Value {
+        json!({ "tick": tick, "position": { "lane": { "index": lane } }, "kind": "hold",
+                "shape": { "sustain": { "duration": duration } } })
+    }
+
+    #[test]
+    fn stretching_a_tap_past_its_tick_makes_it_a_hold_to_there() {
+        let mut song = Song::new(document(json!([object(0, 0, "tap")])), EDITABLE);
+        song.stretch(lane(0), at(0), at(480)).unwrap();
+        assert_eq!(objects(&song), [hold(0, 0, 480)]);
+    }
+
+    #[test]
+    fn stretching_a_hold_back_to_its_own_tick_makes_it_a_tap_again() {
+        let mut song = Song::new(document(json!([hold(0, 0, 480)])), EDITABLE);
+        song.stretch(lane(0), at(0), at(0)).unwrap();
+        assert_eq!(objects(&song), [object(0, 0, "tap")]);
+    }
+
+    #[test]
+    fn a_note_placed_and_stretched_undoes_in_one_step() {
+        let mut song = Song::new(document(json!([])), EDITABLE);
+        song.toggle(at(0), lane(0), Kind::Tap).unwrap();
+        song.stretch(lane(0), at(0), at(240)).unwrap();
+        song.stretch(lane(0), at(0), at(480)).unwrap();
+        song.undo().unwrap();
+        assert_eq!(objects(&song), Vec::<Value>::new());
+        assert!(!song.can_undo());
+        song.redo().unwrap();
+        assert_eq!(objects(&song), [hold(0, 0, 480)]);
+    }
+
+    #[test]
+    fn stretching_an_older_note_is_a_step_of_its_own() {
+        let mut song = Song::new(document(json!([object(0, 0, "tap")])), EDITABLE);
+        song.toggle(at(240), lane(1), Kind::Tap).unwrap();
+        song.stretch(lane(0), at(0), at(480)).unwrap();
+        song.undo().unwrap();
+        assert_eq!(objects(&song), [object(0, 0, "tap"), object(240, 1, "tap")]);
+    }
+
+    #[test]
+    fn a_stretch_the_game_refuses_leaves_the_note_as_it_was() {
+        let mut song = Song::new(document(json!([object(0, 0, "tap")])), &[&NoHolds]);
+        let refusal = song.stretch(lane(0), at(0), at(480)).unwrap_err();
+        assert_eq!(refusal.to_string(), "a hold");
+        assert_eq!(objects(&song), [object(0, 0, "tap")]);
+    }
+
+    #[test]
+    fn only_taps_and_holds_stretch() {
+        let mut song = Song::new(document(json!([object(0, 0, "mine")])), EDITABLE);
+        song.stretch(lane(0), at(0), at(480)).unwrap();
+        assert_eq!(objects(&song), [object(0, 0, "mine")]);
+        assert!(!song.can_undo());
     }
 
     #[test]
