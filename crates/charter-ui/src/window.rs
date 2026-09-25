@@ -5,7 +5,7 @@ use std::path::Path;
 use charter_core::{Kind, LaneIndex, RulesetPlugin, Tick};
 use egui::Ui;
 
-use charter_editor::{Refusal, Song, Step, Toggled, demo};
+use charter_editor::{NoteAt, Refusal, Selecting, Song, Step, Toggled, demo};
 
 use crate::notefield::{self, Zoom};
 use crate::{keys, panels, style};
@@ -42,8 +42,31 @@ pub(crate) enum Action {
     LaneUp(LaneIndex),
     /// Every lane key that toggled is up again.
     LanesReleased,
+    /// Places a note at `tick` on `lane`, or removes what starts there.
+    Place {
+        tick: Tick,
+        lane: LaneIndex,
+        note: Note,
+    },
+    /// Makes the tap or hold starting on `lane` at `from` end at `to`.
+    Stretch {
+        lane: LaneIndex,
+        from: Tick,
+        to: Tick,
+    },
+    /// Meets the selection with a note, or with none: nothing was under the pointer.
+    Select(Option<NoteAt>, Selecting),
+    /// Meets the selection with the notes starting within `ticks` on a lane within `lanes`.
+    SelectBetween {
+        ticks: (Tick, Tick),
+        lanes: (LaneIndex, LaneIndex),
+        how: Selecting,
+    },
     Undo,
     Redo,
+    SelectAll,
+    ClearSelection,
+    DeleteSelection,
 }
 
 /// The editor window's state.
@@ -66,6 +89,8 @@ pub struct Window {
     /// Taps placed by lane keys still down, by lane and tick. Each stretches into a hold to the
     /// cursor as it moves.
     holding: Vec<(LaneIndex, Tick)>,
+    /// A drag across the notefield in progress.
+    gesture: Option<notefield::Gesture>,
 }
 
 impl Window {
@@ -157,7 +182,22 @@ impl Window {
                 self.holding.clear();
                 self.failure = refused(song.redo().err());
             }
-            Action::OpenDemo => {}
+            Action::Place { tick, lane, note } => {
+                self.failure = refused(song.toggle(tick, lane, note.kind()).err());
+            }
+            Action::Stretch { lane, from, to } => {
+                self.failure = refused(song.stretch(lane, from, to).err());
+            }
+            Action::Select(Some(note), how) => song.select([note], how),
+            Action::Select(None, Selecting::Replace) | Action::ClearSelection => {
+                song.clear_selection();
+            }
+            Action::OpenDemo | Action::Select(None, Selecting::Add | Selecting::Subtract) => {}
+            Action::SelectBetween { ticks, lanes, how } => {
+                song.select_between(ticks.0..=ticks.1, lanes.0..=lanes.1, how);
+            }
+            Action::SelectAll => song.select_all(),
+            Action::DeleteSelection => self.failure = refused(song.delete_selection().err()),
         }
     }
 
@@ -199,7 +239,7 @@ impl Window {
         });
         if let Some(song) = &self.song {
             egui::Panel::left("song").show(ui, |ui| panels::song_panel(ui, song, &mut actions));
-            egui::Panel::right("inspector").show(ui, panels::inspector);
+            egui::Panel::right("inspector").show(ui, |ui| panels::inspector(ui, song));
         }
         egui::CentralPanel::default().show(ui, |ui| {
             if let Some(failure) = &self.failure {
@@ -210,7 +250,9 @@ impl Window {
             }
             match &self.song {
                 Some(song) => {
-                    notefield::show(ui, song, self.zoom, &mut self.scrolled, &mut actions);
+                    let (zoom, scrolled, gesture) =
+                        (self.zoom, &mut self.scrolled, &mut self.gesture);
+                    notefield::show(ui, song, zoom, scrolled, gesture, &mut actions);
                 }
                 None => panels::empty(ui, &mut actions),
             }
@@ -684,6 +726,240 @@ mod tests {
         harness.key_press(egui::Key::ArrowDown);
         harness.run();
         assert_eq!(note_at(&harness, 0, 0), Some(mine()));
+    }
+
+    /// An `sm` song with one four-lane chart of taps walking across the lanes a sixteenth apart.
+    fn four_taps() -> Vec<u8> {
+        let tap = |tick: i32, lane: u16| {
+            serde_json::json!({ "tick": tick, "position": { "lane": { "index": lane } },
+                                "kind": "tap", "shape": "instant" })
+        };
+        let song = serde_json::json!({
+            "format_version": 0,
+            "ruleset": { "id": "sm", "version": "1" },
+            "metadata": { "title": "Four", "artist": "a", "audio": "a.ogg" },
+            "timing": { "offset_seconds": 0.0, "events": [ { "tick": 0, "kind": { "bpm": 120.0 } } ] },
+            "charts": [ { "name": "Easy", "lanes": 4,
+                          "objects": [tap(0, 0), tap(240, 1), tap(480, 2), tap(720, 3)] } ]
+        });
+        serde_json::to_vec(&song).unwrap()
+    }
+
+    fn editable_four_taps() -> Harness<'static, Window> {
+        let mut app = Window::new(PLUGINS);
+        app.open(Path::new("four.json"), &four_taps());
+        window(app)
+    }
+
+    fn note_count(harness: &Harness<'_, Window>) -> usize {
+        let song = harness.state().song.as_ref().unwrap();
+        song.chart().unwrap().objects.len()
+    }
+
+    #[test]
+    fn ctrl_a_selects_the_chart_and_delete_removes_it_in_one_step() {
+        let mut harness = editable_four_taps();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.run();
+        assert!(harness.query_by_label("4 notes").is_some());
+        harness.key_press(egui::Key::Delete);
+        harness.run();
+        assert_eq!(note_count(&harness), 0);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.run();
+        assert_eq!(note_count(&harness), 4);
+    }
+
+    #[test]
+    fn escape_clears_the_selection() {
+        let mut harness = editable_four_taps();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.key_press(egui::Key::Escape);
+        harness.run();
+        assert!(harness.query_by_label("Nothing selected").is_some());
+        harness.key_press(egui::Key::Backspace);
+        harness.run();
+        assert_eq!(note_count(&harness), 4);
+    }
+
+    #[test]
+    fn the_inspector_shows_what_the_selection_shares_and_mixed_where_it_differs() {
+        let mut harness = editable_four_taps();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.run();
+        assert_eq!(harness.query_all_by_label("mixed").count(), 2);
+        assert!(harness.query_by_label("tap").is_some());
+        assert!(harness.query_by_label("instant").is_some());
+    }
+
+    /// Where the middle of `lane` meets the line of `tick` on screen, `below` points lower.
+    fn spot(harness: &Harness<'_, Window>, lane: u16, tick: i32, below: f32) -> egui::Pos2 {
+        let area = harness.get_by_label("Notefield").rect();
+        let app = harness.state();
+        let song = app.song.as_ref().unwrap();
+        let chart = song.chart().unwrap();
+        let timing = chart.timing();
+        let lanes = chart.lanes.map_or(0, u16::from);
+        let field = notefield::Field::new(area, lanes, timing.time_at(song.cursor()), app.zoom);
+        let x = field
+            .columns
+            .span(LaneIndex::new(lane), LaneCount::ONE)
+            .center();
+        egui::pos2(x, field.view.y(timing.time_at(Tick::new(tick))) + below)
+    }
+
+    fn press(
+        harness: &Harness<'_, Window>,
+        pos: egui::Pos2,
+        pressed: bool,
+        modifiers: egui::Modifiers,
+    ) {
+        harness.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers,
+        });
+    }
+
+    fn click(harness: &mut Harness<'_, Window>, pos: egui::Pos2, modifiers: egui::Modifiers) {
+        harness.hover_at(pos);
+        harness.event(egui::Event::ModifiersChanged(modifiers));
+        press(harness, pos, true, modifiers);
+        press(harness, pos, false, modifiers);
+        harness.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+        harness.run();
+    }
+
+    fn drag(
+        harness: &mut Harness<'_, Window>,
+        from: egui::Pos2,
+        to: egui::Pos2,
+        modifiers: egui::Modifiers,
+    ) {
+        harness.hover_at(from);
+        harness.event(egui::Event::ModifiersChanged(modifiers));
+        press(harness, from, true, modifiers);
+        for step in 1..=4 {
+            #[allow(clippy::cast_precision_loss)] // four steps
+            harness.hover_at(from.lerp(to, step as f32 / 4.0));
+        }
+        press(harness, to, false, modifiers);
+        harness.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+        harness.run();
+    }
+
+    #[test]
+    fn ctrl_clicking_a_lane_places_a_tap_on_the_nearest_snap_line() {
+        let mut harness = editable_four_taps();
+        let pos = spot(&harness, 3, 240, 4.0);
+        click(&mut harness, pos, egui::Modifiers::COMMAND);
+        assert_eq!(note_at(&harness, 240, 3), Some(tap()));
+    }
+
+    #[test]
+    fn ctrl_shift_clicking_places_a_mine() {
+        let mut harness = editable_four_taps();
+        let pos = spot(&harness, 1, 480, 0.0);
+        click(
+            &mut harness,
+            pos,
+            egui::Modifiers::COMMAND.plus(egui::Modifiers::SHIFT),
+        );
+        assert_eq!(note_at(&harness, 480, 1), Some(mine()));
+    }
+
+    #[test]
+    fn ctrl_dragging_down_a_lane_draws_a_hold_that_undoes_in_one_step() {
+        let mut harness = editable_four_taps();
+        let (from, to) = (spot(&harness, 3, 240, 0.0), spot(&harness, 3, 720, -3.0));
+        drag(&mut harness, from, to, egui::Modifiers::COMMAND);
+        assert_eq!(note_at(&harness, 240, 3), Some(hold(480)));
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.run();
+        assert_eq!(note_at(&harness, 240, 3), None);
+    }
+
+    #[test]
+    fn clicking_notes_selects_them_as_shift_adds_and_alt_takes_away() {
+        let mut harness = editable_four_taps();
+        let (first, second) = (spot(&harness, 0, 0, 0.0), spot(&harness, 1, 240, 2.0));
+        click(&mut harness, first, egui::Modifiers::NONE);
+        assert!(harness.query_by_label("1 note").is_some());
+        click(&mut harness, second, egui::Modifiers::SHIFT);
+        assert!(harness.query_by_label("2 notes").is_some());
+        click(&mut harness, first, egui::Modifiers::ALT);
+        assert!(harness.query_by_label("1 note").is_some());
+        let empty = spot(&harness, 3, 0, 0.0);
+        click(&mut harness, empty, egui::Modifiers::NONE);
+        assert!(harness.query_by_label("Nothing selected").is_some());
+    }
+
+    #[test]
+    fn dragging_a_box_selects_the_notes_whose_heads_it_covers() {
+        let mut harness = editable_four_taps();
+        let (from, to) = (spot(&harness, 1, 180, 0.0), spot(&harness, 2, 540, 0.0));
+        drag(&mut harness, from, to, egui::Modifiers::NONE);
+        assert!(harness.query_by_label("2 notes").is_some());
+        let song = harness.state().song.as_ref().unwrap();
+        let ticks: Vec<_> = song.selection().map(|note| note.tick).collect();
+        assert_eq!(ticks, [Tick::new(240), Tick::new(480)]);
+    }
+
+    #[test]
+    fn the_mouse_places_nothing_in_a_read_only_song() {
+        let mut app = Window::default();
+        app.open(Path::new("four.json"), &four_taps());
+        let mut harness = window(app);
+        let pos = spot(&harness, 3, 240, 0.0);
+        click(&mut harness, pos, egui::Modifiers::COMMAND);
+        assert_eq!(note_at(&harness, 240, 3), None);
+        assert!(harness.query_by_label_contains("Refused").is_none());
+    }
+
+    #[test]
+    fn a_ctrl_drag_draws_its_hold_while_a_message_comes_and_goes() {
+        let mut harness = editable_four_taps();
+        harness
+            .state_mut()
+            .refuse(Path::new("other.json"), &"it is not a song");
+        harness.run();
+        let (from, to) = (spot(&harness, 3, 240, 0.0), spot(&harness, 3, 720, -3.0));
+        drag(&mut harness, from, to, egui::Modifiers::COMMAND);
+        assert_eq!(note_at(&harness, 240, 3), Some(hold(480)));
+    }
+
+    #[test]
+    fn a_hold_reaches_where_the_drag_lets_go() {
+        let mut harness = editable_four_taps();
+        let (from, near, far) = (
+            spot(&harness, 3, 240, 0.0),
+            spot(&harness, 3, 480, 0.0),
+            spot(&harness, 3, 960, 0.0),
+        );
+        harness.hover_at(from);
+        harness.event(egui::Event::ModifiersChanged(egui::Modifiers::COMMAND));
+        press(&harness, from, true, egui::Modifiers::COMMAND);
+        harness.hover_at(from.lerp(near, 0.5));
+        harness.hover_at(near);
+        press(&harness, far, false, egui::Modifiers::COMMAND);
+        harness.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+        harness.run();
+        assert_eq!(note_at(&harness, 240, 3), Some(hold(720)));
+    }
+
+    #[test]
+    fn escape_during_a_box_selection_cancels_it() {
+        let mut harness = editable_four_taps();
+        let (from, to) = (spot(&harness, 1, 180, 0.0), spot(&harness, 2, 540, 0.0));
+        harness.hover_at(from);
+        press(&harness, from, true, egui::Modifiers::NONE);
+        harness.hover_at(from.lerp(to, 0.5));
+        harness.hover_at(to);
+        harness.key_press(egui::Key::Escape);
+        press(&harness, to, false, egui::Modifiers::NONE);
+        harness.run();
+        assert!(harness.query_by_label("Nothing selected").is_some());
     }
 
     #[test]

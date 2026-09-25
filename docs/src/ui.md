@@ -12,8 +12,10 @@ status: draft
 draws on are all still open. `cargo run -p charter-ui --example mock` shows it as a static egui
 mock, with a made-up song in each of StepMania, Tap Tap Revenge, osu!mania, Project Sekai and
 Arcaea. `cargo run -p charter-app` is the editor so far. It draws charts in the shared vocabulary's
-glyphs, since no ruleset plugin draws yet, and edits songs of the built-in rulesets. Lane keys
-place taps, holds and mines, and undo and redo return to where each edit was made.
+glyphs, since no ruleset plugin draws yet, and edits songs of the built-in rulesets. Lane keys and
+Ctrl with the mouse place taps, holds and mines; the mouse selects and Delete removes the
+selection; undo and redo return to where each edit was made. The inspector shows the selection
+but cannot change it yet.
 
 ## Main window
 
@@ -72,10 +74,13 @@ dark playfield, often in a dim room, and notes read best as bright shapes on dar
   customizable shortcuts, and Tempora's drag modifiers stay invisible until learned
   ([shortcuts](research/topics/shortcuts.md)).
 - There is no toolbar or tool palette. Entry is modeless, as in ArrowVortex: lane keys place notes
-  at the cursor, and the mouse selects, with Shift adding to a marquee and Alt subtracting.
+  at the cursor, and the mouse selects, with Shift adding to a marquee and Alt subtracting. Ctrl
+  turns the mouse to placing: a click toggles a tap on the nearest snap line, Ctrl+Shift a mine,
+  and a drag along a lane draws a hold.
 - Undo takes back one edit at a time and returns to the chart and the cursor it was made at, as
   Moonscraper's returns its camera ([undo model](research/topics/undo-model.md)). One lane key
-  press is one step, and so is a hold drawn from the note it grew out of.
+  press is one step, a hold drawn from the note it grew out of is one, and so is deleting a
+  selection.
 - The problems strip lists warnings about a valid document, such as the unreachable notes the
   format flags inside a warp, and clicking one jumps there. It never lists errors, because the
   editor never holds an invalid document. A file that breaks a rule does not open, and the message

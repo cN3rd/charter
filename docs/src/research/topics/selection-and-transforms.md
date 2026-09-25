@@ -40,3 +40,11 @@ All **observed** from source. Earlier research ranked non-destructive paste "ver
 horizontal mirror "the first parity transform", both **inferred**. It flagged `Requantize` as
 high-risk because it touches timing, and noted that rotate/shuffle should not be claimed as
 ArrowVortex parity without community validation, since the source does not show them.
+
+## Draft position
+
+A click selects the note under the pointer, and a drag selects the notes whose heads a box covers;
+Shift adds to the selection and Alt takes from it, ArrowVortex's modifiers. Ctrl+A selects the
+chart and Escape selects nothing. Delete removes the selection as one step. A note is selected by
+the tick it starts on and its first lane, which no other note of the chart shares, so a selection
+survives edits to other notes. Only deleting acts on it so far.

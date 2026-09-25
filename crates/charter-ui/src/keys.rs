@@ -153,10 +153,13 @@ fn command(key: Key, modifiers: Modifiers) -> Option<Action> {
         return match key {
             Key::Plus | Key::Equals => Some(Action::ZoomBy(Zoom::STEP)),
             Key::Minus => Some(Action::ZoomBy(Zoom::STEP.recip())),
+            Key::A => Some(Action::SelectAll),
             _ => None,
         };
     }
     match key {
+        Key::Delete | Key::Backspace => Some(Action::DeleteSelection),
+        Key::Escape => Some(Action::ClearSelection),
         Key::ArrowDown => Some(Action::Move(Step::Later)),
         Key::ArrowUp => Some(Action::Move(Step::Earlier)),
         Key::PageDown => Some(Action::MoveMeasure(Step::Later)),

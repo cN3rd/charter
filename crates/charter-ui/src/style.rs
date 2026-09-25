@@ -22,6 +22,9 @@ pub const ROLL: Color32 = Color32::from_rgb(230, 140, 70);
 pub const MINE: Color32 = Color32::from_rgb(235, 90, 90);
 pub const FAKE: Color32 = Color32::from_gray(110);
 pub const OTHER: Color32 = Color32::from_rgb(170, 170, 120);
+pub const SELECTED: Color32 = Color32::from_rgb(250, 250, 250);
+pub const MARQUEE: Color32 = Color32::from_rgb(110, 170, 255);
+pub const MARQUEE_FILL: Color32 = Color32::from_rgba_unmultiplied_const(110, 170, 255, 28);
 
 /// Dark whatever the system prefers, since charting means long sessions against a game's dark
 /// playfield, and with text bright enough to read at small sizes. Ctrl+Plus and Ctrl+Minus zoom

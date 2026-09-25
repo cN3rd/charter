@@ -84,7 +84,7 @@ expected `E1` for it. Do not silence that by adding frontmatter.
 | Path | Role |
 |---|---|
 | `crates/charter-core` | the chart format: data model, JSON I/O, validation, tick to time; `RulesetPlugin`, the surface a ruleset plugin implements |
-| `crates/charter-editor` | editing a song without drawing it: open chart, cursor, snaps, note edits the ruleset plugin checks, undo, the demo song |
+| `crates/charter-editor` | editing a song without drawing it: open chart, cursor, snaps, note edits the ruleset plugin checks, selection, undo, the demo song |
 | `crates/charter-ui` | the editor window in egui: notefield, panels, keys, style; never touches a file; the static mock as an example |
 | `crates/charter-app` | binary front end, thin: registers the built-in ruleset plugins and opens the song named on the command line |
 | `plugins/stepmania`, `plugins/ttr`, `plugins/osu-mania` | ruleset plugins: typed game models over `charter-core`, each with a `Plugin` the editor checks songs and edits through |
@@ -120,8 +120,9 @@ atomic commits with `/commit`. `.github/skills/README.md` lists every skill and 
 
 `charter-core` implements the format chapter, and the three ruleset plugins model their games on
 top of it without file import or export. The editor draws charts generically, moves the cursor by
-snap and by measure, and edits a song whose ruleset plugin accepts it: lane keys place taps, holds
-and mines, every edit is checked by the format and the plugin, and undo and redo return to where each edit was made. A
+snap and by measure, and edits a song whose ruleset plugin accepts it: lane keys and Ctrl with the
+mouse place taps, holds and mines, the mouse selects and Delete removes the selection, every edit
+is checked by the format and the plugin, and undo and redo return to where each edit was made. A
 song without its plugin is read-only. Songs open from the command line or by dropping them on the
 window.
 `charter-editor` holds that state without drawing it, `charter-ui` draws it in egui and never

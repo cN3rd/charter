@@ -1,7 +1,9 @@
 //! An open song: its document, which chart is open, where the cursor is, and the edits made to
 //! it.
 
+use std::collections::BTreeSet;
 use std::num::NonZeroU16;
+use std::ops::RangeInclusive;
 
 use charter_core::{
     Chart, Error, Extensions, Kind, LaneCount, LaneIndex, LaneSpan, Object, Position,
@@ -22,6 +24,22 @@ pub enum Step {
 pub enum Toggled {
     Placed,
     Removed,
+}
+
+/// A lane note of the open chart, by the tick it starts on and the first lane it covers, which
+/// no other note starting on that tick shares.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct NoteAt {
+    pub tick: Tick,
+    pub lane: LaneIndex,
+}
+
+/// How notes being selected meet the selection there is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Selecting {
+    Replace,
+    Add,
+    Subtract,
 }
 
 /// Why an edit did not happen. The song stays as it was.
@@ -56,6 +74,8 @@ pub struct Song {
     /// Every edit, oldest first. The first `done` are in effect; the rest were undone.
     history: Vec<Change>,
     done: usize,
+    /// Selected notes of the open chart, each one there.
+    selection: BTreeSet<NoteAt>,
 }
 
 /// Whether the song's game can check edits to it.
@@ -112,6 +132,7 @@ impl Song {
             snap: NonZeroU16::MIN,
             history: Vec::new(),
             done: 0,
+            selection: BTreeSet::new(),
         };
         let snaps: Vec<_> = song.snaps().collect();
         song.snap = snaps
@@ -159,6 +180,7 @@ impl Song {
     pub fn open_chart(&mut self, index: usize) {
         if index < self.document.document().charts.len() && index != self.chart {
             self.chart = index;
+            self.selection.clear();
         }
     }
 
@@ -249,6 +271,7 @@ impl Song {
             && last.chart == self.chart
             && last.edit.absorb(&edit)
         {
+            self.prune_selection();
             return;
         }
         self.history.push(Change {
@@ -257,6 +280,7 @@ impl Song {
             edit,
         });
         self.done = self.history.len();
+        self.prune_selection();
     }
 
     /// The document with `edit` made to chart `chart`, if the format and the game allow it.
@@ -318,10 +342,128 @@ impl Song {
         Ok(())
     }
 
+    /// The selected notes, earliest first.
+    pub fn selection(&self) -> impl Iterator<Item = NoteAt> + '_ {
+        self.selection.iter().copied()
+    }
+
+    #[must_use]
+    pub fn is_selected(&self, object: &Object) -> bool {
+        note_at(object).is_some_and(|note| self.selection.contains(&note))
+    }
+
+    /// Meets the selection with those of `notes` that the open chart has.
+    pub fn select(&mut self, notes: impl IntoIterator<Item = NoteAt>, how: Selecting) {
+        let found: Vec<_> = notes.into_iter().filter(|note| self.has(*note)).collect();
+        self.meet(found, how);
+    }
+
+    /// Meets the selection with the notes of the open chart that start within `ticks` and cover
+    /// a lane within `lanes`.
+    pub fn select_between(
+        &mut self,
+        ticks: RangeInclusive<Tick>,
+        lanes: RangeInclusive<LaneIndex>,
+        how: Selecting,
+    ) {
+        let (first, last) = (u16::from(*lanes.start()), u16::from(*lanes.end()));
+        let width = last
+            .checked_sub(first)
+            .and_then(|span| LaneCount::new(span + 1));
+        let found: Vec<_> = match (width, self.chart()) {
+            (Some(width), Some(chart)) => {
+                let area = LaneSpan::new(LaneIndex::new(first), width);
+                let inside = |object: &&Object| {
+                    ticks.contains(&object.tick)
+                        && object
+                            .position
+                            .lanes()
+                            .is_some_and(|span| span.overlaps(area))
+                };
+                chart
+                    .objects
+                    .iter()
+                    .filter(inside)
+                    .filter_map(note_at)
+                    .collect()
+            }
+            _ => Vec::new(),
+        };
+        self.meet(found, how);
+    }
+
+    /// Selects every lane note of the open chart.
+    pub fn select_all(&mut self) {
+        self.selection = self
+            .chart()
+            .map(|chart| chart.objects.iter().filter_map(note_at).collect())
+            .unwrap_or_default();
+    }
+
+    pub fn clear_selection(&mut self) {
+        self.selection.clear();
+    }
+
+    /// Removes every selected note, as one step.
+    ///
+    /// # Errors
+    ///
+    /// Refuses on a read-only song, and when removing the notes would break a rule of the format
+    /// or of the song's game; the notes stay selected.
+    pub fn delete_selection(&mut self) -> Result<(), Refusal> {
+        let Some(chart) = self.chart() else {
+            return Ok(());
+        };
+        // Removing from the back keeps the index of every note still to remove.
+        let removals = chart.objects.iter().enumerate().rev();
+        let ops: Vec<_> = removals
+            .filter(|(_, object)| self.is_selected(object))
+            .map(|(index, object)| Op::Remove {
+                index,
+                object: object.clone(),
+            })
+            .collect();
+        if ops.is_empty() {
+            return Ok(());
+        }
+        let edit = Edit(ops);
+        self.document = self.edited(self.chart, &edit)?;
+        self.record(edit);
+        Ok(())
+    }
+
+    fn meet(&mut self, notes: Vec<NoteAt>, how: Selecting) {
+        match how {
+            Selecting::Replace => self.selection = notes.into_iter().collect(),
+            Selecting::Add => self.selection.extend(notes),
+            Selecting::Subtract => {
+                for note in &notes {
+                    self.selection.remove(note);
+                }
+            }
+        }
+    }
+
+    /// Whether the open chart has the note `note` names.
+    fn has(&self, note: NoteAt) -> bool {
+        self.starting(note.tick, note.lane)
+            .is_some_and(|(_, object)| note_at(object) == Some(note))
+    }
+
+    /// Drops the selected notes an edit took away.
+    fn prune_selection(&mut self) {
+        let selection = std::mem::take(&mut self.selection);
+        self.selection = selection
+            .into_iter()
+            .filter(|note| self.has(*note))
+            .collect();
+    }
+
     /// Opens `chart` with the cursor on `cursor`, where an undone or redone edit was made.
     fn return_to(&mut self, chart: usize, cursor: Tick) {
         self.open_chart(chart);
         self.cursor = cursor;
+        self.prune_selection();
     }
 
     #[must_use]
@@ -391,6 +533,17 @@ impl Song {
 
     fn length_of(&self, snap: NonZeroU16) -> Option<Ticks> {
         self.document.document().ticks_per_beat.note_length(snap)
+    }
+}
+
+/// The note an object is, when it sits on lanes.
+fn note_at(object: &Object) -> Option<NoteAt> {
+    match object.position {
+        Position::Lane { index, .. } => Some(NoteAt {
+            tick: object.tick,
+            lane: index,
+        }),
+        Position::Plane { .. } => None,
     }
 }
 
@@ -803,6 +956,112 @@ mod tests {
         song.undo().unwrap();
         song.redo().unwrap();
         assert_eq!(objects(&song), [object(0, 0, "tap")]);
+    }
+
+    fn four_taps() -> Song {
+        let taps = json!([
+            object(0, 0, "tap"),
+            object(240, 1, "tap"),
+            object(480, 2, "tap"),
+            object(720, 3, "tap")
+        ]);
+        Song::new(document(taps), EDITABLE)
+    }
+
+    fn note_at(tick: i32, index: u16) -> NoteAt {
+        NoteAt {
+            tick: at(tick),
+            lane: lane(index),
+        }
+    }
+
+    fn selection(song: &Song) -> Vec<NoteAt> {
+        song.selection().collect()
+    }
+
+    #[test]
+    fn a_marquee_selects_the_notes_that_start_inside_it() {
+        let mut song = four_taps();
+        song.select_between(at(240)..=at(480), lane(1)..=lane(2), Selecting::Replace);
+        assert_eq!(selection(&song), [note_at(240, 1), note_at(480, 2)]);
+    }
+
+    #[test]
+    fn adding_and_subtracting_meet_the_selection_there_is() {
+        let mut song = four_taps();
+        song.select_between(at(0)..=at(240), lane(0)..=lane(3), Selecting::Replace);
+        song.select([note_at(480, 2)], Selecting::Add);
+        song.select_between(at(0)..=at(0), lane(0)..=lane(3), Selecting::Subtract);
+        assert_eq!(selection(&song), [note_at(240, 1), note_at(480, 2)]);
+        song.select([note_at(720, 3)], Selecting::Replace);
+        assert_eq!(selection(&song), [note_at(720, 3)]);
+    }
+
+    #[test]
+    fn a_wide_note_is_selected_through_any_lane_it_covers() {
+        let wide = json!({ "tick": 0, "position": { "lane": { "index": 2, "width": 2 } },
+                           "kind": "hold", "shape": { "sustain": { "duration": 480 } } });
+        let mut song = Song::new(document(json!([wide])), EDITABLE);
+        song.select_between(at(0)..=at(0), lane(3)..=lane(3), Selecting::Replace);
+        assert_eq!(selection(&song), [note_at(0, 2)]);
+        let chart = song.chart().unwrap();
+        assert!(song.is_selected(&chart.objects[0]));
+    }
+
+    #[test]
+    fn selecting_a_note_that_is_not_there_selects_nothing() {
+        let mut song = four_taps();
+        song.select([note_at(960, 0), note_at(240, 0)], Selecting::Replace);
+        assert_eq!(selection(&song), []);
+    }
+
+    #[test]
+    fn select_all_takes_the_open_chart_and_opening_another_clears_it() {
+        let mut song = four_taps();
+        song.select_all();
+        assert_eq!(selection(&song).len(), 4);
+        song.open_chart(1);
+        assert_eq!(selection(&song), []);
+    }
+
+    #[test]
+    fn deleting_the_selection_is_one_step_that_undo_takes_back() {
+        let mut song = four_taps();
+        song.select([note_at(0, 0), note_at(480, 2)], Selecting::Replace);
+        song.delete_selection().unwrap();
+        assert_eq!(
+            objects(&song),
+            [object(240, 1, "tap"), object(720, 3, "tap")]
+        );
+        assert_eq!(selection(&song), []);
+        song.undo().unwrap();
+        assert_eq!(objects(&song).len(), 4);
+        assert!(!song.can_undo());
+    }
+
+    #[test]
+    fn deleting_an_empty_selection_changes_nothing() {
+        let mut song = four_taps();
+        song.delete_selection().unwrap();
+        assert_eq!(objects(&song).len(), 4);
+        assert!(!song.can_undo());
+    }
+
+    #[test]
+    fn a_read_only_song_selects_but_refuses_to_delete() {
+        let taps = json!([object(0, 0, "tap"), object(240, 1, "tap")]);
+        let mut song = Song::new(document(taps), &[]);
+        song.select_all();
+        assert!(matches!(song.delete_selection(), Err(Refusal::ReadOnly)));
+        assert_eq!(selection(&song).len(), 2);
+    }
+
+    #[test]
+    fn a_selected_note_an_edit_removes_leaves_the_selection() {
+        let mut song = four_taps();
+        song.select_all();
+        song.toggle(at(0), lane(0), Kind::Tap).unwrap();
+        assert_eq!(selection(&song).len(), 3);
     }
 
     #[test]

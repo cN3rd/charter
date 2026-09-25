@@ -3,7 +3,7 @@
 
 use std::num::NonZeroU16;
 
-use charter_core::{MarkerKind, ResolvedTime};
+use charter_core::{MarkerKind, Object, Position, ResolvedTime, Shape};
 use egui::{self, Align, Layout, RichText, Ui};
 use serde_json::Value;
 
@@ -65,10 +65,18 @@ pub fn menu_bar(ui: &mut Ui, song: Option<&Song>, actions: &mut Vec<Action>) {
 }
 
 /// The keys and gestures the notefield answers to, and what each does.
-const KEYS: [(&str, &str); 10] = [
+const KEYS: [(&str, &str); 18] = [
     ("1 to 9, 0", "Place or remove a tap on lanes 1 to 10"),
     ("Hold 1 to 0, move", "Draw a hold"),
     ("Shift+1 to 0", "Place or remove a mine"),
+    ("Ctrl+Click", "Place or remove a tap"),
+    ("Ctrl+Shift+Click", "Place or remove a mine"),
+    ("Ctrl+Drag", "Draw a hold"),
+    ("Click, Drag", "Select notes"),
+    ("Shift+Click, Shift+Drag", "Add to the selection"),
+    ("Alt+Click, Alt+Drag", "Take from the selection"),
+    ("Ctrl+A, Escape", "Select every note, or none"),
+    ("Delete, Backspace", "Delete the selection"),
     ("Ctrl+Z", "Undo"),
     ("Ctrl+Shift+Z, Ctrl+Y", "Redo"),
     ("Up, Down, Wheel", "Move the cursor by the snap"),
@@ -165,9 +173,61 @@ fn shown(value: &Value) -> String {
         .map_or_else(|| value.to_string(), str::to_owned)
 }
 
-pub fn inspector(ui: &mut Ui) {
+/// What the selected notes are: their count, then each field they share, or `mixed` where they
+/// differ.
+pub fn inspector(ui: &mut Ui, song: &Song) {
     heading(ui, "Inspector");
-    ui.weak("Nothing selected");
+    let Some(chart) = song.chart() else {
+        ui.weak("Nothing selected");
+        return;
+    };
+    let selected: Vec<&Object> = chart
+        .objects
+        .iter()
+        .filter(|object| song.is_selected(object))
+        .collect();
+    if selected.is_empty() {
+        ui.weak("Nothing selected");
+        return;
+    }
+    let count = match selected.len() {
+        1 => "1 note".to_owned(),
+        n => format!("{n} notes"),
+    };
+    ui.label(count);
+    let timing = chart.timing();
+    let shared = |field: &dyn Fn(&Object) -> String| {
+        let mut values = selected.iter().map(|object| field(object));
+        let first = values.next().unwrap_or_default();
+        if values.all(|value| value == first) {
+            first
+        } else {
+            "mixed".to_owned()
+        }
+    };
+    let lane = |object: &Object| match object.position {
+        Position::Lane { index, .. } => (u16::from(index) + 1).to_string(),
+        Position::Plane { .. } => "plane".to_owned(),
+    };
+    let length = |object: &Object| match &object.shape {
+        Shape::Instant => "instant".to_owned(),
+        Shape::Sustain { duration } => format!("{duration} ticks"),
+        Shape::Path { .. } => "path".to_owned(),
+    };
+    fields(
+        ui,
+        "inspector",
+        &[
+            (
+                "At",
+                shared(&|object| timing.grid_position(object.tick).to_string()),
+            ),
+            ("Lane", shared(&lane)),
+            ("Kind", shared(&|object| object.kind.to_string())),
+            ("Length", shared(&length)),
+        ],
+        "",
+    );
 }
 
 pub fn status_bar(ui: &mut Ui, song: Option<&Song>, zoom: Zoom) {
