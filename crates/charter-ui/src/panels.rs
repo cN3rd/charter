@@ -10,9 +10,9 @@ use serde_json::Value;
 use charter_editor::Song;
 
 use crate::Action;
-use crate::keys::{NEW_SONG, OPEN, REDO, SAVE, SAVE_AS, SETTINGS, UNDO};
+use crate::keys::{HELP, NEW_SONG, OPEN, REDO, SAVE, SAVE_AS, SETTINGS, UNDO};
 use crate::notefield::Zoom;
-use crate::style::{fields, heading, table, title};
+use crate::style::{fields, heading, table};
 
 pub fn menu_bar(ui: &mut Ui, song: Option<&Song>, actions: &mut Vec<Action>) {
     let song_open = song.is_some();
@@ -72,20 +72,38 @@ pub fn menu_bar(ui: &mut Ui, song: Option<&Song>, actions: &mut Vec<Action>) {
             }
         });
         ui.menu_button("Help", |ui| {
-            ui.label(title("Keys"));
-            table(ui, "keys", |ui| {
-                for (keys, does) in KEYS {
-                    ui.monospace(keys);
-                    ui.label(does);
-                    ui.end_row();
-                }
-            });
+            let item = egui::Button::new("Keyboard shortcuts")
+                .shortcut_text(ui.ctx().format_shortcut(&HELP));
+            if ui.add(item).clicked() {
+                actions.push(Action::Help);
+            }
         });
     });
 }
 
+/// The keyboard shortcuts, while `open` is set.
+pub fn shortcuts(ctx: &egui::Context, open: &mut bool) {
+    egui::Window::new("Keyboard shortcuts")
+        .open(open)
+        .collapsible(false)
+        .resizable(false)
+        .pivot(egui::Align2::CENTER_CENTER)
+        .default_pos(ctx.content_rect().center())
+        .show(ctx, |ui| {
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                table(ui, "keys", |ui| {
+                    for (keys, does) in KEYS {
+                        ui.monospace(keys);
+                        ui.label(does);
+                        ui.end_row();
+                    }
+                });
+            });
+        });
+}
+
 /// The keys and gestures the notefield answers to, and what each does.
-const KEYS: [(&str, &str); 21] = [
+const KEYS: [(&str, &str); 26] = [
     ("1 to 9, 0", "Place or remove a tap on lanes 1 to 10"),
     ("Hold 1 to 0, move", "Draw a hold"),
     ("Shift+1 to 0", "Place or remove a mine"),
@@ -104,9 +122,17 @@ const KEYS: [(&str, &str); 21] = [
     ("Ctrl+Comma", "Settings"),
     ("Up, Down, Wheel", "Move the cursor by the snap"),
     ("Page Up, Page Down", "Move the cursor by a measure"),
+    (
+        "Home, End",
+        "Jump to the start, or to where the last note ends",
+    ),
+    ("Alt+Up, Alt+Down", "Jump to the previous or next section"),
+    ("Ctrl+B", "Add or remove a bookmark at the cursor"),
+    ("F7, F8", "Lower or raise the tempo at the cursor by 1 BPM"),
     ("Left, Right", "Coarser or finer snap"),
     ("Ctrl+Wheel", "Zoom"),
     ("Ctrl+Plus, Ctrl+Minus", "Zoom"),
+    ("F1", "Keyboard shortcuts"),
 ];
 
 pub fn song_panel(ui: &mut Ui, song: &Song, actions: &mut Vec<Action>) {

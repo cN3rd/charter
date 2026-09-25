@@ -1,7 +1,7 @@
 //! What the keyboard asks the editor to do: shortcuts by what a key means, and lane keys by where
 //! they sit on the keyboard.
 
-use charter_core::LaneIndex;
+use charter_core::{LaneIndex, Tick};
 use egui::{Key, KeyboardShortcut, Modifiers};
 
 use charter_editor::Step;
@@ -20,6 +20,8 @@ pub(crate) const SAVE_AS: KeyboardShortcut =
     KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::S);
 pub(crate) const SETTINGS: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Comma);
 pub(crate) const NEW_SONG: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::N);
+pub(crate) const BOOKMARK: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::B);
+pub(crate) const HELP: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE, Key::F1);
 
 /// The keys that place notes on lanes 1 to 10, as StepMania and ArrowVortex bind them.
 const LANE_KEYS: [Key; 10] = [
@@ -171,6 +173,19 @@ fn command(key: Key, modifiers: Modifiers) -> Option<Action> {
     if is(SETTINGS) {
         return Some(Action::Settings);
     }
+    if is(BOOKMARK) {
+        return Some(Action::ToggleBookmark);
+    }
+    if is(HELP) {
+        return Some(Action::Help);
+    }
+    if modifiers.alt {
+        return match key {
+            Key::ArrowDown => Some(Action::JumpSection(Step::Later)),
+            Key::ArrowUp => Some(Action::JumpSection(Step::Earlier)),
+            _ => None,
+        };
+    }
     if modifiers.command {
         return match key {
             Key::Plus | Key::Equals => Some(Action::ZoomBy(Zoom::STEP)),
@@ -188,6 +203,10 @@ fn command(key: Key, modifiers: Modifiers) -> Option<Action> {
         Key::PageUp => Some(Action::MoveMeasure(Step::Earlier)),
         Key::ArrowRight => Some(Action::FinerSnap),
         Key::ArrowLeft => Some(Action::CoarserSnap),
+        Key::Home => Some(Action::JumpTo(Tick::new(0))),
+        Key::End => Some(Action::JumpEnd),
+        Key::F7 => Some(Action::NudgeBpm(-1.0)),
+        Key::F8 => Some(Action::NudgeBpm(1.0)),
         _ => None,
     }
 }

@@ -165,10 +165,21 @@ pub(crate) enum Action {
     SetSection(String),
     /// Removes the song's marker at this index.
     RemoveMarker(usize),
+    /// Puts the cursor where the open chart's last note ends.
+    JumpEnd,
+    /// Puts the cursor on the nearest section that way.
+    JumpSection(Step),
+    /// Adds a bookmark at the cursor, or removes the one there.
+    ToggleBookmark,
+    /// Raises the tempo at the cursor by this many BPM, or lowers it when negative.
+    NudgeBpm(f64),
+    /// Shows or hides the keyboard shortcuts.
+    Help,
 }
 
 /// The editor window's state.
 #[derive(Debug, Default)]
+#[allow(clippy::struct_excessive_bools)] // independent flags, not a state machine
 pub struct Window {
     /// The ruleset plugins every song is checked against.
     plugins: &'static [&'static dyn RulesetPlugin],
@@ -220,6 +231,8 @@ pub struct Window {
     bpm_draft: Option<String>,
     /// A section name being typed, while its field has the keyboard.
     section_draft: Option<String>,
+    /// Whether the keyboard shortcuts are showing.
+    help_open: bool,
     /// The audio file dropped on the song, which is copied beside the song when it is saved
     /// elsewhere.
     audio_file: Option<PathBuf>,
@@ -558,6 +571,7 @@ impl Window {
             Action::Save => self.saving = Some(Saving::InPlace),
             Action::SaveAs => self.saving = Some(Saving::Elsewhere),
             Action::Settings => self.settings_open = !self.settings_open,
+            Action::Help => self.help_open = !self.help_open,
             Action::NewSong => {
                 self.new_song.get_or_insert_default();
             }
@@ -623,6 +637,7 @@ impl Window {
             | Action::Save
             | Action::SaveAs
             | Action::Settings
+            | Action::Help
             | Action::NewSong
             | Action::Select(None, Selecting::Add | Selecting::Subtract) => {}
             Action::SelectBetween { ticks, lanes, how } => {
@@ -631,6 +646,14 @@ impl Window {
             Action::SetBpm(bpm) => self.failure = refused(song.set_bpm(bpm).err()),
             Action::RemoveBpm => self.failure = refused(song.remove_bpm().err()),
             Action::JumpTo(tick) => song.jump_to(tick),
+            Action::JumpEnd => song.jump_to(song.end()),
+            Action::JumpSection(step) => {
+                if let Some(tick) = song.section_from(step) {
+                    song.jump_to(tick);
+                }
+            }
+            Action::ToggleBookmark => self.failure = refused(song.toggle_bookmark().err()),
+            Action::NudgeBpm(by) => self.failure = nudge_bpm(song, by),
             Action::SetSection(text) => self.failure = refused(song.set_section(&text).err()),
             Action::RemoveMarker(index) => self.failure = refused(song.remove_marker(index).err()),
             Action::SelectAll => song.select_all(),
@@ -771,6 +794,7 @@ impl Window {
             }
         });
         settings::show(ui.ctx(), &mut self.settings, &mut self.settings_open);
+        panels::shortcuts(ui.ctx(), &mut self.help_open);
         for action in actions {
             self.apply(action);
         }
@@ -813,6 +837,16 @@ fn stretch(song: &mut Song, holding: &[(LaneIndex, Tick)]) -> Option<String> {
         .iter()
         .filter_map(|&(lane, from)| song.stretch(lane, from, cursor).err());
     refused(refusals.last())
+}
+
+/// Raises the tempo at the cursor by `by` BPM, and says why if it cannot.
+fn nudge_bpm(song: &mut Song, by: f64) -> Option<String> {
+    let (_, bpm) = song.bpm()?;
+    let nudged = f64::from(bpm) + by;
+    match charter_core::Bpm::try_from(nudged) {
+        Ok(bpm) => refused(song.set_bpm(bpm).err()),
+        Err(_) => Some(format!("{nudged} is not a tempo")),
+    }
 }
 
 /// What to say about a refused edit, or nothing when the edit went through.
@@ -1969,6 +2003,75 @@ mod tests {
                 .is_none()
         );
         assert!(harness.query_by_label("Remove marker Verse").is_none());
+    }
+
+    #[test]
+    fn home_and_end_jump_to_the_start_and_to_where_the_last_note_ends() {
+        let mut harness = editable_demo();
+        harness.key_press(egui::Key::End);
+        harness.run();
+        let song = harness.state().song.as_ref().unwrap();
+        assert_eq!(song.cursor(), song.end());
+        assert_ne!(song.cursor(), Tick::new(0));
+        harness.key_press(egui::Key::Home);
+        harness.run();
+        assert!(cursor_shows(&harness, "0:0:0"));
+    }
+
+    #[test]
+    fn alt_up_and_down_jump_between_sections() {
+        let mut harness = editable_demo();
+        harness.key_press_modifiers(egui::Modifiers::ALT, egui::Key::ArrowDown);
+        harness.run();
+        assert!(cursor_shows(&harness, "8:0:0"));
+        harness.key_press_modifiers(egui::Modifiers::ALT, egui::Key::ArrowDown);
+        harness.run();
+        assert!(cursor_shows(&harness, "16:0:0"));
+        harness.key_press_modifiers(egui::Modifiers::ALT, egui::Key::ArrowUp);
+        harness.run();
+        assert!(cursor_shows(&harness, "8:0:0"));
+    }
+
+    #[test]
+    fn ctrl_b_toggles_a_bookmark_at_the_cursor() {
+        let mut harness = editable_demo();
+        let before = marker_texts(&harness).len();
+        harness.key_press(egui::Key::ArrowDown);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::B);
+        harness.run();
+        assert_eq!(marker_texts(&harness).len(), before + 1);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::B);
+        harness.run();
+        assert_eq!(marker_texts(&harness).len(), before);
+    }
+
+    #[test]
+    fn f8_and_f7_raise_and_lower_the_tempo_at_the_cursor_a_bpm_at_a_time() {
+        let mut harness = editable_demo();
+        harness.key_press(egui::Key::F8);
+        harness.run();
+        assert_eq!(bpm_at_cursor(&harness), Some((0, "151".to_owned())));
+        harness.key_press(egui::Key::F7);
+        harness.key_press(egui::Key::F7);
+        harness.run();
+        assert_eq!(bpm_at_cursor(&harness), Some((0, "149".to_owned())));
+    }
+
+    #[test]
+    fn f1_shows_the_keyboard_shortcuts() {
+        let mut harness = editable_demo();
+        harness.key_press(egui::Key::F1);
+        harness.run();
+        let shown = |harness: &Harness<'_, Window>| {
+            harness
+                .query_all_by_label("Keyboard shortcuts")
+                .next()
+                .is_some()
+        };
+        assert!(shown(&harness));
+        harness.key_press(egui::Key::F1);
+        harness.run();
+        assert!(!shown(&harness));
     }
 
     #[test]
