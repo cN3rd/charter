@@ -25,6 +25,7 @@ serde_json = { version = "1.0.151", features = ["float_roundtrip"] }
 thiserror = "2.0.20"
 egui = "0.36.2"
 eframe = "0.36.2"
+rfd = "0.17.2"
 egui_kittest = "0.36.2"
 # ponytail: std only; the fork and timeout features pull in a temp-file runner the sans-io tests
 # do not need.

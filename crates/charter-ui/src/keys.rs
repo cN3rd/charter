@@ -14,6 +14,10 @@ pub(crate) const REDO: KeyboardShortcut =
     KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::Z);
 /// Redo as Windows programs spell it.
 const REDO_Y: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Y);
+pub(crate) const OPEN: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::O);
+pub(crate) const SAVE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::S);
+pub(crate) const SAVE_AS: KeyboardShortcut =
+    KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::S);
 
 /// The keys that place notes on lanes 1 to 10, as StepMania and ArrowVortex bind them.
 const LANE_KEYS: [Key; 10] = [
@@ -148,6 +152,16 @@ fn command(key: Key, modifiers: Modifiers) -> Option<Action> {
     }
     if is(UNDO) {
         return Some(Action::Undo);
+    }
+    // Save as first, for the same reason.
+    if is(SAVE_AS) {
+        return Some(Action::SaveAs);
+    }
+    if is(SAVE) {
+        return Some(Action::Save);
+    }
+    if is(OPEN) {
+        return Some(Action::Open);
     }
     if modifiers.command {
         return match key {

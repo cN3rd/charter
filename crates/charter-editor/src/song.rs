@@ -74,6 +74,9 @@ pub struct Song {
     /// Every edit, oldest first. The first `done` are in effect; the rest were undone.
     history: Vec<Change>,
     done: usize,
+    /// How many edits were in effect when the song was opened or last saved, unless no undo or
+    /// redo can bring that state back.
+    saved: Option<usize>,
     /// Selected notes of the open chart, each one there.
     selection: BTreeSet<NoteAt>,
 }
@@ -132,6 +135,7 @@ impl Song {
             snap: NonZeroU16::MIN,
             history: Vec::new(),
             done: 0,
+            saved: Some(0),
             selection: BTreeSet::new(),
         };
         let snaps: Vec<_> = song.snaps().collect();
@@ -267,10 +271,16 @@ impl Song {
     /// step.
     fn record(&mut self, edit: Edit) {
         self.history.truncate(self.done);
+        if self.saved.is_some_and(|saved| saved > self.done) {
+            self.saved = None;
+        }
         if let Some(last) = self.history.last_mut()
             && last.chart == self.chart
             && last.edit.absorb(&edit)
         {
+            if self.saved == Some(self.done) {
+                self.saved = None;
+            }
             self.prune_selection();
             return;
         }
@@ -340,6 +350,17 @@ impl Song {
         self.done += 1;
         self.return_to(chart, cursor);
         Ok(())
+    }
+
+    /// Whether the song differs from when it was opened or last saved.
+    #[must_use]
+    pub fn is_modified(&self) -> bool {
+        self.saved != Some(self.done)
+    }
+
+    /// Takes the song as it stands to be what its file holds.
+    pub fn mark_saved(&mut self) {
+        self.saved = Some(self.done);
     }
 
     /// The selected notes, earliest first.
@@ -956,6 +977,50 @@ mod tests {
         song.undo().unwrap();
         song.redo().unwrap();
         assert_eq!(objects(&song), [object(0, 0, "tap")]);
+    }
+
+    #[test]
+    fn a_song_is_unmodified_until_edited_and_again_once_undone() {
+        let mut song = Song::new(document(json!([])), EDITABLE);
+        assert!(!song.is_modified());
+        song.toggle(at(0), lane(0), Kind::Tap).unwrap();
+        assert!(song.is_modified());
+        song.undo().unwrap();
+        assert!(!song.is_modified());
+        song.redo().unwrap();
+        assert!(song.is_modified());
+    }
+
+    #[test]
+    fn saving_makes_the_song_as_it_stands_unmodified() {
+        let mut song = Song::new(document(json!([])), EDITABLE);
+        song.toggle(at(0), lane(0), Kind::Tap).unwrap();
+        song.mark_saved();
+        assert!(!song.is_modified());
+        song.undo().unwrap();
+        assert!(song.is_modified());
+    }
+
+    #[test]
+    fn a_saved_state_undone_and_edited_over_is_gone_for_good() {
+        let mut song = Song::new(document(json!([])), EDITABLE);
+        song.toggle(at(0), lane(0), Kind::Tap).unwrap();
+        song.mark_saved();
+        song.undo().unwrap();
+        song.toggle(at(0), lane(1), Kind::Tap).unwrap();
+        song.undo().unwrap();
+        assert!(song.is_modified());
+    }
+
+    #[test]
+    fn stretching_a_note_placed_before_saving_modifies_the_song() {
+        let mut song = Song::new(document(json!([])), EDITABLE);
+        song.toggle(at(0), lane(0), Kind::Tap).unwrap();
+        song.mark_saved();
+        song.stretch(lane(0), at(0), at(480)).unwrap();
+        assert!(song.is_modified());
+        song.undo().unwrap();
+        assert!(song.is_modified());
     }
 
     fn four_taps() -> Song {

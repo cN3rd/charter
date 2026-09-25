@@ -1,6 +1,6 @@
 //! The editor window's state, and how actions from its panels, keys and gestures change it.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use charter_core::{Kind, LaneIndex, RulesetPlugin, Tick};
 use egui::Ui;
@@ -9,6 +9,61 @@ use charter_editor::{NoteAt, Refusal, Selecting, Song, Step, Toggled, demo};
 
 use crate::notefield::{self, Zoom};
 use crate::{keys, panels, style};
+
+/// Something only the program hosting the window can do. The host answers a save through
+/// [`Window::saved`], and an open by passing the file to [`Window::open`].
+#[derive(Debug, PartialEq, Eq)]
+pub enum Request {
+    /// Write `bytes`, the song as it stands, to `path`.
+    Write { path: PathBuf, bytes: Vec<u8> },
+    /// Ask where to save the song, suggesting the file name `name`, then write `bytes` there.
+    SaveAs { name: String, bytes: Vec<u8> },
+    /// Ask for a song to open.
+    Open,
+}
+
+/// How a save the window asked for went.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Saved {
+    /// The song is in this file now.
+    To(PathBuf),
+    /// No file was chosen.
+    Cancelled,
+    /// The file could not be written, for this reason.
+    Failed(String),
+}
+
+/// What would lose the open song's unsaved changes, waiting on whether to save them first.
+#[derive(Debug)]
+enum Discard {
+    /// Closing the window.
+    Close,
+    /// Opening another song, read from `path` unless it is the demo.
+    Open {
+        path: Option<PathBuf>,
+        song: Box<Song>,
+    },
+}
+
+/// Where a save the user asked for goes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Saving {
+    /// To the song's file, or wherever the user chooses when it has none.
+    InPlace,
+    /// Wherever the user chooses.
+    Elsewhere,
+}
+
+/// How far the window is in closing, once the user chose to.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Leaving {
+    #[default]
+    Staying,
+    /// The host's window is to be told to close.
+    Now,
+    /// Closing, whatever changes are left: a close request goes through.
+    Going,
+}
 
 /// A note a lane key places.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,6 +122,12 @@ pub(crate) enum Action {
     SelectAll,
     ClearSelection,
     DeleteSelection,
+    /// Asks the host for a song to open.
+    Open,
+    /// Saves the song to its file, or asks where when it has none.
+    Save,
+    /// Asks where to save the song.
+    SaveAs,
 }
 
 /// The editor window's state.
@@ -75,6 +136,20 @@ pub struct Window {
     /// The ruleset plugins every song is checked against.
     plugins: &'static [&'static dyn RulesetPlugin],
     song: Option<Song>,
+    /// The file the open song was read from or last saved to.
+    path: Option<PathBuf>,
+    /// What the host has yet to do.
+    requests: Vec<Request>,
+    /// The title last given to the host's window.
+    shown_title: String,
+    /// A save asked for this frame, made once every edit of the frame is in.
+    saving: Option<Saving>,
+    /// What waits on the answer to whether to save the open song's changes.
+    discard: Option<Discard>,
+    /// What to do once the save the user asked for is done.
+    after_save: Option<Discard>,
+    /// How far the window is in closing.
+    leaving: Leaving,
     /// How tall a second of the open song is on screen.
     zoom: Zoom,
     /// Why the last file failed to open, or the last edit was refused.
@@ -103,11 +178,83 @@ impl Window {
         }
     }
 
+    /// What the window needs its host to do, oldest first. A host takes these after every frame.
+    pub fn take_requests(&mut self) -> Vec<Request> {
+        std::mem::take(&mut self.requests)
+    }
+
+    /// Takes how a save the window asked for went.
+    pub fn saved(&mut self, saved: Saved) {
+        match saved {
+            Saved::To(path) => {
+                if let Some(song) = &mut self.song {
+                    song.mark_saved();
+                }
+                self.path = Some(path);
+                self.failure = None;
+                if let Some(discard) = self.after_save.take() {
+                    self.carry_on(discard);
+                }
+            }
+            Saved::Cancelled => self.after_save = None,
+            Saved::Failed(why) => {
+                self.after_save = None;
+                self.failure = Some(format!("Could not save: {why}"));
+            }
+        }
+    }
+
+    /// The name the host's window goes by: the open song, starred while it has unsaved changes.
+    #[must_use]
+    pub fn title(&self) -> String {
+        let Some(song) = &self.song else {
+            return "charter".to_owned();
+        };
+        let star = if song.is_modified() { "*" } else { "" };
+        format!("{star}{} - charter", self.file_name(song))
+    }
+
+    /// The open song's file name, or one made from its title when it has no file.
+    fn file_name(&self, song: &Song) -> String {
+        file_name(self.path.as_deref(), song)
+    }
+
+    /// Asks the host to write the song to its file, or to ask where when `saving` says so or the
+    /// song has no file.
+    fn save(&mut self, saving: Saving) {
+        let Some(song) = &self.song else {
+            return;
+        };
+        let bytes = match song.document().to_json() {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                self.failure = Some(format!("Could not save: {error}"));
+                return;
+            }
+        };
+        let request = match &self.path {
+            Some(path) if saving == Saving::InPlace => Request::Write {
+                path: path.clone(),
+                bytes,
+            },
+            _ => Request::SaveAs {
+                name: self.file_name(song),
+                bytes,
+            },
+        };
+        self.requests.push(request);
+    }
+
     /// Opens the song in `bytes`, read from the file at `path`. A file that fails leaves the
     /// open song as it was and says why.
+    ///
+    /// Over a song with unsaved changes, it first asks whether to save them.
     pub fn open(&mut self, path: &Path, bytes: &[u8]) {
         match Song::open(bytes, self.plugins) {
-            Ok(song) => self.show(song),
+            Ok(song) => self.after_asking(Discard::Open {
+                path: Some(path.to_path_buf()),
+                song: Box::new(song),
+            }),
             Err(error) => self.refuse(path, &error),
         }
     }
@@ -117,25 +264,60 @@ impl Window {
         self.failure = Some(format!("{} did not open: {why}", path.display()));
     }
 
-    /// Opens the demo song.
+    /// Opens the demo song, first asking whether to save unsaved changes to the song open.
     pub fn open_demo(&mut self) {
-        self.show(Song::new(demo::song(), self.plugins));
+        let song = Box::new(Song::new(demo::song(), self.plugins));
+        self.after_asking(Discard::Open { path: None, song });
     }
 
-    /// Puts `song` in the window in place of the one open.
-    fn show(&mut self, song: Song) {
-        self.song = Some(song);
-        self.zoom = Zoom::START;
-        self.failure = None;
-        self.placed = false;
-        self.holding.clear();
+    /// Does what would lose the open song's unsaved changes, once the user says what to do with
+    /// them; at once when there are none.
+    fn after_asking(&mut self, discard: Discard) {
+        if self.song.as_ref().is_some_and(Song::is_modified) {
+            self.discard = Some(discard);
+        } else {
+            self.carry_on(discard);
+        }
+    }
+
+    fn carry_on(&mut self, discard: Discard) {
+        match discard {
+            Discard::Close => self.leaving = Leaving::Now,
+            Discard::Open { path, song } => {
+                self.saving = None;
+                self.song = Some(*song);
+                self.path = path;
+                self.zoom = Zoom::START;
+                self.failure = None;
+                self.placed = false;
+                self.holding.clear();
+            }
+        }
+    }
+
+    /// Takes the answer to whether to save before the changes are lost.
+    fn answer(&mut self, answer: panels::Answer) {
+        let Some(discard) = self.discard.take() else {
+            return;
+        };
+        match answer {
+            panels::Answer::Save => {
+                self.after_save = Some(discard);
+                self.saving = Some(Saving::InPlace);
+            }
+            panels::Answer::DontSave => self.carry_on(discard),
+            panels::Answer::Cancel => {}
+        }
     }
 
     fn apply(&mut self, action: Action) {
         // What the window does whether or not a song is open.
-        if action == Action::OpenDemo {
-            self.open_demo();
-            return;
+        match action {
+            Action::OpenDemo => self.open_demo(),
+            Action::Open => self.requests.push(Request::Open),
+            Action::Save => self.saving = Some(Saving::InPlace),
+            Action::SaveAs => self.saving = Some(Saving::Elsewhere),
+            _ => {}
         }
         let Some(song) = &mut self.song else {
             return;
@@ -192,7 +374,11 @@ impl Window {
             Action::Select(None, Selecting::Replace) | Action::ClearSelection => {
                 song.clear_selection();
             }
-            Action::OpenDemo | Action::Select(None, Selecting::Add | Selecting::Subtract) => {}
+            Action::OpenDemo
+            | Action::Open
+            | Action::Save
+            | Action::SaveAs
+            | Action::Select(None, Selecting::Add | Selecting::Subtract) => {}
             Action::SelectBetween { ticks, lanes, how } => {
                 song.select_between(ticks.0..=ticks.1, lanes.0..=lanes.1, how);
             }
@@ -216,14 +402,35 @@ impl Window {
     /// Draws the window into `ui` and answers this frame's input.
     pub fn ui(&mut self, ui: &mut Ui) {
         style::apply(ui.ctx());
+        if self.leaving == Leaving::Now {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+            self.leaving = Leaving::Going;
+        }
+        if ui.input(|input| input.viewport().close_requested()) && self.leaving == Leaving::Staying
+        {
+            if self.song.as_ref().is_some_and(Song::is_modified) {
+                ui.ctx()
+                    .send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                self.discard = Some(Discard::Close);
+            } else {
+                self.leaving = Leaving::Going;
+            }
+        }
+        if self.discard.is_some() {
+            let name = self.song.as_ref().map(|song| self.file_name(song));
+            if let Some(answer) = panels::ask_to_save(ui, name.as_deref().unwrap_or_default()) {
+                self.answer(answer);
+            }
+        }
         self.open_dropped(ui);
         let mut actions = Vec::new();
         if let Some(song) = &self.song {
             let lanes = editable_lanes(song);
             let lane_keys = &mut self.lane_keys;
             let asked = ui.input(|input| keys::key_actions(input, lanes, lane_keys));
-            // A focused widget takes the keyboard, but a lane key coming up still ends its chord.
-            let busy = ui.ctx().egui_wants_keyboard_input();
+            // A focused widget or a question takes the keyboard, but a lane key coming up still
+            // ends its chord.
+            let busy = ui.ctx().egui_wants_keyboard_input() || self.discard.is_some();
             let ends_a_chord =
                 |action: &Action| matches!(action, Action::LaneUp(_) | Action::LanesReleased);
             actions.extend(
@@ -260,7 +467,24 @@ impl Window {
         for action in actions {
             self.apply(action);
         }
+        if let Some(saving) = self.saving.take() {
+            self.save(saving);
+        }
+        let title = self.title();
+        if title != self.shown_title {
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.shown_title = title;
+        }
     }
+}
+
+/// The file name of `song`, read from `path`, or one made from its title when it has no file.
+fn file_name(path: Option<&Path>, song: &Song) -> String {
+    path.and_then(Path::file_name).map_or_else(
+        || format!("{}.json", song.document().document().metadata.title),
+        |name| name.to_string_lossy().into_owned(),
+    )
 }
 
 /// How many lanes of the open chart lane keys can edit: none when the song is read-only.
@@ -290,7 +514,7 @@ fn refused(refusal: Option<Refusal>) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::sync::Arc;
 
     use std::error::Error;
@@ -630,9 +854,23 @@ mod tests {
         harness.key_down(egui::Key::Num1);
         harness.run();
         harness.state_mut().open_demo();
+        harness.run();
+        harness.get_by_label("Don't save").click();
         harness.key_up(egui::Key::Num1);
         harness.run();
         assert!(cursor_shows(&harness, "0:0:0"));
+    }
+
+    #[test]
+    fn keys_wait_while_the_window_asks_about_unsaved_changes() {
+        let mut harness = edited_four_taps();
+        harness
+            .state_mut()
+            .open(Path::new("example.json"), example());
+        harness.run();
+        harness.key_press(egui::Key::Num3);
+        harness.run();
+        assert_eq!(note_count(&harness), 5);
     }
 
     /// What starts on `lane` at `tick` in the open chart, as the format writes it.
@@ -917,6 +1155,240 @@ mod tests {
         assert!(harness.query_by_label_contains("Refused").is_none());
     }
 
+    /// The one request the window made since the last were taken.
+    fn request(harness: &mut Harness<'_, Window>) -> Request {
+        let mut requests = harness.state_mut().take_requests();
+        assert_eq!(requests.len(), 1, "{requests:?}");
+        requests.remove(0)
+    }
+
+    /// Whether `bytes` hold a song whose open chart has a tap on `lane` at `tick`.
+    fn holds_tap(bytes: &[u8], tick: i32, lane: u16) -> bool {
+        let song = charter_core::ValidDocument::from_json(bytes).unwrap();
+        let chart = song.charts().next().unwrap();
+        chart.objects().any(|object| {
+            object.tick == Tick::new(tick)
+                && object.position.lanes()
+                    == Some(LaneSpan::new(LaneIndex::new(lane), LaneCount::ONE))
+        })
+    }
+
+    #[test]
+    fn ctrl_s_writes_the_song_back_to_its_file() {
+        let mut harness = editable_four_taps();
+        harness.key_press(egui::Key::Num4);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::S);
+        harness.run();
+        let Request::Write { path, bytes } = request(&mut harness) else {
+            panic!("expected a write");
+        };
+        assert_eq!(path, Path::new("four.json"));
+        assert!(holds_tap(&bytes, 0, 3));
+    }
+
+    #[test]
+    fn saving_a_song_without_a_file_asks_where() {
+        let mut harness = editable_demo();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::S);
+        harness.run();
+        let Request::SaveAs { name, .. } = request(&mut harness) else {
+            panic!("expected save as");
+        };
+        assert_eq!(name, "Demo.json");
+    }
+
+    #[test]
+    fn ctrl_shift_s_asks_where_even_for_a_song_with_a_file() {
+        let mut harness = editable_four_taps();
+        let command_shift = egui::Modifiers::COMMAND.plus(egui::Modifiers::SHIFT);
+        harness.key_press_modifiers(command_shift, egui::Key::S);
+        harness.run();
+        let Request::SaveAs { name, .. } = request(&mut harness) else {
+            panic!("expected save as");
+        };
+        assert_eq!(name, "four.json");
+    }
+
+    #[test]
+    fn ctrl_o_and_the_file_menu_ask_for_a_song_to_open() {
+        let mut harness = editable_four_taps();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::O);
+        harness.run();
+        assert_eq!(request(&mut harness), Request::Open);
+        harness.get_by_label("File").click();
+        harness.run();
+        harness.get_by_label_contains("Open…").click();
+        harness.run();
+        assert_eq!(request(&mut harness), Request::Open);
+    }
+
+    #[test]
+    fn the_title_names_the_song_and_marks_unsaved_changes() {
+        let mut harness = editable_four_taps();
+        assert_eq!(harness.state().title(), "four.json - charter");
+        harness.key_press(egui::Key::Num4);
+        harness.run();
+        assert_eq!(harness.state().title(), "*four.json - charter");
+        harness
+            .state_mut()
+            .saved(Saved::To(PathBuf::from("four.json")));
+        harness.run();
+        assert_eq!(harness.state().title(), "four.json - charter");
+    }
+
+    #[test]
+    fn a_song_saved_elsewhere_is_saved_there_from_then_on() {
+        let mut harness = editable_demo();
+        harness
+            .state_mut()
+            .saved(Saved::To(PathBuf::from("mine.json")));
+        harness.run();
+        assert_eq!(harness.state().title(), "mine.json - charter");
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::S);
+        harness.run();
+        let Request::Write { path, .. } = request(&mut harness) else {
+            panic!("expected a write");
+        };
+        assert_eq!(path, Path::new("mine.json"));
+    }
+
+    #[test]
+    fn a_failed_save_says_why_and_keeps_the_changes_unsaved() {
+        let mut harness = editable_four_taps();
+        harness.key_press(egui::Key::Num4);
+        harness.run();
+        harness
+            .state_mut()
+            .saved(Saved::Failed("the disk is full".to_owned()));
+        harness.run();
+        assert!(
+            harness
+                .query_by_label_contains("the disk is full")
+                .is_some()
+        );
+        assert_eq!(harness.state().title(), "*four.json - charter");
+    }
+
+    /// The four taps with one more placed, so there is something to lose.
+    fn edited_four_taps() -> Harness<'static, Window> {
+        let mut harness = editable_four_taps();
+        harness.key_press(egui::Key::Num4);
+        harness.run();
+        harness
+    }
+
+    /// Asks to close the window as its close button does, and runs the one frame that answers.
+    fn close(harness: &mut Harness<'_, Window>) {
+        let root = harness.input_mut().viewports.entry(egui::ViewportId::ROOT);
+        root.or_default().events.push(egui::ViewportEvent::Close);
+        harness.step();
+    }
+
+    /// Whether the last frame sent `command` to the host's window.
+    fn sent(harness: &Harness<'_, Window>, command: &egui::ViewportCommand) -> bool {
+        let output = harness
+            .output()
+            .viewport_output
+            .get(&egui::ViewportId::ROOT);
+        output.is_some_and(|viewport| viewport.commands.contains(command))
+    }
+
+    fn asks_to_save(harness: &Harness<'_, Window>) -> bool {
+        harness
+            .query_by_label("Save changes to four.json?")
+            .is_some()
+    }
+
+    #[test]
+    fn closing_with_unsaved_changes_asks_first() {
+        let mut harness = edited_four_taps();
+        close(&mut harness);
+        assert!(sent(&harness, &egui::ViewportCommand::CancelClose));
+        harness.run();
+        assert!(asks_to_save(&harness));
+    }
+
+    #[test]
+    fn closing_without_changes_does_not_ask() {
+        let mut harness = editable_four_taps();
+        close(&mut harness);
+        assert!(!sent(&harness, &egui::ViewportCommand::CancelClose));
+        harness.run();
+        assert!(!asks_to_save(&harness));
+    }
+
+    #[test]
+    fn dont_save_closes_and_lets_the_close_through() {
+        let mut harness = edited_four_taps();
+        close(&mut harness);
+        harness.run();
+        harness.get_by_label("Don't save").click();
+        harness.step();
+        harness.step();
+        assert!(sent(&harness, &egui::ViewportCommand::Close));
+        close(&mut harness);
+        assert!(!sent(&harness, &egui::ViewportCommand::CancelClose));
+    }
+
+    #[test]
+    fn save_writes_and_closes_once_the_host_says_it_saved() {
+        let mut harness = edited_four_taps();
+        close(&mut harness);
+        harness.run();
+        harness.get_by_label("Save").click();
+        harness.run();
+        let Request::Write { path, .. } = request(&mut harness) else {
+            panic!("expected a write");
+        };
+        harness.state_mut().saved(Saved::To(path));
+        harness.step();
+        assert!(sent(&harness, &egui::ViewportCommand::Close));
+    }
+
+    #[test]
+    fn cancel_keeps_the_window_and_its_changes() {
+        let mut harness = edited_four_taps();
+        close(&mut harness);
+        harness.run();
+        harness.get_by_label("Cancel").click();
+        harness.run();
+        assert!(!asks_to_save(&harness));
+        assert!(!sent(&harness, &egui::ViewportCommand::Close));
+        assert_eq!(harness.state().title(), "*four.json - charter");
+    }
+
+    #[test]
+    fn opening_another_song_over_unsaved_changes_asks_first() {
+        let mut harness = edited_four_taps();
+        harness
+            .state_mut()
+            .open(Path::new("example.json"), example());
+        harness.run();
+        assert!(asks_to_save(&harness));
+        assert_eq!(harness.state().title(), "*four.json - charter");
+        harness.get_by_label("Don't save").click();
+        harness.run();
+        assert_eq!(harness.state().title(), "example.json - charter");
+    }
+
+    #[test]
+    fn a_save_that_fails_leaves_everything_as_it_was() {
+        let mut harness = edited_four_taps();
+        harness.get_by_label("File").click();
+        harness.run();
+        harness.get_by_label("Open the demo song").click();
+        harness.run();
+        harness.get_by_label("Save").click();
+        harness.run();
+        assert!(matches!(request(&mut harness), Request::Write { .. }));
+        harness
+            .state_mut()
+            .saved(Saved::Failed("the disk is full".to_owned()));
+        harness.run();
+        assert_eq!(harness.state().title(), "*four.json - charter");
+        assert!(!asks_to_save(&harness));
+    }
+
     #[test]
     fn a_ctrl_drag_draws_its_hold_while_a_message_comes_and_goes() {
         let mut harness = editable_four_taps();
@@ -960,6 +1432,31 @@ mod tests {
         press(&harness, to, false, egui::Modifiers::NONE);
         harness.run();
         assert!(harness.query_by_label("Nothing selected").is_some());
+    }
+
+    #[test]
+    fn a_save_holds_every_edit_made_in_its_frame() {
+        let mut harness = editable_four_taps();
+        let key = |key, pressed, modifiers| egui::Event::Key {
+            key,
+            pressed,
+            repeat: false,
+            modifiers,
+            physical_key: None,
+        };
+        let command = egui::Modifiers::COMMAND;
+        let events = &mut harness.input_mut().events;
+        events.push(key(egui::Key::S, true, command));
+        events.push(key(egui::Key::S, false, command));
+        events.push(key(egui::Key::Num4, true, egui::Modifiers::NONE));
+        events.push(key(egui::Key::Num4, false, egui::Modifiers::NONE));
+        harness.run();
+        let Request::Write { path, bytes } = request(&mut harness) else {
+            panic!("expected a write");
+        };
+        assert!(holds_tap(&bytes, 0, 3));
+        harness.state_mut().saved(Saved::To(path));
+        assert_eq!(harness.state().title(), "four.json - charter");
     }
 
     #[test]

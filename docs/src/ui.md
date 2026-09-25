@@ -13,9 +13,10 @@ draws on are all still open. `cargo run -p charter-ui --example mock` shows it a
 mock, with a made-up song in each of StepMania, Tap Tap Revenge, osu!mania, Project Sekai and
 Arcaea. `cargo run -p charter-app` is the editor so far. It draws charts in the shared vocabulary's
 glyphs, since no ruleset plugin draws yet, and edits songs of the built-in rulesets. Lane keys and
-Ctrl with the mouse place taps, holds and mines; the mouse selects and Delete removes the
-selection; undo and redo return to where each edit was made. The inspector shows the selection
-but cannot change it yet.
+Ctrl with the mouse place taps, holds and mines; the mouse selects and Delete removes the selection;
+undo and redo return to where each edit was made. Songs open and save through native file dialogs,
+and unsaved changes are asked about before they are lost. The inspector shows the selection but
+cannot change it yet.
 
 ## Main window
 
@@ -190,6 +191,8 @@ and the notes over a waveform that stays put.
   Detection lists candidates and applies none until one is picked
   ([suggestion UI](research/topics/suggestion-ui.md)).
 - With no song open, the centre offers new, open and recent songs.
+- Closing the window, opening another song or the demo over unsaved changes first asks whether to
+  save them. The title stars a song with unsaved changes.
 
 ## Open for the next pass
 

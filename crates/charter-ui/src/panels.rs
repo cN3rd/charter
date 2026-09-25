@@ -10,7 +10,7 @@ use serde_json::Value;
 use charter_editor::Song;
 
 use crate::Action;
-use crate::keys::{REDO, UNDO};
+use crate::keys::{OPEN, REDO, SAVE, SAVE_AS, UNDO};
 use crate::notefield::Zoom;
 use crate::style::{fields, heading, table, title};
 
@@ -18,6 +18,19 @@ pub fn menu_bar(ui: &mut Ui, song: Option<&Song>, actions: &mut Vec<Action>) {
     let song_open = song.is_some();
     egui::MenuBar::new().ui(ui, |ui| {
         ui.menu_button("File", |ui| {
+            let items = [
+                ("Open…", OPEN, true, Action::Open),
+                ("Save", SAVE, song_open, Action::Save),
+                ("Save as…", SAVE_AS, song_open, Action::SaveAs),
+            ];
+            for (label, shortcut, enabled, action) in items {
+                let item =
+                    egui::Button::new(label).shortcut_text(ui.ctx().format_shortcut(&shortcut));
+                if ui.add_enabled(enabled, item).clicked() {
+                    actions.push(action);
+                }
+            }
+            ui.separator();
             if ui.button("Open the demo song").clicked() {
                 actions.push(Action::OpenDemo);
             }
@@ -65,7 +78,7 @@ pub fn menu_bar(ui: &mut Ui, song: Option<&Song>, actions: &mut Vec<Action>) {
 }
 
 /// The keys and gestures the notefield answers to, and what each does.
-const KEYS: [(&str, &str); 18] = [
+const KEYS: [(&str, &str); 19] = [
     ("1 to 9, 0", "Place or remove a tap on lanes 1 to 10"),
     ("Hold 1 to 0, move", "Draw a hold"),
     ("Shift+1 to 0", "Place or remove a mine"),
@@ -79,6 +92,7 @@ const KEYS: [(&str, &str); 18] = [
     ("Delete, Backspace", "Delete the selection"),
     ("Ctrl+Z", "Undo"),
     ("Ctrl+Shift+Z, Ctrl+Y", "Redo"),
+    ("Ctrl+O, Ctrl+S, Ctrl+Shift+S", "Open, save, save as"),
     ("Up, Down, Wheel", "Move the cursor by the snap"),
     ("Page Up, Page Down", "Move the cursor by a measure"),
     ("Left, Right", "Coarser or finer snap"),
@@ -293,6 +307,38 @@ pub fn empty(ui: &mut Ui, actions: &mut Vec<Action>) {
             actions.push(Action::OpenDemo);
         }
     });
+}
+
+/// What to do with unsaved changes that are about to be lost.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Answer {
+    Save,
+    DontSave,
+    Cancel,
+}
+
+/// Asks whether to save the changes to the song in `name` before they are lost. Escape or a
+/// click outside cancels.
+pub fn ask_to_save(ui: &Ui, name: &str) -> Option<Answer> {
+    let mut answer = None;
+    let modal = egui::Modal::new(egui::Id::new("save changes")).show(ui.ctx(), |ui| {
+        ui.set_max_width(360.0);
+        ui.strong(format!("Save changes to {name}?"));
+        ui.label("Changes are lost unless you save them.");
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            for (label, choice) in [
+                ("Save", Answer::Save),
+                ("Don't save", Answer::DontSave),
+                ("Cancel", Answer::Cancel),
+            ] {
+                if ui.button(label).clicked() {
+                    answer = Some(choice);
+                }
+            }
+        });
+    });
+    answer.or(modal.should_close().then_some(Answer::Cancel))
 }
 
 /// Why the last file did not open, or the last edit was refused.
