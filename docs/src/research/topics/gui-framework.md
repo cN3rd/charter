@@ -44,3 +44,10 @@ callback is needed. Until that exists, this decision rests on reading documentat
 
 Related: [waveform rendering](waveform-rendering.md),
 [performance targets](performance-targets.md).
+
+## Draft position
+
+egui, through eframe 0.36 and its default `wgpu` renderer, draws `crates/charter-ui`: a
+read-only notefield over real documents, and a static mock of the [UI draft](../../ui.md). Each
+draws about a thousand shapes where the spike asks for tens of thousands, and neither animates,
+so the spike is still unrun.

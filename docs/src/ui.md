@@ -9,7 +9,10 @@ status: draft
 # User interface draft
 
 **Draft.** A low-fidelity layout to iterate on. The [research topics](research/topics/index.md) it
-draws on are all still open.
+draws on are all still open. `cargo run -p charter-ui --example mock` shows it as a static egui
+mock, with a made-up song in each of StepMania, Tap Tap Revenge, osu!mania, Project Sekai and
+Arcaea. `cargo run -p charter-app` is the editor so far: it opens a song read-only and draws its
+charts in the shared vocabulary's glyphs, since no ruleset plugin draws yet.
 
 ## Main window
 

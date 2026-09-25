@@ -15,7 +15,8 @@ cargo test -p charter-core format_chapter  # single test: -p <crate> <substring 
 cargo test -p charter-core -- --nocapture --exact json::tests::the_format_chapter_example_survives_a_round_trip
 cargo clippy --workspace --all-targets
 cargo fmt --all
-cargo run -p charter-app
+cargo run -p charter-app                 # the editor; add `-- path/to/song.json` to open a song
+cargo run -p charter-ui --example mock   # the static mock of the UI draft
 cargo kani -p charter-core               # Kani proofs, also in charter-ttr and charter-osu-mania; `cargo install --locked kani-verifier && cargo kani setup` once
 git submodule update --init              # required once, see .github/skills/README.md
 ```
@@ -83,7 +84,9 @@ expected `E1` for it. Do not silence that by adding frontmatter.
 | Path | Role |
 |---|---|
 | `crates/charter-core` | the chart format: data model, JSON I/O, validation, tick to time |
-| `crates/charter-app` | binary front end, thin |
+| `crates/charter-editor` | editing a song without drawing it: open chart, cursor, snaps, the demo song |
+| `crates/charter-ui` | the editor window in egui: notefield, panels, style; the static mock as an example |
+| `crates/charter-app` | binary front end, thin: opens a native window around `charter-ui` |
 | `plugins/stepmania`, `plugins/ttr`, `plugins/osu-mania` | ruleset plugins: typed game models over `charter-core` |
 | `third-party/symphonia-wrap` | build-time facade over `symphonia`, read its README first |
 
@@ -116,5 +119,8 @@ atomic commits with `/commit`. `.github/skills/README.md` lists every skill and 
 ## Current state
 
 `charter-core` implements the format chapter, and the three ruleset plugins model their games on
-top of it without file import or export. `charter-app` is a generated stub. No UI or DSP crate
-exists yet. Ask before inventing a crate boundary.
+top of it without file import or export. The editor opens a song read-only and draws its charts
+generically, with no ruleset plugin involved, and moves the cursor by snap and by measure:
+`charter-editor` holds that state without drawing it, `charter-ui` draws it in egui, and
+`charter-app` opens the window. `charter-ui`'s `mock` example is the static mock of the book's UI
+draft. No DSP crate exists yet. Ask before inventing a crate boundary.
