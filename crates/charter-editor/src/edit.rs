@@ -1,8 +1,8 @@
-//! Changes to a chart's objects, each holding what it takes to undo it.
+//! Changes to a song, each holding what it takes to undo it.
 
-use charter_core::Object;
+use charter_core::{Document, Metadata, Object};
 
-/// One change to one object of a chart.
+/// One change: to one object of the chart an edit is made to, or to the song as a whole.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Op {
     Insert {
@@ -17,6 +17,10 @@ pub(crate) enum Op {
         index: usize,
         old: Object,
         new: Object,
+    },
+    Metadata {
+        old: Box<Metadata>,
+        new: Box<Metadata>,
     },
 }
 
@@ -36,6 +40,10 @@ impl Op {
                 old: new.clone(),
                 new: old.clone(),
             },
+            Self::Metadata { old, new } => Self::Metadata {
+                old: new.clone(),
+                new: old.clone(),
+            },
         }
     }
 }
@@ -51,20 +59,30 @@ impl Edit {
         Self(self.0.iter().rev().map(Op::inverse).collect())
     }
 
-    /// Makes the edit to `objects`, which must be the objects it was made against.
-    pub(crate) fn apply(&self, objects: &mut Vec<Object>) {
-        // Each index was found in the objects its change is made to, so it is in range.
+    /// Makes the edit to `document`, whose chart `chart` its object changes go to. It must be
+    /// the document the edit was made against. Says whether the chart was there.
+    pub(crate) fn apply(&self, document: &mut Document, chart: usize) -> bool {
         for op in &self.0 {
-            match op {
-                Op::Insert { index, object } => objects.insert(*index, object.clone()),
-                Op::Remove { index, .. } => {
+            // Each index was found in the objects its change is made to, so it is in range.
+            let objects = document
+                .charts
+                .get_mut(chart)
+                .map(|chart| &mut chart.objects);
+            match (op, objects) {
+                (Op::Metadata { new, .. }, _) => document.metadata = (**new).clone(),
+                (Op::Insert { index, object }, Some(objects)) => {
+                    objects.insert(*index, object.clone());
+                }
+                (Op::Remove { index, .. }, Some(objects)) => {
                     objects.remove(*index);
                 }
-                Op::Replace { index, new, .. } => {
+                (Op::Replace { index, new, .. }, Some(objects)) => {
                     objects.splice(*index..=*index, [new.clone()]);
                 }
+                (_, None) => return false,
             }
         }
+        true
     }
 
     /// Folds `next` into this edit when all `next` does is change the one object this edit
@@ -142,11 +160,53 @@ mod tests {
                 object: tap(720),
             },
         ]);
-        let mut objects = before.clone();
-        edit.apply(&mut objects);
-        assert_eq!(objects, [hold(240, 240), tap(720)]);
-        edit.inverse().apply(&mut objects);
-        assert_eq!(objects, before);
+        let mut document = song(before.clone());
+        assert!(edit.apply(&mut document, 0));
+        assert_eq!(document.charts[0].objects, [hold(240, 240), tap(720)]);
+        assert!(edit.inverse().apply(&mut document, 0));
+        assert_eq!(document.charts[0].objects, before);
+    }
+
+    /// A song of one chart holding `objects`.
+    fn song(objects: Vec<Object>) -> Document {
+        let value = serde_json::json!({
+            "format_version": 0,
+            "ruleset": { "id": "test", "version": "1" },
+            "metadata": { "title": "t", "artist": "a", "audio": "song.ogg" },
+            "timing": { "offset_seconds": 0.0, "events": [ { "tick": 0, "kind": { "bpm": 120.0 } } ] },
+            "charts": [ { "name": "Easy", "lanes": 4 } ]
+        });
+        let mut document: Document = serde_json::from_value(value).unwrap();
+        document.charts[0].objects = objects;
+        document
+    }
+
+    #[test]
+    fn a_metadata_change_and_its_inverse_swap_the_metadata() {
+        let mut document = song(Vec::new());
+        let old = document.metadata.clone();
+        let new = Metadata {
+            title: "u".to_owned(),
+            ..old.clone()
+        };
+        let edit = Edit(vec![Op::Metadata {
+            old: Box::new(old.clone()),
+            new: Box::new(new.clone()),
+        }]);
+        assert!(edit.apply(&mut document, 0));
+        assert_eq!(document.metadata, new);
+        assert!(edit.inverse().apply(&mut document, 0));
+        assert_eq!(document.metadata, old);
+    }
+
+    #[test]
+    fn an_object_change_to_a_chart_that_is_not_there_does_not_apply() {
+        let mut document = song(Vec::new());
+        let edit = Edit(vec![Op::Insert {
+            index: 0,
+            object: tap(0),
+        }]);
+        assert!(!edit.apply(&mut document, 1));
     }
 
     #[test]

@@ -6,8 +6,8 @@ use std::num::NonZeroU16;
 use std::ops::RangeInclusive;
 
 use charter_core::{
-    Chart, Error, Extensions, Kind, LaneCount, LaneIndex, LaneSpan, Object, Position,
-    RulesetPlugin, Shape, Tick, Ticks, Timing, Valid, ValidDocument,
+    Chart, Error, Extensions, Kind, LaneCount, LaneIndex, LaneSpan, Metadata, Object, Position,
+    ResourcePath, RulesetPlugin, Shape, Tick, Ticks, Timing, Valid, ValidDocument,
 };
 
 use crate::edit::{Edit, Op};
@@ -253,6 +253,29 @@ impl Song {
         Ok(())
     }
 
+    /// Makes the song's audio the file at `audio`, as one step.
+    ///
+    /// # Errors
+    ///
+    /// Refuses on a read-only song.
+    pub fn set_audio(&mut self, audio: ResourcePath) -> Result<(), Refusal> {
+        let old = &self.document.document().metadata;
+        if old.audio == audio {
+            return Ok(());
+        }
+        let new = Metadata {
+            audio,
+            ..old.clone()
+        };
+        let edit = Edit(vec![Op::Metadata {
+            old: Box::new(old.clone()),
+            new: Box::new(new),
+        }]);
+        self.document = self.edited(self.chart, &edit)?;
+        self.record(edit);
+        Ok(())
+    }
+
     /// The object of the open chart that starts at `tick` and covers `lane`, and where it is.
     fn starting(&self, tick: Tick, lane: LaneIndex) -> Option<(usize, &Object)> {
         let objects = &self.document.document().charts.get(self.chart)?.objects;
@@ -306,12 +329,9 @@ impl Song {
         // at 10,000 notes in a release build; check only the edited chart once live recording or
         // bulk edits need it faster.
         let mut document = self.document.document().clone();
-        let objects = &mut document
-            .charts
-            .get_mut(chart)
-            .ok_or(Refusal::NoChart)?
-            .objects;
-        edit.apply(objects);
+        if !edit.apply(&mut document, chart) {
+            return Err(Refusal::NoChart);
+        }
         let edited = ValidDocument::new(document)?;
         plugin.check(&edited).map_err(Refusal::Game)?;
         Ok(edited)
@@ -1136,6 +1156,40 @@ mod tests {
         song.delete_selection().unwrap();
         assert_eq!(objects(&song).len(), 4);
         assert!(!song.can_undo());
+    }
+
+    fn audio(song: &Song) -> &str {
+        song.document().document().metadata.audio.as_str()
+    }
+
+    #[test]
+    fn setting_the_audio_is_a_step_undo_takes_back() {
+        let mut song = Song::new(document(json!([])), EDITABLE);
+        song.set_audio(ResourcePath::new("track.ogg").unwrap())
+            .unwrap();
+        assert_eq!(audio(&song), "track.ogg");
+        assert!(song.is_modified());
+        song.undo().unwrap();
+        assert_eq!(audio(&song), "song.ogg");
+        assert!(!song.is_modified());
+        song.redo().unwrap();
+        assert_eq!(audio(&song), "track.ogg");
+    }
+
+    #[test]
+    fn setting_the_audio_it_already_has_changes_nothing() {
+        let mut song = Song::new(document(json!([])), EDITABLE);
+        song.set_audio(ResourcePath::new("song.ogg").unwrap())
+            .unwrap();
+        assert!(!song.can_undo());
+    }
+
+    #[test]
+    fn a_read_only_song_refuses_new_audio() {
+        let mut song = Song::new(document(json!([])), &[]);
+        let refused = song.set_audio(ResourcePath::new("track.ogg").unwrap());
+        assert!(matches!(refused, Err(Refusal::ReadOnly)));
+        assert_eq!(audio(&song), "song.ogg");
     }
 
     #[test]
