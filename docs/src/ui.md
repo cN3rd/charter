@@ -15,8 +15,8 @@ Arcaea. `cargo run -p charter-app` is the editor so far. It draws charts in the 
 glyphs, since no ruleset plugin draws yet, and edits songs of the built-in rulesets. Lane keys and
 Ctrl with the mouse place taps, holds and mines; the mouse selects and Delete removes the
 selection; undo and redo return to where each edit was made. Songs open and save through native
-file dialogs, unsaved changes are asked about before they are lost, and a settings window holds
-what the user chooses. The inspector shows the selection but cannot change it yet.
+file dialogs, unsaved changes are asked about before they are lost and autosaved half a minute
+after they are made, and a settings window holds what the user chooses. The inspector shows the selection but cannot change it yet.
 
 ## Main window
 
@@ -193,6 +193,12 @@ and the notes over a waveform that stays put.
 - With no song open, the centre offers new, open and recent songs.
 - Closing the window, opening another song or the demo over unsaved changes first asks whether to
   save them. The title stars a song with unsaved changes.
+- Unsaved changes are autosaved to one recovery file in charter's own data folder, never beside
+  the song, half a minute after the first change since the last autosave. Saving the song, undoing
+  back to it or throwing the changes away removes the file. On the next start a recovery file
+  left behind is offered for restoring: the song comes back unsaved, for the file it belongs to.
+  Saves write beside the song and move over it, without forcing the write to disk, since some
+  filesystems refuse that; the autosave is the cover for a crash.
 
 ## Open for the next pass
 

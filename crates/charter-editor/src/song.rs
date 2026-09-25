@@ -79,6 +79,8 @@ pub struct Song {
     saved: Option<usize>,
     /// Selected notes of the open chart, each one there.
     selection: BTreeSet<NoteAt>,
+    /// How many times the notes have changed since the song opened.
+    revision: u64,
 }
 
 /// Whether the song's game can check edits to it.
@@ -137,6 +139,7 @@ impl Song {
             done: 0,
             saved: Some(0),
             selection: BTreeSet::new(),
+            revision: 0,
         };
         let snaps: Vec<_> = song.snaps().collect();
         song.snap = snaps
@@ -270,6 +273,7 @@ impl Song {
     /// could have been redone. An edit that only changes what the step before placed joins that
     /// step.
     fn record(&mut self, edit: Edit) {
+        self.revision += 1;
         self.history.truncate(self.done);
         if self.saved.is_some_and(|saved| saved > self.done) {
             self.saved = None;
@@ -361,6 +365,19 @@ impl Song {
     /// Takes the song as it stands to be what its file holds.
     pub fn mark_saved(&mut self) {
         self.saved = Some(self.done);
+    }
+
+    /// Takes the song to differ from what its file holds, as a song restored from an autosave
+    /// does.
+    pub fn mark_unsaved(&mut self) {
+        self.saved = None;
+    }
+
+    /// A count of the changes made to the song's notes, edits, undos and redos alike, so two
+    /// equal revisions of one song hold the same notes.
+    #[must_use]
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
 
     /// The selected notes, earliest first.
@@ -482,6 +499,7 @@ impl Song {
 
     /// Opens `chart` with the cursor on `cursor`, where an undone or redone edit was made.
     fn return_to(&mut self, chart: usize, cursor: Tick) {
+        self.revision += 1;
         self.open_chart(chart);
         self.cursor = cursor;
         self.prune_selection();
@@ -1135,6 +1153,39 @@ mod tests {
         song.select_all();
         song.toggle(at(0), lane(0), Kind::Tap).unwrap();
         assert_eq!(selection(&song).len(), 3);
+    }
+
+    #[test]
+    fn the_revision_moves_with_every_change_to_the_notes_and_nothing_else() {
+        let mut song = Song::new(document(json!([])), EDITABLE);
+        let mut seen = vec![song.revision()];
+        let mut changed = |song: &Song| {
+            let new = !seen.contains(&song.revision());
+            seen.push(song.revision());
+            new
+        };
+        song.toggle(at(0), lane(0), Kind::Tap).unwrap();
+        assert!(changed(&song));
+        song.stretch(lane(0), at(0), at(480)).unwrap();
+        assert!(changed(&song));
+        song.undo().unwrap();
+        assert!(changed(&song));
+        song.redo().unwrap();
+        assert!(changed(&song));
+        let before = song.revision();
+        song.step(Step::Later);
+        song.select_all();
+        song.open_chart(1);
+        assert_eq!(song.revision(), before);
+    }
+
+    #[test]
+    fn a_song_marked_unsaved_is_modified_until_saved() {
+        let mut song = Song::new(document(json!([])), EDITABLE);
+        song.mark_unsaved();
+        assert!(song.is_modified());
+        song.mark_saved();
+        assert!(!song.is_modified());
     }
 
     #[test]

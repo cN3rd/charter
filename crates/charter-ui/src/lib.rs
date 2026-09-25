@@ -6,6 +6,7 @@
 mod keys;
 mod notefield;
 mod panels;
+mod recovery;
 mod settings;
 mod style;
 mod window;

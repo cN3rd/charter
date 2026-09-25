@@ -9,7 +9,10 @@ use charter_editor::{NoteAt, Refusal, Selecting, Song, Step, Toggled, demo};
 
 use crate::notefield::{self, Zoom};
 use crate::settings::{self, Settings};
-use crate::{keys, panels, style};
+use crate::{keys, panels, recovery, style};
+
+/// How long unsaved changes wait before they are autosaved, in seconds.
+const AUTOSAVE_AFTER: f64 = 30.0;
 
 /// Something only the program hosting the window can do. The host answers a save through
 /// [`Window::saved`], and an open by passing the file to [`Window::open`].
@@ -21,6 +24,12 @@ pub enum Request {
     SaveAs { name: String, bytes: Vec<u8> },
     /// Ask for a song to open.
     Open,
+    /// Keep `bytes`, the song's unsaved changes, where the next run finds them, in place of any
+    /// kept before. The host passes them to [`Window::recover`] when it starts, and says through
+    /// [`Window::autosave_failed`] if they could not be kept.
+    Autosave { bytes: Vec<u8> },
+    /// Remove the kept changes: they were saved or thrown away.
+    DropAutosave,
 }
 
 /// How a save the window asked for went.
@@ -43,7 +52,16 @@ enum Discard {
     Open {
         path: Option<PathBuf>,
         song: Box<Song>,
+        /// Whether the song is the autosave, restored.
+        restored: bool,
     },
+}
+
+/// Unsaved changes from an earlier run, waiting on whether to restore them.
+#[derive(Debug)]
+struct Restoring {
+    path: Option<PathBuf>,
+    song: Box<Song>,
 }
 
 /// Where a save the user asked for goes.
@@ -172,6 +190,14 @@ pub struct Window {
     holding: Vec<(LaneIndex, Tick)>,
     /// A drag across the notefield in progress.
     gesture: Option<notefield::Gesture>,
+    /// Whether the host may be keeping an autosave.
+    autosave_kept: bool,
+    /// The revision of the open song the autosave holds, when it holds one.
+    autosaved: Option<u64>,
+    /// When the open song's changes are next autosaved, in seconds on the frame clock.
+    autosave_due: Option<f64>,
+    /// Unsaved changes from an earlier run, waiting on whether to restore them.
+    restoring: Option<Restoring>,
 }
 
 impl Window {
@@ -218,6 +244,92 @@ impl Window {
                 self.after_save = None;
                 self.failure = Some(format!("Could not save: {why}"));
             }
+        }
+    }
+
+    /// Takes the autosave an earlier run kept, and asks whether to restore it. One that cannot be
+    /// read is removed, saying so.
+    pub fn recover(&mut self, bytes: &[u8]) {
+        self.autosave_kept = true;
+        match recovery::read(bytes, self.plugins) {
+            Ok((path, song)) => {
+                self.restoring = Some(Restoring {
+                    path,
+                    song: Box::new(song),
+                });
+            }
+            Err(error) => {
+                self.failure = Some(format!(
+                    "Unsaved changes from last time could not be restored: {error}"
+                ));
+                self.drop_autosave();
+            }
+        }
+    }
+
+    /// Takes why the last autosave could not be kept. It is tried again later.
+    pub fn autosave_failed(&mut self, why: &str) {
+        self.autosaved = None;
+        self.failure = Some(format!("Autosave failed: {why}"));
+    }
+
+    /// Asks the host to remove the autosave, if it may be keeping one.
+    fn drop_autosave(&mut self) {
+        self.autosaved = None;
+        self.autosave_due = None;
+        if std::mem::take(&mut self.autosave_kept) {
+            self.requests.push(Request::DropAutosave);
+        }
+    }
+
+    /// Asks the host to keep the open song's unsaved changes once they have waited long enough,
+    /// and to remove them once there are none.
+    fn autosave(&mut self, ctx: &egui::Context) {
+        if self.leaving != Leaving::Staying || self.restoring.is_some() {
+            return;
+        }
+        let Some(song) = &self.song else {
+            return;
+        };
+        if !song.is_modified() {
+            self.drop_autosave();
+            return;
+        }
+        let revision = song.revision();
+        if self.autosaved == Some(revision) {
+            return;
+        }
+        let now = ctx.input(|input| input.time);
+        let due = *self.autosave_due.get_or_insert(now + AUTOSAVE_AFTER);
+        if now < due {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(due - now));
+            return;
+        }
+        self.autosave_due = None;
+        match recovery::write(self.path.as_deref(), song.document().document()) {
+            Ok(bytes) => {
+                self.requests.push(Request::Autosave { bytes });
+                self.autosave_kept = true;
+                self.autosaved = Some(revision);
+            }
+            Err(error) => self.failure = Some(format!("Autosave failed: {error}")),
+        }
+    }
+
+    /// Takes the answer to whether to restore the changes from an earlier run.
+    fn answer_restore(&mut self, restore: bool) {
+        let Some(Restoring { path, mut song }) = self.restoring.take() else {
+            return;
+        };
+        if restore {
+            song.mark_unsaved();
+            self.after_asking(Discard::Open {
+                path,
+                song,
+                restored: true,
+            });
+        } else {
+            self.drop_autosave();
         }
     }
 
@@ -271,6 +383,7 @@ impl Window {
             Ok(song) => self.after_asking(Discard::Open {
                 path: Some(path.to_path_buf()),
                 song: Box::new(song),
+                restored: false,
             }),
             Err(error) => self.refuse(path, &error),
         }
@@ -284,7 +397,11 @@ impl Window {
     /// Opens the demo song, first asking whether to save unsaved changes to the song open.
     pub fn open_demo(&mut self) {
         let song = Box::new(Song::new(demo::song(), self.plugins));
-        self.after_asking(Discard::Open { path: None, song });
+        self.after_asking(Discard::Open {
+            path: None,
+            song,
+            restored: false,
+        });
     }
 
     /// Does what would lose the open song's unsaved changes, once the user says what to do with
@@ -299,8 +416,21 @@ impl Window {
 
     fn carry_on(&mut self, discard: Discard) {
         match discard {
-            Discard::Close => self.leaving = Leaving::Now,
-            Discard::Open { path, mut song } => {
+            Discard::Close => {
+                self.drop_autosave();
+                self.leaving = Leaving::Now;
+            }
+            Discard::Open {
+                path,
+                mut song,
+                restored,
+            } => {
+                if restored {
+                    self.autosave_due = None;
+                    self.autosaved = Some(song.revision());
+                } else {
+                    self.drop_autosave();
+                }
                 self.saving = None;
                 song.set_snap(self.settings.snap);
                 self.song = Some(*song);
@@ -440,6 +570,11 @@ impl Window {
                 self.leaving = Leaving::Going;
             }
         }
+        if let Some(Restoring { path, song }) = &self.restoring
+            && let Some(restore) = panels::ask_to_restore(ui, &file_name(path.as_deref(), song))
+        {
+            self.answer_restore(restore);
+        }
         if self.discard.is_some() {
             let name = self.song.as_ref().map(|song| self.file_name(song));
             if let Some(answer) = panels::ask_to_save(ui, name.as_deref().unwrap_or_default()) {
@@ -454,7 +589,9 @@ impl Window {
             let asked = ui.input(|input| keys::key_actions(input, lanes, lane_keys));
             // A focused widget or a question takes the keyboard, but a lane key coming up still
             // ends its chord.
-            let busy = ui.ctx().egui_wants_keyboard_input() || self.discard.is_some();
+            let busy = ui.ctx().egui_wants_keyboard_input()
+                || self.discard.is_some()
+                || self.restoring.is_some();
             let ends_a_chord =
                 |action: &Action| matches!(action, Action::LaneUp(_) | Action::LanesReleased);
             actions.extend(
@@ -495,6 +632,7 @@ impl Window {
         if let Some(saving) = self.saving.take() {
             self.save(saving);
         }
+        self.autosave(ui.ctx());
         let title = self.title();
         if title != self.shown_title {
             ui.ctx()
@@ -552,6 +690,7 @@ mod tests {
     use egui_kittest::kittest::{NodeT, Queryable};
 
     use super::*;
+    use crate::recovery;
 
     /// The format chapter, embedded at compile time so the tests do no I/O.
     const SPEC: &str = include_str!("../../../docs/src/format.md");
@@ -1548,6 +1687,144 @@ mod tests {
         harness.key_press(egui::Key::ArrowDown);
         harness.run();
         assert_eq!(note_at(&harness, 0, 0), Some(tap()));
+    }
+
+    /// Runs the window with its clock at `seconds`.
+    fn at_time(harness: &mut Harness<'_, Window>, seconds: f64) {
+        harness.input_mut().time = Some(seconds);
+        harness.run();
+    }
+
+    /// The four taps edited at one second in, and left long enough to be autosaved.
+    fn autosaved_four_taps() -> (Harness<'static, Window>, Vec<u8>) {
+        let mut harness = editable_four_taps();
+        at_time(&mut harness, 0.0);
+        harness.key_press(egui::Key::Num4);
+        at_time(&mut harness, 1.0);
+        at_time(&mut harness, 31.5);
+        let Request::Autosave { bytes } = request(&mut harness) else {
+            panic!("expected an autosave");
+        };
+        (harness, bytes)
+    }
+
+    #[test]
+    fn unsaved_changes_are_autosaved_half_a_minute_after_they_are_made() {
+        let mut harness = editable_four_taps();
+        at_time(&mut harness, 0.0);
+        harness.key_press(egui::Key::Num4);
+        at_time(&mut harness, 1.0);
+        at_time(&mut harness, 20.0);
+        assert_eq!(harness.state_mut().take_requests(), []);
+        at_time(&mut harness, 31.5);
+        let Request::Autosave { bytes } = request(&mut harness) else {
+            panic!("expected an autosave");
+        };
+        let (path, song) = recovery::read(&bytes, PLUGINS).unwrap();
+        assert_eq!(path.as_deref(), Some(Path::new("four.json")));
+        assert!(holds_tap(&song.document().to_json().unwrap(), 0, 3));
+        at_time(&mut harness, 90.0);
+        assert_eq!(harness.state_mut().take_requests(), []);
+    }
+
+    #[test]
+    fn saving_removes_the_autosave() {
+        let (mut harness, _) = autosaved_four_taps();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::S);
+        harness.run();
+        assert!(matches!(request(&mut harness), Request::Write { .. }));
+        harness
+            .state_mut()
+            .saved(Saved::To(PathBuf::from("four.json")));
+        harness.run();
+        assert_eq!(request(&mut harness), Request::DropAutosave);
+    }
+
+    #[test]
+    fn undoing_back_to_the_saved_song_removes_the_autosave() {
+        let (mut harness, _) = autosaved_four_taps();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.run();
+        assert_eq!(request(&mut harness), Request::DropAutosave);
+    }
+
+    #[test]
+    fn closing_without_saving_removes_the_autosave() {
+        let (mut harness, _) = autosaved_four_taps();
+        close(&mut harness);
+        harness.run();
+        harness.get_by_label("Don't save").click();
+        harness.run();
+        let requests = harness.state_mut().take_requests();
+        assert_eq!(requests, [Request::DropAutosave]);
+    }
+
+    fn restore_prompt(harness: &Harness<'_, Window>) -> bool {
+        harness
+            .query_by_label("Restore unsaved changes to four.json?")
+            .is_some()
+    }
+
+    #[test]
+    fn an_autosave_restored_brings_the_changes_back_unsaved_for_their_file() {
+        let (_, bytes) = autosaved_four_taps();
+        let mut harness = window(Window::new(PLUGINS));
+        harness.state_mut().recover(&bytes);
+        harness.run();
+        assert!(restore_prompt(&harness));
+        harness.get_by_label("Restore").click();
+        harness.run();
+        assert_eq!(harness.state().title(), "*four.json - charter");
+        assert_eq!(note_at(&harness, 0, 3), Some(tap()));
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::S);
+        harness.run();
+        let Request::Write { path, .. } = request(&mut harness) else {
+            panic!("expected a write");
+        };
+        assert_eq!(path, Path::new("four.json"));
+        harness.state_mut().saved(Saved::To(path));
+        harness.run();
+        assert_eq!(request(&mut harness), Request::DropAutosave);
+    }
+
+    #[test]
+    fn an_autosave_discarded_is_removed() {
+        let (_, bytes) = autosaved_four_taps();
+        let mut harness = window(Window::new(PLUGINS));
+        harness.state_mut().recover(&bytes);
+        harness.run();
+        harness.get_by_label("Discard").click();
+        harness.run();
+        assert!(!restore_prompt(&harness));
+        assert_eq!(request(&mut harness), Request::DropAutosave);
+        assert!(harness.state().song.is_none());
+    }
+
+    #[test]
+    fn a_damaged_autosave_says_so_and_is_removed() {
+        let mut harness = window(Window::new(PLUGINS));
+        harness.state_mut().recover(b"{ not json");
+        harness.run();
+        assert!(
+            harness
+                .query_by_label_contains("could not be restored")
+                .is_some()
+        );
+        assert_eq!(request(&mut harness), Request::DropAutosave);
+    }
+
+    #[test]
+    fn a_failed_autosave_says_why_and_tries_again_later() {
+        let (mut harness, _) = autosaved_four_taps();
+        harness.state_mut().autosave_failed("the disk is full");
+        harness.run();
+        assert!(
+            harness
+                .query_by_label_contains("Autosave failed: the disk is full")
+                .is_some()
+        );
+        at_time(&mut harness, 70.0);
+        assert!(matches!(request(&mut harness), Request::Autosave { .. }));
     }
 
     #[test]

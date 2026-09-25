@@ -348,6 +348,27 @@ pub fn ask_to_save(ui: &Ui, name: &str) -> Option<Answer> {
     answer.or(modal.should_close().then_some(Answer::Cancel))
 }
 
+/// Asks whether to restore the unsaved changes to the song in `name` that an earlier run kept:
+/// true to restore them, false to throw them away. Only an answer closes it.
+pub fn ask_to_restore(ui: &Ui, name: &str) -> Option<bool> {
+    let mut answer = None;
+    egui::Modal::new(egui::Id::new("restore changes")).show(ui.ctx(), |ui| {
+        ui.set_max_width(360.0);
+        ui.strong(format!("Restore unsaved changes to {name}?"));
+        ui.label("charter closed before they were saved.");
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            if ui.button("Restore").clicked() {
+                answer = Some(true);
+            }
+            if ui.button("Discard").clicked() {
+                answer = Some(false);
+            }
+        });
+    });
+    answer
+}
+
 /// Why the last file did not open, or the last edit was refused.
 pub fn failure(ui: &mut Ui, message: &str) {
     let colour = ui.visuals().warn_fg_color;
