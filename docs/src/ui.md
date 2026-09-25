@@ -19,12 +19,13 @@ cursor: a BPM typed there and entered changes the tempo from the cursor on, as o
 change at the cursor can be removed, unless it is the only one. Below it the song's markers are
 listed; clicking one jumps the cursor there, a name typed and entered names the section at the
 cursor or starts one, and any marker can be removed, each as one step. Songs open and save through
-native file dialogs, unsaved changes are asked about before they are lost and autosaved half a
-minute after they are made, and a settings window holds what the user chooses, including which way
-the notefield runs and the tick and metronome sounds, which play once charter plays audio. The
-inspector shows the selection but cannot change it yet. A new song takes its game, the layout every
-chart shares, its title, artist and chart names from a dialog, and asks for audio until an audio
-file is dropped on the window; saving copies that file beside the song.
+native file dialogs, unsaved changes are asked about before they are lost and autosaved, half a
+minute after they are made unless the settings say otherwise, and a settings window holds what the
+user chooses, including which way the notefield runs and the tick and metronome sounds, which play
+once charter plays audio. The inspector shows the selection but cannot change it yet. A new song
+takes its game, the layout every chart shares, its title, artist and chart names from a dialog, and
+asks for audio until an audio file is dropped on the window; saving copies that file beside the
+song.
 
 ## Main window
 
@@ -205,12 +206,14 @@ and the notes over a waveform that stays put.
 - With no song open, the centre offers new, open and recent songs.
 - Closing the window, opening another song or the demo over unsaved changes first asks whether to
   save them. The title stars a song with unsaved changes.
-- Unsaved changes are autosaved to one recovery file in charter's own data folder, never beside
-  the song, half a minute after the first change since the last autosave. Saving the song, undoing
-  back to it or throwing the changes away removes the file. On the next start a recovery file
-  left behind is offered for restoring: the song comes back unsaved, for the file it belongs to.
-  Saves write beside the song and move over it, without forcing the write to disk, since some
-  filesystems refuse that; the autosave is the cover for a crash.
+- Unsaved changes are autosaved to one recovery file in charter's own data folder, never beside the
+  song, half a minute after the first change since the last autosave; the settings window sets the
+  wait, from 5 seconds to 10 minutes, or turns autosave off, which stops new autosaves and leaves
+  one already kept for the next start. Saving the song, undoing back to it or throwing the changes
+  away removes the file. On the next start a recovery file left behind is offered for restoring: the
+  song comes back unsaved, for the file it belongs to. Saves write beside the song and move over it,
+  without forcing the write to disk, since some filesystems refuse that; the autosave is the cover
+  for a crash.
 
 ## Open for the next pass
 

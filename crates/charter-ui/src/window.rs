@@ -15,9 +15,6 @@ use crate::{keys, panels, recovery, style};
 /// The extensions of the audio files a song can play.
 const AUDIO: [&str; 5] = ["ogg", "mp3", "wav", "flac", "opus"];
 
-/// How long unsaved changes wait before they are autosaved, in seconds.
-const AUTOSAVE_AFTER: f64 = 30.0;
-
 /// Something only the program hosting the window can do. The host answers a save through
 /// [`Window::saved`], and an open by passing the file to [`Window::open`].
 #[derive(Debug, PartialEq, Eq)]
@@ -390,7 +387,11 @@ impl Window {
             return;
         }
         let now = ctx.input(|input| input.time);
-        let due = *self.autosave_due.get_or_insert(now + AUTOSAVE_AFTER);
+        let Some(after) = self.settings.autosave_after() else {
+            self.autosave_due = None;
+            return;
+        };
+        let due = *self.autosave_due.get_or_insert(now + after);
         if now < due {
             ctx.request_repaint_after(std::time::Duration::from_secs_f64(due - now));
             return;
@@ -2109,6 +2110,50 @@ mod tests {
             panic!("expected an autosave");
         };
         (harness, bytes)
+    }
+
+    fn four_taps_with(settings: Settings) -> Harness<'static, Window> {
+        let mut app = Window::new(PLUGINS).with_settings(settings);
+        app.open(Path::new("four.json"), &four_taps());
+        window(app)
+    }
+
+    #[test]
+    fn unsaved_changes_wait_as_long_as_the_settings_say_before_they_are_autosaved() {
+        let mut harness = four_taps_with(Settings {
+            autosave_seconds: 10,
+            ..Settings::default()
+        });
+        at_time(&mut harness, 0.0);
+        harness.key_press(egui::Key::Num4);
+        at_time(&mut harness, 1.0);
+        at_time(&mut harness, 10.5);
+        assert_eq!(harness.state_mut().take_requests(), []);
+        at_time(&mut harness, 11.5);
+        assert!(matches!(request(&mut harness), Request::Autosave { .. }));
+    }
+
+    #[test]
+    fn with_autosave_off_nothing_is_autosaved() {
+        let mut harness = four_taps_with(Settings {
+            autosave: false,
+            ..Settings::default()
+        });
+        at_time(&mut harness, 0.0);
+        harness.key_press(egui::Key::Num4);
+        at_time(&mut harness, 1.0);
+        at_time(&mut harness, 120.0);
+        assert_eq!(harness.state_mut().take_requests(), []);
+    }
+
+    #[test]
+    fn the_settings_window_turns_autosave_off() {
+        let mut harness = editable_demo();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Comma);
+        harness.run();
+        harness.get_by_label("Autosave unsaved changes").click();
+        harness.run();
+        assert!(!harness.state().settings().autosave);
     }
 
     #[test]

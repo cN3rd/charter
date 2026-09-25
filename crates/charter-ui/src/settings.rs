@@ -51,6 +51,10 @@ pub struct Settings {
     pub tick_sound: Sound,
     /// What sounds on each beat during playback.
     pub metronome: Sound,
+    /// Whether unsaved changes are kept where the next run finds them.
+    pub autosave: bool,
+    /// How long unsaved changes wait before they are autosaved, in seconds.
+    pub autosave_seconds: u32,
 }
 
 impl Default for Settings {
@@ -63,14 +67,30 @@ impl Default for Settings {
             direction: Direction::Up,
             tick_sound: Sound::Off,
             metronome: Sound::Off,
+            autosave: true,
+            autosave_seconds: 30,
         }
     }
 }
+
+/// The shortest and longest autosave waits, in seconds.
+const AUTOSAVE_SECONDS: (u32, u32) = (5, 600);
 
 /// The interface sizes on offer, as factors.
 const SCALES: [f32; 6] = [0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
 
 impl Settings {
+    /// How long unsaved changes wait before they are autosaved, in seconds, kept to a range
+    /// that neither writes constantly nor risks much; none when autosave is off.
+    pub(crate) fn autosave_after(&self) -> Option<f64> {
+        self.autosave.then(|| {
+            f64::from(
+                self.autosave_seconds
+                    .clamp(AUTOSAVE_SECONDS.0, AUTOSAVE_SECONDS.1),
+            )
+        })
+    }
+
     /// The interface size, kept to what the window can draw.
     pub(crate) fn scale(&self) -> f32 {
         if self.scale.is_finite() {
@@ -135,6 +155,16 @@ pub fn show(ctx: &egui::Context, settings: &mut Settings, open: &mut bool) {
                     .response
                     .labelled_by(caption.id);
                 ui.end_row();
+                ui.weak("Autosave");
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut settings.autosave, "Autosave unsaved changes");
+                    let wait = egui::DragValue::new(&mut settings.autosave_seconds)
+                        .range(AUTOSAVE_SECONDS.0..=AUTOSAVE_SECONDS.1)
+                        .prefix("after ")
+                        .suffix(" s");
+                    ui.add_enabled(settings.autosave, wait);
+                });
+                ui.end_row();
                 // ponytail: the sounds are chosen now and play once charter plays audio.
                 for (label, id, sound) in [
                     ("Tick sound", "tick sound", &mut settings.tick_sound),
@@ -175,6 +205,28 @@ mod tests {
     }
 
     #[test]
+    fn unsaved_changes_are_autosaved_after_half_a_minute_to_start_with() {
+        let settings = Settings::default();
+        assert!(settings.autosave);
+        assert_eq!(settings.autosave_after(), Some(30.0));
+        let off = Settings {
+            autosave: false,
+            ..Settings::default()
+        };
+        assert_eq!(off.autosave_after(), None);
+    }
+
+    #[test]
+    fn an_autosave_wait_out_of_range_is_kept_within_it() {
+        let settings = |seconds| Settings {
+            autosave_seconds: seconds,
+            ..Settings::default()
+        };
+        assert_eq!(settings(0).autosave_after(), Some(5.0));
+        assert_eq!(settings(100_000).autosave_after(), Some(600.0));
+    }
+
+    #[test]
     fn notes_travel_up_with_no_tick_or_metronome_sound_to_start_with() {
         let settings = Settings::default();
         assert_eq!(settings.direction, Direction::Up);
@@ -192,6 +244,8 @@ mod tests {
             direction: Direction::Right,
             tick_sound: Sound::Click,
             metronome: Sound::Beep,
+            autosave: false,
+            autosave_seconds: 90,
         };
         let stored = serde_json::to_string(&settings).unwrap();
         assert_eq!(serde_json::from_str::<Settings>(&stored).unwrap(), settings);
