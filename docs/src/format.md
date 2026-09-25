@@ -678,9 +678,9 @@ shown.
 
 | Type | Holds | Meaning | Operations |
 |---|---|---|---|
-| `Tick` | `i32` | A musical position | Adding `Ticks` gives a `Tick`; a later `Tick` is `Ticks` away |
+| `Tick` | `i32` | A musical position | Adding `Ticks` gives a `Tick`; a later `Tick` is `Ticks` away; steps to the nearest line of a grid either way |
 | `Ticks` | `NonZeroU32` | A length in ticks | |
-| `TicksPerBeat` | `NonZeroU16` | The resolution of the time base | |
+| `TicksPerBeat` | `NonZeroU16` | The resolution of the time base | Gives the length of an Nth note when it is whole |
 | `TimeSignature` | Two `NonZeroU16` | A meter | Tells whether its measure is a whole number of ticks |
 | `Bpm` | `i64` millionths above 0 | Quarter notes per minute | Resolves `Ticks` at a `TicksPerBeat` to seconds |
 | `Seconds` | `i64` millionths above 0 | A length of time | Moves a `ResolvedTime` later |

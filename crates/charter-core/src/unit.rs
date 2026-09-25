@@ -285,6 +285,24 @@ impl Tick {
         self.0.checked_add_unsigned(span.0.get()).map(Self)
     }
 
+    /// The first tick after this one on a grid of lines `step` apart from tick 0, or `None` past
+    /// the last tick.
+    #[must_use]
+    pub fn next_on(self, step: Ticks) -> Option<Self> {
+        let step = i64::from(step.0.get());
+        let line = (i64::from(self.0).div_euclid(step) + 1) * step;
+        i32::try_from(line).ok().map(Self)
+    }
+
+    /// The last tick before this one on a grid of lines `step` apart from tick 0, or `None`
+    /// before the first tick.
+    #[must_use]
+    pub fn previous_on(self, step: Ticks) -> Option<Self> {
+        let step = i64::from(step.0.get());
+        let line = (i64::from(self.0) - 1).div_euclid(step) * step;
+        i32::try_from(line).ok().map(Self)
+    }
+
     /// How far `later` lies after this tick, or `None` unless it is later.
     #[must_use]
     pub fn ticks_until(self, later: Self) -> Option<Ticks> {
@@ -374,6 +392,18 @@ impl TicksPerBeat {
         match NonZeroU16::new(ticks) {
             Some(ticks) => Some(Self(ticks)),
             None => None,
+        }
+    }
+
+    /// How long an `n`th note lasts: `4 / n` beats, if that is a whole number of ticks.
+    #[must_use]
+    pub fn note_length(self, n: NonZeroU16) -> Option<Ticks> {
+        let quarters = 4 * u32::from(self.0.get());
+        let n = u32::from(n.get());
+        if quarters.is_multiple_of(n) {
+            Ticks::new(quarters / n)
+        } else {
+            None
         }
     }
 }
@@ -488,6 +518,39 @@ mod tests {
     }
 
     #[test]
+    fn a_tick_steps_forward_to_the_next_line_of_a_grid() {
+        let step = Ticks::new(240).unwrap();
+        assert_eq!(Tick::new(0).next_on(step), Some(Tick::new(240)));
+        assert_eq!(Tick::new(100).next_on(step), Some(Tick::new(240)));
+        assert_eq!(Tick::new(-100).next_on(step), Some(Tick::new(0)));
+        assert_eq!(Tick::new(i32::MAX - 100).next_on(step), None);
+    }
+
+    #[test]
+    fn a_tick_steps_back_to_the_last_line_of_a_grid_before_it() {
+        let step = Ticks::new(240).unwrap();
+        assert_eq!(Tick::new(240).previous_on(step), Some(Tick::new(0)));
+        assert_eq!(Tick::new(250).previous_on(step), Some(Tick::new(240)));
+        assert_eq!(Tick::new(0).previous_on(step), Some(Tick::new(-240)));
+        assert_eq!(Tick::new(i32::MIN + 100).previous_on(step), None);
+    }
+
+    proptest::proptest! {
+        #![proptest_config(crate::proptest_config())]
+
+        #[test]
+        fn stepping_along_a_grid_finds_the_nearest_line_each_way(tick in -500_i32..500, step in 1_u32..=64) {
+            let gap = i32::try_from(step).unwrap();
+            let on_grid = |k: &i32| k.rem_euclid(gap) == 0;
+            let next = (tick + 1..tick + 100).find(on_grid).unwrap();
+            let previous = (tick - 100..tick).rev().find(on_grid).unwrap();
+            let span = Ticks::new(step).unwrap();
+            proptest::prop_assert_eq!(Tick::new(tick).next_on(span), Some(Tick::new(next)));
+            proptest::prop_assert_eq!(Tick::new(tick).previous_on(span), Some(Tick::new(previous)));
+        }
+    }
+
+    #[test]
     fn a_later_tick_is_a_span_away() {
         assert_eq!(Tick::new(-480).ticks_until(Tick::new(480)), Ticks::new(960));
         assert_eq!(
@@ -496,6 +559,21 @@ mod tests {
         );
         assert_eq!(Tick::new(5).ticks_until(Tick::new(5)), None);
         assert_eq!(Tick::new(5).ticks_until(Tick::new(4)), None);
+    }
+
+    #[test]
+    fn an_nth_note_lasts_four_nths_of_a_beat_when_that_is_whole() {
+        let note = |resolution: u16, n: u16| {
+            TicksPerBeat::new(resolution)
+                .unwrap()
+                .note_length(NonZeroU16::new(n).unwrap())
+        };
+        assert_eq!(note(960, 4), Ticks::new(960));
+        assert_eq!(note(960, 12), Ticks::new(320));
+        assert_eq!(note(960, 192), Ticks::new(20));
+        assert_eq!(note(48, 64), Ticks::new(3));
+        assert_eq!(note(960, 7), None);
+        assert_eq!(note(1, 8), None);
     }
 
     #[test]
