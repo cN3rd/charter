@@ -13,4 +13,10 @@ egui.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+eframe.workspace = true
 egui_kittest.workspace = true
+
+# The static mock of the book's UI draft, kept as reference while the real window grows.
+[[example]]
+name = "mock"
+test = true
