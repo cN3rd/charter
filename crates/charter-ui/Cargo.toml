@@ -7,6 +7,7 @@ edition = "2024"
 workspace = true
 
 [dependencies]
+charter-audio.workspace = true
 charter-core.workspace = true
 charter-editor.workspace = true
 egui.workspace = true

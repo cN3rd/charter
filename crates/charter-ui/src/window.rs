@@ -48,9 +48,11 @@ pub enum Request {
     /// Play the song's audio from `from` seconds, at `rate` times its speed. The host reports
     /// where it is through [`Window::playhead`], and says when it ends through
     /// [`Window::playback_ended`].
+    /// `clicks` are the tones to mix over it, each at its time in seconds into the audio.
     Play {
         from: f64,
         rate: f64,
+        clicks: Vec<(f64, charter_audio::Tone)>,
     },
     Pause,
     /// Carry on playing from this many seconds into the audio.
@@ -100,7 +102,8 @@ impl Rate {
 /// How the audio the song wants stands with the host.
 #[derive(Debug, PartialEq)]
 enum Loaded {
-    Ready,
+    /// Ready to play, this many seconds long.
+    Ready(f64),
     Failed,
 }
 
@@ -249,6 +252,10 @@ pub(crate) enum Action {
     NudgeBpm(f64),
     /// Shows or hides the keyboard shortcuts.
     Help,
+    /// Turns the metronome on or off.
+    ToggleMetronome,
+    /// Turns the tick on each note on or off.
+    ToggleTicks,
 }
 
 /// The editor window's state.
@@ -408,8 +415,7 @@ impl Window {
 
     /// Takes that `file`, `seconds` long, is ready to play.
     pub fn audio_ready(&mut self, file: &Path, seconds: f64) {
-        let _ = seconds;
-        self.audio = Some((file.to_path_buf(), Loaded::Ready));
+        self.audio = Some((file.to_path_buf(), Loaded::Ready(seconds)));
     }
 
     /// Takes that `file` could not be loaded, and why.
@@ -454,10 +460,11 @@ impl Window {
         };
         let from = song.timing().time_at(song.cursor()).seconds();
         match self.loaded() {
-            Some(Loaded::Ready) => {
+            Some(&Loaded::Ready(seconds)) => {
+                let clicks = clicks(song, &self.settings, from, seconds);
                 self.playing = true;
                 let rate = self.rate.factor();
-                self.requests.push(Request::Play { from, rate });
+                self.requests.push(Request::Play { from, rate, clicks });
             }
             Some(Loaded::Failed) => {}
             None if self.audio_file().is_none() => {
@@ -734,15 +741,17 @@ impl Window {
         }
     }
 
-    fn apply(&mut self, action: Action) {
-        // What the window does whether or not a song is open.
-        match action {
+    /// Does what the window does whether or not a song is open.
+    fn apply_to_window(&mut self, action: &Action) {
+        match *action {
             Action::OpenDemo => self.open_demo(),
             Action::Open => self.requests.push(Request::Open),
             Action::Save => self.saving = Some(Saving::InPlace),
             Action::SaveAs => self.saving = Some(Saving::Elsewhere),
             Action::Settings => self.settings_open = !self.settings_open,
             Action::Help => self.help_open = !self.help_open,
+            Action::ToggleMetronome => self.settings.metronome = self.settings.metronome.toggled(),
+            Action::ToggleTicks => self.settings.tick_sound = self.settings.tick_sound.toggled(),
             Action::TogglePlay => self.toggle_play(),
             Action::NudgeRate(step) => self.set_rate(self.rate.by(step)),
             Action::SetRate(factor) => self.set_rate(Rate::of(factor)),
@@ -751,6 +760,10 @@ impl Window {
             }
             _ => {}
         }
+    }
+
+    fn apply(&mut self, action: Action) {
+        self.apply_to_window(&action);
         let Some(song) = &mut self.song else {
             return;
         };
@@ -812,6 +825,8 @@ impl Window {
             | Action::SaveAs
             | Action::Settings
             | Action::Help
+            | Action::ToggleMetronome
+            | Action::ToggleTicks
             | Action::TogglePlay
             | Action::NudgeRate(_)
             | Action::SetRate(_)
@@ -1025,6 +1040,53 @@ fn stretch(song: &mut Song, holding: &[(LaneIndex, Tick)]) -> Option<String> {
     refused(refusals.last())
 }
 
+// ponytail: the clicks are worked out once, when playback starts, so notes placed while playing
+// click from the next play; schedule them live if that gets in the way of recording.
+/// The tones `settings` ask for over the open chart of `song`, playing from `from` seconds to
+/// `until`: a tick on each note, and the metronome on each beat.
+fn clicks(
+    song: &Song,
+    settings: &Settings,
+    from: f64,
+    until: f64,
+) -> Vec<(f64, charter_audio::Tone)> {
+    let timing = song.timing();
+    let mut clicks = Vec::new();
+    if let (Some(tone), Some(chart)) = (settings.tick_sound.tone(), song.chart()) {
+        let heads = chart
+            .objects()
+            .map(|object| timing.time_at(object.tick).seconds());
+        clicks.extend(
+            heads
+                .filter(|at| (from..=until).contains(at))
+                .map(|at| (at, tone)),
+        );
+    }
+    let beat = song
+        .document()
+        .document()
+        .ticks_per_beat
+        .note_length(std::num::NonZeroU16::new(4).unwrap_or(std::num::NonZeroU16::MIN));
+    if let (Some(tone), Some(beat)) = (settings.metronome.tone(), beat) {
+        let first = notefield::latest_tick_by(timing, from);
+        'measures: for measure in timing.measures_from(first) {
+            let end = measure.start.checked_add(measure.length);
+            let beats = std::iter::successors(Some(measure.start), |tick| tick.checked_add(beat));
+            for tick in beats.take_while(|tick| end.is_none_or(|end| *tick < end)) {
+                let at = timing.time_at(tick).seconds();
+                if at > until {
+                    break 'measures;
+                }
+                if at >= from {
+                    clicks.push((at, tone));
+                }
+            }
+        }
+    }
+    clicks.sort_by(|a, b| a.0.total_cmp(&b.0));
+    clicks
+}
+
 /// Raises the tempo at the cursor by `by` BPM, and says why if it cannot.
 fn nudge_bpm(song: &mut Song, by: f64) -> Option<String> {
     let (_, bpm) = song.bpm()?;
@@ -1059,6 +1121,7 @@ mod tests {
     use crate::flip::{Direction, Flip};
     use crate::recovery;
     use crate::settings::Sound;
+    use charter_audio::Tone;
 
     /// The format chapter, embedded at compile time so the tests do no I/O.
     const SPEC: &str = include_str!("../../../docs/src/format.md");
@@ -2307,7 +2370,7 @@ mod tests {
         harness.key_press(egui::Key::ArrowDown);
         harness.run();
         space(&mut harness);
-        let Request::Play { from, rate } = request(&mut harness) else {
+        let Request::Play { from, rate, .. } = request(&mut harness) else {
             panic!("expected play");
         };
         assert!((from - 0.125).abs() < 1e-9, "{from}");
@@ -2408,6 +2471,73 @@ mod tests {
             panic!("expected play");
         };
         assert!((rate - 0.1).abs() < 1e-9, "{rate}");
+    }
+
+    fn playable_with(settings: Settings) -> Harness<'static, Window> {
+        let mut app = Window::new(PLUGINS).with_settings(settings);
+        app.open(Path::new("/songs/four.json"), &four_taps());
+        let mut harness = window(app);
+        harness
+            .state_mut()
+            .audio_ready(Path::new("/songs/a.ogg"), 2.0);
+        harness.run();
+        harness
+    }
+
+    fn clicks_played(harness: &mut Harness<'_, Window>) -> Vec<(f64, Tone)> {
+        space(harness);
+        let Request::Play { clicks, .. } = request(harness) else {
+            panic!("expected play");
+        };
+        clicks
+    }
+
+    #[test]
+    fn with_no_sounds_chosen_playback_clicks_nothing() {
+        let mut harness = playable_with(Settings::default());
+        assert_eq!(clicks_played(&mut harness), []);
+    }
+
+    #[test]
+    fn the_tick_sound_plays_on_every_note_from_the_cursor_on() {
+        let mut harness = playable_with(Settings {
+            tick_sound: Sound::Beep,
+            ..Settings::default()
+        });
+        harness.key_press(egui::Key::ArrowDown);
+        harness.run();
+        let clicks = clicks_played(&mut harness);
+        let times: Vec<f64> = clicks.iter().map(|(at, _)| *at).collect();
+        assert_eq!(times, [0.125, 0.25, 0.375]);
+        assert!(clicks.iter().all(|(_, tone)| *tone == Tone::Beep));
+    }
+
+    #[test]
+    fn the_metronome_plays_on_every_beat_until_the_audio_ends() {
+        let mut harness = playable_with(Settings {
+            metronome: Sound::Click,
+            ..Settings::default()
+        });
+        let clicks = clicks_played(&mut harness);
+        let times: Vec<f64> = clicks.iter().map(|(at, _)| *at).collect();
+        assert_eq!(times, [0.0, 0.5, 1.0, 1.5, 2.0]);
+        assert!(clicks.iter().all(|(_, tone)| *tone == Tone::Click));
+    }
+
+    #[test]
+    fn f3_and_f4_turn_the_metronome_and_the_note_ticks_on_and_off() {
+        let mut harness = editable_demo();
+        harness.key_press(egui::Key::F3);
+        harness.key_press(egui::Key::F4);
+        harness.run();
+        let settings = harness.state().settings();
+        assert_eq!(
+            (settings.metronome, settings.tick_sound),
+            (Sound::Click, Sound::Click)
+        );
+        harness.key_press(egui::Key::F3);
+        harness.run();
+        assert_eq!(harness.state().settings().metronome, Sound::Off);
     }
 
     #[test]

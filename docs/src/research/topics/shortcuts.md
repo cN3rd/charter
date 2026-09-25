@@ -55,13 +55,14 @@ free.
 
 ## Draft position
 
-charter binds the consensus where one exists and ArrowVortex's choice where the VSRG editors
-split, since its charts are lane-based like ArrowVortex's. Bound today: lane keys and Shift for
-mines, Up and Down, Page Up and Down, Left and Right for the snap, Home and End, Alt+Up and
-Alt+Down between sections, Ctrl+B for a bookmark, F7 and F8 for the tempo at the cursor, Ctrl+Z,
-Ctrl+Shift+Z and Ctrl+Y, Ctrl+A, Escape, Delete and Backspace, Ctrl+N, O, S and Shift+S, Ctrl+Comma
-and F1. Space, Shift+Left and Right, F3 and F4 are for playback. Cut, copy and paste wait for a
-clipboard. Bindings are fixed for now; the open questions below still stand.
+charter binds the consensus where one exists and ArrowVortex's choice where the VSRG editors split,
+since its charts are lane-based like ArrowVortex's. Bound today: lane keys and Shift for mines, Up
+and Down, Page Up and Down, Left and Right for the snap, Home and End, Alt+Up and Alt+Down between
+sections, Ctrl+B for a bookmark, F7 and F8 for the tempo at the cursor, Ctrl+Z, Ctrl+Shift+Z and
+Ctrl+Y, Ctrl+A, Escape, Delete and Backspace, Ctrl+N, O, S and Shift+S, Ctrl+Comma and F1, and for
+playback Space, Shift+Left and Right with Ctrl+Shift for finer steps, and F3 and F4 for the
+metronome and note ticks. Cut, copy and paste wait for a clipboard. Bindings are fixed for now; the
+open questions below still stand.
 
 ## Open decision
 

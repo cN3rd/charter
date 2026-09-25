@@ -23,6 +23,24 @@ pub enum Sound {
 impl Sound {
     const ALL: [Self; 3] = [Self::Off, Self::Click, Self::Beep];
 
+    /// The tone the sound plays, if any.
+    pub(crate) fn tone(self) -> Option<charter_audio::Tone> {
+        match self {
+            Self::Off => None,
+            Self::Click => Some(charter_audio::Tone::Click),
+            Self::Beep => Some(charter_audio::Tone::Beep),
+        }
+    }
+
+    /// Off when on, and a click when off.
+    #[must_use]
+    pub(crate) fn toggled(self) -> Self {
+        match self {
+            Self::Off => Self::Click,
+            Self::Click | Self::Beep => Self::Off,
+        }
+    }
+
     fn name(self) -> &'static str {
         match self {
             Self::Off => "Off",
@@ -165,7 +183,6 @@ pub fn show(ctx: &egui::Context, settings: &mut Settings, open: &mut bool) {
                     ui.add_enabled(settings.autosave, wait);
                 });
                 ui.end_row();
-                // ponytail: the sounds are chosen now and play once charter plays audio.
                 for (label, id, sound) in [
                     ("Tick sound", "tick sound", &mut settings.tick_sound),
                     ("Metronome", "metronome", &mut settings.metronome),
@@ -179,8 +196,7 @@ pub fn show(ctx: &egui::Context, settings: &mut Settings, open: &mut bool) {
                             }
                         })
                         .response
-                        .labelled_by(caption.id)
-                        .on_hover_text("Plays once charter can play a song's audio");
+                        .labelled_by(caption.id);
                     ui.end_row();
                 }
             });

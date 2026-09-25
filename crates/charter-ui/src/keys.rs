@@ -220,6 +220,8 @@ fn command(key: Key, modifiers: Modifiers) -> Option<Action> {
         Key::Space => Some(Action::TogglePlay),
         Key::Home => Some(Action::JumpTo(Tick::new(0))),
         Key::End => Some(Action::JumpEnd),
+        Key::F3 => Some(Action::ToggleMetronome),
+        Key::F4 => Some(Action::ToggleTicks),
         Key::F7 => Some(Action::NudgeBpm(-1.0)),
         Key::F8 => Some(Action::NudgeBpm(1.0)),
         _ => None,

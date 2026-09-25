@@ -128,7 +128,7 @@ pub fn shortcuts(ctx: &egui::Context, open: &mut bool) {
 }
 
 /// The keys and gestures the notefield answers to, and what each does.
-const KEYS: [(&str, &str); 29] = [
+const KEYS: [(&str, &str); 30] = [
     ("1 to 9, 0", "Place or remove a tap on lanes 1 to 10"),
     ("Hold 1 to 0, move", "Draw a hold"),
     ("Shift+1 to 0", "Place or remove a mine"),
@@ -158,6 +158,10 @@ const KEYS: [(&str, &str); 29] = [
     ("Ctrl+Wheel", "Zoom"),
     ("Ctrl+Plus, Ctrl+Minus", "Zoom"),
     ("Space", "Play from the cursor, or pause"),
+    (
+        "F3, F4",
+        "Turn the metronome or the tick on each note on or off",
+    ),
     ("Shift+Left, Shift+Right", "Play slower or faster by 10%"),
     (
         "Ctrl+Shift+Left, Ctrl+Shift+Right",

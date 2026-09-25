@@ -11,7 +11,7 @@ use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle, StaticSoundS
 use kira::{AudioManager, AudioManagerSettings, DefaultBackend, Frame, Tween};
 
 /// A file being decoded, and where its result arrives.
-type Loading = (PathBuf, Receiver<Result<StaticSoundData, String>>);
+type Loading = (PathBuf, Receiver<Result<Track, String>>);
 
 /// The audio device, the song's audio and the sound playing it.
 #[derive(Default)]
@@ -19,7 +19,7 @@ pub struct Player {
     /// The output, opened on first use; the error when it would not open.
     device: Option<Result<AudioManager<DefaultBackend>, String>>,
     loading: Option<Loading>,
-    loaded: Option<(PathBuf, StaticSoundData)>,
+    loaded: Option<(PathBuf, Track)>,
     playing: Option<StaticSoundHandle>,
 }
 
@@ -58,9 +58,9 @@ impl Player {
         }
         if let Some((path, receive)) = &self.loading {
             match receive.try_recv() {
-                Ok(Ok(data)) => {
-                    window.audio_ready(path, data.duration().as_secs_f64());
-                    self.loaded = Some((path.clone(), data));
+                Ok(Ok(track)) => {
+                    window.audio_ready(path, track.seconds());
+                    self.loaded = Some((path.clone(), track));
                     self.loading = None;
                 }
                 Ok(Err(why)) => {
@@ -89,14 +89,23 @@ impl Player {
     /// Does what the window asked of playback; other requests are left to the caller.
     pub fn answer(&mut self, request: &Request, window: &mut Window) {
         match *request {
-            Request::Play { from, rate } => {
+            Request::Play {
+                from,
+                rate,
+                ref clicks,
+            } => {
                 self.stop();
-                let Some((path, data)) = &self.loaded else {
+                let Some((path, track)) = &self.loaded else {
                     return;
                 };
                 let settings = StaticSoundSettings::new()
                     .start_position(from.max(0.0))
                     .playback_rate(rate);
+                let data = if clicks.is_empty() {
+                    sound(track)
+                } else {
+                    sound(&charter_audio::mix(track, clicks))
+                };
                 let (path, data) = (path.clone(), data.with_settings(settings));
                 let played = self
                     .device()
@@ -140,12 +149,11 @@ impl Player {
     }
 }
 
-/// Reads and decodes the file at `path` into sound kira can play.
-fn load(path: &Path) -> Result<StaticSoundData, String> {
+/// Reads and decodes the file at `path`.
+fn load(path: &Path) -> Result<Track, String> {
     let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
     let extension = path.extension().and_then(|extension| extension.to_str());
-    let track = Track::decode(bytes, extension).map_err(|error| error.to_string())?;
-    Ok(sound(&track))
+    Track::decode(bytes, extension).map_err(|error| error.to_string())
 }
 
 /// `track` as sound data kira plays.

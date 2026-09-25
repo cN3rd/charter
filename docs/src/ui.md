@@ -21,14 +21,14 @@ listed; clicking one jumps the cursor there, a name typed and entered names the 
 cursor or starts one, and any marker can be removed, each as one step. Songs open and save through
 native file dialogs, unsaved changes are asked about before they are lost and autosaved, half a
 minute after they are made unless the settings say otherwise, and a settings window holds what the
-user chooses, including which way the notefield runs and the tick and metronome sounds, which play
-once charter plays audio. The inspector shows the selection but cannot change it yet. A new song
-takes its game, the layout every chart shares, its title, artist and chart names from a dialog, and
-asks for audio until an audio file is dropped on the window; saving copies that file beside the
-song. Space plays the song's audio from the cursor and pauses it, the cursor follows the playback,
-and moving the cursor while playing seeks. Shift+Left and Shift+Right, or the Playback menu, play
-slower or faster from 10% to 400%, which changes the audio's pitch with its speed and leaves the
-chart alone.
+user chooses, including which way the notefield runs and the tick on each note and the metronome on
+each beat, which play over the audio and which F3 and F4 turn on and off. The inspector shows the
+selection but cannot change it yet. A new song takes its game, the layout every chart shares, its
+title, artist and chart names from a dialog, and asks for audio until an audio file is dropped on
+the window; saving copies that file beside the song. Space plays the song's audio from the cursor
+and pauses it, the cursor follows the playback, and moving the cursor while playing seeks.
+Shift+Left and Shift+Right, or the Playback menu, play slower or faster from 10% to 400%, which
+changes the audio's pitch with its speed and leaves the chart alone.
 
 ## Main window
 
