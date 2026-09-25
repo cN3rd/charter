@@ -12,11 +12,14 @@ status: draft
 draws on are all still open. `cargo run -p charter-ui --example mock` shows it as a static egui
 mock, with a made-up song in each of StepMania, Tap Tap Revenge, osu!mania, Project Sekai and
 Arcaea. `cargo run -p charter-app` is the editor so far. It draws charts in the shared vocabulary's
-glyphs, since no ruleset plugin draws yet, and edits songs of the built-in rulesets. Lane keys and
-Ctrl with the mouse place taps, holds and mines; the mouse selects and Delete removes the
-selection; undo and redo return to where each edit was made. Songs open and save through native
-file dialogs, unsaved changes are asked about before they are lost and autosaved half a minute
-after they are made, and a settings window holds what the user chooses. The inspector shows the selection but cannot change it yet.
+glyphs, since no ruleset plugin draws yet, and starts and edits songs of the built-in rulesets. Lane
+keys and Ctrl with the mouse place taps, holds and mines; the mouse selects and Delete removes the
+selection; undo and redo return to where each edit was made. Songs open and save through native file
+dialogs, unsaved changes are asked about before they are lost and autosaved half a minute after they
+are made, and a settings window holds what the user chooses. The inspector shows the selection but
+cannot change it yet. A new song takes its game, the layout every chart shares, its title, artist
+and chart names from a dialog, and asks for audio until an audio file is dropped on the window;
+saving copies that file beside the song.
 
 ## Main window
 
@@ -185,8 +188,8 @@ and the notes over a waveform that stays put.
 - Record mode keeps the layout. Armed lanes light up in the header, recording starts at the cursor
   after a count-in, and captured notes show as ghosts until the pass ends, then commit as one undo
   step. The rest is [open](research/topics/live-recording.md).
-- Rare work goes in dialogs: a new song from an audio file, also started by dropping one on the
-  window, and export, BPM detection and settings. Export lists what the target format will lose
+- Rare work goes in dialogs: a new song, whose audio is dropped on the window once it is open,
+  and export, BPM detection and settings. Export lists what the target format will lose
   and asks before writing ([export loss reporting](research/topics/export-loss-reporting.md)).
   Detection lists candidates and applies none until one is picked
   ([suggestion UI](research/topics/suggestion-ui.md)).

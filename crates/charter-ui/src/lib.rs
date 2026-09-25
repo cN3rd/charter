@@ -4,6 +4,7 @@
 //! does that I/O.
 
 mod keys;
+mod new_song;
 mod notefield;
 mod panels;
 mod recovery;

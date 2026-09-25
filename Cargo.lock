@@ -671,6 +671,8 @@ version = "0.0.0"
 dependencies = [
  "charter-core",
  "charter-editor",
+ "charter-stepmania",
+ "charter-ttr",
  "eframe",
  "egui",
  "egui_kittest",

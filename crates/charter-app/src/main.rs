@@ -46,6 +46,15 @@ impl eframe::App for Host {
                     }
                 }
                 Request::Autosave { bytes } => self.autosave(&bytes),
+                Request::CopyAudio { from, to } => {
+                    // A file already there is taken to be the song's audio.
+                    if !to.exists()
+                        && let Err(error) = std::fs::copy(&from, &to)
+                    {
+                        let why = format!("{} to {}: {error}", from.display(), to.display());
+                        self.window.audio_not_copied(&why);
+                    }
+                }
                 Request::DropAutosave => {
                     if let Some(recovery) = &self.recovery {
                         // Nothing to remove is fine, and a file left over is offered, then

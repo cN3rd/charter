@@ -19,6 +19,7 @@ pub(crate) const SAVE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMA
 pub(crate) const SAVE_AS: KeyboardShortcut =
     KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::S);
 pub(crate) const SETTINGS: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Comma);
+pub(crate) const NEW_SONG: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::N);
 
 /// The keys that place notes on lanes 1 to 10, as StepMania and ArrowVortex bind them.
 const LANE_KEYS: [Key; 10] = [
@@ -163,6 +164,9 @@ fn command(key: Key, modifiers: Modifiers) -> Option<Action> {
     }
     if is(OPEN) {
         return Some(Action::Open);
+    }
+    if is(NEW_SONG) {
+        return Some(Action::NewSong);
     }
     if is(SETTINGS) {
         return Some(Action::Settings);

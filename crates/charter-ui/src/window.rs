@@ -7,9 +7,13 @@ use egui::Ui;
 
 use charter_editor::{NoteAt, Refusal, Selecting, Song, Step, Toggled, demo};
 
+use crate::new_song::{self, NO_AUDIO};
 use crate::notefield::{self, Zoom};
 use crate::settings::{self, Settings};
 use crate::{keys, panels, recovery, style};
+
+/// The extensions of the audio files a song can play.
+const AUDIO: [&str; 5] = ["ogg", "mp3", "wav", "flac", "opus"];
 
 /// How long unsaved changes wait before they are autosaved, in seconds.
 const AUTOSAVE_AFTER: f64 = 30.0;
@@ -30,6 +34,9 @@ pub enum Request {
     Autosave { bytes: Vec<u8> },
     /// Remove the kept changes: they were saved or thrown away.
     DropAutosave,
+    /// Copy the song's audio from `from` to `to`, beside the song, unless a file is there. The
+    /// host says through [`Window::audio_not_copied`] if it could not.
+    CopyAudio { from: PathBuf, to: PathBuf },
 }
 
 /// How a save the window asked for went.
@@ -149,6 +156,8 @@ pub(crate) enum Action {
     SaveAs,
     /// Shows or hides the settings window.
     Settings,
+    /// Shows the dialog that starts a song.
+    NewSong,
 }
 
 /// The editor window's state.
@@ -198,6 +207,11 @@ pub struct Window {
     autosave_due: Option<f64>,
     /// Unsaved changes from an earlier run, waiting on whether to restore them.
     restoring: Option<Restoring>,
+    /// The dialog that starts a song, while it shows.
+    new_song: Option<new_song::Draft>,
+    /// The audio file dropped on the song, which is copied beside the song when it is saved
+    /// elsewhere.
+    audio_file: Option<PathBuf>,
 }
 
 impl Window {
@@ -233,6 +247,7 @@ impl Window {
                 if let Some(song) = &mut self.song {
                     song.mark_saved();
                 }
+                self.copy_audio(&path);
                 self.path = Some(path);
                 self.failure = None;
                 if let Some(discard) = self.after_save.take() {
@@ -264,6 +279,67 @@ impl Window {
                 ));
                 self.drop_autosave();
             }
+        }
+    }
+
+    /// Takes why the song's audio could not be copied beside it.
+    pub fn audio_not_copied(&mut self, why: &str) {
+        self.failure = Some(format!("Audio not copied: {why}"));
+    }
+
+    /// Asks the host to copy the audio dropped on the song beside the song, now saved to `path`,
+    /// if the song still names it and it is somewhere else.
+    fn copy_audio(&mut self, path: &Path) {
+        let (Some(from), Some(song)) = (self.audio_file.take(), &self.song) else {
+            return;
+        };
+        let named = song.document().document().metadata.audio.as_str();
+        let (Some(name), Some(folder)) = (from.file_name(), path.parent()) else {
+            return;
+        };
+        if name.to_str() != Some(named) || from.parent() == Some(folder) {
+            return;
+        }
+        let to = folder.join(name);
+        self.requests.push(Request::CopyAudio { from, to });
+    }
+
+    /// Makes the file at `path` the open song's audio.
+    fn add_audio(&mut self, path: &Path) {
+        let Some(song) = &mut self.song else {
+            self.failure = Some("Open or start a song before adding its audio.".to_owned());
+            return;
+        };
+        let name = path.file_name().map(|name| name.to_string_lossy());
+        let audio = match charter_core::ResourcePath::new(name.as_deref().unwrap_or_default()) {
+            Ok(audio) => audio,
+            Err(error) => {
+                self.failure = Some(format!(
+                    "{} cannot be a song's audio: {error}",
+                    path.display()
+                ));
+                return;
+            }
+        };
+        self.failure = refused(song.set_audio(audio).err());
+        if self.failure.is_none() {
+            self.audio_file = Some(path.to_path_buf());
+        }
+    }
+
+    /// Starts the song the new-song dialog asks for.
+    fn create(&mut self, plugin: &dyn charter_core::RulesetPlugin, song: &charter_core::NewSong) {
+        self.new_song = None;
+        match plugin.new_song(song) {
+            Ok(document) => {
+                let song = Box::new(Song::new(document, self.plugins));
+                self.after_asking(Discard::Open {
+                    path: None,
+                    song,
+                    restored: false,
+                });
+            }
+            Err(error) => self.failure = Some(format!("Could not start the song: {error}")),
         }
     }
 
@@ -439,6 +515,7 @@ impl Window {
                 self.failure = None;
                 self.placed = false;
                 self.holding.clear();
+                self.audio_file = None;
             }
         }
     }
@@ -466,6 +543,9 @@ impl Window {
             Action::Save => self.saving = Some(Saving::InPlace),
             Action::SaveAs => self.saving = Some(Saving::Elsewhere),
             Action::Settings => self.settings_open = !self.settings_open,
+            Action::NewSong => {
+                self.new_song.get_or_insert_default();
+            }
             _ => {}
         }
         let Some(song) = &mut self.song else {
@@ -528,6 +608,7 @@ impl Window {
             | Action::Save
             | Action::SaveAs
             | Action::Settings
+            | Action::NewSong
             | Action::Select(None, Selecting::Add | Selecting::Subtract) => {}
             Action::SelectBetween { ticks, lanes, how } => {
                 song.select_between(ticks.0..=ticks.1, lanes.0..=lanes.1, how);
@@ -537,16 +618,64 @@ impl Window {
         }
     }
 
-    /// Opens every file dropped on the window this frame, in order, so the last one that opens
-    /// wins.
+    /// Opens every song dropped on the window this frame, in order, so the last one that opens
+    /// wins, and gives the open song the audio file dropped on it.
     fn open_dropped(&mut self, ui: &Ui) {
         let dropped = ui.input(|input| input.raw.dropped_files.clone());
         for file in dropped {
+            let path = file.path();
+            let extension = path.extension().and_then(|extension| extension.to_str());
+            if extension.is_some_and(|extension| AUDIO.contains(&extension.to_lowercase().as_str()))
+            {
+                self.add_audio(path);
+                continue;
+            }
             match file.bytes() {
-                Ok(bytes) => self.open(file.path(), &bytes),
-                Err(error) => self.refuse(file.path(), &error),
+                Ok(bytes) => self.open(path, &bytes),
+                Err(error) => self.refuse(path, &error),
             }
         }
+    }
+
+    /// Shows whichever question or dialog is waiting on the user, and takes the answer.
+    fn dialogs(&mut self, ui: &Ui) {
+        if let Some(draft) = &mut self.new_song {
+            match new_song::show(ui, self.plugins, draft) {
+                Some(new_song::Answer::Create { plugin, song }) => self.create(plugin, &song),
+                Some(new_song::Answer::Cancel) => self.new_song = None,
+                None => {}
+            }
+        }
+        if let Some(Restoring { path, song }) = &self.restoring
+            && let Some(restore) = panels::ask_to_restore(ui, &file_name(path.as_deref(), song))
+        {
+            self.answer_restore(restore);
+        }
+        if self.discard.is_some() {
+            let name = self.song.as_ref().map(|song| self.file_name(song));
+            if let Some(answer) = panels::ask_to_save(ui, name.as_deref().unwrap_or_default()) {
+                self.answer(answer);
+            }
+        }
+    }
+
+    /// What this frame's keys ask for. Lane keys edit only a song open for editing.
+    fn keyboard(&mut self, ui: &Ui) -> Vec<Action> {
+        let lanes = self.song.as_ref().map_or(0, editable_lanes);
+        let lane_keys = &mut self.lane_keys;
+        let asked = ui.input(|input| keys::key_actions(input, lanes, lane_keys));
+        // A focused widget or a question takes the keyboard, but a lane key coming up still ends
+        // its chord.
+        let busy = ui.ctx().egui_wants_keyboard_input()
+            || self.new_song.is_some()
+            || self.discard.is_some()
+            || self.restoring.is_some();
+        let ends_a_chord =
+            |action: &Action| matches!(action, Action::LaneUp(_) | Action::LanesReleased);
+        asked
+            .into_iter()
+            .filter(|action| !busy || ends_a_chord(action))
+            .collect()
     }
 
     /// Draws the window into `ui` and answers this frame's input.
@@ -570,36 +699,9 @@ impl Window {
                 self.leaving = Leaving::Going;
             }
         }
-        if let Some(Restoring { path, song }) = &self.restoring
-            && let Some(restore) = panels::ask_to_restore(ui, &file_name(path.as_deref(), song))
-        {
-            self.answer_restore(restore);
-        }
-        if self.discard.is_some() {
-            let name = self.song.as_ref().map(|song| self.file_name(song));
-            if let Some(answer) = panels::ask_to_save(ui, name.as_deref().unwrap_or_default()) {
-                self.answer(answer);
-            }
-        }
+        self.dialogs(ui);
         self.open_dropped(ui);
-        let mut actions = Vec::new();
-        if let Some(song) = &self.song {
-            let lanes = editable_lanes(song);
-            let lane_keys = &mut self.lane_keys;
-            let asked = ui.input(|input| keys::key_actions(input, lanes, lane_keys));
-            // A focused widget or a question takes the keyboard, but a lane key coming up still
-            // ends its chord.
-            let busy = ui.ctx().egui_wants_keyboard_input()
-                || self.discard.is_some()
-                || self.restoring.is_some();
-            let ends_a_chord =
-                |action: &Action| matches!(action, Action::LaneUp(_) | Action::LanesReleased);
-            actions.extend(
-                asked
-                    .into_iter()
-                    .filter(|action| !busy || ends_a_chord(action)),
-            );
-        }
+        let mut actions = self.keyboard(ui);
         let song = self.song.as_ref();
         egui::Panel::top("menu").show(ui, |ui| panels::menu_bar(ui, song, &mut actions));
         egui::Panel::bottom("status").show(ui, |ui| {
@@ -615,6 +717,13 @@ impl Window {
             }
             if let Some(why) = self.song.as_ref().and_then(Song::read_only) {
                 panels::read_only(ui, why);
+            }
+            if self
+                .song
+                .as_ref()
+                .is_some_and(|song| song.document().document().metadata.audio.as_str() == NO_AUDIO)
+            {
+                panels::no_audio(ui);
             }
             match &self.song {
                 Some(song) => {
@@ -686,6 +795,7 @@ mod tests {
     use charter_core::{
         Chart, LaneCount, LaneIndex, LaneSpan, Position, Tick, Valid, ValidDocument,
     };
+    use egui::accesskit::Role;
     use egui_kittest::Harness;
     use egui_kittest::kittest::{NodeT, Queryable};
 
@@ -2012,5 +2122,259 @@ mod tests {
         harness.input_mut().dropped_files.push(file);
         harness.run();
         assert!(harness.query_all_by_label("Future").next().is_some());
+    }
+
+    /// The StepMania and Tap Tap Revenge plugins, which start songs.
+    const GAMES: &[&dyn RulesetPlugin] = &[&charter_stepmania::Plugin, &charter_ttr::Plugin];
+
+    fn new_song_dialog() -> Harness<'static, Window> {
+        let mut harness = window(Window::new(GAMES));
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::N);
+        harness.run();
+        harness
+    }
+
+    fn dialog_open(harness: &Harness<'_, Window>) -> bool {
+        harness.query_by_label("Create").is_some()
+    }
+
+    fn charts(harness: &Harness<'_, Window>) -> Vec<(String, Option<LaneCount>)> {
+        let song = harness.state().song.as_ref().unwrap();
+        let charts = &song.document().document().charts;
+        charts
+            .iter()
+            .map(|chart| (chart.name.clone(), chart.lanes))
+            .collect()
+    }
+
+    fn lanes(n: u16) -> Option<LaneCount> {
+        LaneCount::new(n)
+    }
+
+    #[test]
+    fn the_file_menu_and_ctrl_n_start_a_new_song_and_cancel_leaves_it() {
+        let mut harness = window(Window::new(GAMES));
+        harness.get_by_label("File").click();
+        harness.run();
+        harness.get_by_label_contains("New song…").click();
+        harness.run();
+        assert!(dialog_open(&harness));
+        harness.get_by_label("Cancel").click();
+        harness.run();
+        assert!(!dialog_open(&harness));
+        assert!(harness.state().song.is_none());
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::N);
+        harness.run();
+        assert!(dialog_open(&harness));
+    }
+
+    #[test]
+    fn shortcuts_work_with_no_song_open() {
+        let mut harness = window(Window::new(GAMES));
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::O);
+        harness.run();
+        assert_eq!(request(&mut harness), Request::Open);
+    }
+
+    #[test]
+    fn the_empty_window_offers_a_new_song() {
+        let mut harness = window(Window::new(GAMES));
+        harness.get_by_label("New song").click();
+        harness.run();
+        assert!(dialog_open(&harness));
+    }
+
+    #[test]
+    fn a_new_song_starts_as_one_empty_chart_of_the_first_games_usual_layout() {
+        let mut harness = new_song_dialog();
+        harness.get_by_label("Create").click();
+        harness.run();
+        assert!(!dialog_open(&harness));
+        assert_eq!(charts(&harness), [("Easy".to_owned(), lanes(4))]);
+        let song = harness.state().song.as_ref().unwrap();
+        assert_eq!(song.document().document().ruleset.id.as_str(), "sm");
+        assert!(song.read_only().is_none());
+        assert_eq!(harness.state().title(), "Untitled.json - charter");
+    }
+
+    #[test]
+    fn a_new_song_takes_its_game_layout_title_and_charts_from_the_dialog() {
+        let mut harness = new_song_dialog();
+        harness.get_by_label("Tap Tap Revenge").click();
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::ComboBox, "Lanes")
+            .click();
+        harness.run();
+        harness.get_by_label("5 lanes").click();
+        harness.run();
+        let title = harness.get_by_role_and_label(Role::TextInput, "Title");
+        title.focus();
+        title.type_text("Mine");
+        harness.run();
+        harness.get_by_label("Add a chart").click();
+        harness.run();
+        harness.get_by_label("Create").click();
+        harness.run();
+        assert_eq!(
+            charts(&harness),
+            [
+                ("Easy".to_owned(), lanes(5)),
+                ("Chart 2".to_owned(), lanes(5))
+            ]
+        );
+        assert_eq!(harness.state().title(), "Mine.json - charter");
+    }
+
+    #[test]
+    fn a_new_song_needs_a_chart() {
+        let mut harness = new_song_dialog();
+        harness.get_by_label("Remove Easy").click();
+        harness.run();
+        assert!(harness.query_by_label("Remove Easy").is_none());
+        harness.get_by_label("Create").click();
+        harness.run();
+        assert!(dialog_open(&harness));
+        assert!(harness.state().song.is_none());
+    }
+
+    #[test]
+    fn lane_keys_wait_while_the_new_song_dialog_shows() {
+        let mut harness = editable_demo();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::N);
+        harness.run();
+        harness.key_press(egui::Key::Num1);
+        harness.run();
+        harness.get_by_label("Cancel").click();
+        harness.run();
+        assert_eq!(lanes_at(&harness, 0), [3]);
+    }
+
+    fn created() -> Harness<'static, Window> {
+        let mut harness = new_song_dialog();
+        harness.get_by_label("Create").click();
+        harness.run();
+        harness
+    }
+
+    /// A file dropped on the window that only a path stands for.
+    #[derive(Debug)]
+    struct DroppedPath(&'static str);
+
+    impl egui::DroppedFile for DroppedPath {
+        fn path(&self) -> &Path {
+            Path::new(self.0)
+        }
+
+        fn bytes(&self) -> Result<Vec<u8>, String> {
+            Err("not read in tests".to_owned())
+        }
+    }
+
+    fn drop_file(harness: &mut Harness<'_, Window>, path: &'static str) {
+        harness
+            .input_mut()
+            .dropped_files
+            .push(Arc::new(DroppedPath(path)));
+        harness.run();
+    }
+
+    fn no_audio(harness: &Harness<'_, Window>) -> bool {
+        harness.query_by_label_contains("No audio yet").is_some()
+    }
+
+    fn audio(harness: &Harness<'_, Window>) -> String {
+        let song = harness.state().song.as_ref().unwrap();
+        song.document()
+            .document()
+            .metadata
+            .audio
+            .as_str()
+            .to_owned()
+    }
+
+    #[test]
+    fn a_new_song_asks_for_audio_until_a_file_is_dropped_on_it() {
+        let mut harness = created();
+        assert!(no_audio(&harness));
+        drop_file(&mut harness, "/music/track.ogg");
+        assert!(!no_audio(&harness));
+        assert_eq!(audio(&harness), "track.ogg");
+        assert_eq!(harness.state().title(), "*Untitled.json - charter");
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.run();
+        assert!(no_audio(&harness));
+    }
+
+    #[test]
+    fn saving_a_song_copies_the_audio_dropped_on_it_beside_it() {
+        let mut harness = created();
+        drop_file(&mut harness, "/music/track.ogg");
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::S);
+        harness.run();
+        assert!(matches!(request(&mut harness), Request::SaveAs { .. }));
+        harness
+            .state_mut()
+            .saved(Saved::To(PathBuf::from("/songs/mine.json")));
+        harness.run();
+        assert_eq!(
+            harness.state_mut().take_requests(),
+            [Request::CopyAudio {
+                from: PathBuf::from("/music/track.ogg"),
+                to: PathBuf::from("/songs/track.ogg"),
+            }]
+        );
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::S);
+        harness.run();
+        assert!(matches!(request(&mut harness), Request::Write { .. }));
+        harness
+            .state_mut()
+            .saved(Saved::To(PathBuf::from("/songs/mine.json")));
+        harness.run();
+        assert_eq!(harness.state_mut().take_requests(), []);
+    }
+
+    #[test]
+    fn audio_already_beside_the_song_is_not_copied() {
+        let mut harness = created();
+        drop_file(&mut harness, "/songs/track.ogg");
+        harness
+            .state_mut()
+            .saved(Saved::To(PathBuf::from("/songs/mine.json")));
+        harness.run();
+        assert_eq!(harness.state_mut().take_requests(), []);
+    }
+
+    #[test]
+    fn audio_that_could_not_be_copied_says_why() {
+        let mut harness = created();
+        harness.state_mut().audio_not_copied("the disk is full");
+        harness.run();
+        assert!(
+            harness
+                .query_by_label_contains("Audio not copied: the disk is full")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn audio_dropped_with_no_song_open_says_to_open_one() {
+        let mut harness = window(Window::new(GAMES));
+        drop_file(&mut harness, "/music/track.ogg");
+        assert!(
+            harness
+                .query_by_label_contains("Open or start a song before adding its audio")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn audio_dropped_on_a_read_only_song_is_refused() {
+        let mut harness = window(Window::new(&[]));
+        harness.state_mut().open_demo();
+        harness.run();
+        drop_file(&mut harness, "/music/track.ogg");
+        assert_eq!(audio(&harness), "demo.ogg");
+        assert!(harness.query_by_label_contains("Refused").is_some());
     }
 }

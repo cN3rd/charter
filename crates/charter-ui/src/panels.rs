@@ -10,7 +10,7 @@ use serde_json::Value;
 use charter_editor::Song;
 
 use crate::Action;
-use crate::keys::{OPEN, REDO, SAVE, SAVE_AS, SETTINGS, UNDO};
+use crate::keys::{NEW_SONG, OPEN, REDO, SAVE, SAVE_AS, SETTINGS, UNDO};
 use crate::notefield::Zoom;
 use crate::style::{fields, heading, table, title};
 
@@ -19,6 +19,7 @@ pub fn menu_bar(ui: &mut Ui, song: Option<&Song>, actions: &mut Vec<Action>) {
     egui::MenuBar::new().ui(ui, |ui| {
         ui.menu_button("File", |ui| {
             let items = [
+                ("New song…", NEW_SONG, true, Action::NewSong),
                 ("Open…", OPEN, true, Action::Open),
                 ("Save", SAVE, song_open, Action::Save),
                 ("Save as…", SAVE_AS, song_open, Action::SaveAs),
@@ -84,7 +85,7 @@ pub fn menu_bar(ui: &mut Ui, song: Option<&Song>, actions: &mut Vec<Action>) {
 }
 
 /// The keys and gestures the notefield answers to, and what each does.
-const KEYS: [(&str, &str); 20] = [
+const KEYS: [(&str, &str); 21] = [
     ("1 to 9, 0", "Place or remove a tap on lanes 1 to 10"),
     ("Hold 1 to 0, move", "Draw a hold"),
     ("Shift+1 to 0", "Place or remove a mine"),
@@ -98,6 +99,7 @@ const KEYS: [(&str, &str); 20] = [
     ("Delete, Backspace", "Delete the selection"),
     ("Ctrl+Z", "Undo"),
     ("Ctrl+Shift+Z, Ctrl+Y", "Redo"),
+    ("Ctrl+N", "New song"),
     ("Ctrl+O, Ctrl+S, Ctrl+Shift+S", "Open, save, save as"),
     ("Ctrl+Comma", "Settings"),
     ("Up, Down, Wheel", "Move the cursor by the snap"),
@@ -310,10 +312,20 @@ pub fn empty(ui: &mut Ui, actions: &mut Vec<Action>) {
             "Drop a charter song (.json) on this window, or give its path when you start charter.",
         );
         ui.add_space(8.0);
+        if ui.button("New song").clicked() {
+            actions.push(Action::NewSong);
+        }
         if ui.button("Open the demo song").clicked() {
             actions.push(Action::OpenDemo);
         }
     });
+}
+
+/// That the open song has no audio yet, and how to give it some.
+pub fn no_audio(ui: &mut Ui) {
+    let colour = ui.visuals().warn_fg_color;
+    let text = "No audio yet: drop an audio file (.ogg, .mp3, .wav, .flac, .opus) on the window.";
+    ui.label(RichText::new(text).color(colour));
 }
 
 /// What to do with unsaved changes that are about to be lost.
