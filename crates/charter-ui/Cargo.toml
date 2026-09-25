@@ -1,0 +1,16 @@
+[package]
+name = "charter-ui"
+version = "0.0.0"
+edition = "2024"
+
+[lints]
+workspace = true
+
+[dependencies]
+charter-core.workspace = true
+charter-editor.workspace = true
+egui.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+egui_kittest.workspace = true

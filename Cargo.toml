@@ -2,6 +2,7 @@
 members = [
     "crates/charter-core",
     "crates/charter-editor",
+    "crates/charter-ui",
     "crates/charter-app",
     "plugins/stepmania",
     "plugins/ttr",
@@ -18,6 +19,8 @@ serde = { version = "1.0.229", features = ["derive"] }
 # values survive a round trip, and the default parser drifts one value in ten.
 serde_json = { version = "1.0.151", features = ["float_roundtrip"] }
 thiserror = "2.0.20"
+egui = "0.36.2"
+egui_kittest = "0.36.2"
 # ponytail: std only; the fork and timeout features pull in a temp-file runner the sans-io tests
 # do not need.
 proptest = { version = "1.11.0", default-features = false, features = ["std"] }
