@@ -1,0 +1,11 @@
+[package]
+name = "charter-editor"
+version = "0.0.0"
+edition = "2024"
+
+[lints]
+workspace = true
+
+[dependencies]
+charter-core.workspace = true
+serde_json.workspace = true

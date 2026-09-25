@@ -41,6 +41,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "charter-editor"
+version = "0.0.0"
+dependencies = [
+ "charter-core",
+ "serde_json",
+]
+
+[[package]]
 name = "charter-osu-mania"
 version = "0.0.0"
 dependencies = [
