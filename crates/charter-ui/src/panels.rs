@@ -10,7 +10,7 @@ use serde_json::Value;
 use charter_editor::Song;
 
 use crate::Action;
-use crate::keys::{OPEN, REDO, SAVE, SAVE_AS, UNDO};
+use crate::keys::{OPEN, REDO, SAVE, SAVE_AS, SETTINGS, UNDO};
 use crate::notefield::Zoom;
 use crate::style::{fields, heading, table, title};
 
@@ -33,6 +33,12 @@ pub fn menu_bar(ui: &mut Ui, song: Option<&Song>, actions: &mut Vec<Action>) {
             ui.separator();
             if ui.button("Open the demo song").clicked() {
                 actions.push(Action::OpenDemo);
+            }
+            ui.separator();
+            let item =
+                egui::Button::new("Settings…").shortcut_text(ui.ctx().format_shortcut(&SETTINGS));
+            if ui.add(item).clicked() {
+                actions.push(Action::Settings);
             }
         });
         ui.menu_button("Edit", |ui| {
@@ -78,7 +84,7 @@ pub fn menu_bar(ui: &mut Ui, song: Option<&Song>, actions: &mut Vec<Action>) {
 }
 
 /// The keys and gestures the notefield answers to, and what each does.
-const KEYS: [(&str, &str); 19] = [
+const KEYS: [(&str, &str); 20] = [
     ("1 to 9, 0", "Place or remove a tap on lanes 1 to 10"),
     ("Hold 1 to 0, move", "Draw a hold"),
     ("Shift+1 to 0", "Place or remove a mine"),
@@ -93,6 +99,7 @@ const KEYS: [(&str, &str); 19] = [
     ("Ctrl+Z", "Undo"),
     ("Ctrl+Shift+Z, Ctrl+Y", "Redo"),
     ("Ctrl+O, Ctrl+S, Ctrl+Shift+S", "Open, save, save as"),
+    ("Ctrl+Comma", "Settings"),
     ("Up, Down, Wheel", "Move the cursor by the snap"),
     ("Page Up, Page Down", "Move the cursor by a measure"),
     ("Left, Right", "Coarser or finer snap"),

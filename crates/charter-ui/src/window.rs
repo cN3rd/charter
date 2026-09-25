@@ -8,6 +8,7 @@ use egui::Ui;
 use charter_editor::{NoteAt, Refusal, Selecting, Song, Step, Toggled, demo};
 
 use crate::notefield::{self, Zoom};
+use crate::settings::{self, Settings};
 use crate::{keys, panels, style};
 
 /// Something only the program hosting the window can do. The host answers a save through
@@ -128,6 +129,8 @@ pub(crate) enum Action {
     Save,
     /// Asks where to save the song.
     SaveAs,
+    /// Shows or hides the settings window.
+    Settings,
 }
 
 /// The editor window's state.
@@ -150,6 +153,9 @@ pub struct Window {
     after_save: Option<Discard>,
     /// How far the window is in closing.
     leaving: Leaving,
+    settings: Settings,
+    /// Whether the settings window is showing.
+    settings_open: bool,
     /// How tall a second of the open song is on screen.
     zoom: Zoom,
     /// Why the last file failed to open, or the last edit was refused.
@@ -169,6 +175,17 @@ pub struct Window {
 }
 
 impl Window {
+    /// This window with the user's choices from an earlier run.
+    #[must_use]
+    pub fn with_settings(self, settings: Settings) -> Self {
+        Self { settings, ..self }
+    }
+
+    #[must_use]
+    pub fn settings(&self) -> &Settings {
+        &self.settings
+    }
+
     /// A window with no song open, which checks songs against `plugins`.
     #[must_use]
     pub fn new(plugins: &'static [&'static dyn RulesetPlugin]) -> Self {
@@ -283,11 +300,12 @@ impl Window {
     fn carry_on(&mut self, discard: Discard) {
         match discard {
             Discard::Close => self.leaving = Leaving::Now,
-            Discard::Open { path, song } => {
+            Discard::Open { path, mut song } => {
                 self.saving = None;
+                song.set_snap(self.settings.snap);
                 self.song = Some(*song);
                 self.path = path;
-                self.zoom = Zoom::START;
+                self.zoom = Zoom::START.by(self.settings.zoom / 100.0);
                 self.failure = None;
                 self.placed = false;
                 self.holding.clear();
@@ -317,6 +335,7 @@ impl Window {
             Action::Open => self.requests.push(Request::Open),
             Action::Save => self.saving = Some(Saving::InPlace),
             Action::SaveAs => self.saving = Some(Saving::Elsewhere),
+            Action::Settings => self.settings_open = !self.settings_open,
             _ => {}
         }
         let Some(song) = &mut self.song else {
@@ -350,7 +369,7 @@ impl Window {
             }
             Action::LaneUp(lane) => self.holding.retain(|(held, _)| *held != lane),
             Action::LanesReleased => {
-                if std::mem::take(&mut self.placed) {
+                if std::mem::take(&mut self.placed) && self.settings.auto_jump {
                     song.step(Step::Later);
                 }
             }
@@ -378,6 +397,7 @@ impl Window {
             | Action::Open
             | Action::Save
             | Action::SaveAs
+            | Action::Settings
             | Action::Select(None, Selecting::Add | Selecting::Subtract) => {}
             Action::SelectBetween { ticks, lanes, how } => {
                 song.select_between(ticks.0..=ticks.1, lanes.0..=lanes.1, how);
@@ -402,6 +422,10 @@ impl Window {
     /// Draws the window into `ui` and answers this frame's input.
     pub fn ui(&mut self, ui: &mut Ui) {
         style::apply(ui.ctx());
+        let scale = self.settings.scale();
+        if (ui.ctx().zoom_factor() - scale).abs() > f32::EPSILON {
+            ui.ctx().set_zoom_factor(scale);
+        }
         if self.leaving == Leaving::Now {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
             self.leaving = Leaving::Going;
@@ -464,6 +488,7 @@ impl Window {
                 None => panels::empty(ui, &mut actions),
             }
         });
+        settings::show(ui.ctx(), &mut self.settings, &mut self.settings_open);
         for action in actions {
             self.apply(action);
         }
@@ -514,6 +539,7 @@ fn refused(refusal: Option<Refusal>) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroU16;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
 
@@ -1387,6 +1413,59 @@ mod tests {
         harness.run();
         assert_eq!(harness.state().title(), "*four.json - charter");
         assert!(!asks_to_save(&harness));
+    }
+
+    #[test]
+    fn the_settings_window_opens_from_the_file_menu_and_with_ctrl_comma() {
+        let mut harness = editable_demo();
+        harness.get_by_label("File").click();
+        harness.run();
+        harness.get_by_label_contains("Settings…").click();
+        harness.run();
+        assert!(harness.query_by_label("Settings").is_some());
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Comma);
+        harness.run();
+        assert!(harness.query_by_label("Settings").is_none());
+    }
+
+    #[test]
+    fn turning_auto_jump_off_keeps_the_cursor_where_notes_go() {
+        let mut harness = editable_demo();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Comma);
+        harness.run();
+        harness
+            .get_by_label("Move on a snap after placing a note")
+            .click();
+        harness.run();
+        assert!(!harness.state().settings().auto_jump);
+        harness.key_press(egui::Key::Num1);
+        harness.run();
+        assert_eq!(lanes_at(&harness, 0), [0, 3]);
+        assert!(cursor_shows(&harness, "0:0:0"));
+    }
+
+    #[test]
+    fn a_song_opens_on_the_snap_and_zoom_the_settings_choose() {
+        let settings = Settings {
+            snap: NonZeroU16::new(32).unwrap(),
+            zoom: 200.0,
+            ..Settings::default()
+        };
+        let mut app = Window::new(PLUGINS).with_settings(settings);
+        app.open_demo();
+        let harness = window(app);
+        assert!(harness.query_by_label("Snap 32nd").is_some());
+        assert!(harness.query_by_label("Zoom 200%").is_some());
+    }
+
+    #[test]
+    fn the_interface_size_setting_scales_the_whole_window() {
+        let settings = Settings {
+            scale: 1.5,
+            ..Settings::default()
+        };
+        let harness = window(Window::new(PLUGINS).with_settings(settings));
+        assert!((harness.ctx.zoom_factor() - 1.5).abs() < f32::EPSILON);
     }
 
     #[test]

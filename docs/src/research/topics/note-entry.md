@@ -40,11 +40,11 @@ is an **inferred** priority, and left the direct-entry-versus-conversion questio
 ## Draft position
 
 Digits 1 to 9 and 0 place a tap on lanes 1 to 10 at the cursor, or remove the note that starts
-there, and Shift with a digit places a mine, as in ArrowVortex. Holds are ArrowVortex's and Quaver's
-hold-to-extend: a tap whose key is still down stretches into a hold to wherever the cursor moves.
-Auto-jump follows ArrowVortex's release rule: the cursor moves one snap once every lane key is up
-after a note was placed, so keys held together place a chord on one tick. Removing a note leaves the
-cursor.
+there, and Shift with a digit places a mine, as in ArrowVortex. Holds are ArrowVortex's and
+Quaver's hold-to-extend: a tap whose key is still down stretches into a hold to wherever the
+cursor moves. Auto-jump follows ArrowVortex's release rule: the cursor moves one snap once every
+lane key is up after a note was placed, so keys held together place a chord on one tick. A setting
+turns it off. Removing a note leaves the cursor.
 
 The mouse places with Ctrl held, since a plain click selects: a click toggles a tap on the nearest
 snap line, Ctrl+Shift a mine, and a drag draws a hold, osu!'s gesture without its tool modes.

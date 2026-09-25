@@ -12,5 +12,5 @@ charter-osu-mania.workspace = true
 charter-stepmania.workspace = true
 charter-ttr.workspace = true
 charter-ui.workspace = true
-eframe.workspace = true
+eframe = { workspace = true, features = ["persistence"] }
 rfd.workspace = true

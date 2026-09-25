@@ -58,7 +58,7 @@ pub enum Refusal {
 }
 
 /// The snaps in ArrowVortex's menu, coarsest first.
-const SNAPS: [u16; 10] = [4, 8, 12, 16, 24, 32, 48, 64, 96, 192];
+pub const SNAPS: [u16; 10] = [4, 8, 12, 16, 24, 32, 48, 64, 96, 192];
 
 /// The snap a song opens on, when its resolution holds it.
 const DEFAULT_SNAP: u16 = 16;
@@ -537,6 +537,14 @@ impl Song {
     pub fn finer_snap(&mut self) {
         let finer = self.snaps().find(|snap| *snap > self.snap);
         self.snap = finer.unwrap_or(self.snap);
+    }
+
+    /// Snaps to `snap` if it is one of [`SNAPS`] and a whole number of ticks at the song's
+    /// resolution, and otherwise keeps the snap there is.
+    pub fn set_snap(&mut self, snap: NonZeroU16) {
+        if self.snaps().any(|held| held == snap) {
+            self.snap = snap;
+        }
     }
 
     pub fn coarser_snap(&mut self) {
@@ -1182,6 +1190,25 @@ mod tests {
             song.coarser_snap();
         }
         assert_eq!(song.snap(), note(4));
+    }
+
+    #[test]
+    fn a_chosen_snap_stands_only_if_the_menu_has_it_and_the_resolution_holds_it() {
+        let mut song = Song::new(document(json!([])), &[]);
+        song.set_snap(note(12));
+        assert_eq!(song.snap(), note(12));
+        song.set_snap(note(7));
+        assert_eq!(song.snap(), note(12));
+        let coarse = json!({
+            "format_version": 0,
+            "ticks_per_beat": 100,
+            "ruleset": { "id": "test", "version": "1" },
+            "metadata": { "title": "t", "artist": "a", "audio": "song.ogg" },
+            "timing": { "offset_seconds": 0.0, "events": [ { "tick": 0, "kind": { "bpm": 120.0 } } ] }
+        });
+        let mut song = Song::open(&serde_json::to_vec(&coarse).unwrap(), &[]).unwrap();
+        song.set_snap(note(12));
+        assert_eq!(song.snap(), note(16));
     }
 
     #[test]

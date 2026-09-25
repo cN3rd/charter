@@ -85,8 +85,8 @@ expected `E1` for it. Do not silence that by adding frontmatter.
 |---|---|
 | `crates/charter-core` | the chart format: data model, JSON I/O, validation, tick to time; `RulesetPlugin`, the surface a ruleset plugin implements |
 | `crates/charter-editor` | editing a song without drawing it: open chart, cursor, snaps, note edits the ruleset plugin checks, selection, undo, unsaved changes, the demo song |
-| `crates/charter-ui` | the editor window in egui: notefield, panels, keys, style; asks its host for files and dialogs; the static mock as an example |
-| `crates/charter-app` | binary front end, thin: registers the built-in ruleset plugins, answers the window's file and dialog requests with `std::fs` and rfd |
+| `crates/charter-ui` | the editor window in egui: notefield, panels, keys, settings, style; asks its host for files and dialogs; the static mock as an example |
+| `crates/charter-app` | binary front end, thin: registers the built-in ruleset plugins, answers the window's file and dialog requests with `std::fs` and rfd, keeps settings in eframe's storage |
 | `plugins/stepmania`, `plugins/ttr`, `plugins/osu-mania` | ruleset plugins: typed game models over `charter-core`, each with a `Plugin` the editor checks songs and edits through |
 | `third-party/symphonia-wrap` | build-time facade over `symphonia`, read its README first |
 
@@ -124,7 +124,7 @@ snap and by measure, and edits a song whose ruleset plugin accepts it: lane keys
 mouse place taps, holds and mines, the mouse selects and Delete removes the selection, every edit
 is checked by the format and the plugin, and undo and redo return to where each edit was made. A
 song without its plugin is read-only. Songs open and save through native dialogs, unsaved changes
-are asked about before they are lost.
+are asked about before they are lost, and a settings window keeps its choices between runs.
 `charter-editor` holds that state without drawing it, `charter-ui` draws it in egui and never
 touches a file, and `charter-app` registers the plugins, opens the window and does its file I/O. `charter-ui`'s `mock` example is the static mock of the book's
 UI draft. No DSP crate exists yet. Ask before inventing a crate boundary.

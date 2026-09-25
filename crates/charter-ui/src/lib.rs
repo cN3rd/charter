@@ -6,8 +6,10 @@
 mod keys;
 mod notefield;
 mod panels;
+mod settings;
 mod style;
 mod window;
 
+pub use settings::Settings;
 use window::{Action, Note};
 pub use window::{Request, Saved, Window};

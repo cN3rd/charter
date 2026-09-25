@@ -1,12 +1,13 @@
 //! charter's editor in a native window, opening the song whose path is the first argument, if
 //! there is one. Songs of the built-in rulesets can be edited. The window asks this program to
-//! read and write files and to show file dialogs.
+//! read and write files and to show file dialogs, and this program keeps the user's settings
+//! between runs.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use charter_core::RulesetPlugin;
-use charter_ui::{Request, Saved, Window};
+use charter_ui::{Request, Saved, Settings, Window};
 
 /// The ruleset plugins built into charter.
 const PLUGINS: &[&dyn RulesetPlugin] = &[
@@ -14,6 +15,9 @@ const PLUGINS: &[&dyn RulesetPlugin] = &[
     &charter_ttr::Plugin,
     &charter_osu_mania::Plugin,
 ];
+
+/// Where the settings are kept in eframe's storage.
+const SETTINGS: &str = "settings";
 
 /// The editor window, and the files and dialogs it asks for.
 struct Host {
@@ -39,6 +43,10 @@ impl eframe::App for Host {
                 }
             }
         }
+    }
+
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        eframe::set_value(storage, SETTINGS, self.window.settings());
     }
 }
 
@@ -103,9 +111,13 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "charter",
         options,
-        Box::new(|_| {
+        Box::new(|creation| {
+            let kept = creation
+                .storage
+                .and_then(|storage| eframe::get_value(storage, SETTINGS));
+            let settings: Settings = kept.unwrap_or_default();
             let mut host = Host {
-                window: Window::new(PLUGINS),
+                window: Window::new(PLUGINS).with_settings(settings),
             };
             if let Some(path) = std::env::args_os().nth(1) {
                 host.read(Path::new(&path));
