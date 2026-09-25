@@ -23,6 +23,13 @@ how plugins are loaded is still [open](research/topics/plugins.md).
 - A song is checked when built, by reading or by `Song::new`, against the ruleset and every
   document rule, and cannot change after. Writing one therefore cannot fail.
 
+Each plugin also exports `Plugin`, which implements `charter-core`'s `RulesetPlugin`: `id` is the
+ruleset id its documents carry, and `check` reads a document as a song and keeps only whether
+that worked. The editor opens a song for editing only when the plugin for its ruleset accepts it,
+and checks every edit, undo and redo through the same plugin, so an edit the game cannot represent
+is refused. Without its plugin a song is read-only. `charter-app` compiles the built-in plugins in,
+and nothing loads a plugin at runtime yet.
+
 | Ruleset | Namespace | Kinds | Timing | Chart settings |
 |---|---|---|---|---|
 | StepMania | `sm` | `tap`, `hold`, `roll`, `mine`, `lift`, `fake`, `sm.auto_keysound` | Every core kind, `sm.tickcount`, `sm.combo`, `sm.speed`, `sm.scroll`, `sm.fake` | `style`, `difficulty`, `meter`, `description` |

@@ -589,7 +589,7 @@ mod tests {
     }
 
     fn song() -> Song {
-        Song::new(demo::song())
+        Song::new(demo::song(), &[])
     }
 
     #[test]

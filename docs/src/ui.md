@@ -11,8 +11,9 @@ status: draft
 **Draft.** A low-fidelity layout to iterate on. The [research topics](research/topics/index.md) it
 draws on are all still open. `cargo run -p charter-ui --example mock` shows it as a static egui
 mock, with a made-up song in each of StepMania, Tap Tap Revenge, osu!mania, Project Sekai and
-Arcaea. `cargo run -p charter-app` is the editor so far: it opens a song read-only and draws its
-charts in the shared vocabulary's glyphs, since no ruleset plugin draws yet.
+Arcaea. `cargo run -p charter-app` is the editor so far. It draws charts in the shared vocabulary's
+glyphs, since no ruleset plugin draws yet, and edits songs of the built-in rulesets. Lane keys
+place and remove taps, and undo and redo return to where each edit was made.
 
 ## Main window
 
@@ -72,6 +73,9 @@ dark playfield, often in a dim room, and notes read best as bright shapes on dar
   ([shortcuts](research/topics/shortcuts.md)).
 - There is no toolbar or tool palette. Entry is modeless, as in ArrowVortex: lane keys place notes
   at the cursor, and the mouse selects, with Shift adding to a marquee and Alt subtracting.
+- Undo takes back one edit at a time and returns to the chart and the cursor it was made at, as
+  Moonscraper's returns its camera ([undo model](research/topics/undo-model.md)). One lane key
+  press is one step.
 - The problems strip lists warnings about a valid document, such as the unreachable notes the
   format flags inside a warp, and clicking one jumps there. It never lists errors, because the
   editor never holds an invalid document. A file that breaks a rule does not open, and the message
@@ -128,7 +132,9 @@ dark playfield, often in a dim room, and notes read best as bright shapes on dar
 - The now line is the cursor. It stays near one edge, leaving most of the view for what comes
   next, and during playback the chart scrolls past it as in the game. Lane keys place notes on it,
   and auto-jump then moves it one snap, so each note of a stream takes one keystroke
-  ([note entry](research/topics/note-entry.md)).
+  ([note entry](research/topics/note-entry.md)). The cursor moves on once every lane key is up, so
+  keys held together place a chord on one tick. A lane key on a note removes it and leaves the
+  cursor where it is.
 - The waveform has its own strip. ArrowVortex draws it behind the notes; a strip keeps one width
   whether the chart has 3 lanes or 20, and leaves the lanes column to the ruleset. A spectrogram
   can sit beside it as another strip. Measure and beat lines cross the lanes and the waveform
@@ -173,7 +179,7 @@ and the notes over a waveform that stays put.
   after a count-in, and captured notes show as ghosts until the pass ends, then commit as one undo
   step. The rest is [open](research/topics/live-recording.md).
 - Rare work goes in dialogs: a new song from an audio file, also started by dropping one on the
-  window, and export, BPM detection and preferences. Export lists what the target format will lose
+  window, and export, BPM detection and settings. Export lists what the target format will lose
   and asks before writing ([export loss reporting](research/topics/export-loss-reporting.md)).
   Detection lists candidates and applies none until one is picked
   ([suggestion UI](research/topics/suggestion-ui.md)).
@@ -182,7 +188,6 @@ and the notes over a waveform that stays put.
 ## Open for the next pass
 
 - The waveform behind the notes instead of beside them
-- Mouse placement: a modifier, or tool modes as in osu!
 - C-mod as the default, or a default per ruleset
 - Tempora's measure-per-row view for sync, if the notefield proves clumsy
 - Test play, which osu! and Quaver have and this draft leaves out

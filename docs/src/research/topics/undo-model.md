@@ -31,3 +31,12 @@ case — see [live recording](live-recording.md).
 Earlier research proposed transactional undo for every edit, and that a recording pass be one
 undoable transaction. Moonscraper's view-restoring undo is **observed** and unusually thoughtful;
 the transactional requirement is **asserted**.
+
+## Draft position
+
+`charter-editor` keeps each edit with the chart and the cursor it was made at, and undo and redo
+return to both: Moonscraper's view restoration, less a camera the editor does not have. One lane key
+press is one step. An undone or redone edit is checked like a new one, by the format and the ruleset
+plugin, since every document the editor holds has passed both. The `undo` crate's `Record` does not
+fit that: it keeps an edit it has applied whatever the edit returned, so a refused edit would stay
+on the record.

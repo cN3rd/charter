@@ -70,3 +70,9 @@ rejection. The ABI constraint itself is **observed** and is a property of Rust r
 project.
 
 Worth recovering the original plugin decision document before treating any of this as settled.
+
+## Draft position
+
+Built-in plugins are the same trait surface compiled in. `charter-core` defines `RulesetPlugin`,
+each ruleset crate implements it, and `charter-app` registers the built-in ones. The editor asks it
+whether a song, and each edit to it, is valid for the game. Nothing loads a plugin at runtime.

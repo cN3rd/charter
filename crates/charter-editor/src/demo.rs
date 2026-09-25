@@ -16,7 +16,8 @@ const BRIDGE: i64 = 24 * MEASURE;
 const OUTRO: i64 = BRIDGE + 4 * SEVEN_EIGHT_MEASURE;
 const END: i64 = OUTRO + 4 * MEASURE;
 
-/// The demo song: two charts over a tempo change, a stop and a spell of 7/8.
+/// The demo song: two StepMania dance-single charts over a tempo change, a stop and a spell of
+/// 7/8.
 ///
 /// # Panics
 ///
@@ -45,9 +46,11 @@ pub fn song() -> ValidDocument {
             { "tick": OUTRO, "kind": "section", "text": "Outro" },
         ],
         "charts": [
-            { "name": "Easy", "lanes": 4, "settings": { "difficulty": "Easy", "meter": 3 },
+            { "name": "Easy", "lanes": 4,
+              "settings": { "style": "dance-single", "difficulty": "easy", "meter": 3 },
               "objects": easy() },
-            { "name": "Hard", "lanes": 4, "settings": { "difficulty": "Hard", "meter": 9 },
+            { "name": "Hard", "lanes": 4,
+              "settings": { "style": "dance-single", "difficulty": "hard", "meter": 9 },
               "objects": hard() },
         ],
     });
@@ -143,9 +146,14 @@ impl Placer {
 
 #[cfg(test)]
 mod tests {
-    use charter_core::{Kind, Shape, TimingKind};
+    use charter_core::{Kind, RulesetPlugin, Shape, TimingKind};
 
     use super::*;
+
+    #[test]
+    fn the_demo_song_is_one_the_stepmania_plugin_accepts() {
+        charter_stepmania::Plugin.check(&song()).unwrap();
+    }
 
     #[test]
     fn the_demo_song_has_an_easy_and_a_hard_chart_over_varied_timing() {

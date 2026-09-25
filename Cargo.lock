@@ -601,6 +601,10 @@ dependencies = [
 name = "charter-app"
 version = "0.0.0"
 dependencies = [
+ "charter-core",
+ "charter-osu-mania",
+ "charter-stepmania",
+ "charter-ttr",
  "charter-ui",
  "eframe",
 ]
@@ -620,7 +624,9 @@ name = "charter-editor"
 version = "0.0.0"
 dependencies = [
  "charter-core",
+ "charter-stepmania",
  "serde_json",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

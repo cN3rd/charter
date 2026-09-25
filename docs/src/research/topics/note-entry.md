@@ -36,3 +36,12 @@ single repeated keystroke, which is a throughput difference rather than a conven
 
 All **observed**. Earlier research called auto-jump "a charting-speed feature" to build early, which
 is an **inferred** priority, and left the direct-entry-versus-conversion question explicitly open.
+
+## Draft position
+
+Digits 1 to 9 and 0 place a tap on lanes 1 to 10 at the cursor, or remove the note that starts
+there, as in ArrowVortex. Auto-jump follows ArrowVortex's release rule: the cursor moves one snap
+once every lane key is up after a note was placed, so keys held together place a chord on one
+tick. Removing a note leaves the cursor. Holds and mines have no entry yet.
+
+Conversions have no entry yet.

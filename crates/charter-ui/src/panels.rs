@@ -7,17 +7,32 @@ use charter_core::{MarkerKind, ResolvedTime};
 use egui::{self, Align, Layout, RichText, Ui};
 use serde_json::Value;
 
-use charter_editor::{Song, Step};
+use charter_editor::Song;
 
 use crate::Action;
+use crate::keys::{REDO, UNDO};
 use crate::notefield::Zoom;
 use crate::style::{fields, heading, table, title};
 
-pub fn menu_bar(ui: &mut Ui, song_open: bool, actions: &mut Vec<Action>) {
+pub fn menu_bar(ui: &mut Ui, song: Option<&Song>, actions: &mut Vec<Action>) {
+    let song_open = song.is_some();
     egui::MenuBar::new().ui(ui, |ui| {
         ui.menu_button("File", |ui| {
             if ui.button("Open the demo song").clicked() {
                 actions.push(Action::OpenDemo);
+            }
+        });
+        ui.menu_button("Edit", |ui| {
+            let items = [
+                ("Undo", UNDO, song.is_some_and(Song::can_undo), Action::Undo),
+                ("Redo", REDO, song.is_some_and(Song::can_redo), Action::Redo),
+            ];
+            for (label, shortcut, enabled, action) in items {
+                let item =
+                    egui::Button::new(label).shortcut_text(ui.ctx().format_shortcut(&shortcut));
+                if ui.add_enabled(enabled, item).clicked() {
+                    actions.push(action);
+                }
             }
         });
         ui.menu_button("View", |ui| {
@@ -49,12 +64,14 @@ pub fn menu_bar(ui: &mut Ui, song_open: bool, actions: &mut Vec<Action>) {
     });
 }
 
-/// The keys the notefield answers to, and what each does.
-const KEYS: [(&str, &str); 6] = [
-    ("Up, Down", "Move the cursor by the snap"),
+/// The keys and gestures the notefield answers to, and what each does.
+const KEYS: [(&str, &str); 8] = [
+    ("1 to 9, 0", "Place or remove a tap on lanes 1 to 10"),
+    ("Ctrl+Z", "Undo"),
+    ("Ctrl+Shift+Z, Ctrl+Y", "Redo"),
+    ("Up, Down, Wheel", "Move the cursor by the snap"),
     ("Page Up, Page Down", "Move the cursor by a measure"),
     ("Left, Right", "Coarser or finer snap"),
-    ("Wheel", "Move the cursor by the snap"),
     ("Ctrl+Wheel", "Zoom"),
     ("Ctrl+Plus, Ctrl+Minus", "Zoom"),
 ];
@@ -164,7 +181,11 @@ pub fn status_bar(ui: &mut Ui, song: Option<&Song>, zoom: Zoom) {
         ui.label(format!("Snap {}", ordinal(song.snap())));
         ui.label(format!("Zoom {:.0}%", zoom.percent()));
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            ui.weak("Read only");
+            if song.read_only().is_some() {
+                ui.weak("Read only");
+            } else {
+                ui.label("Editing");
+            }
         });
     });
 }
@@ -212,39 +233,15 @@ pub fn empty(ui: &mut Ui, actions: &mut Vec<Action>) {
     });
 }
 
-/// Why the last file did not open.
+/// Why the last file did not open, or the last edit was refused.
 pub fn failure(ui: &mut Ui, message: &str) {
     let colour = ui.visuals().warn_fg_color;
     ui.label(RichText::new(message).color(colour));
 }
 
-/// The step a key asks for, if any.
-pub fn key_actions(input: &egui::InputState) -> Vec<Action> {
-    let mut actions = Vec::new();
-    let pressed = |key| input.key_pressed(key);
-    if input.modifiers.command {
-        if pressed(egui::Key::Plus) || pressed(egui::Key::Equals) {
-            actions.push(Action::ZoomBy(Zoom::STEP));
-        }
-        if pressed(egui::Key::Minus) {
-            actions.push(Action::ZoomBy(Zoom::STEP.recip()));
-        }
-        return actions;
-    }
-    let keys = [
-        (egui::Key::ArrowDown, Action::Move(Step::Later)),
-        (egui::Key::ArrowUp, Action::Move(Step::Earlier)),
-        (egui::Key::PageDown, Action::MoveMeasure(Step::Later)),
-        (egui::Key::PageUp, Action::MoveMeasure(Step::Earlier)),
-        (egui::Key::ArrowRight, Action::FinerSnap),
-        (egui::Key::ArrowLeft, Action::CoarserSnap),
-    ];
-    for (key, action) in keys {
-        for _ in 0..input.num_presses(key) {
-            actions.push(action);
-        }
-    }
-    actions
+/// Why the open song cannot be edited.
+pub fn read_only(ui: &mut Ui, why: &str) {
+    ui.weak(format!("Read only: {why}"));
 }
 
 #[cfg(test)]
