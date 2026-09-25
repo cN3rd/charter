@@ -54,7 +54,7 @@ impl Default for Zoom {
 /// Where audio times fall on screen in one frame: later times lower, the cursor on the now line.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct View {
-    now_y: f32,
+    pub(crate) now_y: f32,
     cursor: f64,
     zoom: Zoom,
 }
@@ -187,6 +187,23 @@ impl Columns {
         Rangef::new(left, left + f32::from(u16::from(width)) * self.lane_w)
     }
 
+    /// The middle of the timing gutter, where its events are grabbed.
+    #[cfg(test)]
+    pub(crate) fn timing_x(&self) -> f32 {
+        self.timing.center()
+    }
+
+    /// The middle of the ruler, where markers are grabbed.
+    #[cfg(test)]
+    pub(crate) fn ruler_x(&self) -> f32 {
+        self.ruler.center()
+    }
+
+    /// The middle of the cursor's handle on the ruler.
+    pub(crate) fn handle_x(&self) -> f32 {
+        self.ruler.max - 5.0
+    }
+
     /// Every column on the time axis.
     fn timeline(&self) -> Rangef {
         Rangef::new(self.ruler.min, self.lanes.max.max(self.timing.max))
@@ -205,6 +222,59 @@ pub enum Gesture {
         x: f32,
         seconds: f64,
     },
+    /// The event at `index` of the open timing, being dragged to another line.
+    MoveTiming { index: usize },
+    /// The song's marker at `index`, being dragged to another line.
+    MoveMarker { index: usize },
+    /// The cursor's handle, dragged from `y` on screen while the cursor was at `seconds`.
+    Scrub { seconds: f64, y: f32 },
+}
+
+/// The handle under `pos`, if one is: the cursor's on the ruler, a timing event in the gutter or
+/// a marker on the ruler, each within grabbing distance of its line. The song's first BPM
+/// change stays put, so the song keeps a tempo to start from. Only the cursor's handle moves in a
+/// song that cannot be edited.
+fn handle_at(song: &Song, field: &Field, pos: Pos2) -> Option<Gesture> {
+    let (columns, view) = (&field.columns, field.view);
+    let near = |y: f32| (y - pos.y).abs() <= GRAB;
+    let on_handle = Rangef::new(columns.handle_x() - 9.0, columns.handle_x() + 7.0);
+    if on_handle.contains(pos.x) && near(view.now_y) {
+        let seconds = view.seconds_at(view.now_y);
+        return Some(Gesture::Scrub { seconds, y: pos.y });
+    }
+    if song.read_only().is_some() {
+        return None;
+    }
+    let timing = song.timing();
+    let nearest = |ticks: &mut dyn Iterator<Item = (usize, Tick)>| {
+        ticks
+            .map(|(index, tick)| (index, (view.y(timing.time_at(tick)) - pos.y).abs()))
+            .filter(|(_, off)| *off <= GRAB)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(index, _)| index)
+    };
+    if columns.timing.contains(pos.x) {
+        let first_bpm = timing
+            .events
+            .iter()
+            .position(|event| matches!(event.kind, TimingKind::Bpm(_)));
+        let mut events = timing
+            .events
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| Some(*index) != first_bpm)
+            .map(|(index, event)| (index, event.tick));
+        return nearest(&mut events).map(|index| Gesture::MoveTiming { index });
+    }
+    if columns.ruler.contains(pos.x) {
+        let markers = &song.document().document().markers;
+        let mut ticks = markers
+            .iter()
+            .enumerate()
+            .map(|(index, marker)| (index, marker.tick));
+        return nearest(&mut ticks).map(|index| Gesture::MoveMarker { index });
+    }
+    None
 }
 
 /// Where the notefield draws things in one frame.
@@ -378,8 +448,9 @@ pub fn show(
         (first, last),
         gesture,
     ));
+    let latest = ui.input(|input| input.pointer.latest_pos().map(|at| flip.back(at)));
     if let Some(Gesture::Marquee { x, seconds, .. }) = *gesture
-        && let Some(latest) = ui.input(|input| input.pointer.latest_pos().map(|at| flip.back(at)))
+        && let Some(latest) = latest
     {
         let corner = pos2(x, view.y_of(seconds));
         clipped.rect(
@@ -389,6 +460,28 @@ pub fn show(
             Stroke::new(1.0, style::MARQUEE),
             StrokeKind::Inside,
         );
+    }
+    if let Some(Gesture::MoveTiming { .. } | Gesture::MoveMarker { .. }) = *gesture
+        && let Some(latest) = latest
+    {
+        drop_guide(&clipped, columns, song, view, latest.y);
+    }
+    let hovered = ui.input(|input| input.pointer.hover_pos().map(|at| flip.back(at)));
+    if gesture.is_some()
+        || hovered.is_some_and(|at| response.hovered() && handle_at(song, &field, at).is_some())
+    {
+        let across = matches!(direction, Direction::Left | Direction::Right);
+        let icon = if across {
+            egui::CursorIcon::ResizeHorizontal
+        } else {
+            egui::CursorIcon::ResizeVertical
+        };
+        if !matches!(
+            *gesture,
+            Some(Gesture::Marquee { .. } | Gesture::Hold { .. })
+        ) {
+            ui.ctx().set_cursor_icon(icon);
+        }
     }
     now_line(&clipped, columns, view.now_y);
 }
@@ -460,7 +553,9 @@ fn pointer(
         && !escaped
         && let Some(origin) = origin
     {
-        *gesture = if modifiers.command {
+        *gesture = if let Some(handle) = handle_at(song, field, origin) {
+            Some(handle)
+        } else if modifiers.command {
             spot(origin).map(|(lane, from)| {
                 // A note already there is stretched as it is, rather than toggled away.
                 if !song.starts_at(from, lane) {
@@ -483,28 +578,44 @@ fn pointer(
         };
     }
     if response.dragged()
+        && let (Some(Gesture::Scrub { seconds, y }), Some(pos)) = (*gesture, latest)
+        && let Some(step) = step
+    {
+        let later = f64::from((pos.y - y) / field.view.zoom.points_per_second());
+        let to = nearest_line(timing, seconds + later, step);
+        actions.push(Action::JumpTo(to));
+    }
+    if response.dragged()
         && let (Some(Gesture::Hold { lane, from }), Some(pos)) = (*gesture, latest)
         && let Some(to) = line(pos)
     {
         actions.push(Action::Stretch { lane, from, to });
     }
     if response.drag_stopped() {
-        match (gesture.take(), latest) {
-            (Some(Gesture::Hold { lane, from }), Some(pos)) => {
-                actions.extend(line(pos).map(|to| Action::Stretch { lane, from, to }));
-            }
-            (Some(Gesture::Marquee { how, x, seconds }), Some(pos)) => {
-                let corner = (x, seconds);
-                actions.extend(
-                    field
-                        .boxed(timing, corner, pos)
-                        .map(|(ticks, lanes)| Action::SelectBetween { ticks, lanes, how }),
-                );
-            }
-            _ => {}
-        }
+        actions.extend(let_go(gesture.take(), latest, field, timing, &line));
     }
     actions
+}
+
+/// What a drag asks for when it lets go at `latest`: the hold drawn to there, the handle
+/// dropped on the line there, or the notes the box covers selected.
+fn let_go(
+    gesture: Option<Gesture>,
+    latest: Option<Pos2>,
+    field: &Field,
+    timing: Valid<'_, Timing>,
+    line: &dyn Fn(Pos2) -> Option<Tick>,
+) -> Option<Action> {
+    let pos = latest?;
+    match gesture? {
+        Gesture::Hold { lane, from } => line(pos).map(|to| Action::Stretch { lane, from, to }),
+        Gesture::MoveTiming { index } => line(pos).map(|to| Action::MoveTiming { index, to }),
+        Gesture::MoveMarker { index } => line(pos).map(|to| Action::MoveMarker { index, to }),
+        Gesture::Marquee { how, x, seconds } => field
+            .boxed(timing, (x, seconds), pos)
+            .map(|(ticks, lanes)| Action::SelectBetween { ticks, lanes, how }),
+        Gesture::Scrub { .. } => None,
+    }
 }
 
 /// How a click or a box meets the selection: Shift adds to it and Alt takes from it.
@@ -784,6 +895,30 @@ fn draw_object(
             painter.circle_filled(centre, 3.0, style::TEXT);
         }
     }
+}
+
+/// Where a dragged handle will land, the snap line nearest `y`: a line across the time axis in
+/// the accent, with its position in the ruler.
+fn drop_guide(painter: &Canvas, columns: &Columns, song: &Song, view: View, y: f32) {
+    let timing = song.timing();
+    let step = song
+        .document()
+        .document()
+        .ticks_per_beat
+        .note_length(song.snap());
+    let Some(step) = step else {
+        return;
+    };
+    let tick = nearest_line(timing, view.seconds_at(y), step);
+    let at = view.y(timing.time_at(tick));
+    painter.hline(columns.timeline(), at, Stroke::new(1.5, style::ACCENT));
+    painter.text(
+        pos2(columns.ruler.min + 6.0, at - 3.0),
+        Align2::LEFT_BOTTOM,
+        timing.grid_position(tick).to_string(),
+        FontId::monospace(11.0),
+        style::ACCENT,
+    );
 }
 
 /// Where in `objects`, sorted by tick, are those whose spans reach into `first..=last`.

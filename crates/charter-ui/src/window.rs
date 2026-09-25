@@ -252,6 +252,16 @@ pub(crate) enum Action {
     RemoveMarker(usize),
     /// Puts the cursor where the open chart's last note ends.
     JumpEnd,
+    /// Moves the open timing's event at `index` to `to`.
+    MoveTiming {
+        index: usize,
+        to: Tick,
+    },
+    /// Moves the song's marker at `index` to `to`.
+    MoveMarker {
+        index: usize,
+        to: Tick,
+    },
     /// Puts the cursor on the nearest section that way.
     JumpSection(Step),
     /// Adds a bookmark at the cursor, or removes the one there.
@@ -914,6 +924,12 @@ impl Window {
             Action::RemoveBpm => self.failure = refused(song.remove_bpm().err()),
             Action::JumpTo(tick) => song.jump_to(tick),
             Action::JumpEnd => song.jump_to(song.end()),
+            Action::MoveTiming { index, to } => {
+                self.failure = refused(song.move_timing(index, to).err());
+            }
+            Action::MoveMarker { index, to } => {
+                self.failure = refused(song.move_marker(index, to).err());
+            }
             Action::JumpSection(step) => {
                 if let Some(tick) = song.section_from(step) {
                     song.jump_to(tick);
@@ -2936,6 +2952,110 @@ mod tests {
                 .query_by_label_contains("Click or drag over notes to select them")
                 .is_some()
         );
+    }
+
+    /// Four lanes at 120 BPM that change to 150 BPM at the second beat, with a section at the
+    /// first eighth.
+    fn timed_song() -> Harness<'static, Window> {
+        let song = serde_json::json!({
+            "format_version": 0,
+            "ruleset": { "id": "sm", "version": "0.1.0" },
+            "metadata": { "title": "Timed", "artist": "a", "audio": "a.ogg" },
+            "timing": { "offset_seconds": 0.0, "events": [
+                { "tick": 0, "kind": { "bpm": 120.0 } },
+                { "tick": 960, "kind": { "bpm": 150.0 } }
+            ] },
+            "markers": [ { "tick": 480, "kind": "section", "text": "Drop" } ],
+            "charts": [ { "name": "Easy", "lanes": 4 } ]
+        });
+        let mut app = Window::new(PLUGINS);
+        app.open(Path::new("timed.json"), &serde_json::to_vec(&song).unwrap());
+        window(app)
+    }
+
+    fn field(harness: &Harness<'_, Window>) -> notefield::Field {
+        let area = harness.get_by_label("Notefield").rect();
+        let app = harness.state();
+        let song = app.song.as_ref().unwrap();
+        let chart = song.chart().unwrap();
+        let lanes = chart.lanes.map_or(0, u16::from);
+        notefield::Field::new(area, lanes, chart.timing().time_at(song.cursor()), app.zoom)
+    }
+
+    /// Where the line of `tick` crosses the column at `x`.
+    fn on_line(harness: &Harness<'_, Window>, x: f32, tick: i32) -> egui::Pos2 {
+        let field = field(harness);
+        let song = harness.state().song.as_ref().unwrap();
+        let y = field.view.y(song.timing().time_at(Tick::new(tick)));
+        egui::pos2(x, y)
+    }
+
+    fn event_ticks(harness: &Harness<'_, Window>) -> Vec<Tick> {
+        let song = harness.state().song.as_ref().unwrap();
+        song.timing()
+            .events
+            .iter()
+            .map(|event| event.tick)
+            .collect()
+    }
+
+    #[test]
+    fn dragging_a_bpm_change_in_the_timing_column_moves_it() {
+        let mut harness = timed_song();
+        let x = field(&harness).columns.timing_x();
+        let (from, to) = (on_line(&harness, x, 960), on_line(&harness, x, 1920));
+        drag(&mut harness, from, to, egui::Modifiers::NONE);
+        assert_eq!(event_ticks(&harness), [Tick::new(0), Tick::new(1920)]);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.run();
+        assert_eq!(event_ticks(&harness), [Tick::new(0), Tick::new(960)]);
+    }
+
+    #[test]
+    fn the_first_bpm_change_stays_put() {
+        let mut harness = timed_song();
+        let x = field(&harness).columns.timing_x();
+        let (from, to) = (on_line(&harness, x, 0), on_line(&harness, x, 480));
+        drag(&mut harness, from, to, egui::Modifiers::NONE);
+        assert_eq!(event_ticks(&harness), [Tick::new(0), Tick::new(960)]);
+    }
+
+    #[test]
+    fn dragging_a_marker_in_the_ruler_moves_it() {
+        let mut harness = timed_song();
+        let x = field(&harness).columns.ruler_x();
+        let (from, to) = (on_line(&harness, x, 480), on_line(&harness, x, 1440));
+        drag(&mut harness, from, to, egui::Modifiers::NONE);
+        let song = harness.state().song.as_ref().unwrap();
+        assert_eq!(song.document().document().markers[0].tick, Tick::new(1440));
+    }
+
+    #[test]
+    fn dragging_the_cursor_handle_scrubs_through_the_song() {
+        let mut harness = timed_song();
+        let field = field(&harness);
+        let from = egui::pos2(field.columns.handle_x(), field.view.now_y);
+        let beat = field.view.y_of(0.5) - field.view.y_of(0.0);
+        drag(
+            &mut harness,
+            from,
+            from + egui::vec2(0.0, beat),
+            egui::Modifiers::NONE,
+        );
+        assert!(cursor_shows(&harness, "0:1:0"));
+    }
+
+    #[test]
+    fn the_handles_of_a_read_only_song_stay_put() {
+        let mut harness = timed_song();
+        harness.state_mut().plugins = &[];
+        let song = harness.state().song.as_ref().unwrap().document().clone();
+        harness.state_mut().song = Some(Song::new(song, &[]));
+        harness.run();
+        let x = field(&harness).columns.timing_x();
+        let (from, to) = (on_line(&harness, x, 960), on_line(&harness, x, 1920));
+        drag(&mut harness, from, to, egui::Modifiers::NONE);
+        assert_eq!(event_ticks(&harness), [Tick::new(0), Tick::new(960)]);
     }
 
     #[test]
