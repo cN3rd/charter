@@ -90,6 +90,20 @@ impl Track {
         Ok(Self { rate, frames })
     }
 
+    /// `frames` at `rate` frames per second, or a second of silence at 44.1 kHz for a rate of
+    /// zero.
+    #[must_use]
+    pub fn from_frames(rate: u32, frames: Vec<[f32; 2]>) -> Self {
+        let rate = NonZeroU32::new(rate).unwrap_or(NonZeroU32::MIN.saturating_add(44_099));
+        Self { rate, frames }
+    }
+
+    /// `frames` frames of silence at `rate` frames per second.
+    #[must_use]
+    pub fn silence(rate: u32, frames: usize) -> Self {
+        Self::from_frames(rate, vec![[0.0, 0.0]; frames])
+    }
+
     /// Frames per second.
     #[must_use]
     pub fn rate(&self) -> NonZeroU32 {
