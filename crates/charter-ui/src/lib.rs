@@ -14,6 +14,6 @@ mod style;
 mod window;
 
 pub use flip::Direction;
-pub use settings::Settings;
+pub use settings::{Settings, Sound};
 use window::{Action, Note};
 pub use window::{Request, Saved, Window};

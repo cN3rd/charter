@@ -10,6 +10,28 @@ use crate::flip::Direction;
 use crate::panels::ordinal;
 use crate::style::table;
 
+/// A sound the editor can make while a song plays.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Sound {
+    #[default]
+    Off,
+    Click,
+    Beep,
+}
+
+impl Sound {
+    const ALL: [Self; 3] = [Self::Off, Self::Click, Self::Beep];
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::Click => "Click",
+            Self::Beep => "Beep",
+        }
+    }
+}
+
 /// The user's choices, which the host keeps between runs. Choices missing from what the host
 /// kept, such as ones newer than it, take their defaults.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -25,6 +47,10 @@ pub struct Settings {
     pub scale: f32,
     /// Which way the notefield runs.
     pub direction: Direction,
+    /// What sounds as each note passes the now line during playback.
+    pub tick_sound: Sound,
+    /// What sounds on each beat during playback.
+    pub metronome: Sound,
 }
 
 impl Default for Settings {
@@ -35,6 +61,8 @@ impl Default for Settings {
             zoom: 100.0,
             scale: 1.0,
             direction: Direction::Up,
+            tick_sound: Sound::Off,
+            metronome: Sound::Off,
         }
     }
 }
@@ -107,6 +135,24 @@ pub fn show(ctx: &egui::Context, settings: &mut Settings, open: &mut bool) {
                     .response
                     .labelled_by(caption.id);
                 ui.end_row();
+                // ponytail: the sounds are chosen now and play once charter plays audio.
+                for (label, id, sound) in [
+                    ("Tick sound", "tick sound", &mut settings.tick_sound),
+                    ("Metronome", "metronome", &mut settings.metronome),
+                ] {
+                    let caption = ui.weak(label);
+                    egui::ComboBox::from_id_salt(id)
+                        .selected_text(sound.name())
+                        .show_ui(ui, |ui| {
+                            for choice in Sound::ALL {
+                                ui.selectable_value(sound, choice, choice.name());
+                            }
+                        })
+                        .response
+                        .labelled_by(caption.id)
+                        .on_hover_text("Plays once charter can play a song's audio");
+                    ui.end_row();
+                }
             });
         });
 }
@@ -129,8 +175,11 @@ mod tests {
     }
 
     #[test]
-    fn notes_travel_up_to_start_with() {
-        assert_eq!(Settings::default().direction, Direction::Up);
+    fn notes_travel_up_with_no_tick_or_metronome_sound_to_start_with() {
+        let settings = Settings::default();
+        assert_eq!(settings.direction, Direction::Up);
+        assert_eq!(settings.tick_sound, Sound::Off);
+        assert_eq!(settings.metronome, Sound::Off);
     }
 
     #[test]
@@ -141,6 +190,8 @@ mod tests {
             zoom: 150.0,
             scale: 1.25,
             direction: Direction::Right,
+            tick_sound: Sound::Click,
+            metronome: Sound::Beep,
         };
         let stored = serde_json::to_string(&settings).unwrap();
         assert_eq!(serde_json::from_str::<Settings>(&stored).unwrap(), settings);

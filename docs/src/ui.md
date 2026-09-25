@@ -16,10 +16,11 @@ glyphs, since no ruleset plugin draws yet, and starts and edits songs of the bui
 keys and Ctrl with the mouse place taps, holds and mines; the mouse selects and Delete removes the
 selection; undo and redo return to where each edit was made. Songs open and save through native file
 dialogs, unsaved changes are asked about before they are lost and autosaved half a minute after they
-are made, and a settings window holds what the user chooses, including which way the notefield runs.
-The inspector shows the selection but cannot change it yet. A new song takes its game, the layout
-every chart shares, its title, artist and chart names from a dialog, and asks for audio until an
-audio file is dropped on the window; saving copies that file beside the song.
+are made, and a settings window holds what the user chooses, including which way the notefield runs
+and the tick and metronome sounds, which play once charter plays audio. The inspector shows the
+selection but cannot change it yet. A new song takes its game, the layout every chart shares, its
+title, artist and chart names from a dialog, and asks for audio until an audio file is dropped on
+the window; saving copies that file beside the song.
 
 ## Main window
 

@@ -803,6 +803,7 @@ mod tests {
     use super::*;
     use crate::flip::{Direction, Flip};
     use crate::recovery;
+    use crate::settings::Sound;
 
     /// The format chapter, embedded at compile time so the tests do no I/O.
     const SPEC: &str = include_str!("../../../docs/src/format.md");
@@ -1680,7 +1681,7 @@ mod tests {
     }
 
     #[test]
-    fn the_settings_window_turns_the_notefield() {
+    fn the_settings_window_turns_the_notefield_and_picks_sounds() {
         let mut harness = editable_demo();
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Comma);
         harness.run();
@@ -1693,6 +1694,18 @@ mod tests {
             .click();
         harness.run();
         assert_eq!(harness.state().settings().direction, Direction::Left);
+        harness
+            .get_by_role_and_label(Role::ComboBox, "Metronome")
+            .click();
+        harness.run();
+        harness.get_by_label("Beep").click();
+        harness.run();
+        assert_eq!(harness.state().settings().metronome, Sound::Beep);
+        assert!(
+            harness
+                .query_by_role_and_label(Role::ComboBox, "Tick sound")
+                .is_some()
+        );
     }
 
     /// The demo, open for editing with the notefield running `direction`.
