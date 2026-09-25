@@ -62,6 +62,12 @@ macro_rules! decimal {
             }
         }
 
+        impl From<$name> for f64 {
+            fn from(value: $name) -> Self {
+                $crate::number::from_millionths(value.0)
+            }
+        }
+
         impl ::serde::Serialize for $name {
             fn serialize<S: ::serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
                 serializer.serialize_f64($crate::number::from_millionths(self.0))
@@ -154,6 +160,12 @@ mod tests {
         assert_eq!(FIVE, decimal(5.0).ok());
         assert_eq!(Decimal::from_millionths(MAX_MILLIONTHS + 1), None);
         assert_eq!(Decimal::from_millionths(-MAX_MILLIONTHS - 1), None);
+    }
+
+    #[test]
+    fn a_decimal_reads_back_as_the_number_it_holds() {
+        assert!((f64::from(crate::Bpm::try_from(150.5).unwrap()) - 150.5).abs() < f64::EPSILON);
+        assert!((f64::from(decimal(-0.25).unwrap()) + 0.25).abs() < f64::EPSILON);
     }
 }
 
