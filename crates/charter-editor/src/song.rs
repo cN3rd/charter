@@ -6,9 +6,9 @@ use std::num::NonZeroU16;
 use std::ops::RangeInclusive;
 
 use charter_core::{
-    Bpm, Chart, Error, Extensions, Kind, LaneCount, LaneIndex, LaneSpan, Metadata, Object,
-    Position, ResourcePath, RulesetPlugin, Shape, Tick, Ticks, Timing, TimingEvent, TimingKind,
-    Valid, ValidDocument,
+    Bpm, Chart, Error, Extensions, Kind, LaneCount, LaneIndex, LaneSpan, Marker, MarkerKind,
+    Metadata, Object, Position, ResourcePath, RulesetPlugin, Shape, Tick, Ticks, Timing,
+    TimingEvent, TimingKind, Valid, ValidDocument,
 };
 
 use crate::edit::{Edit, Op};
@@ -364,6 +364,77 @@ impl Song {
             old: Box::new(old.clone()),
             new: Box::new(new),
         }]);
+        self.document = self.edited(self.chart, &edit)?;
+        self.record(edit);
+        Ok(())
+    }
+
+    /// Puts the cursor on `tick`, such as a marker's.
+    pub fn jump_to(&mut self, tick: Tick) {
+        self.cursor = tick;
+    }
+
+    /// The name of the section that starts at the cursor, if one does.
+    #[must_use]
+    pub fn section(&self) -> Option<&str> {
+        let markers = &self.document.document().markers;
+        markers
+            .iter()
+            .find(|marker| marker.tick == self.cursor && marker.kind == MarkerKind::Section)
+            .map(|marker| marker.text.as_str())
+    }
+
+    /// Names the section that starts at the cursor `text`, starting one there if none does, as
+    /// one step. Does nothing when it already has that name.
+    ///
+    /// # Errors
+    ///
+    /// Refuses on a read-only song.
+    pub fn set_section(&mut self, text: &str) -> Result<(), Refusal> {
+        if self.section() == Some(text) {
+            return Ok(());
+        }
+        let at = self.cursor;
+        let mut new = self.document.document().markers.clone();
+        let here = new
+            .iter_mut()
+            .find(|marker| marker.tick == at && marker.kind == MarkerKind::Section);
+        if let Some(section) = here {
+            text.clone_into(&mut section.text);
+        } else {
+            let index = new.partition_point(|marker| marker.tick <= at);
+            let section = Marker {
+                tick: at,
+                kind: MarkerKind::Section,
+                text: text.to_owned(),
+            };
+            new.insert(index, section);
+        }
+        self.remark(new)
+    }
+
+    /// Removes the song's marker at `index` in its markers, of whatever kind, as one step.
+    /// Does nothing when there is none there.
+    ///
+    /// # Errors
+    ///
+    /// Refuses on a read-only song.
+    pub fn remove_marker(&mut self, index: usize) -> Result<(), Refusal> {
+        if self.read_only().is_some() {
+            return Err(Refusal::ReadOnly);
+        }
+        let mut new = self.document.document().markers.clone();
+        if index >= new.len() {
+            return Ok(());
+        }
+        new.remove(index);
+        self.remark(new)
+    }
+
+    /// Gives the song the markers `new`, as one step.
+    fn remark(&mut self, new: Vec<Marker>) -> Result<(), Refusal> {
+        let old = self.document.document().markers.clone();
+        let edit = Edit(vec![Op::Markers { old, new }]);
         self.document = self.edited(self.chart, &edit)?;
         self.record(edit);
         Ok(())
@@ -1392,6 +1463,89 @@ mod tests {
         let mut song = Song::new(document, &[]);
         assert!(matches!(song.set_bpm(tempo(90.0)), Err(Refusal::ReadOnly)));
         assert!(matches!(song.remove_bpm(), Ok(()) | Err(Refusal::ReadOnly)));
+    }
+
+    /// A song with `markers`.
+    fn marked(markers: &Value) -> Song {
+        let value = json!({
+            "format_version": 0,
+            "ruleset": { "id": "test", "version": "1" },
+            "metadata": { "title": "t", "artist": "a", "audio": "song.ogg" },
+            "timing": { "offset_seconds": 0.0, "events": [ bpm_event(0, 120.0) ] },
+            "markers": markers.clone(),
+            "charts": [ { "name": "Easy", "lanes": 4 } ]
+        });
+        let document = ValidDocument::from_json(&serde_json::to_vec(&value).unwrap()).unwrap();
+        Song::new(document, EDITABLE)
+    }
+
+    fn marker(tick: i32, kind: &str, text: &str) -> Value {
+        json!({ "tick": tick, "kind": kind, "text": text })
+    }
+
+    fn markers(song: &Song) -> Value {
+        serde_json::to_value(&song.document().document().markers).unwrap()
+    }
+
+    #[test]
+    fn a_section_named_where_there_is_none_is_a_new_one_undo_takes_back() {
+        let mut song = marked(&json!([
+            marker(0, "section", "Intro"),
+            marker(480, "bookmark", "b")
+        ]));
+        song.jump_to(Tick::new(480));
+        assert_eq!(song.section(), None);
+        song.set_section("Verse").unwrap();
+        let expected = json!([
+            marker(0, "section", "Intro"),
+            marker(480, "bookmark", "b"),
+            marker(480, "section", "Verse")
+        ]);
+        assert_eq!(markers(&song), expected);
+        assert_eq!(song.section(), Some("Verse"));
+        song.undo().unwrap();
+        assert_eq!(song.section(), None);
+    }
+
+    #[test]
+    fn a_section_named_where_one_is_renames_it() {
+        let mut song = marked(&json!([marker(0, "section", "Intro")]));
+        song.set_section("Start").unwrap();
+        assert_eq!(markers(&song), json!([marker(0, "section", "Start")]));
+        song.set_section("Start").unwrap();
+        assert!(song.can_undo());
+        song.undo().unwrap();
+        assert!(!song.can_undo());
+    }
+
+    #[test]
+    fn a_marker_removed_goes_as_one_step() {
+        let mut song = marked(&json!([
+            marker(0, "section", "Intro"),
+            marker(480, "bookmark", "b")
+        ]));
+        song.remove_marker(0).unwrap();
+        assert_eq!(markers(&song), json!([marker(480, "bookmark", "b")]));
+        song.remove_marker(5).unwrap();
+        song.undo().unwrap();
+        assert_eq!(markers(&song).as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn jumping_puts_the_cursor_on_the_tick() {
+        let mut song = marked(&json!([]));
+        song.jump_to(Tick::new(1234));
+        assert_eq!(song.cursor(), Tick::new(1234));
+    }
+
+    #[test]
+    fn a_read_only_song_refuses_marker_edits() {
+        let document = marked(&json!([marker(0, "section", "Intro")]))
+            .document()
+            .clone();
+        let mut song = Song::new(document, &[]);
+        assert!(matches!(song.set_section("x"), Err(Refusal::ReadOnly)));
+        assert!(matches!(song.remove_marker(0), Err(Refusal::ReadOnly)));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! Changes to a song, each holding what it takes to undo it.
 
-use charter_core::{Document, Metadata, Object, Timing};
+use charter_core::{Document, Marker, Metadata, Object, Timing};
 
 /// One change: to one object of the chart an edit is made to, or to the song as a whole.
 #[derive(Clone, Debug, PartialEq)]
@@ -21,6 +21,10 @@ pub(crate) enum Op {
     Metadata {
         old: Box<Metadata>,
         new: Box<Metadata>,
+    },
+    Markers {
+        old: Vec<Marker>,
+        new: Vec<Marker>,
     },
     /// A change to the timing of the chart the edit is made to when `own`, or else the song's.
     Timing {
@@ -50,6 +54,10 @@ impl Op {
                 old: new.clone(),
                 new: old.clone(),
             },
+            Self::Markers { old, new } => Self::Markers {
+                old: new.clone(),
+                new: old.clone(),
+            },
             Self::Timing { own, old, new } => Self::Timing {
                 own: *own,
                 old: new.clone(),
@@ -76,6 +84,7 @@ impl Edit {
         for op in &self.0 {
             match op {
                 Op::Metadata { new, .. } => document.metadata = (**new).clone(),
+                Op::Markers { new, .. } => document.markers.clone_from(new),
                 Op::Timing {
                     own: false, new, ..
                 } => document.timing = (**new).clone(),
@@ -100,7 +109,7 @@ impl Edit {
                         Op::Replace { index, new, .. } => {
                             objects.splice(*index..=*index, [new.clone()]);
                         }
-                        Op::Metadata { .. } | Op::Timing { .. } => {}
+                        Op::Metadata { .. } | Op::Markers { .. } | Op::Timing { .. } => {}
                     }
                 }
             }
