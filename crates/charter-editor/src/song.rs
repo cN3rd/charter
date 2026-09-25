@@ -6,8 +6,9 @@ use std::num::NonZeroU16;
 use std::ops::RangeInclusive;
 
 use charter_core::{
-    Chart, Error, Extensions, Kind, LaneCount, LaneIndex, LaneSpan, Metadata, Object, Position,
-    ResourcePath, RulesetPlugin, Shape, Tick, Ticks, Timing, Valid, ValidDocument,
+    Bpm, Chart, Error, Extensions, Kind, LaneCount, LaneIndex, LaneSpan, Metadata, Object,
+    Position, ResourcePath, RulesetPlugin, Shape, Tick, Ticks, Timing, TimingEvent, TimingKind,
+    Valid, ValidDocument,
 };
 
 use crate::edit::{Edit, Op};
@@ -268,6 +269,98 @@ impl Song {
             ..old.clone()
         };
         let edit = Edit(vec![Op::Metadata {
+            old: Box::new(old.clone()),
+            new: Box::new(new),
+        }]);
+        self.document = self.edited(self.chart, &edit)?;
+        self.record(edit);
+        Ok(())
+    }
+
+    /// The timing tempo edits go to: the open chart's own when it has one, and whether it is.
+    fn edited_timing(&self) -> (bool, &charter_core::Timing) {
+        let document = self.document.document();
+        let own = document
+            .charts
+            .get(self.chart)
+            .and_then(|chart| chart.timing.as_ref());
+        own.map_or((false, &document.timing), |own| (true, own))
+    }
+
+    /// The BPM change in effect at the cursor, and its tick: the latest at or before the
+    /// cursor, or the first when the cursor is before every change.
+    #[must_use]
+    pub fn bpm(&self) -> Option<(Tick, Bpm)> {
+        let (_, timing) = self.edited_timing();
+        let changes = timing.events.iter().filter_map(|event| match event.kind {
+            TimingKind::Bpm(bpm) => Some((event.tick, bpm)),
+            _ => None,
+        });
+        let mut first = None;
+        let mut latest = None;
+        for change in changes {
+            first.get_or_insert(change);
+            if change.0 <= self.cursor {
+                latest = Some(change);
+            }
+        }
+        latest.or(first)
+    }
+
+    /// Makes the tempo from the cursor on `bpm`: the BPM change at the cursor takes it, or a new
+    /// change there does. Does nothing when `bpm` is already in effect there.
+    ///
+    /// # Errors
+    ///
+    /// Refuses on a read-only song, or when the game refuses the tempo.
+    pub fn set_bpm(&mut self, bpm: Bpm) -> Result<(), Refusal> {
+        let at = self.cursor;
+        if self.bpm().is_some_and(|(_, held)| held == bpm) {
+            return Ok(());
+        }
+        let (own, timing) = self.edited_timing();
+        let mut new = timing.clone();
+        let here = new
+            .events
+            .iter_mut()
+            .find(|event| event.tick == at && matches!(event.kind, TimingKind::Bpm(_)));
+        if let Some(change) = here {
+            change.kind = TimingKind::Bpm(bpm);
+        } else {
+            let index = new.events.partition_point(|event| event.tick <= at);
+            let change = TimingEvent {
+                tick: at,
+                kind: TimingKind::Bpm(bpm),
+                ext: Extensions::new(),
+            };
+            new.events.insert(index, change);
+        }
+        self.retime(own, new)
+    }
+
+    /// Removes the BPM change at the cursor, if there is one.
+    ///
+    /// # Errors
+    ///
+    /// Refuses on a read-only song, and when the change is the timing's only one.
+    pub fn remove_bpm(&mut self) -> Result<(), Refusal> {
+        let at = self.cursor;
+        let (own, timing) = self.edited_timing();
+        let mut new = timing.clone();
+        let before = new.events.len();
+        new.events
+            .retain(|event| !(event.tick == at && matches!(event.kind, TimingKind::Bpm(_))));
+        if new.events.len() == before {
+            return Ok(());
+        }
+        self.retime(own, new)
+    }
+
+    /// Gives the timing tempo edits go to the events of `new`, as one step.
+    fn retime(&mut self, own: bool, new: charter_core::Timing) -> Result<(), Refusal> {
+        let (_, old) = self.edited_timing();
+        let edit = Edit(vec![Op::Timing {
+            own,
             old: Box::new(old.clone()),
             new: Box::new(new),
         }]);
@@ -1190,6 +1283,115 @@ mod tests {
         let refused = song.set_audio(ResourcePath::new("track.ogg").unwrap());
         assert!(matches!(refused, Err(Refusal::ReadOnly)));
         assert_eq!(audio(&song), "song.ogg");
+    }
+
+    /// A song whose timing has `events`, and whose second chart has `own` timing if given.
+    fn timed(events: &Value, own: Option<&Value>) -> Song {
+        let mut value = json!({
+            "format_version": 0,
+            "ruleset": { "id": "test", "version": "1" },
+            "metadata": { "title": "t", "artist": "a", "audio": "song.ogg" },
+            "timing": { "offset_seconds": 0.0, "events": events.clone() },
+            "charts": [ { "name": "Easy", "lanes": 4 }, { "name": "Hard", "lanes": 4 } ]
+        });
+        if let Some(own) = own {
+            value["charts"][1]["timing"] = json!({ "offset_seconds": 0.0, "events": own.clone() });
+        }
+        let document = ValidDocument::from_json(&serde_json::to_vec(&value).unwrap()).unwrap();
+        Song::new(document, EDITABLE)
+    }
+
+    fn bpm_event(tick: i32, bpm: f64) -> Value {
+        json!({ "tick": tick, "kind": { "bpm": bpm } })
+    }
+
+    fn song_events(song: &Song) -> Value {
+        serde_json::to_value(&song.document().document().timing.events).unwrap()
+    }
+
+    fn tempo(bpm: f64) -> Bpm {
+        Bpm::try_from(bpm).unwrap()
+    }
+
+    #[test]
+    fn a_bpm_set_between_changes_is_a_new_change_undo_takes_back() {
+        let meter = json!({ "tick": 960, "kind": { "time_signature": [3, 4] } });
+        let mut song = timed(&json!([bpm_event(0, 120.0), meter.clone()]), None);
+        song.step(Step::Later);
+        let at = song.cursor();
+        assert_eq!(at, Tick::new(240));
+        song.set_bpm(tempo(150.0)).unwrap();
+        let expected = json!([bpm_event(0, 120.0), bpm_event(240, 150.0), meter]);
+        assert_eq!(song_events(&song), expected);
+        assert_eq!(song.bpm(), Some((at, tempo(150.0))));
+        song.undo().unwrap();
+        assert_eq!(song.bpm(), Some((Tick::new(0), tempo(120.0))));
+    }
+
+    #[test]
+    fn a_bpm_set_on_a_change_changes_it() {
+        let mut song = timed(&json!([bpm_event(0, 120.0)]), None);
+        song.set_bpm(tempo(90.5)).unwrap();
+        assert_eq!(song_events(&song), json!([bpm_event(0, 90.5)]));
+    }
+
+    #[test]
+    fn setting_the_bpm_already_in_effect_there_changes_nothing() {
+        let mut song = timed(&json!([bpm_event(0, 120.0)]), None);
+        song.set_bpm(tempo(120.0)).unwrap();
+        assert!(!song.can_undo());
+    }
+
+    #[test]
+    fn a_bpm_change_removed_at_the_cursor_goes_and_the_last_one_stays() {
+        let mut song = timed(&json!([bpm_event(0, 120.0), bpm_event(480, 150.0)]), None);
+        song.step(Step::Later);
+        song.step(Step::Later);
+        assert_eq!(song.cursor(), Tick::new(480));
+        song.remove_bpm().unwrap();
+        assert_eq!(song_events(&song), json!([bpm_event(0, 120.0)]));
+        song.undo().unwrap();
+        song.step(Step::Earlier);
+        song.step(Step::Earlier);
+        song.remove_bpm().unwrap();
+        assert_eq!(song_events(&song), json!([bpm_event(480, 150.0)]));
+        song.step(Step::Later);
+        song.step(Step::Later);
+        assert!(song.remove_bpm().is_err());
+        assert_eq!(song_events(&song), json!([bpm_event(480, 150.0)]));
+    }
+
+    #[test]
+    fn removing_where_no_bpm_changes_changes_nothing() {
+        let mut song = timed(&json!([bpm_event(0, 120.0)]), None);
+        song.step(Step::Later);
+        song.remove_bpm().unwrap();
+        assert!(!song.can_undo());
+    }
+
+    #[test]
+    fn a_chart_with_its_own_timing_takes_the_bpm_itself() {
+        let mut song = timed(
+            &json!([bpm_event(0, 120.0)]),
+            Some(&json!([bpm_event(0, 100.0)])),
+        );
+        song.open_chart(1);
+        assert_eq!(song.bpm(), Some((Tick::new(0), tempo(100.0))));
+        song.set_bpm(tempo(200.0)).unwrap();
+        assert_eq!(song_events(&song), json!([bpm_event(0, 120.0)]));
+        let own = &song.document().document().charts[1].timing;
+        let own = serde_json::to_value(&own.as_ref().unwrap().events).unwrap();
+        assert_eq!(own, json!([bpm_event(0, 200.0)]));
+    }
+
+    #[test]
+    fn a_read_only_song_refuses_tempo_changes() {
+        let document = timed(&json!([bpm_event(0, 120.0)]), None)
+            .document()
+            .clone();
+        let mut song = Song::new(document, &[]);
+        assert!(matches!(song.set_bpm(tempo(90.0)), Err(Refusal::ReadOnly)));
+        assert!(matches!(song.remove_bpm(), Ok(()) | Err(Refusal::ReadOnly)));
     }
 
     #[test]

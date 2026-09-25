@@ -1,6 +1,6 @@
 //! Changes to a song, each holding what it takes to undo it.
 
-use charter_core::{Document, Metadata, Object};
+use charter_core::{Document, Metadata, Object, Timing};
 
 /// One change: to one object of the chart an edit is made to, or to the song as a whole.
 #[derive(Clone, Debug, PartialEq)]
@@ -21,6 +21,12 @@ pub(crate) enum Op {
     Metadata {
         old: Box<Metadata>,
         new: Box<Metadata>,
+    },
+    /// A change to the timing of the chart the edit is made to when `own`, or else the song's.
+    Timing {
+        own: bool,
+        old: Box<Timing>,
+        new: Box<Timing>,
     },
 }
 
@@ -44,6 +50,11 @@ impl Op {
                 old: new.clone(),
                 new: old.clone(),
             },
+            Self::Timing { own, old, new } => Self::Timing {
+                own: *own,
+                old: new.clone(),
+                new: old.clone(),
+            },
         }
     }
 }
@@ -63,23 +74,35 @@ impl Edit {
     /// the document the edit was made against. Says whether the chart was there.
     pub(crate) fn apply(&self, document: &mut Document, chart: usize) -> bool {
         for op in &self.0 {
-            // Each index was found in the objects its change is made to, so it is in range.
-            let objects = document
-                .charts
-                .get_mut(chart)
-                .map(|chart| &mut chart.objects);
-            match (op, objects) {
-                (Op::Metadata { new, .. }, _) => document.metadata = (**new).clone(),
-                (Op::Insert { index, object }, Some(objects)) => {
-                    objects.insert(*index, object.clone());
+            match op {
+                Op::Metadata { new, .. } => document.metadata = (**new).clone(),
+                Op::Timing {
+                    own: false, new, ..
+                } => document.timing = (**new).clone(),
+                Op::Timing { new, .. } => {
+                    let Some(edited) = document.charts.get_mut(chart) else {
+                        return false;
+                    };
+                    edited.timing = Some((**new).clone());
                 }
-                (Op::Remove { index, .. }, Some(objects)) => {
-                    objects.remove(*index);
+                Op::Insert { .. } | Op::Remove { .. } | Op::Replace { .. } => {
+                    let Some(edited) = document.charts.get_mut(chart) else {
+                        return false;
+                    };
+                    let objects = &mut edited.objects;
+                    // Each index was found in the objects its change is made to, so it is in
+                    // range.
+                    match op {
+                        Op::Insert { index, object } => objects.insert(*index, object.clone()),
+                        Op::Remove { index, .. } => {
+                            objects.remove(*index);
+                        }
+                        Op::Replace { index, new, .. } => {
+                            objects.splice(*index..=*index, [new.clone()]);
+                        }
+                        Op::Metadata { .. } | Op::Timing { .. } => {}
+                    }
                 }
-                (Op::Replace { index, new, .. }, Some(objects)) => {
-                    objects.splice(*index..=*index, [new.clone()]);
-                }
-                (_, None) => return false,
             }
         }
         true
@@ -197,6 +220,27 @@ mod tests {
         assert_eq!(document.metadata, new);
         assert!(edit.inverse().apply(&mut document, 0));
         assert_eq!(document.metadata, old);
+    }
+
+    #[test]
+    fn a_timing_change_goes_to_the_chart_when_its_own_and_else_to_the_song() {
+        let mut document = song(Vec::new());
+        let old = document.timing.clone();
+        let mut new = old.clone();
+        new.events.clear();
+        let timing = |own| {
+            Edit(vec![Op::Timing {
+                own,
+                old: Box::new(old.clone()),
+                new: Box::new(new.clone()),
+            }])
+        };
+        assert!(timing(true).apply(&mut document, 0));
+        assert_eq!(document.charts[0].timing.as_ref(), Some(&new));
+        assert_eq!(document.timing, old);
+        assert!(timing(false).apply(&mut document, 0));
+        assert_eq!(document.timing, new);
+        assert!(!timing(true).apply(&mut document, 1));
     }
 
     #[test]
