@@ -50,6 +50,7 @@
     - [Export loss reporting](./research/topics/export-loss-reporting.md)
     - [Performance targets](./research/topics/performance-targets.md)
     - [GUI framework](./research/topics/gui-framework.md)
+    - [egui crates](./research/topics/egui-crates.md)
     - [Audio playback](./research/topics/audio-playback.md)
     - [Waveform rendering](./research/topics/waveform-rendering.md)
     - [Spectrogram](./research/topics/spectrogram.md)

@@ -41,6 +41,7 @@ concluded, and what that conclusion actually rests on. **None of these are settl
 ## Stack
 
 - [GUI framework](gui-framework.md)
+- [egui crates](egui-crates.md)
 - [Audio playback](audio-playback.md)
 - [Waveform rendering](waveform-rendering.md)
 - [Spectrogram](spectrogram.md)

@@ -43,7 +43,7 @@ thousands of line segments and texture strips, to determine whether `Painter` su
 callback is needed. Until that exists, this decision rests on reading documentation.
 
 Related: [waveform rendering](waveform-rendering.md),
-[performance targets](performance-targets.md).
+[performance targets](performance-targets.md), [egui crates](egui-crates.md).
 
 ## Draft position
 
