@@ -32,6 +32,7 @@ rfd = "0.17.2"
 # ponytail: kira's own symphonia is off; charter-audio decodes through symphonia-wrap and hands
 # kira frames.
 kira = { version = "0.12.4", default-features = false, features = ["cpal"] }
+egui-phosphor = "0.14.0"
 egui_kittest = "0.36.2"
 # ponytail: std only; the fork and timeout features pull in a temp-file runner the sans-io tests
 # do not need.

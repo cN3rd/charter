@@ -12,7 +12,7 @@ use charter_editor::{Song, Step};
 use crate::Action;
 use crate::keys::{HELP, NEW_SONG, OPEN, REDO, SAVE, SAVE_AS, SETTINGS, UNDO};
 use crate::notefield::Zoom;
-use crate::style::{fields, heading, table};
+use crate::style::{self, fields, heading, icon, table};
 use crate::window::Rate;
 
 #[allow(clippy::too_many_lines)] // the menus in the order they show
@@ -266,7 +266,6 @@ const KEYS: [(&str, &[(&str, &str)]); 6] = [
 pub fn song_panel(ui: &mut Ui, song: &Song, actions: &mut Vec<Action>) {
     let document = song.document().document();
     let metadata = &document.metadata;
-    heading(ui, "Song");
     let preview = metadata.preview.map_or_else(
         || "none".to_owned(),
         |preview| match preview.length_seconds {
@@ -274,38 +273,41 @@ pub fn song_panel(ui: &mut Ui, song: &Song, actions: &mut Vec<Action>) {
             None => format!("{} s", preview.start_seconds),
         },
     );
-    fields(
-        ui,
-        "song",
-        &[
-            ("Title", metadata.title.clone()),
-            ("Artist", metadata.artist.clone()),
-            ("Audio", metadata.audio.to_string()),
-            ("Preview", preview),
-            (
-                "Ruleset",
-                format!("{} {}", document.ruleset.id, document.ruleset.version),
-            ),
-        ],
-        "",
-    );
-    heading(ui, "Charts");
-    if document.charts.is_empty() {
-        ui.weak("No charts yet");
-    }
-    table(ui, "charts", |ui| {
-        for (index, chart) in document.charts.iter().enumerate() {
-            let open = index == song.chart_index();
-            if ui.selectable_label(open, &chart.name).clicked() {
-                actions.push(Action::OpenChart(index));
-            }
-            ui.weak(
-                chart
-                    .lanes
-                    .map_or_else(|| "no lanes".to_owned(), |lanes| format!("{lanes} lanes")),
-            );
-            ui.end_row();
+    style::section(ui, "Song", |ui| {
+        fields(
+            ui,
+            "song",
+            &[
+                ("Title", metadata.title.clone()),
+                ("Artist", metadata.artist.clone()),
+                ("Audio", metadata.audio.to_string()),
+                ("Preview", preview),
+                (
+                    "Ruleset",
+                    format!("{} {}", document.ruleset.id, document.ruleset.version),
+                ),
+            ],
+            "",
+        );
+    });
+    style::section(ui, "Charts", |ui| {
+        if document.charts.is_empty() {
+            ui.weak("No charts yet");
         }
+        table(ui, "charts", |ui| {
+            for (index, chart) in document.charts.iter().enumerate() {
+                let open = index == song.chart_index();
+                if ui.selectable_label(open, &chart.name).clicked() {
+                    actions.push(Action::OpenChart(index));
+                }
+                ui.weak(
+                    chart
+                        .lanes
+                        .map_or_else(|| "no lanes".to_owned(), |lanes| format!("{lanes} lanes")),
+                );
+                ui.end_row();
+            }
+        });
     });
 }
 
@@ -338,7 +340,10 @@ pub fn details(ui: &mut Ui, song: &Song) {
 /// editing a name typed and entered names the section at the cursor, starting one there if
 /// there is none, and each marker can be removed.
 pub fn markers(ui: &mut Ui, song: &Song, draft: &mut Option<String>, actions: &mut Vec<Action>) {
-    heading(ui, "Markers");
+    style::section(ui, "Markers", |ui| markers_body(ui, song, draft, actions));
+}
+
+fn markers_body(ui: &mut Ui, song: &Song, draft: &mut Option<String>, actions: &mut Vec<Action>) {
     let editable = song.read_only().is_none();
     if editable {
         table(ui, "section here", |ui| {
@@ -367,7 +372,8 @@ pub fn markers(ui: &mut Ui, song: &Song, draft: &mut Option<String>, actions: &m
     let timing = song.timing();
     table(ui, "markers", |ui| {
         for (index, marker) in document.markers.iter().enumerate() {
-            ui.monospace(timing.grid_position(marker.tick).to_string());
+            let at = timing.grid_position(marker.tick).to_string();
+            ui.label(RichText::new(at).monospace().color(style::WEAK_TEXT));
             let kind = match &marker.kind {
                 MarkerKind::Section => "section".to_owned(),
                 MarkerKind::Bookmark => "bookmark".to_owned(),
@@ -384,13 +390,12 @@ pub fn markers(ui: &mut Ui, song: &Song, draft: &mut Option<String>, actions: &m
                 actions.push(Action::JumpTo(marker.tick));
             }
             if editable {
-                let remove = ui
-                    .small_button("Remove")
-                    .on_hover_text("Remove this marker; Ctrl+Z brings it back");
-                let label = format!("Remove marker {text}");
-                remove.widget_info(|| {
-                    egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label)
-                });
+                let remove = style::quiet_icon(
+                    ui,
+                    style::icon::TRASH,
+                    &format!("Remove marker {text}"),
+                    "Remove this marker; Ctrl+Z brings it back",
+                );
                 if remove.clicked() {
                     actions.push(Action::RemoveMarker(index));
                 }
@@ -474,7 +479,19 @@ pub fn tempo(
     draft: &mut Option<String>,
     actions: &mut Vec<Action>,
 ) -> Option<String> {
-    heading(ui, "Tempo");
+    let mut refused = None;
+    style::section(ui, "Tempo", |ui| {
+        refused = tempo_body(ui, song, draft, actions);
+    });
+    refused
+}
+
+fn tempo_body(
+    ui: &mut Ui,
+    song: &Song,
+    draft: &mut Option<String>,
+    actions: &mut Vec<Action>,
+) -> Option<String> {
     let Some((at, bpm)) = song.bpm() else {
         ui.weak("No BPM");
         return None;
@@ -510,46 +527,204 @@ pub fn tempo(
         ui.end_row();
     });
     ui.add_space(4.0);
-    if editable && at == song.cursor() && ui.small_button("Remove this BPM change").clicked() {
+    if editable
+        && at == song.cursor()
+        && style::icon_button(ui, style::icon::TRASH, "Remove this BPM change", false).clicked()
+    {
         actions.push(Action::RemoveBpm);
     }
     refused
 }
 
-pub fn status_bar(
+#[allow(clippy::too_many_lines)] // the toolbar's groups in the order they show
+pub fn transport_bar(
     ui: &mut Ui,
     song: Option<&Song>,
-    zoom: Zoom,
-    rate: Rate,
-    (audio, playing): (&str, bool),
+    (zoom, rate, playing): (Zoom, Rate, bool),
+    (metronome, ticks): (bool, bool),
+    actions: &mut Vec<Action>,
 ) {
     ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+        ui.add_enabled_ui(song.is_some(), |ui| {
+            style::chip(ui, |ui| {
+                let start = Action::JumpTo(Tick::new(0));
+                if style::tool(ui, icon::SKIP_BACK, "Jump to the start", "Home", false).clicked() {
+                    actions.push(start);
+                }
+                let (symbol, name) = if playing {
+                    (icon::PAUSE, "Pause")
+                } else {
+                    (icon::PLAY, "Play")
+                };
+                let tip = format!("{name} from the cursor (Space)");
+                if style::tool(ui, symbol, name, &tip, playing).clicked() {
+                    actions.push(Action::TogglePlay);
+                }
+                if style::tool(ui, icon::SKIP_FORWARD, "Jump to the end", "End", false).clicked() {
+                    actions.push(Action::JumpEnd);
+                }
+            });
+        });
+        if let Some(song) = song {
+            readout(ui, song);
+            style::chip(ui, |ui| {
+                ui.label(style::glyph(ui, icon::METRONOME).color(style::WEAK_TEXT));
+                let tempo = song
+                    .bpm()
+                    .map_or_else(|| "no BPM".to_owned(), |(_, bpm)| format!("{bpm} BPM"));
+                ui.label(tempo);
+            });
+            style::chip(ui, |ui| {
+                ui.label(style::glyph(ui, icon::GRID_FOUR).color(style::WEAK_TEXT));
+                if style::quiet_icon(ui, icon::CARET_LEFT, "Coarser snap", "Coarser snap (Left)")
+                    .clicked()
+                {
+                    actions.push(Action::CoarserSnap);
+                }
+                ui.label(format!("Snap {}", ordinal(song.snap())));
+                if style::quiet_icon(ui, icon::CARET_RIGHT, "Finer snap", "Finer snap (Right)")
+                    .clicked()
+                {
+                    actions.push(Action::FinerSnap);
+                }
+            });
+            style::chip(ui, |ui| {
+                ui.label(style::glyph(ui, icon::GAUGE).color(style::WEAK_TEXT));
+                if style::quiet_icon(ui, icon::MINUS, "Slower", "Play slower (Shift+Left)")
+                    .clicked()
+                {
+                    actions.push(Action::NudgeRate(-0.1));
+                }
+                ui.label(format!("Speed {:.0}%", rate.percent()));
+                if style::quiet_icon(ui, icon::PLUS, "Faster", "Play faster (Shift+Right)")
+                    .clicked()
+                {
+                    actions.push(Action::NudgeRate(0.1));
+                }
+            });
+            style::chip(ui, |ui| {
+                if style::quiet_icon(
+                    ui,
+                    icon::MAGNIFYING_GLASS_MINUS,
+                    "Zoom out",
+                    "Zoom out (Ctrl+Minus)",
+                )
+                .clicked()
+                {
+                    actions.push(Action::ZoomBy(Zoom::STEP.recip()));
+                }
+                ui.label(format!("Zoom {:.0}%", zoom.percent()));
+                if style::quiet_icon(
+                    ui,
+                    icon::MAGNIFYING_GLASS_PLUS,
+                    "Zoom in",
+                    "Zoom in (Ctrl+Plus)",
+                )
+                .clicked()
+                {
+                    actions.push(Action::ZoomBy(Zoom::STEP));
+                }
+            });
+        }
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if style::tool(
+                ui,
+                icon::GEAR_SIX,
+                "Open settings",
+                "Settings (Ctrl+Comma)",
+                false,
+            )
+            .clicked()
+            {
+                actions.push(Action::Settings);
+            }
+            style::chip(ui, |ui| {
+                if style::tool(
+                    ui,
+                    icon::MUSIC_NOTE_SIMPLE,
+                    "Note ticks",
+                    "Note ticks (F4)",
+                    ticks,
+                )
+                .clicked()
+                {
+                    actions.push(Action::ToggleTicks);
+                }
+                if style::tool(
+                    ui,
+                    icon::METRONOME,
+                    "Metronome",
+                    "Metronome (F3)",
+                    metronome,
+                )
+                .clicked()
+                {
+                    actions.push(Action::ToggleMetronome);
+                }
+            });
+        });
+    });
+}
+
+/// Where the cursor is, large, as a transport's display shows it: the grid position, and the
+/// time under it.
+fn readout(ui: &mut Ui, song: &Song) {
+    egui::Frame::new()
+        .fill(style::WELL)
+        .corner_radius(7)
+        .inner_margin(egui::Margin::symmetric(12, 3))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let timing = song.timing();
+                let at = timing.grid_position(song.cursor()).to_string();
+                let big = RichText::new(&at)
+                    .monospace()
+                    .size(17.0)
+                    .color(style::ACCENT);
+                let cursor = ui.label(big);
+                cursor.widget_info(|| {
+                    egui::WidgetInfo::labeled(
+                        egui::WidgetType::Label,
+                        true,
+                        format!("Cursor at {at}"),
+                    )
+                });
+                let time = clock(timing.time_at(song.cursor()));
+                ui.label(
+                    RichText::new(time)
+                        .monospace()
+                        .size(13.0)
+                        .color(style::WEAK_TEXT),
+                );
+            });
+        });
+}
+
+/// What changes rarely: whether the audio plays and how it stands, and whether the song can be
+/// edited.
+pub fn status_bar(ui: &mut Ui, song: Option<&Song>, (audio, playing): (&str, bool)) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 10.0;
         let Some(song) = song else {
             ui.weak("No song open");
             return;
         };
-        let timing = song.timing();
-        let at = timing.grid_position(song.cursor()).to_string();
-        let cursor = ui.monospace(&at);
-        cursor.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::WidgetType::Label, true, format!("Cursor at {at}"))
-        });
-        ui.monospace(clock(timing.time_at(song.cursor())));
-        ui.separator();
-        if let Some((_, bpm)) = song.bpm() {
-            ui.label(format!("{bpm} BPM"));
-        }
-        ui.label(format!("Snap {}", ordinal(song.snap())));
-        ui.label(format!("Zoom {:.0}%", zoom.percent()));
-        ui.separator();
-        ui.label(if playing { "Playing" } else { "Paused" });
-        ui.label(format!("Speed {:.0}%", rate.percent()));
+        let (colour, state) = if playing {
+            (style::ACCENT, "Playing")
+        } else {
+            (style::WEAK_TEXT, "Paused")
+        };
+        ui.label(RichText::new("●").color(colour).size(9.0));
+        ui.label(state);
         ui.weak(audio);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if song.read_only().is_some() {
                 ui.weak("Read only");
+                ui.label(style::glyph(ui, icon::LOCK_SIMPLE).color(style::WEAK_TEXT));
             } else {
                 ui.label("Editing");
+                ui.label(style::glyph(ui, icon::PENCIL_SIMPLE).color(style::ACCENT));
             }
         });
     });
@@ -586,34 +761,65 @@ pub fn ordinal(n: NonZeroU16) -> String {
 /// What the centre shows with no song open.
 pub fn empty(ui: &mut Ui, actions: &mut Vec<Action>) {
     ui.vertical_centered(|ui| {
-        ui.add_space(ui.available_height() / 3.0);
-        ui.heading("No song open");
+        ui.add_space((ui.available_height() / 3.0 - 40.0).max(0.0));
         ui.label(
-            "Drop a charter song (.json) on this window, or give its path when you start charter.",
+            RichText::new("charter")
+                .family(style::titles(ui))
+                .size(34.0),
         );
-        ui.add_space(8.0);
-        if ui.button("Open song…").clicked() {
-            actions.push(Action::Open);
-        }
-        if ui.button("New song").clicked() {
-            actions.push(Action::NewSong);
-        }
-        if ui.button("Open the demo song").clicked() {
-            actions.push(Action::OpenDemo);
-        }
+        ui.add_space(2.0);
+        ui.weak("A chart editor for rhythm games");
+        ui.add_space(22.0);
+        let row = 3.0 * 136.0;
+        ui.allocate_ui_with_layout(
+            egui::vec2(row, 30.0),
+            Layout::left_to_right(Align::Center),
+            |ui| {
+                ui.spacing_mut().button_padding = egui::vec2(14.0, 7.0);
+                if style::icon_button(ui, style::icon::FILE_PLUS, "New song", true).clicked() {
+                    actions.push(Action::NewSong);
+                }
+                if style::icon_button(ui, style::icon::FOLDER_OPEN, "Open song…", false).clicked()
+                {
+                    actions.push(Action::Open);
+                }
+                if style::icon_button(ui, style::icon::MUSIC_NOTES, "Open the demo song", false)
+                    .clicked()
+                {
+                    actions.push(Action::OpenDemo);
+                }
+            },
+        );
+        ui.add_space(16.0);
+        ui.weak("or drop a charter song (.json) on this window");
     });
 }
 
 /// That the open song has no audio yet, and how to give it some.
 pub fn no_audio(ui: &mut Ui, actions: &mut Vec<Action>) {
-    ui.horizontal(|ui| {
-        let colour = ui.visuals().warn_fg_color;
-        let text = "No audio yet: drop an audio file (.ogg, .mp3, .wav, .flac) on the window, or";
-        ui.label(RichText::new(text).color(colour));
-        if ui.button("Choose audio…").clicked() {
+    notice(ui, style::icon::MUSIC_NOTES, |ui| {
+        ui.label("No audio yet. Drop an audio file (.ogg, .mp3, .wav, .flac) on the window, or");
+        if style::icon_button(ui, style::icon::FOLDER_OPEN, "Choose audio…", false).clicked() {
             actions.push(Action::ChooseAudio);
         }
     });
+}
+
+/// A strip across the top of the centre that says something about the song, led by `symbol`.
+fn notice<R>(ui: &mut Ui, symbol: &str, body: impl FnOnce(&mut Ui) -> R) -> R {
+    egui::Frame::new()
+        .fill(style::NOTICE)
+        .corner_radius(6)
+        .inner_margin(egui::Margin::symmetric(10, 4))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.label(style::glyph(ui, symbol).color(style::WARN));
+                body(ui)
+            })
+            .inner
+        })
+        .inner
 }
 
 /// What to do with unsaved changes that are about to be lost.
@@ -629,19 +835,24 @@ pub enum Answer {
 pub fn ask_to_save(ui: &Ui, name: &str) -> Option<Answer> {
     let mut answer = None;
     let modal = egui::Modal::new(egui::Id::new("save changes")).show(ui.ctx(), |ui| {
-        ui.set_max_width(360.0);
-        ui.strong(format!("Save changes to {name}?"));
+        ui.set_max_width(380.0);
+        ui.label(
+            RichText::new(format!("Save changes to {name}?"))
+                .family(style::titles(ui))
+                .size(15.0),
+        );
+        ui.add_space(4.0);
         ui.label("Changes are lost unless you save them.");
-        ui.add_space(8.0);
+        ui.add_space(14.0);
         ui.horizontal(|ui| {
-            for (label, choice) in [
-                ("Save", Answer::Save),
-                ("Don't save", Answer::DontSave),
-                ("Cancel", Answer::Cancel),
-            ] {
-                if ui.button(label).clicked() {
-                    answer = Some(choice);
-                }
+            if ui.add(style::primary("Save")).clicked() {
+                answer = Some(Answer::Save);
+            }
+            if ui.button("Don't save").clicked() {
+                answer = Some(Answer::DontSave);
+            }
+            if ui.button("Cancel").clicked() {
+                answer = Some(Answer::Cancel);
             }
         });
     });
@@ -653,12 +864,14 @@ pub fn ask_to_save(ui: &Ui, name: &str) -> Option<Answer> {
 pub fn ask_to_restore(ui: &Ui, name: &str) -> Option<bool> {
     let mut answer = None;
     egui::Modal::new(egui::Id::new("restore changes")).show(ui.ctx(), |ui| {
-        ui.set_max_width(360.0);
-        ui.strong(format!("Restore unsaved changes to {name}?"));
+        ui.set_max_width(380.0);
+        let question = format!("Restore unsaved changes to {name}?");
+        ui.label(RichText::new(question).family(style::titles(ui)).size(15.0));
+        ui.add_space(4.0);
         ui.label("charter closed before they were saved.");
-        ui.add_space(8.0);
+        ui.add_space(14.0);
         ui.horizontal(|ui| {
-            if ui.button("Restore").clicked() {
+            if ui.add(style::primary("Restore")).clicked() {
                 answer = Some(true);
             }
             if ui.button("Discard").clicked() {
@@ -669,20 +882,44 @@ pub fn ask_to_restore(ui: &Ui, name: &str) -> Option<bool> {
     answer
 }
 
-/// Why the last file did not open, or the last edit was refused.
-/// Says whether the user dismissed it.
-pub fn failure(ui: &mut Ui, message: &str) -> bool {
-    ui.horizontal(|ui| {
-        let colour = ui.visuals().warn_fg_color;
-        ui.label(RichText::new(message).color(colour));
-        ui.small_button("Dismiss").clicked()
-    })
-    .inner
+/// Why the last file did not open, or the last edit was refused, floating at the foot of the
+/// area `ui` fills. Says whether the user dismissed it.
+pub fn toast(ui: &Ui, message: &str) -> bool {
+    let area = ui.max_rect();
+    let width = (area.width() - 32.0).clamp(160.0, 640.0);
+    egui::Area::new(ui.id().with("toast"))
+        .order(egui::Order::Foreground)
+        .pivot(egui::Align2::CENTER_BOTTOM)
+        .fixed_pos(area.center_bottom() - egui::vec2(0.0, 16.0))
+        .show(ui.ctx(), |ui| {
+            egui::Frame::popup(ui.style())
+                .fill(style::NOTICE)
+                .corner_radius(8)
+                .inner_margin(egui::Margin::symmetric(12, 8))
+                .show(ui, |ui| {
+                    ui.set_width(width);
+                    ui.horizontal(|ui| {
+                        ui.label(style::glyph(ui, icon::WARNING).color(style::WARN));
+                        ui.add(egui::Label::new(RichText::new(message).color(style::WARN)).wrap());
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            let tip = "Dismiss this message";
+                            style::quiet_icon(ui, icon::X, "Dismiss", tip).clicked()
+                        })
+                        .inner
+                    })
+                    .inner
+                })
+                .inner
+        })
+        .inner
 }
 
 /// Why the open song cannot be edited.
 pub fn read_only(ui: &mut Ui, why: &str) {
-    ui.weak(format!("Read only: {why}"));
+    notice(ui, style::icon::LOCK_SIMPLE, |ui| {
+        ui.label(format!("Read only: {why}"));
+    });
+    ui.add_space(4.0);
 }
 
 #[cfg(test)]

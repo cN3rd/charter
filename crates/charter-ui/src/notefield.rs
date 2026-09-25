@@ -569,7 +569,12 @@ fn header(
     };
     caption(
         columns.timing.center(),
-        if own_timing { "chart" } else { "song" }.to_owned(),
+        if own_timing {
+            "chart timing"
+        } else {
+            "song timing"
+        }
+        .to_owned(),
     );
     for lane in 0..lanes {
         let span = columns.span(LaneIndex::new(lane), LaneCount::ONE);
@@ -755,7 +760,7 @@ fn draw_object(
         painter.rect_stroke(
             rect.expand(3.0),
             5.0,
-            Stroke::new(2.0, style::SELECTED),
+            Stroke::new(1.5, style::SELECTED),
             StrokeKind::Outside,
         );
     }

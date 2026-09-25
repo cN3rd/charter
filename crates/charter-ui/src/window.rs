@@ -1028,14 +1028,29 @@ impl Window {
         let audio_state = self.audio_state();
         let mut dismissed = false;
         let playing = self.playing;
-        egui::Panel::top("menu").show(ui, |ui| panels::menu_bar(ui, song, playing, &mut actions));
-        egui::Panel::bottom("status").show(ui, |ui| {
-            let transport = (audio_state, self.playing);
-            panels::status_bar(ui, self.song.as_ref(), self.zoom, self.rate, transport);
-        });
+        egui::Panel::top("menu")
+            .frame(style::chrome())
+            .show(ui, |ui| panels::menu_bar(ui, song, playing, &mut actions));
+        let sounds = (
+            self.settings.metronome != settings::Sound::Off,
+            self.settings.tick_sound != settings::Sound::Off,
+        );
+        let view = (self.zoom, self.rate, self.playing);
+        egui::Panel::top("transport")
+            .frame(style::toolbar())
+            .show(ui, |ui| {
+                panels::transport_bar(ui, self.song.as_ref(), view, sounds, &mut actions);
+            });
+        egui::Panel::bottom("status")
+            .frame(style::chrome())
+            .show(ui, |ui| {
+                panels::status_bar(ui, self.song.as_ref(), (audio_state, self.playing));
+            });
         if let Some(song) = &self.song {
             let (bpm, section) = (&mut self.bpm_draft, &mut self.section_draft);
             let refused = egui::Panel::left("song")
+                .frame(style::panel())
+                .default_size(300.0)
                 .show(ui, |ui| {
                     egui::ScrollArea::vertical()
                         .show(ui, |ui| {
@@ -1051,32 +1066,48 @@ impl Window {
             if refused.is_some() {
                 self.failure = refused;
             }
-            egui::Panel::right("inspector").show(ui, |ui| panels::inspector(ui, song));
+            egui::Panel::right("inspector")
+                .frame(style::panel())
+                .default_size(240.0)
+                .show(ui, |ui| panels::inspector(ui, song));
         }
-        egui::CentralPanel::default().show(ui, |ui| {
-            if let Some(failure) = &self.failure {
-                dismissed = panels::failure(ui, failure);
-            }
-            if let Some(why) = self.song.as_ref().and_then(Song::read_only) {
-                panels::read_only(ui, why);
-            }
-            if self
-                .song
-                .as_ref()
-                .is_some_and(|song| song.document().document().metadata.audio.as_str() == NO_AUDIO)
-            {
-                panels::no_audio(ui, &mut actions);
-            }
-            match &self.song {
-                Some(song) => {
-                    let (zoom, scrolled, gesture) =
-                        (self.zoom, &mut self.scrolled, &mut self.gesture);
-                    let direction = self.settings.direction;
-                    notefield::show(ui, song, zoom, direction, scrolled, gesture, &mut actions);
+        egui::CentralPanel::default()
+            .frame(style::canvas())
+            .show(ui, |ui| {
+                if let Some(failure) = &self.failure {
+                    // Over the canvas rather than in its layout, so the notefield never moves
+                    // under a drag when a message comes or goes.
+                    dismissed = panels::toast(ui, failure);
                 }
-                None => panels::empty(ui, &mut actions),
-            }
-        });
+                if let Some(why) = self.song.as_ref().and_then(Song::read_only) {
+                    panels::read_only(ui, why);
+                }
+                if self.song.as_ref().is_some_and(|song| {
+                    song.document().document().metadata.audio.as_str() == NO_AUDIO
+                }) {
+                    panels::no_audio(ui, &mut actions);
+                }
+                match &self.song {
+                    Some(song) => {
+                        let (zoom, scrolled, gesture) =
+                            (self.zoom, &mut self.scrolled, &mut self.gesture);
+                        let direction = self.settings.direction;
+                        style::stage().show(ui, |ui| {
+                            ui.set_min_size(ui.available_size());
+                            notefield::show(
+                                ui,
+                                song,
+                                zoom,
+                                direction,
+                                scrolled,
+                                gesture,
+                                &mut actions,
+                            );
+                        });
+                    }
+                    None => panels::empty(ui, &mut actions),
+                }
+            });
         settings::show(ui.ctx(), &mut self.settings, &mut self.settings_open);
         if dismissed {
             self.failure = None;

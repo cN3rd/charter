@@ -11,6 +11,7 @@ charter-audio.workspace = true
 charter-core.workspace = true
 charter-editor.workspace = true
 egui.workspace = true
+egui-phosphor.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 

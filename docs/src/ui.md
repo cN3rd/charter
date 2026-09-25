@@ -33,7 +33,12 @@ alone. The status bar says whether the audio is ready, loading, missing or unrea
 message has a Dismiss button. The Edit, Timing and Playback menus carry the selection, tempo, marker
 and playback commands with their keys, F1 lists every key by group with a filter, and saving,
 opening, settings and help keep working while a text field has the keyboard. With no song open the
-centre offers Open song…, New song and the demo.
+centre offers Open song…, New song and the demo. The look follows pro audio and creative tools: a
+transport toolbar under the menus with a large position readout and grouped tempo, snap, speed and
+zoom controls, collapsible sections in the side panels, the notefield in a dark well, one blue
+accent for selection and primary actions, Inter for text and Phosphor for icons, bundled under
+`crates/charter-ui/assets/fonts` with Inter's OFL licence; messages float over the canvas rather
+than moving it.
 
 ## Main window
 

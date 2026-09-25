@@ -137,11 +137,12 @@ pub fn show(ui: &Ui, plugins: &[&'static dyn RulesetPlugin], draft: &mut Draft) 
             ui.horizontal(|ui| {
                 let caption = ui.weak(format!("Chart {}", index + 1));
                 ui.text_edit_singleline(name).labelled_by(caption.id);
-                let remove = ui.small_button("✕");
-                let label = format!("Remove {name}");
-                remove.widget_info(|| {
-                    egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label)
-                });
+                let remove = crate::style::quiet_icon(
+                    ui,
+                    crate::style::icon::X,
+                    &format!("Remove {name}"),
+                    "Remove this chart",
+                );
                 if remove.clicked() {
                     removed = Some(index);
                 }
@@ -150,7 +151,7 @@ pub fn show(ui: &Ui, plugins: &[&'static dyn RulesetPlugin], draft: &mut Draft) 
         if let Some(index) = removed {
             draft.charts.remove(index);
         }
-        if ui.button("Add a chart").clicked() {
+        if crate::style::icon_button(ui, crate::style::icon::PLUS, "Add a chart", false).clicked() {
             draft
                 .charts
                 .push(format!("Chart {}", draft.charts.len() + 1));
@@ -161,7 +162,7 @@ pub fn show(ui: &Ui, plugins: &[&'static dyn RulesetPlugin], draft: &mut Draft) 
         ui.horizontal(|ui| {
             let song = draft.song();
             if ui
-                .add_enabled(song.is_some(), egui::Button::new("Create"))
+                .add_enabled(song.is_some(), crate::style::primary("Create"))
                 .clicked()
                 && let Some(song) = song
             {
