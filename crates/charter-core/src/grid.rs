@@ -1,0 +1,409 @@
+//! The measure grid that a timing map's time signatures lay over its ticks.
+
+use std::fmt;
+use std::num::NonZeroU16;
+
+use crate::document::{Timing, TimingKind};
+use crate::unit::{Tick, Ticks, TicksPerBeat, TimeSignature};
+
+/// One measure of a timing map's grid.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Measure {
+    /// Counting from 0 for the measure holding tick 0, and down from -1 before it.
+    pub number: i64,
+    pub start: Tick,
+    /// A whole measure of its meter, or less where the next time signature cuts it short. Both
+    /// ends stay inside the ticks a document can hold.
+    pub length: Ticks,
+    pub meter: TimeSignature,
+}
+
+/// Where a tick falls in the grid: its measure, the beats since that measure started, counting
+/// from 0, and the ticks past the last of those beats. Shown as `measure:beat:tick`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GridPosition {
+    pub measure: i64,
+    pub beat: u32,
+    pub tick: u32,
+}
+
+impl fmt::Display for GridPosition {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}:{}", self.measure, self.beat, self.tick)
+    }
+}
+
+/// The meter before the first time signature.
+const COMMON_TIME: TimeSignature = match (NonZeroU16::new(4), NonZeroU16::new(4)) {
+    (Some(numerator), Some(denominator)) => TimeSignature {
+        numerator,
+        denominator,
+    },
+    _ => unreachable!(),
+};
+
+/// A stretch of ticks over which one meter lays measures `length` apart from `origin`, until
+/// the next stretch begins.
+#[derive(Clone, Copy, Debug)]
+struct Stretch {
+    begin: i64,
+    origin: i64,
+    length: i64,
+    meter: TimeSignature,
+}
+
+/// The measures of a grid in order.
+#[derive(Clone, Debug)]
+pub struct Measures {
+    stretches: Vec<Stretch>,
+    stretch: usize,
+    start: i64,
+    number: i64,
+}
+
+impl Measures {
+    /// Where the stretch at `index` ends: where the next begins, or never.
+    fn end_of(&self, index: usize) -> i64 {
+        self.stretches
+            .get(index + 1)
+            .map_or(i64::MAX, |next| next.begin)
+    }
+}
+
+impl Iterator for Measures {
+    type Item = Measure;
+
+    fn next(&mut self) -> Option<Measure> {
+        let stretch = *self.stretches.get(self.stretch)?;
+        let first = i64::from(i32::MIN);
+        let last = i64::from(i32::MAX);
+        if self.start > last {
+            return None;
+        }
+        let end = (self.start + stretch.length).min(self.end_of(self.stretch));
+        let shown = self.start.max(first);
+        let length = u32::try_from(end.min(last + 1) - shown).unwrap_or(u32::MAX);
+        let measure = Measure {
+            number: self.number,
+            start: Tick::new(i32::try_from(shown).ok()?),
+            length: Ticks::new(length)?,
+            meter: stretch.meter,
+        };
+        if end == self.end_of(self.stretch) {
+            self.stretch += 1;
+        }
+        self.start = end;
+        self.number += 1;
+        Some(measure)
+    }
+}
+
+/// Ticks in a measure of `meter`, if that is a whole number.
+fn measure_length(meter: TimeSignature, resolution: TicksPerBeat) -> Option<i64> {
+    let quarters = i64::from(meter.numerator.get()) * 4 * i64::from(resolution.get());
+    let denominator = i64::from(meter.denominator.get());
+    (quarters % denominator == 0).then_some(quarters / denominator)
+}
+
+/// `n / d` rounded up, for a positive `d`.
+fn ceil_div(n: i64, d: i64) -> i64 {
+    -(-n).div_euclid(d)
+}
+
+impl Timing {
+    /// The stretches of the grid: common time from tick 0 until the first time signature, then
+    /// each time signature from its own tick. `None` if a measure is not a whole number of ticks.
+    fn stretches(&self, resolution: TicksPerBeat) -> Option<Vec<Stretch>> {
+        let mut stretches = vec![Stretch {
+            begin: i64::MIN,
+            origin: 0,
+            length: measure_length(COMMON_TIME, resolution)?,
+            meter: COMMON_TIME,
+        }];
+        for event in &self.events {
+            if let TimingKind::TimeSignature(meter) = event.kind {
+                let at = i64::from(event.tick.get());
+                stretches.push(Stretch {
+                    begin: at,
+                    origin: at,
+                    length: measure_length(meter, resolution)?,
+                    meter,
+                });
+            }
+        }
+        Some(stretches)
+    }
+
+    /// The measures from the one holding `from` onward; see
+    /// [`Valid::measures_from`](crate::Valid::measures_from). Events must be sorted by tick.
+    /// `None` if a measure is not a whole number of ticks, which a valid document rules out.
+    pub(crate) fn measures_from(&self, resolution: TicksPerBeat, from: Tick) -> Option<Measures> {
+        let grid = Grid {
+            stretches: self.stretches(resolution)?,
+        };
+        let (stretch, start) = grid.holding(i64::from(from.get()))?;
+        let number = grid.number(start)?;
+        Some(Measures {
+            stretches: grid.stretches,
+            stretch,
+            start,
+            number,
+        })
+    }
+
+    /// Where `tick` falls in the grid; see [`Valid::grid_position`](crate::Valid::grid_position).
+    /// `None` if a measure is not a whole number of ticks.
+    pub(crate) fn grid_position(
+        &self,
+        resolution: TicksPerBeat,
+        tick: Tick,
+    ) -> Option<GridPosition> {
+        let grid = Grid {
+            stretches: self.stretches(resolution)?,
+        };
+        let tick = i64::from(tick.get());
+        let (_, start) = grid.holding(tick)?;
+        let along = tick - start;
+        let beat = i64::from(resolution.get());
+        Some(GridPosition {
+            measure: grid.number(start)?,
+            beat: u32::try_from(along / beat).ok()?,
+            tick: u32::try_from(along % beat).ok()?,
+        })
+    }
+}
+
+/// A timing map's stretches, able to say where measures start and how they are numbered, in
+/// ticks that may run past either end of what a document can hold.
+struct Grid {
+    stretches: Vec<Stretch>,
+}
+
+impl Grid {
+    /// The stretch holding `tick`, and where the measure holding it starts.
+    fn holding(&self, tick: i64) -> Option<(usize, i64)> {
+        let index = self
+            .stretches
+            .partition_point(|stretch| stretch.begin <= tick)
+            .checked_sub(1)?;
+        let stretch = self.stretches.get(index)?;
+        let measures = (tick - stretch.origin).div_euclid(stretch.length);
+        Some((index, stretch.origin + measures * stretch.length))
+    }
+
+    /// The number of the measure starting at `start`: how many measures lie between it and the
+    /// one holding tick 0.
+    fn number(&self, start: i64) -> Option<i64> {
+        let (_, zero) = self.holding(0)?;
+        Some(if start >= zero {
+            self.starts_between(zero, start)
+        } else {
+            -self.starts_between(start, zero)
+        })
+    }
+
+    /// How many measures start in `from..to`.
+    fn starts_between(&self, from: i64, to: i64) -> i64 {
+        let ends = self
+            .stretches
+            .iter()
+            .skip(1)
+            .map(|next| next.begin)
+            .chain(std::iter::once(i64::MAX));
+        self.stretches
+            .iter()
+            .zip(ends)
+            .map(|(stretch, end)| {
+                let (low, high) = (from.max(stretch.begin), to.min(end));
+                if low < high {
+                    ceil_div(high - stretch.origin, stretch.length)
+                        - ceil_div(low - stretch.origin, stretch.length)
+                } else {
+                    0
+                }
+            })
+            .sum()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::*;
+    use crate::document::{DEFAULT_TICKS_PER_BEAT, TimingEvent, TimingKind};
+    use crate::unit::{Bpm, Origin};
+
+    fn meter(numerator: u16, denominator: u16) -> TimeSignature {
+        TimeSignature {
+            numerator: NonZeroU16::new(numerator).unwrap(),
+            denominator: NonZeroU16::new(denominator).unwrap(),
+        }
+    }
+
+    /// A timing map at 120 BPM with a time signature on each of `signatures`.
+    fn timing(signatures: &[(i32, TimeSignature)]) -> Timing {
+        let tempo = TimingEvent {
+            tick: Tick::new(0),
+            kind: TimingKind::Bpm(Bpm::try_from(120.0).unwrap()),
+            ext: BTreeMap::new(),
+        };
+        let mut events = vec![tempo];
+        events.extend(signatures.iter().map(|&(tick, meter)| TimingEvent {
+            tick: Tick::new(tick),
+            kind: TimingKind::TimeSignature(meter),
+            ext: BTreeMap::new(),
+        }));
+        events.sort_by_key(|event| event.tick);
+        Timing {
+            offset_seconds: Origin::try_from(0.0).unwrap(),
+            events,
+        }
+    }
+
+    fn measure(number: i64, start: i32, length: u32, meter: TimeSignature) -> Measure {
+        Measure {
+            number,
+            start: Tick::new(start),
+            length: Ticks::new(length).unwrap(),
+            meter,
+        }
+    }
+
+    fn first_measures(timing: &Timing, from: i32, count: usize) -> Vec<Measure> {
+        timing
+            .measures_from(DEFAULT_TICKS_PER_BEAT, Tick::new(from))
+            .unwrap()
+            .take(count)
+            .collect()
+    }
+
+    #[test]
+    fn the_grid_is_four_four_from_tick_zero_until_a_time_signature() {
+        assert_eq!(
+            first_measures(&timing(&[]), 5000, 2),
+            [
+                measure(1, 3840, 3840, meter(4, 4)),
+                measure(2, 7680, 3840, meter(4, 4))
+            ]
+        );
+    }
+
+    #[test]
+    fn measures_before_the_one_holding_tick_zero_count_down() {
+        assert_eq!(
+            first_measures(&timing(&[]), -1, 2),
+            [
+                measure(-1, -3840, 3840, meter(4, 4)),
+                measure(0, 0, 3840, meter(4, 4))
+            ]
+        );
+    }
+
+    #[test]
+    fn a_time_signature_cuts_the_measure_in_progress_short_and_restarts_the_grid() {
+        assert_eq!(
+            first_measures(&timing(&[(5000, meter(7, 8))]), 3840, 3),
+            [
+                measure(1, 3840, 1160, meter(4, 4)),
+                measure(2, 5000, 3360, meter(7, 8)),
+                measure(3, 8360, 3360, meter(7, 8)),
+            ]
+        );
+    }
+
+    /// The meter that rules `tick` and the tick its grid starts from, from the definition alone:
+    /// the last time signature at or before it, or common time from tick 0.
+    fn ruling(signatures: &[(i32, TimeSignature)], tick: i32) -> (i32, TimeSignature) {
+        signatures
+            .iter()
+            .rev()
+            .find(|(at, _)| *at <= tick)
+            .map_or((0, meter(4, 4)), |&(at, meter)| (at, meter))
+    }
+
+    /// Whether `tick` starts a measure, found without stretches or counting.
+    fn starts_a_measure(signatures: &[(i32, TimeSignature)], resolution: u16, tick: i32) -> bool {
+        let (origin, meter) = ruling(signatures, tick);
+        let quarters = i64::from(meter.numerator.get()) * 4 * i64::from(resolution);
+        let length = quarters / i64::from(meter.denominator.get());
+        (i64::from(tick) - i64::from(origin)).rem_euclid(length) == 0
+    }
+
+    proptest::proptest! {
+        #![proptest_config(crate::proptest_config())]
+
+        #[test]
+        fn the_grid_agrees_with_checking_every_tick_against_the_definition(
+            resolution in 1_u16..=6,
+            placed in proptest::collection::btree_map(-150_i32..150, (1_u16..=7, proptest::sample::select(vec![1_u16, 2, 4])), 0..4),
+            from in -150_i32..150,
+        ) {
+            let signatures: Vec<_> = placed.into_iter().map(|(tick, (n, d))| (tick, meter(n, d))).collect();
+            let starts: Vec<i32> = (-700..700).filter(|&tick| starts_a_measure(&signatures, resolution, tick)).collect();
+            let zero = starts.iter().rposition(|&tick| tick <= 0).unwrap();
+            let resolution = TicksPerBeat::new(resolution).unwrap();
+            let measures = timing(&signatures).measures_from(resolution, Tick::new(from)).unwrap();
+            let mut expected = starts.iter().rposition(|&tick| tick <= from).unwrap();
+            for measure in measures.take_while(|measure| measure.start.get() < 300) {
+                let (start, next) = (starts[expected], starts[expected + 1]);
+                proptest::prop_assert_eq!(measure, Measure {
+                    number: i64::try_from(expected).unwrap() - i64::try_from(zero).unwrap(),
+                    start: Tick::new(start),
+                    length: Ticks::new(u32::try_from(next - start).unwrap()).unwrap(),
+                    meter: ruling(&signatures, start).1,
+                });
+                expected += 1;
+            }
+            proptest::prop_assert!(starts[expected] >= 300, "measures stopped before {}", starts[expected]);
+        }
+    }
+
+    #[test]
+    fn a_measure_starting_on_the_last_tick_still_has_a_place() {
+        let last = Tick::new(i32::MAX);
+        let timing = timing(&[(i32::MAX, meter(4, 4))]);
+        let measure = timing
+            .measures_from(DEFAULT_TICKS_PER_BEAT, last)
+            .unwrap()
+            .next()
+            .unwrap();
+        assert_eq!(
+            (measure.start, measure.length),
+            (last, Ticks::new(1).unwrap())
+        );
+        let position = timing.grid_position(DEFAULT_TICKS_PER_BEAT, last).unwrap();
+        assert_eq!((position.beat, position.tick), (0, 0));
+    }
+
+    #[test]
+    fn the_first_tick_counts_from_where_its_measure_really_starts() {
+        let position = timing(&[])
+            .grid_position(DEFAULT_TICKS_PER_BEAT, Tick::new(i32::MIN))
+            .unwrap();
+        assert_eq!(
+            position,
+            GridPosition {
+                measure: -559_241,
+                beat: 1,
+                tick: 832
+            }
+        );
+    }
+
+    #[test]
+    fn a_tick_falls_in_a_measure_on_a_beat_some_ticks_along() {
+        let position = timing(&[])
+            .grid_position(DEFAULT_TICKS_PER_BEAT, Tick::new(3840 + 2 * 960 + 120))
+            .unwrap();
+        assert_eq!(
+            position,
+            GridPosition {
+                measure: 1,
+                beat: 2,
+                tick: 120
+            }
+        );
+        assert_eq!(position.to_string(), "1:2:120");
+    }
+}

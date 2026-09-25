@@ -3,6 +3,7 @@
 
 mod document;
 mod error;
+mod grid;
 mod ident;
 mod json;
 mod number;
@@ -17,6 +18,7 @@ pub use document::{
     Timing, TimingEvent, TimingKind,
 };
 pub use error::{Error, InvalidValue, Location, Rule, Stream, Violation};
+pub use grid::{GridPosition, Measure, Measures};
 pub use ident::{Ease, Key, Kind, MarkerKind, Name, Namespace};
 pub use json::{MAX_DOCUMENT_BYTES, Valid, ValidDocument};
 pub use number::Decimal;

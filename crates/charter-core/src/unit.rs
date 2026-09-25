@@ -279,6 +279,10 @@ impl Tick {
         Self(tick)
     }
 
+    pub(crate) fn get(self) -> i32 {
+        self.0
+    }
+
     /// The tick `span` after this one, or `None` past the last tick.
     #[must_use]
     pub fn checked_add(self, span: Ticks) -> Option<Self> {
@@ -393,6 +397,10 @@ impl TicksPerBeat {
             Some(ticks) => Some(Self(ticks)),
             None => None,
         }
+    }
+
+    pub(crate) fn get(self) -> u16 {
+        self.0.get()
     }
 
     /// How long an `n`th note lasts: `4 / n` beats, if that is a whole number of ticks.

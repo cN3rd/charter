@@ -6,6 +6,7 @@ use serde::de::{self, Deserializer, MapAccess, SeqAccess, Visitor};
 
 use crate::document::{Chart, Child, Document, FORMAT_VERSION, Object, Shape, Timing};
 use crate::error::Error;
+use crate::grid::{GridPosition, Measures};
 use crate::unit::{ResolvedTime, Tick};
 use crate::validate::validate;
 
@@ -165,6 +166,33 @@ impl Valid<'_, Timing> {
             .seconds_at(self.document.ticks_per_beat, tick)
             .expect("a valid timing map resolves every tick")
     }
+
+    /// The measures of the grid from the one holding `from` onward. Common time rules from tick
+    /// 0 until the first time signature, and each time signature restarts the grid at its tick.
+    ///
+    /// # Panics
+    ///
+    /// Never: validation guarantees every measure is a whole number of ticks.
+    #[must_use]
+    #[allow(clippy::expect_used)] // see Panics
+    pub fn measures_from(&self, from: Tick) -> Measures {
+        self.part
+            .measures_from(self.document.ticks_per_beat, from)
+            .expect("a valid timing map has whole measures")
+    }
+
+    /// Where `tick` falls in the grid, as its measure, beat and remaining ticks.
+    ///
+    /// # Panics
+    ///
+    /// Never: validation guarantees every measure is a whole number of ticks.
+    #[must_use]
+    #[allow(clippy::expect_used)] // see Panics
+    pub fn grid_position(&self, tick: Tick) -> GridPosition {
+        self.part
+            .grid_position(self.document.ticks_per_beat, tick)
+            .expect("a valid timing map has whole measures")
+    }
 }
 
 #[allow(clippy::expect_used)] // validation guarantees every span ends on a tick
@@ -309,6 +337,17 @@ mod tests {
     #[test]
     fn a_minimal_document_reads_and_writes_back_unchanged() {
         assert_eq!(round_trip(&minimal()), minimal());
+    }
+
+    #[test]
+    fn the_format_chapter_example_turns_seven_eight_on_measure_sixteen() {
+        let song = read(&spec_example()).unwrap();
+        let timing = song.timing();
+        let drop = Tick::new(61440);
+        assert_eq!(timing.grid_position(drop).to_string(), "16:0:0");
+        let measure = timing.measures_from(drop).next().unwrap();
+        assert_eq!((measure.number, measure.start), (16, drop));
+        assert_eq!(measure.meter.to_string(), "7/8");
     }
 
     #[test]
