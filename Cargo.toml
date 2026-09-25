@@ -29,6 +29,9 @@ symphonia-wrap = { path = "third-party/symphonia-wrap" }
 egui = "0.36.2"
 eframe = "0.36.2"
 rfd = "0.17.2"
+# ponytail: kira's own symphonia is off; charter-audio decodes through symphonia-wrap and hands
+# kira frames.
+kira = { version = "0.12.4", default-features = false, features = ["cpal"] }
 egui_kittest = "0.36.2"
 # ponytail: std only; the fork and timeout features pull in a temp-file runner the sans-io tests
 # do not need.
@@ -97,6 +100,10 @@ opt-level = 3
 opt-level = 3
 
 [profile.dev.package."symphonia-metadata"]
+opt-level = 3
+
+# kira mixes on the audio thread, where an unoptimized build crackles.
+[profile.dev.package.kira]
 opt-level = 3
 
 [profile.dev.package."symphonia-wrap"]

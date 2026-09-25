@@ -20,6 +20,15 @@ status: draft
 `rodio` and `kira` both sit on `cpal` + `symphonia`, so the decode layer is settled by default
 regardless of which front end is chosen.
 
+## Draft position
+
+`kira` 0.12, with its own decoding off. `charter-audio` decodes through `symphonia-wrap` into stereo
+frames, sans-io and tested, and `charter-app` hands kira those frames and plays them. The window
+never sees the device: it asks for play, pause, seek and rate, and the host reports the playhead
+each frame. The playback rate is kira's, so the pitch follows the speed, as tape does; keeping the
+pitch needs a time-stretch, still [open](time-stretch.md). Scrubbing is not built, so the spike
+below still decides whether kira's seeking holds up.
+
 ## Open decision
 
 `rodio` or `kira`, or `cpal` directly.

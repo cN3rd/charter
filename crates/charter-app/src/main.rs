@@ -5,8 +5,12 @@
 
 use std::path::{Path, PathBuf};
 
+mod player;
+
 use charter_core::RulesetPlugin;
 use charter_ui::{Request, Saved, Settings, Window};
+
+use crate::player::Player;
 
 /// The ruleset plugins built into charter.
 const PLUGINS: &[&dyn RulesetPlugin] = &[
@@ -26,13 +30,20 @@ struct Host {
     window: Window,
     /// Where the autosave is kept, when the user's data folder is known.
     recovery: Option<PathBuf>,
+    player: Player,
 }
 
 impl eframe::App for Host {
     fn ui(&mut self, ui: &mut eframe::egui::Ui, _frame: &mut eframe::Frame) {
+        if self.player.update(&mut self.window) {
+            ui.ctx().request_repaint();
+        }
         self.window.ui(ui);
         for request in self.window.take_requests() {
             match request {
+                Request::Play { .. } | Request::Pause | Request::Seek(_) | Request::Rate(_) => {
+                    self.player.answer(&request, &mut self.window);
+                }
                 Request::Write { path, bytes } => self.write(path, &bytes),
                 Request::SaveAs { name, bytes } => {
                     match song_dialog().set_file_name(name).save_file() {
@@ -156,6 +167,7 @@ fn main() -> eframe::Result {
             let mut host = Host {
                 window: Window::new(PLUGINS).with_settings(settings),
                 recovery: eframe::storage_dir(APP).map(|folder| folder.join("recovery.json")),
+                player: Player::default(),
             };
             if let Some(path) = std::env::args_os().nth(1) {
                 host.read(Path::new(&path));

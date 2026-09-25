@@ -13,8 +13,9 @@ use crate::Action;
 use crate::keys::{HELP, NEW_SONG, OPEN, REDO, SAVE, SAVE_AS, SETTINGS, UNDO};
 use crate::notefield::Zoom;
 use crate::style::{fields, heading, table};
+use crate::window::Rate;
 
-pub fn menu_bar(ui: &mut Ui, song: Option<&Song>, actions: &mut Vec<Action>) {
+pub fn menu_bar(ui: &mut Ui, song: Option<&Song>, playing: bool, actions: &mut Vec<Action>) {
     let song_open = song.is_some();
     egui::MenuBar::new().ui(ui, |ui| {
         ui.menu_button("File", |ui| {
@@ -71,6 +72,30 @@ pub fn menu_bar(ui: &mut Ui, song: Option<&Song>, actions: &mut Vec<Action>) {
                 }
             }
         });
+        ui.menu_button("Playback", |ui| {
+            let play = if playing { "Pause" } else { "Play" };
+            let item = egui::Button::new(play).shortcut_text("Space");
+            if ui.add_enabled(song_open, item).clicked() {
+                actions.push(Action::TogglePlay);
+            }
+            ui.separator();
+            for (label, shortcut, action) in [
+                ("Faster", "Shift+Right", Action::NudgeRate(0.1)),
+                ("Slower", "Shift+Left", Action::NudgeRate(-0.1)),
+            ] {
+                if ui
+                    .add(egui::Button::new(label).shortcut_text(shortcut))
+                    .clicked()
+                {
+                    actions.push(action);
+                }
+            }
+            for factor in [0.5, 0.75, 1.0] {
+                if ui.button(format!("{:.0}% speed", factor * 100.0)).clicked() {
+                    actions.push(Action::SetRate(factor));
+                }
+            }
+        });
         ui.menu_button("Help", |ui| {
             let item = egui::Button::new("Keyboard shortcuts")
                 .shortcut_text(ui.ctx().format_shortcut(&HELP));
@@ -103,7 +128,7 @@ pub fn shortcuts(ctx: &egui::Context, open: &mut bool) {
 }
 
 /// The keys and gestures the notefield answers to, and what each does.
-const KEYS: [(&str, &str); 26] = [
+const KEYS: [(&str, &str); 29] = [
     ("1 to 9, 0", "Place or remove a tap on lanes 1 to 10"),
     ("Hold 1 to 0, move", "Draw a hold"),
     ("Shift+1 to 0", "Place or remove a mine"),
@@ -132,6 +157,12 @@ const KEYS: [(&str, &str); 26] = [
     ("Left, Right", "Coarser or finer snap"),
     ("Ctrl+Wheel", "Zoom"),
     ("Ctrl+Plus, Ctrl+Minus", "Zoom"),
+    ("Space", "Play from the cursor, or pause"),
+    ("Shift+Left, Shift+Right", "Play slower or faster by 10%"),
+    (
+        "Ctrl+Shift+Left, Ctrl+Shift+Right",
+        "Play slower or faster by 1%",
+    ),
     ("F1", "Keyboard shortcuts"),
 ];
 
@@ -375,7 +406,7 @@ pub fn tempo(
     refused
 }
 
-pub fn status_bar(ui: &mut Ui, song: Option<&Song>, zoom: Zoom) {
+pub fn status_bar(ui: &mut Ui, song: Option<&Song>, zoom: Zoom, rate: Rate, playing: bool) {
     ui.horizontal(|ui| {
         let Some(song) = song else {
             ui.weak("No song open");
@@ -394,6 +425,10 @@ pub fn status_bar(ui: &mut Ui, song: Option<&Song>, zoom: Zoom) {
         }
         ui.label(format!("Snap {}", ordinal(song.snap())));
         ui.label(format!("Zoom {:.0}%", zoom.percent()));
+        ui.label(format!("Rate {:.0}%", rate.percent()));
+        if playing {
+            ui.label("Playing");
+        }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if song.read_only().is_some() {
                 ui.weak("Read only");
@@ -453,7 +488,7 @@ pub fn empty(ui: &mut Ui, actions: &mut Vec<Action>) {
 /// That the open song has no audio yet, and how to give it some.
 pub fn no_audio(ui: &mut Ui) {
     let colour = ui.visuals().warn_fg_color;
-    let text = "No audio yet: drop an audio file (.ogg, .mp3, .wav, .flac, .opus) on the window.";
+    let text = "No audio yet: drop an audio file (.ogg, .mp3, .wav, .flac) on the window.";
     ui.label(RichText::new(text).color(colour));
 }
 

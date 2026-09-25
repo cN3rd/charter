@@ -83,10 +83,11 @@ expected `E1` for it. Do not silence that by adding frontmatter.
 
 | Path | Role |
 |---|---|
+| `crates/charter-audio` | DSP: a song's audio decoded through `symphonia-wrap` into stereo frames; no device |
 | `crates/charter-core` | the chart format: data model, JSON I/O, validation, tick to time; `RulesetPlugin`, the surface a ruleset plugin implements |
 | `crates/charter-editor` | editing a song without drawing it: open chart, cursor, snaps, note edits the ruleset plugin checks, selection, undo, unsaved changes, the demo song |
 | `crates/charter-ui` | the editor window in egui: notefield, panels, keys, settings, style; asks its host for files and dialogs; the static mock as an example |
-| `crates/charter-app` | binary front end, thin: registers the built-in ruleset plugins, answers the window's file and dialog requests with `std::fs` and rfd, keeps settings in eframe's storage |
+| `crates/charter-app` | binary front end, thin: registers the built-in ruleset plugins, answers the window's file and dialog requests with `std::fs` and rfd, plays the song's audio through kira, keeps settings in eframe's storage |
 | `plugins/stepmania`, `plugins/ttr`, `plugins/osu-mania` | ruleset plugins: typed game models over `charter-core`, each with a `Plugin` the editor checks songs and edits through |
 | `third-party/symphonia-wrap` | build-time facade over `symphonia`, read its README first |
 
@@ -129,4 +130,6 @@ native dialogs, unsaved changes are asked about before they are lost and autosav
 after a crash, and a settings window keeps its choices between runs. `charter-editor` holds that
 state without drawing it, `charter-ui` draws it in egui and never touches a file, and `charter-app`
 registers the plugins, opens the window and does its file I/O. `charter-ui`'s `mock` example is the
-static mock of the book's UI draft. No DSP crate exists yet. Ask before inventing a crate boundary.
+static mock of the book's UI draft. `charter-audio` decodes the song's audio and `charter-app` plays
+it through kira; Space plays from the cursor, and the playback rate changes the audio's speed and
+pitch, never the chart. Ask before inventing a crate boundary.

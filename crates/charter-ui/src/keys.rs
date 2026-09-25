@@ -186,6 +186,20 @@ fn command(key: Key, modifiers: Modifiers) -> Option<Action> {
             _ => None,
         };
     }
+    if modifiers.command && modifiers.shift {
+        return match key {
+            Key::ArrowRight => Some(Action::NudgeRate(0.01)),
+            Key::ArrowLeft => Some(Action::NudgeRate(-0.01)),
+            _ => None,
+        };
+    }
+    if modifiers.shift {
+        match key {
+            Key::ArrowRight => return Some(Action::NudgeRate(0.1)),
+            Key::ArrowLeft => return Some(Action::NudgeRate(-0.1)),
+            _ => {}
+        }
+    }
     if modifiers.command {
         return match key {
             Key::Plus | Key::Equals => Some(Action::ZoomBy(Zoom::STEP)),
@@ -203,6 +217,7 @@ fn command(key: Key, modifiers: Modifiers) -> Option<Action> {
         Key::PageUp => Some(Action::MoveMeasure(Step::Earlier)),
         Key::ArrowRight => Some(Action::FinerSnap),
         Key::ArrowLeft => Some(Action::CoarserSnap),
+        Key::Space => Some(Action::TogglePlay),
         Key::Home => Some(Action::JumpTo(Tick::new(0))),
         Key::End => Some(Action::JumpEnd),
         Key::F7 => Some(Action::NudgeBpm(-1.0)),

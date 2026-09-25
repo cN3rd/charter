@@ -25,7 +25,10 @@ user chooses, including which way the notefield runs and the tick and metronome 
 once charter plays audio. The inspector shows the selection but cannot change it yet. A new song
 takes its game, the layout every chart shares, its title, artist and chart names from a dialog, and
 asks for audio until an audio file is dropped on the window; saving copies that file beside the
-song.
+song. Space plays the song's audio from the cursor and pauses it, the cursor follows the playback,
+and moving the cursor while playing seeks. Shift+Left and Shift+Right, or the Playback menu, play
+slower or faster from 10% to 400%, which changes the audio's pitch with its speed and leaves the
+chart alone.
 
 ## Main window
 

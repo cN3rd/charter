@@ -7,10 +7,12 @@ edition = "2024"
 workspace = true
 
 [dependencies]
+charter-audio.workspace = true
 charter-core.workspace = true
 charter-osu-mania.workspace = true
 charter-stepmania.workspace = true
 charter-ttr.workspace = true
 charter-ui.workspace = true
 eframe = { workspace = true, features = ["persistence"] }
+kira.workspace = true
 rfd.workspace = true

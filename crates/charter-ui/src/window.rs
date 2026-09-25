@@ -13,27 +13,95 @@ use crate::settings::{self, Settings};
 use crate::{keys, panels, recovery, style};
 
 /// The extensions of the audio files a song can play.
-const AUDIO: [&str; 5] = ["ogg", "mp3", "wav", "flac", "opus"];
+const AUDIO: [&str; 4] = ["ogg", "mp3", "wav", "flac"];
 
 /// Something only the program hosting the window can do. The host answers a save through
 /// [`Window::saved`], and an open by passing the file to [`Window::open`].
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum Request {
     /// Write `bytes`, the song as it stands, to `path`.
-    Write { path: PathBuf, bytes: Vec<u8> },
+    Write {
+        path: PathBuf,
+        bytes: Vec<u8>,
+    },
     /// Ask where to save the song, suggesting the file name `name`, then write `bytes` there.
-    SaveAs { name: String, bytes: Vec<u8> },
+    SaveAs {
+        name: String,
+        bytes: Vec<u8>,
+    },
     /// Ask for a song to open.
     Open,
     /// Keep `bytes`, the song's unsaved changes, where the next run finds them, in place of any
     /// kept before. The host passes them to [`Window::recover`] when it starts, and says through
     /// [`Window::autosave_failed`] if they could not be kept.
-    Autosave { bytes: Vec<u8> },
+    Autosave {
+        bytes: Vec<u8>,
+    },
     /// Remove the kept changes: they were saved or thrown away.
     DropAutosave,
     /// Copy the song's audio from `from` to `to`, beside the song, unless a file is there. The
     /// host says through [`Window::audio_not_copied`] if it could not.
-    CopyAudio { from: PathBuf, to: PathBuf },
+    CopyAudio {
+        from: PathBuf,
+        to: PathBuf,
+    },
+    /// Play the song's audio from `from` seconds, at `rate` times its speed. The host reports
+    /// where it is through [`Window::playhead`], and says when it ends through
+    /// [`Window::playback_ended`].
+    Play {
+        from: f64,
+        rate: f64,
+    },
+    Pause,
+    /// Carry on playing from this many seconds into the audio.
+    Seek(f64),
+    /// Carry on playing at this many times the audio's speed.
+    Rate(f64),
+}
+
+/// How fast the audio plays, as a factor of its own speed. The chart is untouched by it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Rate(f64);
+
+impl Default for Rate {
+    fn default() -> Self {
+        Self(1.0)
+    }
+}
+
+impl Rate {
+    const SLOWEST: f64 = 0.1;
+    const FASTEST: f64 = 4.0;
+
+    /// This rate changed by `step`, to the nearest percent, and kept between a tenth and four
+    /// times the audio's speed, as ArrowVortex allows.
+    #[must_use]
+    pub fn by(self, step: f64) -> Self {
+        Self::of(self.0 + step)
+    }
+
+    #[must_use]
+    pub fn of(factor: f64) -> Self {
+        let percent = (factor * 100.0).round() / 100.0;
+        Self(percent.clamp(Self::SLOWEST, Self::FASTEST))
+    }
+
+    #[must_use]
+    pub fn factor(self) -> f64 {
+        self.0
+    }
+
+    #[must_use]
+    pub fn percent(self) -> f64 {
+        (self.0 * 100.0).round()
+    }
+}
+
+/// How the audio the song wants stands with the host.
+#[derive(Debug, PartialEq)]
+enum Loaded {
+    Ready,
+    Failed,
 }
 
 /// How a save the window asked for went.
@@ -155,6 +223,12 @@ pub(crate) enum Action {
     Settings,
     /// Shows the dialog that starts a song.
     NewSong,
+    /// Plays the audio from the cursor, or pauses it.
+    TogglePlay,
+    /// Makes the audio play this much faster, or slower when negative.
+    NudgeRate(f64),
+    /// Makes the audio play at this factor of its speed.
+    SetRate(f64),
     /// Makes the tempo from the cursor on this.
     SetBpm(charter_core::Bpm),
     /// Removes the BPM change at the cursor.
@@ -233,6 +307,11 @@ pub struct Window {
     section_draft: Option<String>,
     /// Whether the keyboard shortcuts are showing.
     help_open: bool,
+    /// The audio file the host last reported on, and how it went.
+    audio: Option<(PathBuf, Loaded)>,
+    /// Whether the audio is playing.
+    playing: bool,
+    rate: Rate,
     /// The audio file dropped on the song, which is copied beside the song when it is saved
     /// elsewhere.
     audio_file: Option<PathBuf>,
@@ -303,6 +382,95 @@ impl Window {
                 ));
                 self.drop_autosave();
             }
+        }
+    }
+
+    /// The audio file the open song plays: the one dropped on it while the song still names
+    /// it, or else the file the song names beside the song's own. None for a song without a
+    /// file or without audio. A host loads it whenever it changes, and says how that went
+    /// through [`Window::audio_ready`] or [`Window::audio_failed`].
+    #[must_use]
+    pub fn audio_file(&self) -> Option<PathBuf> {
+        let song = self.song.as_ref()?;
+        let audio = song.document().document().metadata.audio.as_str();
+        if audio == NO_AUDIO {
+            return None;
+        }
+        let dropped = self.audio_file.as_ref().filter(|file| {
+            file.file_name()
+                .is_some_and(|name| name.to_str() == Some(audio))
+        });
+        dropped.cloned().or_else(|| {
+            let folder = self.path.as_ref()?.parent()?;
+            Some(folder.join(audio))
+        })
+    }
+
+    /// Takes that `file`, `seconds` long, is ready to play.
+    pub fn audio_ready(&mut self, file: &Path, seconds: f64) {
+        let _ = seconds;
+        self.audio = Some((file.to_path_buf(), Loaded::Ready));
+    }
+
+    /// Takes that `file` could not be loaded, and why.
+    pub fn audio_failed(&mut self, file: &Path, why: &str) {
+        self.audio = Some((file.to_path_buf(), Loaded::Failed));
+        self.failure = Some(format!("{} cannot play: {why}", file.display()));
+    }
+
+    /// Takes where playback has got to, in seconds into the audio, and puts the cursor there.
+    pub fn playhead(&mut self, seconds: f64) {
+        if !self.playing {
+            return;
+        }
+        if let Some(song) = &mut self.song {
+            let tick = notefield::latest_tick_by(song.timing(), seconds);
+            song.jump_to(tick);
+        }
+    }
+
+    /// Takes that the audio played to its end.
+    pub fn playback_ended(&mut self) {
+        self.playing = false;
+    }
+
+    /// How the audio the song wants stands, if the host has said.
+    fn loaded(&self) -> Option<&Loaded> {
+        let wanted = self.audio_file()?;
+        self.audio
+            .as_ref()
+            .filter(|(file, _)| *file == wanted)
+            .map(|(_, loaded)| loaded)
+    }
+
+    /// Plays the audio from the cursor, or pauses it, or says why it cannot play.
+    fn toggle_play(&mut self) {
+        if std::mem::take(&mut self.playing) {
+            self.requests.push(Request::Pause);
+            return;
+        }
+        let Some(song) = &self.song else {
+            return;
+        };
+        let from = song.timing().time_at(song.cursor()).seconds();
+        match self.loaded() {
+            Some(Loaded::Ready) => {
+                self.playing = true;
+                let rate = self.rate.factor();
+                self.requests.push(Request::Play { from, rate });
+            }
+            Some(Loaded::Failed) => {}
+            None if self.audio_file().is_none() => {
+                self.failure = Some("This song has no audio to play yet.".to_owned());
+            }
+            None => self.failure = Some("The audio is still loading.".to_owned()),
+        }
+    }
+
+    fn set_rate(&mut self, rate: Rate) {
+        self.rate = rate;
+        if self.playing {
+            self.requests.push(Request::Rate(rate.factor()));
         }
     }
 
@@ -544,6 +712,9 @@ impl Window {
                 self.placed = false;
                 self.holding.clear();
                 self.audio_file = None;
+                if std::mem::take(&mut self.playing) {
+                    self.requests.push(Request::Pause);
+                }
             }
         }
     }
@@ -572,6 +743,9 @@ impl Window {
             Action::SaveAs => self.saving = Some(Saving::Elsewhere),
             Action::Settings => self.settings_open = !self.settings_open,
             Action::Help => self.help_open = !self.help_open,
+            Action::TogglePlay => self.toggle_play(),
+            Action::NudgeRate(step) => self.set_rate(self.rate.by(step)),
+            Action::SetRate(factor) => self.set_rate(Rate::of(factor)),
             Action::NewSong => {
                 self.new_song.get_or_insert_default();
             }
@@ -638,6 +812,9 @@ impl Window {
             | Action::SaveAs
             | Action::Settings
             | Action::Help
+            | Action::TogglePlay
+            | Action::NudgeRate(_)
+            | Action::SetRate(_)
             | Action::NewSong
             | Action::Select(None, Selecting::Add | Selecting::Subtract) => {}
             Action::SelectBetween { ticks, lanes, how } => {
@@ -746,9 +923,10 @@ impl Window {
         self.open_dropped(ui);
         let mut actions = self.keyboard(ui);
         let song = self.song.as_ref();
-        egui::Panel::top("menu").show(ui, |ui| panels::menu_bar(ui, song, &mut actions));
+        let playing = self.playing;
+        egui::Panel::top("menu").show(ui, |ui| panels::menu_bar(ui, song, playing, &mut actions));
         egui::Panel::bottom("status").show(ui, |ui| {
-            panels::status_bar(ui, self.song.as_ref(), self.zoom);
+            panels::status_bar(ui, self.song.as_ref(), self.zoom, self.rate, self.playing);
         });
         if let Some(song) = &self.song {
             let (bpm, section) = (&mut self.bpm_draft, &mut self.section_draft);
@@ -795,8 +973,16 @@ impl Window {
         });
         settings::show(ui.ctx(), &mut self.settings, &mut self.settings_open);
         panels::shortcuts(ui.ctx(), &mut self.help_open);
+        let before = self.song.as_ref().map(Song::cursor);
         for action in actions {
             self.apply(action);
+        }
+        if self.playing
+            && let Some(song) = &self.song
+            && Some(song.cursor()) != before
+        {
+            let to = song.timing().time_at(song.cursor()).seconds();
+            self.requests.push(Request::Seek(to));
         }
         if let Some(saving) = self.saving.take() {
             self.save(saving);
@@ -2072,6 +2258,156 @@ mod tests {
         harness.key_press(egui::Key::F1);
         harness.run();
         assert!(!shown(&harness));
+    }
+
+    fn four_taps_at(path: &str) -> Harness<'static, Window> {
+        let mut app = Window::new(PLUGINS);
+        app.open(Path::new(path), &four_taps());
+        window(app)
+    }
+
+    /// Four taps whose audio the host has loaded.
+    fn playable() -> Harness<'static, Window> {
+        let mut harness = four_taps_at("/songs/four.json");
+        harness
+            .state_mut()
+            .audio_ready(Path::new("/songs/a.ogg"), 60.0);
+        harness.run();
+        harness
+    }
+
+    fn space(harness: &mut Harness<'_, Window>) {
+        harness.key_press(egui::Key::Space);
+        harness.run();
+    }
+
+    #[test]
+    fn a_song_from_a_file_wants_the_audio_beside_it() {
+        let harness = four_taps_at("/songs/four.json");
+        assert_eq!(
+            harness.state().audio_file(),
+            Some(PathBuf::from("/songs/a.ogg"))
+        );
+    }
+
+    #[test]
+    fn a_new_song_wants_no_audio_until_some_is_dropped_on_it() {
+        let mut harness = created();
+        assert_eq!(harness.state().audio_file(), None);
+        drop_file(&mut harness, "/music/track.ogg");
+        assert_eq!(
+            harness.state().audio_file(),
+            Some(PathBuf::from("/music/track.ogg"))
+        );
+    }
+
+    #[test]
+    fn space_plays_from_the_cursor_and_pauses() {
+        let mut harness = playable();
+        harness.key_press(egui::Key::ArrowDown);
+        harness.run();
+        space(&mut harness);
+        let Request::Play { from, rate } = request(&mut harness) else {
+            panic!("expected play");
+        };
+        assert!((from - 0.125).abs() < 1e-9, "{from}");
+        assert!((rate - 1.0).abs() < f64::EPSILON);
+        space(&mut harness);
+        assert_eq!(request(&mut harness), Request::Pause);
+    }
+
+    #[test]
+    fn space_before_the_audio_is_ready_says_so() {
+        let mut harness = four_taps_at("/songs/four.json");
+        space(&mut harness);
+        assert_eq!(harness.state_mut().take_requests(), []);
+        assert!(harness.query_by_label_contains("still loading").is_some());
+    }
+
+    #[test]
+    fn audio_that_failed_to_load_says_why_and_does_not_play() {
+        let mut harness = four_taps_at("/songs/four.json");
+        harness
+            .state_mut()
+            .audio_failed(Path::new("/songs/a.ogg"), "no such file");
+        harness.run();
+        assert!(harness.query_by_label_contains("no such file").is_some());
+        space(&mut harness);
+        assert_eq!(harness.state_mut().take_requests(), []);
+    }
+
+    #[test]
+    fn the_cursor_follows_the_playhead() {
+        let mut harness = playable();
+        space(&mut harness);
+        harness.state_mut().take_requests();
+        harness.state_mut().playhead(0.5);
+        harness.run();
+        assert!(cursor_shows(&harness, "0:1:0"));
+        assert_eq!(harness.state_mut().take_requests(), []);
+    }
+
+    #[test]
+    fn moving_the_cursor_while_playing_seeks_there() {
+        let mut harness = playable();
+        space(&mut harness);
+        harness.state_mut().take_requests();
+        harness.key_press(egui::Key::PageDown);
+        harness.run();
+        let Request::Seek(to) = request(&mut harness) else {
+            panic!("expected a seek");
+        };
+        assert!((to - 2.0).abs() < 1e-9, "{to}");
+    }
+
+    #[test]
+    fn playback_that_ends_stops() {
+        let mut harness = playable();
+        space(&mut harness);
+        harness.state_mut().take_requests();
+        harness.state_mut().playback_ended();
+        harness.run();
+        space(&mut harness);
+        assert!(matches!(request(&mut harness), Request::Play { .. }));
+    }
+
+    #[test]
+    fn shift_left_and_right_change_the_playback_rate_without_touching_the_chart() {
+        let mut harness = playable();
+        let before = harness.state().song.as_ref().unwrap().document().clone();
+        space(&mut harness);
+        harness.state_mut().take_requests();
+        harness.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::ArrowLeft);
+        harness.run();
+        let Request::Rate(rate) = request(&mut harness) else {
+            panic!("expected a rate");
+        };
+        assert!((rate - 0.9).abs() < 1e-9, "{rate}");
+        assert!(harness.query_by_label("Rate 90%").is_some());
+        let command = egui::Modifiers::COMMAND.plus(egui::Modifiers::SHIFT);
+        harness.key_press_modifiers(command, egui::Key::ArrowRight);
+        harness.run();
+        let Request::Rate(rate) = request(&mut harness) else {
+            panic!("expected a rate");
+        };
+        assert!((rate - 0.91).abs() < 1e-9, "{rate}");
+        let after = harness.state().song.as_ref().unwrap().document();
+        assert_eq!(after.document(), before.document());
+    }
+
+    #[test]
+    fn the_playback_rate_stays_between_a_tenth_and_four_times() {
+        let mut harness = playable();
+        for _ in 0..40 {
+            harness.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::ArrowLeft);
+        }
+        harness.run();
+        assert!(harness.query_by_label("Rate 10%").is_some());
+        space(&mut harness);
+        let Request::Play { rate, .. } = request(&mut harness) else {
+            panic!("expected play");
+        };
+        assert!((rate - 0.1).abs() < 1e-9, "{rate}");
     }
 
     #[test]
