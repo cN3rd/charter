@@ -487,6 +487,12 @@ impl Song {
         self.remark(new)
     }
 
+    /// Whether a note of the open chart starts at `tick` on `lane`.
+    #[must_use]
+    pub fn starts_at(&self, tick: Tick, lane: LaneIndex) -> bool {
+        self.starting(tick, lane).is_some()
+    }
+
     /// The object of the open chart that starts at `tick` and covers `lane`, and where it is.
     fn starting(&self, tick: Tick, lane: LaneIndex) -> Option<(usize, &Object)> {
         let objects = &self.document.document().charts.get(self.chart)?.objects;
@@ -1633,6 +1639,32 @@ mod tests {
         );
         song.toggle_bookmark().unwrap();
         assert_eq!(markers(&song), json!([marker(0, "section", "A")]));
+    }
+
+    #[test]
+    fn before_the_first_bpm_change_that_change_is_in_effect() {
+        let song = timed(&json!([bpm_event(480, 90.0)]), None);
+        assert_eq!(song.cursor(), Tick::new(0));
+        assert_eq!(song.bpm(), Some((Tick::new(480), tempo(90.0))));
+    }
+
+    #[test]
+    fn a_note_starts_where_its_head_is_on_any_lane_it_covers() {
+        let wide = json!({ "tick": 240, "position": { "lane": { "index": 1, "width": 2 } },
+                           "kind": "tap", "shape": "instant" });
+        let song = Song::new(document(json!([wide])), EDITABLE);
+        assert!(song.starts_at(at(240), lane(1)));
+        assert!(song.starts_at(at(240), lane(2)));
+        assert!(!song.starts_at(at(240), lane(3)));
+        assert!(!song.starts_at(at(0), lane(1)));
+    }
+
+    #[test]
+    fn removing_a_marker_past_the_end_changes_nothing() {
+        let mut song = marked(&json!([marker(0, "section", "A")]));
+        song.remove_marker(usize::MAX).unwrap();
+        assert!(!song.can_undo());
+        assert!(!song.is_modified());
     }
 
     #[test]

@@ -111,6 +111,16 @@ mod tests {
     }
 
     #[test]
+    fn tones_at_no_real_time_are_left_out() {
+        let silence = Track::silence(8000, 800);
+        let mixed = mix(
+            &silence,
+            &[(f64::NAN, Tone::Click), (f64::INFINITY, Tone::Beep)],
+        );
+        assert!(loudest(mixed.frames()) < f32::EPSILON);
+    }
+
+    #[test]
     fn a_tone_mixed_over_loud_audio_stays_within_range() {
         let loud = Track::from_frames(1000, vec![[0.95, -0.95]; 200]);
         let mixed = mix(&loud, &[(0.0, Tone::Beep)]);

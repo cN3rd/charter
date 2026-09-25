@@ -185,4 +185,15 @@ mod tests {
         let refused = Track::decode(b"not audio at all".to_vec(), Some("ogg")).unwrap_err();
         assert!(matches!(refused, DecodeError::Unreadable(_)));
     }
+
+    #[test]
+    fn frames_at_a_rate_of_zero_are_taken_as_cd_audio() {
+        assert_eq!(Track::from_frames(0, Vec::new()).rate().get(), 44_100);
+    }
+
+    #[test]
+    fn a_file_named_without_an_extension_still_decodes() {
+        let track = Track::decode(wav(8000, 1, &[0, 0]), None).unwrap();
+        assert_eq!(track.frames().len(), 2);
+    }
 }
