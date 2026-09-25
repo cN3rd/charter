@@ -6,7 +6,8 @@
 //! [`Song`] is the typed view of a document whose ruleset is [`ID`]. Reading one fails on
 //! anything osu!mania cannot represent and skips data other plugins left behind;
 //! [`Song::to_document`] writes this ruleset's data alone. A song is checked when built, by
-//! reading or by [`Song::new`], so writing one cannot fail.
+//! reading or by [`Song::new`], so writing one cannot fail. [`Plugin`] hands the editor the same
+//! check, so a document is editable only while it reads as a song.
 
 use std::collections::BTreeMap;
 use std::num::NonZeroU16;
@@ -14,8 +15,8 @@ use std::num::NonZeroU16;
 use charter_core::{
     Bpm, Chart as CoreChart, Decimal, Document, Extensions, FORMAT_VERSION, InvalidValue, Key,
     Kind, LaneCount, LaneIndex, Location, Marker, MarkerKind, Metadata, Name, Namespace, Object,
-    Origin, Position, ResourcePath, Ruleset, SampleId, Settings, Shape, Stream, Tick, Ticks,
-    TicksPerBeat, TimeSignature, Timing as CoreTiming, TimingEvent as CoreEvent,
+    Origin, Position, ResourcePath, Ruleset, RulesetPlugin, SampleId, Settings, Shape, Stream,
+    Tick, Ticks, TicksPerBeat, TimeSignature, Timing as CoreTiming, TimingEvent as CoreEvent,
     TimingKind as CoreKind, ValidDocument,
 };
 use serde::{Deserialize, Serialize};
@@ -487,6 +488,24 @@ impl TryFrom<&ValidDocument> for Song {
     }
 }
 
+/// This ruleset for the editor, which checks a document by reading it as a [`Song`].
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Plugin;
+
+impl RulesetPlugin for Plugin {
+    fn id(&self) -> &str {
+        ID
+    }
+
+    fn check(
+        &self,
+        document: &ValidDocument,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Song::try_from(document)?;
+        Ok(())
+    }
+}
+
 fn read_chart(chart: &CoreChart, c: usize) -> Result<Chart, Error> {
     reject_own_keys(&chart.ext, Location::ChartExt(c))?;
     let keys = chart.lanes.and_then(Keys::of).ok_or(Error::Keys {
@@ -657,6 +676,22 @@ mod tests {
         let mut value = document(objects);
         value["ruleset"]["version"] = json!(VERSION);
         value
+    }
+
+    #[test]
+    fn the_plugin_names_its_ruleset_and_checks_documents_as_reading_does() {
+        let valid =
+            |value: &Value| ValidDocument::from_json(&serde_json::to_vec(value).unwrap()).unwrap();
+        assert_eq!(Plugin.id(), ID);
+        let song = valid(&document(json!([tap(0, 3)])));
+        assert!(Plugin.check(&song).is_ok());
+        let plane = json!([{ "tick": 0, "position": { "plane": { "x": 0.5, "y": 0.5 } },
+                             "kind": "tap", "shape": "instant" }]);
+        let not_a_song = valid(&document(plane));
+        assert_eq!(
+            Plugin.check(&not_a_song).unwrap_err().to_string(),
+            Song::try_from(&not_a_song).unwrap_err().to_string()
+        );
     }
 
     #[test]

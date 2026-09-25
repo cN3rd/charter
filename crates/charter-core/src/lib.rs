@@ -1,5 +1,6 @@
-//! Charter's chart format: the data model from the book's format chapter, its JSON form, and the
-//! validation that turns bytes into a valid document.
+//! Charter's chart format: the data model from the book's format chapter, its JSON form, the
+//! validation that turns bytes into a valid document, and [`RulesetPlugin`], which a ruleset
+//! plugin implements so the editor can check documents against its game.
 
 mod document;
 mod error;
@@ -8,6 +9,7 @@ mod ident;
 mod json;
 mod number;
 mod path;
+mod plugin;
 mod timing;
 mod unit;
 mod validate;
@@ -23,6 +25,7 @@ pub use ident::{Ease, Key, Kind, MarkerKind, Name, Namespace};
 pub use json::{MAX_DOCUMENT_BYTES, Valid, ValidDocument};
 pub use number::Decimal;
 pub use path::ResourcePath;
+pub use plugin::RulesetPlugin;
 
 /// Property tests run from a fixed seed and keep no regression files, so they repeat exactly
 /// and touch no files.
