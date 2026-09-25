@@ -356,6 +356,43 @@ impl Song {
         self.retime(own, new)
     }
 
+    /// Moves the event at `index` of the timing tempo edits go to onto `to`, among the events
+    /// there, as one step. Does nothing when there is no such event or it is already there.
+    ///
+    /// # Errors
+    ///
+    /// Refuses on a read-only song, and when an event of its kind is already at `to`.
+    pub fn move_timing(&mut self, index: usize, to: Tick) -> Result<(), Refusal> {
+        let (own, timing) = self.edited_timing();
+        let mut new = timing.clone();
+        if new.events.get(index).is_none_or(|event| event.tick == to) {
+            return Ok(());
+        }
+        let mut event = new.events.remove(index);
+        event.tick = to;
+        let at = new.events.partition_point(|event| event.tick <= to);
+        new.events.insert(at, event);
+        self.retime(own, new)
+    }
+
+    /// Moves the song's marker at `index` onto `to`, among the markers there, as one step. Does
+    /// nothing when there is no such marker or it is already there.
+    ///
+    /// # Errors
+    ///
+    /// Refuses on a read-only song, and when a marker of its kind is already at `to`.
+    pub fn move_marker(&mut self, index: usize, to: Tick) -> Result<(), Refusal> {
+        let mut new = self.document.document().markers.clone();
+        if new.get(index).is_none_or(|marker| marker.tick == to) {
+            return Ok(());
+        }
+        let mut marker = new.remove(index);
+        marker.tick = to;
+        let at = new.partition_point(|marker| marker.tick <= to);
+        new.insert(at, marker);
+        self.remark(new)
+    }
+
     /// Gives the timing tempo edits go to the events of `new`, as one step.
     fn retime(&mut self, own: bool, new: charter_core::Timing) -> Result<(), Refusal> {
         let (_, old) = self.edited_timing();
@@ -1665,6 +1702,80 @@ mod tests {
         song.remove_marker(usize::MAX).unwrap();
         assert!(!song.can_undo());
         assert!(!song.is_modified());
+    }
+
+    #[test]
+    fn a_timing_event_moved_lands_in_order_and_undo_puts_it_back() {
+        let meter = json!({ "tick": 960, "kind": { "time_signature": [3, 4] } });
+        let mut song = timed(
+            &json!([bpm_event(0, 120.0), bpm_event(480, 150.0), meter.clone()]),
+            None,
+        );
+        song.move_timing(1, Tick::new(1920)).unwrap();
+        assert_eq!(
+            song_events(&song),
+            json!([bpm_event(0, 120.0), meter, bpm_event(1920, 150.0)])
+        );
+        song.undo().unwrap();
+        assert_eq!(song_events(&song)[1], bpm_event(480, 150.0));
+    }
+
+    #[test]
+    fn a_bpm_change_moved_onto_another_is_refused() {
+        let mut song = timed(&json!([bpm_event(0, 120.0), bpm_event(480, 150.0)]), None);
+        assert!(song.move_timing(1, Tick::new(0)).is_err());
+        assert_eq!(song_events(&song)[1], bpm_event(480, 150.0));
+    }
+
+    #[test]
+    fn moving_a_timing_event_to_where_it_is_or_one_not_there_changes_nothing() {
+        let mut song = timed(&json!([bpm_event(0, 120.0)]), None);
+        song.move_timing(0, Tick::new(0)).unwrap();
+        song.move_timing(7, Tick::new(480)).unwrap();
+        assert!(!song.can_undo());
+    }
+
+    #[test]
+    fn a_chart_with_its_own_timing_moves_its_own_events() {
+        let own = json!([bpm_event(0, 100.0), bpm_event(480, 90.0)]);
+        let mut song = timed(&json!([bpm_event(0, 120.0)]), Some(&own));
+        song.open_chart(1);
+        song.move_timing(1, Tick::new(960)).unwrap();
+        assert_eq!(song_events(&song), json!([bpm_event(0, 120.0)]));
+        let chart = &song.document().document().charts[1];
+        let events = serde_json::to_value(&chart.timing.as_ref().unwrap().events).unwrap();
+        assert_eq!(events[1], bpm_event(960, 90.0));
+    }
+
+    #[test]
+    fn a_marker_moved_lands_in_order_and_undo_puts_it_back() {
+        let mut song = marked(&json!([
+            marker(0, "section", "A"),
+            marker(480, "section", "B")
+        ]));
+        song.move_marker(0, Tick::new(960)).unwrap();
+        assert_eq!(
+            markers(&song),
+            json!([marker(480, "section", "B"), marker(960, "section", "A")])
+        );
+        song.undo().unwrap();
+        assert_eq!(markers(&song)[0], marker(0, "section", "A"));
+    }
+
+    #[test]
+    fn a_read_only_song_refuses_to_move_handles() {
+        let document = marked(&json!([marker(0, "section", "A")]))
+            .document()
+            .clone();
+        let mut song = Song::new(document, &[]);
+        assert!(matches!(
+            song.move_marker(0, Tick::new(480)),
+            Err(Refusal::ReadOnly)
+        ));
+        assert!(matches!(
+            song.move_timing(0, Tick::new(480)),
+            Err(Refusal::ReadOnly)
+        ));
     }
 
     #[test]
