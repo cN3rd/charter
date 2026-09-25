@@ -38,10 +38,12 @@ transport toolbar under the menus with a large position readout and grouped temp
 zoom controls, collapsible sections in the side panels, the notefield in a dark well, one blue
 accent for selection and primary actions, Inter for text and Phosphor for icons, bundled under
 `crates/charter-ui/assets/fonts` with Inter's OFL licence; messages float over the canvas rather
-than moving it. In the notefield, BPM and other timing changes drag along the timing column and
-markers along the ruler to another snap line, each as one step, with a guide where they will land;
-the song's first BPM change stays put. The cursor's handle on the ruler drags to scrub, and seeks
-while playing.
+than moving it. The settings window has a sidebar of pages, Editing, Display, Sounds and Autosave,
+each setting with a line on what it does and on and off choices as switches; the new-song dialog
+picks the game from a segmented control and sketches the layout's lanes. In the notefield, BPM and
+other timing changes drag along the timing column and markers along the ruler to another snap line,
+each as one step, with a guide where they will land; the song's first BPM change stays put. The
+cursor's handle on the ruler drags to scrub, and seeks while playing.
 
 ## Main window
 

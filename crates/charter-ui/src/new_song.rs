@@ -2,7 +2,9 @@
 //! and artist, and the names of its charts.
 
 use charter_core::{Extensions, Metadata, NewSong, ResourcePath, RulesetPlugin};
-use egui::Ui;
+use egui::{RichText, Ui};
+
+use crate::style;
 
 /// The audio a new song names until the user drops a file on it.
 pub const NO_AUDIO: &str = "no-audio-yet";
@@ -75,26 +77,17 @@ pub fn games(plugins: &[&'static dyn RulesetPlugin]) -> Vec<&'static dyn Ruleset
         .collect()
 }
 
-/// Shows the dialog over the window. Escape or a click outside cancels.
+/// Shows the dialog over the window: the game, the layout every chart shares with a sketch of
+/// its lanes, the title and artist, the charts, and the audio still to come. Escape or a click
+/// outside cancels.
 pub fn show(ui: &Ui, plugins: &[&'static dyn RulesetPlugin], draft: &mut Draft) -> Option<Answer> {
     let games = games(plugins);
     let mut answer = None;
     let modal = egui::Modal::new(egui::Id::new("new song")).show(ui.ctx(), |ui| {
-        ui.set_width(380.0);
-        ui.heading("New song");
-        ui.add_space(8.0);
-        ui.horizontal_wrapped(|ui| {
-            for (index, game) in games.iter().enumerate() {
-                if ui
-                    .selectable_label(draft.game == index, game.name())
-                    .clicked()
-                    && draft.game != index
-                {
-                    draft.game = index;
-                    draft.layout = 0;
-                }
-            }
-        });
+        ui.set_width(WIDTH);
+        ui.label(RichText::new("New song").family(style::titles(ui)).size(18.0));
+        ui.weak("Pick the game and how its charts are laid out. Charts start empty.");
+        ui.add_space(14.0);
         let Some(&game) = games.get(draft.game) else {
             ui.label("No ruleset plugin can start songs.");
             if ui.button("Cancel").clicked() {
@@ -102,67 +95,68 @@ pub fn show(ui: &Ui, plugins: &[&'static dyn RulesetPlugin], draft: &mut Draft) 
             }
             return;
         };
+        choose_game(ui, &games, draft);
+        ui.add_space(12.0);
         let layouts = game.layouts();
-        ui.add_space(8.0);
         egui::Grid::new("new song fields")
             .num_columns(2)
-            .spacing([12.0, 6.0])
+            .min_col_width(CAPTION_W)
+            .spacing([12.0, 8.0])
             .show(ui, |ui| {
                 let caption = ui.weak(game.layout_kind());
-                let chosen = layouts.get(draft.layout).map(|layout| layout.name.as_str());
-                egui::ComboBox::from_id_salt("layout")
-                    .selected_text(chosen.unwrap_or_default())
-                    .show_ui(ui, |ui| {
-                        for (index, layout) in layouts.iter().enumerate() {
-                            ui.selectable_value(&mut draft.layout, index, &layout.name);
-                        }
-                    })
-                    .response
-                    .labelled_by(caption.id);
+                ui.horizontal(|ui| {
+                    let chosen = layouts.get(draft.layout).map(|layout| layout.name.as_str());
+                    egui::ComboBox::from_id_salt("layout")
+                        .selected_text(chosen.unwrap_or_default())
+                        .width(170.0)
+                        .show_ui(ui, |ui| {
+                            for (index, layout) in layouts.iter().enumerate() {
+                                ui.selectable_value(&mut draft.layout, index, &layout.name);
+                            }
+                        })
+                        .response
+                        .labelled_by(caption.id);
+                    if let Some(layout) = layouts.get(draft.layout) {
+                        let counted = layout.name.contains("lane");
+                        lanes(ui, layout.lanes.into(), !counted);
+                    }
+                });
                 ui.end_row();
                 for (label, text, blank) in [
                     ("Title", &mut draft.title, "Untitled"),
                     ("Artist", &mut draft.artist, "Unknown artist"),
                 ] {
                     let caption = ui.weak(label);
-                    ui.add(egui::TextEdit::singleline(text).hint_text(blank))
-                        .labelled_by(caption.id);
+                    let field = egui::TextEdit::singleline(text)
+                        .hint_text(blank)
+                        .desired_width(WIDTH - CAPTION_W - 12.0);
+                    ui.add(field).labelled_by(caption.id);
                     ui.end_row();
                 }
             });
-        ui.add_space(8.0);
-        ui.weak("Charts, each with every lane of the layout");
-        let mut removed = None;
-        for (index, name) in draft.charts.iter_mut().enumerate() {
-            ui.horizontal(|ui| {
-                let caption = ui.weak(format!("Chart {}", index + 1));
-                ui.text_edit_singleline(name).labelled_by(caption.id);
-                let remove = crate::style::quiet_icon(
-                    ui,
-                    crate::style::icon::X,
-                    &format!("Remove {name}"),
-                    "Remove this chart",
-                );
-                if remove.clicked() {
-                    removed = Some(index);
-                }
-            });
-        }
-        if let Some(index) = removed {
-            draft.charts.remove(index);
-        }
-        if crate::style::icon_button(ui, crate::style::icon::PLUS, "Add a chart", false).clicked() {
-            draft
-                .charts
-                .push(format!("Chart {}", draft.charts.len() + 1));
-        }
-        ui.add_space(8.0);
-        ui.weak("Once the song is open, drop its audio file on the window, or choose it there.");
+        ui.add_space(12.0);
+        charts(ui, draft);
+        ui.add_space(14.0);
+        ui.separator();
         ui.add_space(8.0);
         ui.horizontal(|ui| {
+            ui.label(style::glyph(ui, style::icon::MUSIC_NOTES).color(style::WEAK_TEXT));
+            ui.add(
+                egui::Label::new(
+                    RichText::new(
+                        "Once the song is open, drop its audio file on the window, or choose it there.",
+                    )
+                    .small()
+                    .color(style::WEAK_TEXT),
+                )
+                .wrap(),
+            );
+        });
+        ui.add_space(10.0);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let song = draft.song();
             if ui
-                .add_enabled(song.is_some(), crate::style::primary("Create"))
+                .add_enabled(song.is_some(), style::primary("Create"))
                 .clicked()
                 && let Some(song) = song
             {
@@ -174,6 +168,100 @@ pub fn show(ui: &Ui, plugins: &[&'static dyn RulesetPlugin], draft: &mut Draft) 
         });
     });
     answer.or(modal.should_close().then_some(Answer::Cancel))
+}
+
+/// How wide the dialog and its captions are.
+const WIDTH: f32 = 500.0;
+const CAPTION_W: f32 = 64.0;
+
+/// The games, side by side as one segmented control, the one chosen in the accent.
+fn choose_game(ui: &mut Ui, games: &[&'static dyn RulesetPlugin], draft: &mut Draft) {
+    egui::Frame::new()
+        .fill(style::WELL)
+        .corner_radius(8)
+        .inner_margin(egui::Margin::same(3))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 3.0;
+                #[allow(clippy::cast_precision_loss)] // a handful of games
+                let each = (WIDTH - 6.0 - 3.0 * (games.len() as f32 - 1.0)) / games.len() as f32;
+                for (index, game) in games.iter().enumerate() {
+                    let chosen = draft.game == index;
+                    let text = RichText::new(game.name());
+                    let text = if chosen {
+                        text.color(egui::Color32::WHITE)
+                    } else {
+                        text
+                    };
+                    let segment = egui::Button::new(text)
+                        .fill(if chosen {
+                            style::ACCENT_FILL
+                        } else {
+                            egui::Color32::TRANSPARENT
+                        })
+                        .frame_when_inactive(chosen)
+                        .min_size(egui::vec2(each, 28.0));
+                    if ui.add(segment).clicked() && !chosen {
+                        draft.game = index;
+                        draft.layout = 0;
+                    }
+                }
+            });
+        });
+}
+
+/// A sketch of `count` lanes side by side, and how many there are when `say` is set.
+fn lanes(ui: &mut Ui, count: u16, say: bool) {
+    let shown = count.min(20);
+    let (lane, gap) = (7.0, 2.0);
+    let width = f32::from(shown) * (lane + gap);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 20.0), egui::Sense::hover());
+    for index in 0..shown {
+        let left = rect.left() + f32::from(index) * (lane + gap);
+        let column =
+            egui::Rect::from_min_size(egui::pos2(left, rect.top()), egui::vec2(lane, 20.0));
+        ui.painter().rect_filled(column, 2.0, style::HOLD);
+    }
+    if say {
+        let noun = if count == 1 { "lane" } else { "lanes" };
+        ui.weak(format!("{count} {noun}"));
+    }
+}
+
+/// The charts to start, each a name that can change or go, and a way to add another.
+fn charts(ui: &mut Ui, draft: &mut Draft) {
+    ui.label(style::title(ui, "Charts"));
+    ui.weak("Each gets every lane of the layout.");
+    ui.add_space(6.0);
+    let mut removed = None;
+    for (index, name) in draft.charts.iter_mut().enumerate() {
+        ui.horizontal(|ui| {
+            let caption = ui.label(
+                RichText::new(format!("Chart {}", index + 1))
+                    .small()
+                    .color(style::WEAK_TEXT),
+            );
+            let field = egui::TextEdit::singleline(name).desired_width(WIDTH - CAPTION_W - 44.0);
+            ui.add(field).labelled_by(caption.id);
+            let remove = style::quiet_icon(
+                ui,
+                style::icon::X,
+                &format!("Remove {name}"),
+                "Remove this chart",
+            );
+            if remove.clicked() {
+                removed = Some(index);
+            }
+        });
+    }
+    if let Some(index) = removed {
+        draft.charts.remove(index);
+    }
+    if style::icon_button(ui, style::icon::PLUS, "Add a chart", false).clicked() {
+        draft
+            .charts
+            .push(format!("Chart {}", draft.charts.len() + 1));
+    }
 }
 
 #[cfg(test)]
