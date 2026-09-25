@@ -2128,6 +2128,40 @@ mod tests {
         assert!(!asks_to_save(&harness));
     }
 
+    /// Shows the settings page named `name`.
+    fn settings_page(harness: &mut Harness<'_, Window>, name: &str) {
+        harness.get_by_label(name).click();
+        harness.run();
+    }
+
+    #[test]
+    fn the_settings_window_shows_one_page_at_a_time_starting_with_editing() {
+        let mut harness = editable_demo();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Comma);
+        harness.run();
+        assert!(
+            harness
+                .query_by_role_and_label(Role::CheckBox, "Move on a snap after placing a note")
+                .is_some()
+        );
+        assert!(
+            harness
+                .query_by_role_and_label(Role::ComboBox, "Notefield")
+                .is_none()
+        );
+        settings_page(&mut harness, "Display");
+        assert!(
+            harness
+                .query_by_role_and_label(Role::CheckBox, "Move on a snap after placing a note")
+                .is_none()
+        );
+        assert!(
+            harness
+                .query_by_role_and_label(Role::ComboBox, "Notefield")
+                .is_some()
+        );
+    }
+
     #[test]
     fn the_settings_window_opens_from_the_file_menu_and_with_ctrl_comma() {
         let mut harness = editable_demo();
@@ -2146,6 +2180,7 @@ mod tests {
         let mut harness = editable_demo();
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Comma);
         harness.run();
+        settings_page(&mut harness, "Display");
         harness
             .get_by_role_and_label(Role::ComboBox, "Notefield")
             .click();
@@ -2155,6 +2190,7 @@ mod tests {
             .click();
         harness.run();
         assert_eq!(harness.state().settings().direction, Direction::Left);
+        settings_page(&mut harness, "Sounds");
         harness
             .get_by_role_and_label(Role::ComboBox, "Metronome")
             .click();
@@ -3064,7 +3100,7 @@ mod tests {
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Comma);
         harness.run();
         harness
-            .get_by_label("Move on a snap after placing a note")
+            .get_by_role_and_label(Role::CheckBox, "Move on a snap after placing a note")
             .click();
         harness.run();
         assert!(!harness.state().settings().auto_jump);
@@ -3238,7 +3274,10 @@ mod tests {
         let mut harness = editable_demo();
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Comma);
         harness.run();
-        harness.get_by_label("Autosave unsaved changes").click();
+        settings_page(&mut harness, "Autosave");
+        harness
+            .get_by_role_and_label(Role::CheckBox, "Autosave unsaved changes")
+            .click();
         harness.run();
         assert!(!harness.state().settings().autosave);
     }

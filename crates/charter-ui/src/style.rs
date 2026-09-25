@@ -270,6 +270,50 @@ pub fn tool(ui: &mut Ui, symbol: &str, name: &str, tip: &str, on: bool) -> egui:
     named(ui, response, name)
 }
 
+/// An on and off switch, in the accent while on, named `name` for screen readers and tests.
+pub fn switch(ui: &mut Ui, on: &mut bool, name: &str) -> egui::Response {
+    let size = vec2(36.0, 20.0);
+    let (rect, mut response) = ui.allocate_exact_size(size, egui::Sense::click());
+    if response.clicked() {
+        *on = !*on;
+        response.mark_changed();
+    }
+    let (state, name) = (*on, name.to_owned());
+    let enabled = ui.is_enabled();
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, enabled, state, &name)
+    });
+    if ui.is_rect_visible(rect) {
+        let lit = ui.ctx().animate_bool_responsive(response.id, *on);
+        let track = if *on {
+            ACCENT_FILL
+        } else {
+            Color32::from_gray(58)
+        };
+        let track = if response.hovered() {
+            track.gamma_multiply(1.15)
+        } else {
+            track
+        };
+        let radius = rect.height() / 2.0;
+        ui.painter().rect_filled(rect, radius, track);
+        let x = egui::lerp((rect.left() + radius)..=(rect.right() - radius), lit);
+        let knob = egui::pos2(x, rect.center().y);
+        ui.painter()
+            .circle_filled(knob, radius - 3.0, Color32::from_gray(245));
+        if response.has_focus() {
+            let ring = Stroke::new(2.0, ACCENT);
+            ui.painter().rect_stroke(
+                rect.expand(2.0),
+                radius + 2.0,
+                ring,
+                egui::StrokeKind::Outside,
+            );
+        }
+    }
+    response
+}
+
 /// A group of toolbar controls on a sunken strip, like a section of a hardware panel.
 pub fn chip<R>(ui: &mut Ui, body: impl FnOnce(&mut Ui) -> R) -> R {
     egui::Frame::new()

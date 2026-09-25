@@ -8,7 +8,8 @@ use charter_editor::SNAPS;
 
 use crate::flip::Direction;
 use crate::panels::ordinal;
-use crate::style::{heading, table};
+use crate::style::{ACCENT_FILL, PANEL, TEXT, WEAK_TEXT, glyph, icon, switch, titles};
+use egui::RichText;
 
 /// A sound the editor can make while a song plays.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -119,96 +120,283 @@ impl Settings {
     }
 }
 
-/// The settings window, while `open` is set. Choices take effect as they are made.
+/// How wide the sidebar, a page and a setting's control are.
+const SIDEBAR_W: f32 = 150.0;
+const PAGE_W: f32 = 422.0;
+const CONTROL_W: f32 = 200.0;
+
+/// A page of the settings window.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Page {
+    #[default]
+    Editing,
+    Display,
+    Sounds,
+    Autosave,
+}
+
+impl Page {
+    const ALL: [Self; 4] = [Self::Editing, Self::Display, Self::Sounds, Self::Autosave];
+
+    /// Its name in the sidebar, its icon, its title and what it covers.
+    fn words(self) -> (&'static str, &'static str, &'static str, &'static str) {
+        match self {
+            Self::Editing => (
+                "Editing",
+                icon::PENCIL_SIMPLE,
+                "Note entry and defaults",
+                "How placing notes moves the cursor, and how songs open.",
+            ),
+            Self::Display => (
+                "Display",
+                icon::MONITOR,
+                "Display and notefield",
+                "How large the window draws, and which way the chart runs.",
+            ),
+            Self::Sounds => (
+                "Sounds",
+                icon::SPEAKER_HIGH,
+                "Sounds while playing",
+                "What plays over the song's audio.",
+            ),
+            Self::Autosave => (
+                "Autosave",
+                icon::FLOPPY_DISK,
+                "Autosave and recovery",
+                "Keeping unsaved changes safe from a crash.",
+            ),
+        }
+    }
+}
+
+/// The settings window, while `open` is set: a sidebar of pages and the page chosen. Choices
+/// take effect as they are made.
 pub fn show(ctx: &egui::Context, settings: &mut Settings, open: &mut bool) {
+    let page_id = egui::Id::new("settings page");
+    let mut page: Page = ctx.data(|data| data.get_temp(page_id)).unwrap_or_default();
     egui::Window::new("Settings")
         .open(open)
         .resizable(false)
         .collapsible(false)
         .pivot(egui::Align2::CENTER_CENTER)
         .default_pos(ctx.content_rect().center())
+        .frame(egui::Frame::window(&ctx.global_style()).inner_margin(egui::Margin::same(0)))
+        .fixed_size([620.0, 360.0])
         .show(ctx, |ui| {
-            heading(ui, "Editing");
-            table(ui, "editing", |ui| editing(ui, settings));
-            heading(ui, "View");
-            table(ui, "view", |ui| view(ui, settings));
-            heading(ui, "Playback");
-            table(ui, "playback", |ui| playback(ui, settings));
-            heading(ui, "Autosave");
-            ui.horizontal(|ui| {
-                ui.checkbox(&mut settings.autosave, "Autosave unsaved changes");
-                let wait = egui::DragValue::new(&mut settings.autosave_seconds)
-                    .range(AUTOSAVE_SECONDS.0..=AUTOSAVE_SECONDS.1)
-                    .prefix("after ")
-                    .suffix(" s");
-                ui.add_enabled(settings.autosave, wait);
+            ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
+                sidebar(ui, &mut page);
+                egui::Frame::new()
+                    .inner_margin(egui::Margin::symmetric(24, 18))
+                    .show(ui, |ui| {
+                        ui.vertical(|ui| {
+                            ui.spacing_mut().item_spacing = egui::vec2(8.0, 4.0);
+                            ui.set_width(PAGE_W);
+                            let (_, _, title, about) = page.words();
+                            ui.label(RichText::new(title).family(titles(ui)).size(16.0));
+                            ui.weak(about);
+                            ui.add_space(14.0);
+                            match page {
+                                Page::Editing => editing(ui, settings),
+                                Page::Display => display(ui, settings),
+                                Page::Sounds => sounds(ui, settings),
+                                Page::Autosave => autosave(ui, settings),
+                            }
+                        });
+                    });
+            });
+        });
+    ctx.data_mut(|data| data.insert_temp(page_id, page));
+}
+
+/// The pages, down the left of the window on a darker strip.
+fn sidebar(ui: &mut egui::Ui, page: &mut Page) {
+    egui::Frame::new()
+        .fill(PANEL)
+        .inner_margin(egui::Margin::symmetric(10, 14))
+        .show(ui, |ui| {
+            ui.vertical(|ui| {
+                ui.set_width(SIDEBAR_W);
+                ui.set_min_height(360.0);
+                ui.spacing_mut().item_spacing.y = 4.0;
+                for choice in Page::ALL {
+                    let (name, symbol, _, _) = choice.words();
+                    let chosen = *page == choice;
+                    let colour = if chosen { egui::Color32::WHITE } else { TEXT };
+                    let item = egui::Button::new((
+                        glyph(ui, symbol).color(colour),
+                        RichText::new(name).color(colour),
+                    ))
+                    .fill(if chosen {
+                        ACCENT_FILL
+                    } else {
+                        egui::Color32::TRANSPARENT
+                    })
+                    .frame_when_inactive(chosen)
+                    .min_size(egui::vec2(130.0, 30.0));
+                    let response = ui.add(item);
+                    let name = name.to_owned();
+                    response.widget_info(|| {
+                        egui::WidgetInfo::selected(
+                            egui::WidgetType::SelectableLabel,
+                            true,
+                            chosen,
+                            &name,
+                        )
+                    });
+                    if response.clicked() {
+                        *page = choice;
+                    }
+                }
             });
         });
 }
 
-fn editing(ui: &mut egui::Ui, settings: &mut Settings) {
-    ui.weak("Note entry");
-    ui.checkbox(
-        &mut settings.auto_jump,
-        "Move on a snap after placing a note",
-    );
-    ui.end_row();
-    ui.weak("Default snap");
-    egui::ComboBox::from_id_salt("snap")
-        .selected_text(format!("{} snap", ordinal(settings.snap)))
-        .show_ui(ui, |ui| {
-            for snap in SNAPS.into_iter().filter_map(NonZeroU16::new) {
-                let text = format!("{} snap", ordinal(snap));
-                ui.selectable_value(&mut settings.snap, snap, text);
-            }
-        });
-    ui.end_row();
-    ui.weak("Default zoom");
-    let zoom = egui::Slider::new(&mut settings.zoom, 25.0..=400.0).suffix("%");
-    ui.add(zoom);
-    ui.end_row();
-}
-
-fn view(ui: &mut egui::Ui, settings: &mut Settings) {
-    ui.weak("Interface size");
-    egui::ComboBox::from_id_salt("scale")
-        .selected_text(percent(settings.scale))
-        .show_ui(ui, |ui| {
-            for scale in SCALES {
-                ui.selectable_value(&mut settings.scale, scale, percent(scale));
-            }
-        });
-    ui.end_row();
-    let caption = ui.weak("Notefield");
-    egui::ComboBox::from_id_salt("direction")
-        .selected_text(settings.direction.name())
-        .show_ui(ui, |ui| {
-            for direction in Direction::ALL {
-                ui.selectable_value(&mut settings.direction, direction, direction.name());
-            }
-        })
-        .response
-        .labelled_by(caption.id);
-    ui.end_row();
-}
-
-fn playback(ui: &mut egui::Ui, settings: &mut Settings) {
-    for (label, id, sound) in [
-        ("Note ticks", "note ticks", &mut settings.tick_sound),
-        ("Metronome", "metronome", &mut settings.metronome),
-    ] {
-        let caption = ui.weak(label);
-        egui::ComboBox::from_id_salt(id)
-            .selected_text(sound.name())
-            .show_ui(ui, |ui| {
-                for choice in Sound::ALL {
-                    ui.selectable_value(sound, choice, choice.name());
-                }
+/// One setting: its name and what it does on the left, its control on the right, labelled by
+/// the name.
+fn row(ui: &mut egui::Ui, name: &str, about: &str, control: impl FnOnce(&mut egui::Ui, egui::Id)) {
+    ui.horizontal(|ui| {
+        let caption = ui
+            .vertical(|ui| {
+                ui.set_width(PAGE_W - CONTROL_W);
+                let caption = ui.label(name).id;
+                ui.label(RichText::new(about).small().color(WEAK_TEXT));
+                caption
             })
-            .response
-            .labelled_by(caption.id);
-        ui.end_row();
+            .inner;
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            control(ui, caption);
+        });
+    });
+    ui.add_space(6.0);
+    ui.separator();
+    ui.add_space(6.0);
+}
+
+fn editing(ui: &mut egui::Ui, settings: &mut Settings) {
+    let name = "Move on a snap after placing a note";
+    row(
+        ui,
+        name,
+        "Once the lane keys that placed it come up.",
+        |ui, _| {
+            switch(ui, &mut settings.auto_jump, name);
+        },
+    );
+    row(
+        ui,
+        "Default snap",
+        "The snap a song opens on.",
+        |ui, caption| {
+            egui::ComboBox::from_id_salt("snap")
+                .selected_text(format!("{} snap", ordinal(settings.snap)))
+                .show_ui(ui, |ui| {
+                    for snap in SNAPS.into_iter().filter_map(NonZeroU16::new) {
+                        let text = format!("{} snap", ordinal(snap));
+                        ui.selectable_value(&mut settings.snap, snap, text);
+                    }
+                })
+                .response
+                .labelled_by(caption);
+        },
+    );
+    row(
+        ui,
+        "Default zoom",
+        "How close the notefield opens.",
+        |ui, caption| {
+            let zoom = egui::Slider::new(&mut settings.zoom, 25.0..=400.0).suffix("%");
+            ui.add(zoom).labelled_by(caption);
+        },
+    );
+}
+
+fn display(ui: &mut egui::Ui, settings: &mut Settings) {
+    row(
+        ui,
+        "Interface size",
+        "How large the whole window draws.",
+        |ui, caption| {
+            egui::ComboBox::from_id_salt("scale")
+                .selected_text(percent(settings.scale))
+                .show_ui(ui, |ui| {
+                    for scale in SCALES {
+                        ui.selectable_value(&mut settings.scale, scale, percent(scale));
+                    }
+                })
+                .response
+                .labelled_by(caption);
+        },
+    );
+    row(
+        ui,
+        "Notefield",
+        "Which way notes travel past the now line.",
+        |ui, caption| {
+            egui::ComboBox::from_id_salt("direction")
+                .selected_text(settings.direction.name())
+                .width(210.0)
+                .show_ui(ui, |ui| {
+                    for direction in Direction::ALL {
+                        ui.selectable_value(&mut settings.direction, direction, direction.name());
+                    }
+                })
+                .response
+                .labelled_by(caption);
+        },
+    );
+}
+
+fn sounds(ui: &mut egui::Ui, settings: &mut Settings) {
+    for (name, about, id, sound) in [
+        (
+            "Note ticks",
+            "A tick on each note as it passes. F4 turns it on and off.",
+            "note ticks",
+            &mut settings.tick_sound,
+        ),
+        (
+            "Metronome",
+            "A tick on each beat. F3 turns it on and off.",
+            "metronome",
+            &mut settings.metronome,
+        ),
+    ] {
+        row(ui, name, about, |ui, caption| {
+            egui::ComboBox::from_id_salt(id)
+                .selected_text(sound.name())
+                .show_ui(ui, |ui| {
+                    for choice in Sound::ALL {
+                        ui.selectable_value(sound, choice, choice.name());
+                    }
+                })
+                .response
+                .labelled_by(caption);
+        });
     }
+}
+
+fn autosave(ui: &mut egui::Ui, settings: &mut Settings) {
+    let name = "Autosave unsaved changes";
+    row(
+        ui,
+        name,
+        "The next start offers them back after a crash.",
+        |ui, _| {
+            switch(ui, &mut settings.autosave, name);
+        },
+    );
+    row(
+        ui,
+        "Wait before saving",
+        "How long changes sit before they are kept.",
+        |ui, caption| {
+            let wait = egui::DragValue::new(&mut settings.autosave_seconds)
+                .range(AUTOSAVE_SECONDS.0..=AUTOSAVE_SECONDS.1)
+                .suffix(" s");
+            ui.add_enabled(settings.autosave, wait).labelled_by(caption);
+        },
+    );
 }
 
 fn percent(factor: f32) -> String {
