@@ -3,7 +3,7 @@
 
 use std::num::NonZeroU16;
 
-use charter_core::{MarkerKind, Object, Position, ResolvedTime, Shape};
+use charter_core::{Bpm, MarkerKind, Object, Position, ResolvedTime, Shape};
 use egui::{self, Align, Layout, RichText, Ui};
 use serde_json::Value;
 
@@ -253,6 +253,56 @@ pub fn inspector(ui: &mut Ui, song: &Song) {
     );
 }
 
+/// The tempo at the cursor. In a song open for editing a BPM typed and entered sets the tempo
+/// from the cursor on, and the change at the cursor can be removed. Says why a BPM typed is not
+/// one.
+pub fn tempo(
+    ui: &mut Ui,
+    song: &Song,
+    draft: &mut Option<String>,
+    actions: &mut Vec<Action>,
+) -> Option<String> {
+    heading(ui, "Tempo");
+    let Some((at, bpm)) = song.bpm() else {
+        ui.weak("No BPM");
+        return None;
+    };
+    let editable = song.read_only().is_none();
+    let mut refused = None;
+    table(ui, "tempo", |ui| {
+        let caption = ui.weak("BPM");
+        if editable {
+            let mut text = draft.take().unwrap_or_else(|| bpm.to_string());
+            let field = ui
+                .add(egui::TextEdit::singleline(&mut text).desired_width(72.0))
+                .labelled_by(caption.id);
+            let entered =
+                field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
+            if field.has_focus() {
+                *draft = Some(text);
+            } else if entered {
+                let typed = text.trim();
+                match typed
+                    .parse::<f64>()
+                    .map_err(|_| ())
+                    .and_then(|bpm| Bpm::try_from(bpm).map_err(|_| ()))
+                {
+                    Ok(bpm) => actions.push(Action::SetBpm(bpm)),
+                    Err(()) => refused = Some(format!("{typed} is not a tempo")),
+                }
+            }
+        } else {
+            ui.label(bpm.to_string());
+        }
+        ui.weak(format!("since {}", song.timing().grid_position(at)));
+        ui.end_row();
+    });
+    if editable && at == song.cursor() && ui.button("Remove this BPM change").clicked() {
+        actions.push(Action::RemoveBpm);
+    }
+    refused
+}
+
 pub fn status_bar(ui: &mut Ui, song: Option<&Song>, zoom: Zoom) {
     ui.horizontal(|ui| {
         let Some(song) = song else {
@@ -263,6 +313,9 @@ pub fn status_bar(ui: &mut Ui, song: Option<&Song>, zoom: Zoom) {
         ui.monospace(timing.grid_position(song.cursor()).to_string());
         ui.monospace(clock(timing.time_at(song.cursor())));
         ui.separator();
+        if let Some((_, bpm)) = song.bpm() {
+            ui.label(format!("{bpm} BPM"));
+        }
         ui.label(format!("Snap {}", ordinal(song.snap())));
         ui.label(format!("Zoom {:.0}%", zoom.percent()));
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

@@ -158,6 +158,10 @@ pub(crate) enum Action {
     Settings,
     /// Shows the dialog that starts a song.
     NewSong,
+    /// Makes the tempo from the cursor on this.
+    SetBpm(charter_core::Bpm),
+    /// Removes the BPM change at the cursor.
+    RemoveBpm,
 }
 
 /// The editor window's state.
@@ -209,6 +213,8 @@ pub struct Window {
     restoring: Option<Restoring>,
     /// The dialog that starts a song, while it shows.
     new_song: Option<new_song::Draft>,
+    /// A BPM being typed, while its field has the keyboard.
+    bpm_draft: Option<String>,
     /// The audio file dropped on the song, which is copied beside the song when it is saved
     /// elsewhere.
     audio_file: Option<PathBuf>,
@@ -613,6 +619,8 @@ impl Window {
             Action::SelectBetween { ticks, lanes, how } => {
                 song.select_between(ticks.0..=ticks.1, lanes.0..=lanes.1, how);
             }
+            Action::SetBpm(bpm) => self.failure = refused(song.set_bpm(bpm).err()),
+            Action::RemoveBpm => self.failure = refused(song.remove_bpm().err()),
             Action::SelectAll => song.select_all(),
             Action::DeleteSelection => self.failure = refused(song.delete_selection().err()),
         }
@@ -708,7 +716,16 @@ impl Window {
             panels::status_bar(ui, self.song.as_ref(), self.zoom);
         });
         if let Some(song) = &self.song {
-            egui::Panel::left("song").show(ui, |ui| panels::song_panel(ui, song, &mut actions));
+            let draft = &mut self.bpm_draft;
+            let refused = egui::Panel::left("song")
+                .show(ui, |ui| {
+                    panels::song_panel(ui, song, &mut actions);
+                    panels::tempo(ui, song, draft, &mut actions)
+                })
+                .inner;
+            if refused.is_some() {
+                self.failure = refused;
+            }
             egui::Panel::right("inspector").show(ui, |ui| panels::inspector(ui, song));
         }
         egui::CentralPanel::default().show(ui, |ui| {
@@ -1759,6 +1776,94 @@ mod tests {
             let song = harness.state().song.as_ref().unwrap();
             assert_eq!(song.selection().count(), 1, "{direction:?}");
         }
+    }
+
+    fn bpm_field<'a>(harness: &'a Harness<'_, Window>) -> egui_kittest::Node<'a> {
+        harness.get_by_role_and_label(Role::TextInput, "BPM")
+    }
+
+    /// Types `text` over whatever the BPM field holds, then presses `key`.
+    fn enter_bpm(harness: &mut Harness<'_, Window>, text: &str, key: egui::Key) {
+        bpm_field(harness).focus();
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        bpm_field(harness).type_text(text);
+        harness.run();
+        harness.key_press(key);
+        harness.run();
+    }
+
+    /// The tick and BPM of the change in effect at the cursor.
+    fn bpm_at_cursor(harness: &Harness<'_, Window>) -> Option<(i64, String)> {
+        let song = harness.state().song.as_ref().unwrap();
+        let (tick, bpm) = song.bpm()?;
+        let tick = serde_json::to_value(tick).unwrap().as_i64().unwrap();
+        Some((tick, bpm.to_string()))
+    }
+
+    #[test]
+    fn the_tempo_at_the_cursor_shows_beside_the_song_and_in_the_status_bar() {
+        let harness = editable_demo();
+        assert_eq!(bpm_field(&harness).value().as_deref(), Some("150"));
+        assert!(harness.query_by_label("150 BPM").is_some());
+    }
+
+    #[test]
+    fn a_bpm_typed_and_entered_changes_the_tempo_from_the_cursor_on() {
+        let mut harness = editable_demo();
+        harness.key_press(egui::Key::ArrowDown);
+        harness.run();
+        enter_bpm(&mut harness, "175.5", egui::Key::Enter);
+        assert_eq!(bpm_at_cursor(&harness), Some((240, "175.5".to_owned())));
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.run();
+        assert_eq!(bpm_at_cursor(&harness), Some((0, "150".to_owned())));
+    }
+
+    #[test]
+    fn a_bpm_left_with_escape_changes_nothing() {
+        let mut harness = editable_demo();
+        enter_bpm(&mut harness, "90", egui::Key::Escape);
+        assert_eq!(bpm_at_cursor(&harness), Some((0, "150".to_owned())));
+        assert_eq!(bpm_field(&harness).value().as_deref(), Some("150"));
+    }
+
+    #[test]
+    fn a_bpm_that_is_not_a_tempo_says_so() {
+        let mut harness = editable_demo();
+        enter_bpm(&mut harness, "fast", egui::Key::Enter);
+        assert!(
+            harness
+                .query_by_label_contains("fast is not a tempo")
+                .is_some()
+        );
+        assert_eq!(bpm_at_cursor(&harness), Some((0, "150".to_owned())));
+    }
+
+    #[test]
+    fn a_bpm_change_at_the_cursor_can_be_removed() {
+        let mut harness = editable_demo();
+        harness.get_by_label("Remove this BPM change").click();
+        harness.run();
+        let (tick, bpm) = bpm_at_cursor(&harness).unwrap();
+        assert_ne!(tick, 0);
+        assert_eq!(bpm, "180");
+        harness.key_press(egui::Key::ArrowDown);
+        harness.run();
+        assert!(harness.query_by_label("Remove this BPM change").is_none());
+    }
+
+    #[test]
+    fn a_read_only_song_shows_its_tempo_without_changing_it() {
+        let mut harness = window(Window::new(&[]));
+        harness.state_mut().open_demo();
+        harness.run();
+        assert!(
+            harness
+                .query_by_role_and_label(Role::TextInput, "BPM")
+                .is_none()
+        );
+        assert!(harness.query_by_label("150 BPM").is_some());
     }
 
     #[test]

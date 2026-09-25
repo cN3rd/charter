@@ -122,11 +122,11 @@ atomic commits with `/commit`. `.github/skills/README.md` lists every skill and 
 of it without file import or export, and start empty songs. The editor starts songs from a dialog,
 draws charts generically, moves the cursor by snap and by measure, and edits a song whose ruleset
 plugin accepts it: lane keys and Ctrl with the mouse place taps, holds and mines, the mouse selects
-and Delete removes the selection, every edit is checked by the format and the plugin, and undo and
-redo return to where each edit was made. A song without its plugin is read-only. Songs open and save
-through native dialogs, unsaved changes are asked about before they are lost and autosaved for
-restoring after a crash, and a settings window keeps its choices between runs. `charter-editor`
-holds that state without drawing it, `charter-ui` draws it in egui and never touches a file, and
-`charter-app` registers the plugins, opens the window and does its file I/O. `charter-ui`'s `mock`
-example is the static mock of the book's UI draft. No DSP crate exists yet. Ask before inventing a
-crate boundary.
+and Delete removes the selection, every edit is checked by the format and the plugin, the tempo at
+the cursor can be changed, and undo and redo return to where each edit was made. A song without its
+plugin is read-only. Songs open and save through native dialogs, unsaved changes are asked about
+before they are lost and autosaved for restoring after a crash, and a settings window keeps its
+choices between runs. `charter-editor` holds that state without drawing it, `charter-ui` draws it in
+egui and never touches a file, and `charter-app` registers the plugins, opens the window and does
+its file I/O. `charter-ui`'s `mock` example is the static mock of the book's UI draft. No DSP crate
+exists yet. Ask before inventing a crate boundary.
