@@ -132,6 +132,8 @@ enum Discard {
         song: Box<Song>,
         /// Whether the song is the autosave, restored.
         restored: bool,
+        /// The audio file dropped on the song, when an autosave kept it.
+        audio: Option<PathBuf>,
     },
 }
 
@@ -139,6 +141,7 @@ enum Discard {
 #[derive(Debug)]
 struct Restoring {
     path: Option<PathBuf>,
+    audio: Option<PathBuf>,
     song: Box<Song>,
 }
 
@@ -384,9 +387,10 @@ impl Window {
     pub fn recover(&mut self, bytes: &[u8]) {
         self.autosave_kept = true;
         match recovery::read(bytes, self.plugins) {
-            Ok((path, song)) => {
+            Ok(recovery::Kept { path, audio, song }) => {
                 self.restoring = Some(Restoring {
                     path,
+                    audio,
                     song: Box::new(song),
                 });
             }
@@ -594,6 +598,7 @@ impl Window {
                     path: None,
                     song,
                     restored: false,
+                    audio: None,
                 });
             }
             Err(error) => self.failure = Some(format!("Could not start the song: {error}")),
@@ -643,7 +648,8 @@ impl Window {
             return;
         }
         self.autosave_due = None;
-        match recovery::write(self.path.as_deref(), song.document().document()) {
+        let audio = self.audio_file.as_deref();
+        match recovery::write(self.path.as_deref(), audio, song.document().document()) {
             Ok(bytes) => {
                 self.requests.push(Request::Autosave { bytes });
                 self.autosave_kept = true;
@@ -655,7 +661,12 @@ impl Window {
 
     /// Takes the answer to whether to restore the changes from an earlier run.
     fn answer_restore(&mut self, restore: bool) {
-        let Some(Restoring { path, mut song }) = self.restoring.take() else {
+        let Some(Restoring {
+            path,
+            audio,
+            mut song,
+        }) = self.restoring.take()
+        else {
             return;
         };
         if restore {
@@ -664,6 +675,7 @@ impl Window {
                 path,
                 song,
                 restored: true,
+                audio,
             });
         } else {
             self.drop_autosave();
@@ -721,6 +733,7 @@ impl Window {
                 path: Some(path.to_path_buf()),
                 song: Box::new(song),
                 restored: false,
+                audio: None,
             }),
             Err(error) => self.refuse(path, &error),
         }
@@ -738,6 +751,7 @@ impl Window {
             path: None,
             song,
             restored: false,
+            audio: None,
         });
     }
 
@@ -761,6 +775,7 @@ impl Window {
                 path,
                 mut song,
                 restored,
+                audio,
             } => {
                 if restored {
                     self.autosave_due = None;
@@ -776,7 +791,7 @@ impl Window {
                 self.failure = None;
                 self.placed = false;
                 self.holding.clear();
-                self.audio_file = None;
+                self.audio_file = audio;
                 if std::mem::take(&mut self.playing) {
                     self.requests.push(Request::Pause);
                 }
@@ -941,7 +956,7 @@ impl Window {
                 None => {}
             }
         }
-        if let Some(Restoring { path, song }) = &self.restoring
+        if let Some(Restoring { path, song, .. }) = &self.restoring
             && let Some(restore) = panels::ask_to_restore(ui, &file_name(path.as_deref(), song))
         {
             self.answer_restore(restore);
@@ -3089,9 +3104,9 @@ mod tests {
         let Request::Autosave { bytes } = request(&mut harness) else {
             panic!("expected an autosave");
         };
-        let (path, song) = recovery::read(&bytes, PLUGINS).unwrap();
-        assert_eq!(path.as_deref(), Some(Path::new("four.json")));
-        assert!(holds_tap(&song.document().to_json().unwrap(), 0, 3));
+        let kept = recovery::read(&bytes, PLUGINS).unwrap();
+        assert_eq!(kept.path.as_deref(), Some(Path::new("four.json")));
+        assert!(holds_tap(&kept.song.document().to_json().unwrap(), 0, 3));
         at_time(&mut harness, 90.0);
         assert_eq!(harness.state_mut().take_requests(), []);
     }
@@ -3132,6 +3147,43 @@ mod tests {
         harness
             .query_by_label("Restore unsaved changes to four.json?")
             .is_some()
+    }
+
+    #[test]
+    fn an_autosave_restored_remembers_the_audio_dropped_on_the_song() {
+        let mut harness = created();
+        drop_file(&mut harness, "/music/track.ogg");
+        at_time(&mut harness, 100.0);
+        at_time(&mut harness, 131.0);
+        let Request::Autosave { bytes } = request(&mut harness) else {
+            panic!("expected an autosave");
+        };
+        let mut restored = window(Window::new(GAMES));
+        restored.state_mut().recover(&bytes);
+        restored.run();
+        restored.get_by_label("Restore").click();
+        restored.run();
+        assert_eq!(
+            restored.state().audio_file(),
+            Some(PathBuf::from("/music/track.ogg"))
+        );
+        restored
+            .state_mut()
+            .saved(Saved::To(PathBuf::from("/songs/mine.json")));
+        restored.run();
+        let copies: Vec<_> = restored
+            .state_mut()
+            .take_requests()
+            .into_iter()
+            .filter(|request| matches!(request, Request::CopyAudio { .. }))
+            .collect();
+        assert_eq!(
+            copies,
+            [Request::CopyAudio {
+                from: PathBuf::from("/music/track.ogg"),
+                to: PathBuf::from("/songs/track.ogg"),
+            }]
+        );
     }
 
     #[test]
