@@ -8,12 +8,12 @@ use charter_core::{
     Timing, TimingKind, Valid,
 };
 use egui::{
-    self, Align2, FontId, Painter, Pos2, Rangef, Rect, Sense, Stroke, StrokeKind, Ui, Visuals,
-    pos2, vec2,
+    self, Align2, FontId, Pos2, Rangef, Rect, Sense, Stroke, StrokeKind, Ui, Visuals, pos2, vec2,
 };
 
 use charter_editor::{NoteAt, Selecting, Song, Step};
 
+use crate::flip::{Canvas, Direction, Flip};
 use crate::style;
 use crate::{Action, Note};
 
@@ -272,10 +272,12 @@ impl Field {
 
 /// Draws the open chart, and turns the wheel, zoom gestures, clicks and drags over it into
 /// actions.
+#[allow(clippy::too_many_lines)] // one pass over the frame, drawing in order
 pub fn show(
     ui: &mut Ui,
     song: &Song,
     zoom: Zoom,
+    direction: Direction,
     scrolled: &mut f32,
     gesture: &mut Option<Gesture>,
     actions: &mut Vec<Action>,
@@ -285,9 +287,11 @@ pub fn show(
         return;
     };
     let lanes = chart.lanes.map_or(0, u16::from);
-    let indent = Columns::laid_out(ui.available_rect_before_wrap().x_range(), lanes)
-        .ruler
-        .min;
+    let across = ui.available_rect_before_wrap().x_range();
+    let indent = match direction {
+        Direction::Up | Direction::Down => Columns::laid_out(across, lanes).ruler.min,
+        Direction::Left | Direction::Right => across.min,
+    };
     let planar = chart
         .objects()
         .filter(|object| matches!(object.position, Position::Plane { .. }))
@@ -315,7 +319,6 @@ pub fn show(
     // An id of its own, so a drag survives a message appearing above the notefield mid-drag.
     let (_, area) = ui.allocate_space(ui.available_size());
     let response = ui.interact(area, ui.id().with("notefield"), Sense::click_and_drag());
-    let painter = ui.painter_at(area);
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Other, true, "Notefield"));
     if response.hovered() {
         let (steps, zoom) =
@@ -330,7 +333,12 @@ pub fn show(
             actions.push(Action::ZoomBy(zoom));
         }
     }
-    let area = response.rect;
+    let flip = Flip {
+        area: response.rect,
+        direction,
+    };
+    let painter = Canvas::new(ui.painter_at(response.rect), flip);
+    let area = flip.field();
     let timing = chart.timing();
     let field = Field::new(area, lanes, timing.time_at(song.cursor()), zoom);
     let (columns, rows, view) = (&field.columns, field.rows, field.view);
@@ -347,11 +355,11 @@ pub fn show(
         Rangef::new(area.top(), rows.min),
         ui.visuals(),
     );
-    let clipped = painter.with_clip_rect(Rect::from_x_y_ranges(area.x_range(), rows));
+    let clipped = painter.clipped(Rect::from_x_y_ranges(area.x_range(), rows));
     backdrop(&clipped, columns, lanes, rows);
     grid(&clipped, columns, song, view, rows);
-    markers(&clipped, columns, song, view, (first, last));
-    events(&clipped, columns, song, view, (first, last));
+    markers(&clipped, columns, song, view, rows, (first, last));
+    events(&clipped, columns, song, view, rows, (first, last));
     let band = Rect::from_x_y_ranges(columns.timeline(), view.now_y - 12.0..=view.now_y + 12.0);
     clipped.rect_filled(band, 0.0, style::NOW_BAND);
     let mut shown = reaching(&chart.objects, first, last).peekable();
@@ -361,9 +369,17 @@ pub fn show(
             draw_object(&clipped, columns, timing, view, object, selected);
         }
     }
-    actions.extend(pointer(ui, &response, song, &field, (first, last), gesture));
+    actions.extend(pointer(
+        ui,
+        &response,
+        song,
+        &field,
+        flip,
+        (first, last),
+        gesture,
+    ));
     if let Some(Gesture::Marquee { x, seconds, .. }) = *gesture
-        && let Some(latest) = ui.input(|input| input.pointer.latest_pos())
+        && let Some(latest) = ui.input(|input| input.pointer.latest_pos().map(|at| flip.back(at)))
     {
         let corner = pos2(x, view.y_of(seconds));
         clipped.rect(
@@ -385,6 +401,7 @@ fn pointer(
     response: &egui::Response,
     song: &Song,
     field: &Field,
+    flip: Flip,
     visible: (Tick, Tick),
     gesture: &mut Option<Gesture>,
 ) -> Vec<Action> {
@@ -398,8 +415,8 @@ fn pointer(
         let escaped = input.key_pressed(egui::Key::Escape);
         (
             input.modifiers,
-            pointer.press_origin(),
-            pointer.latest_pos(),
+            pointer.press_origin().map(|at| flip.back(at)),
+            pointer.latest_pos().map(|at| flip.back(at)),
             escaped,
         )
     });
@@ -531,7 +548,7 @@ fn hit(
 
 /// Says whose timing the chart uses and numbers its lanes.
 fn header(
-    painter: &Painter,
+    painter: &Canvas,
     columns: &Columns,
     lanes: u16,
     own_timing: bool,
@@ -557,7 +574,7 @@ fn header(
     }
 }
 
-fn backdrop(painter: &Painter, columns: &Columns, lanes: u16, rows: Rangef) {
+fn backdrop(painter: &Canvas, columns: &Columns, lanes: u16, rows: Rangef) {
     for column in [columns.ruler, columns.timing] {
         painter.rect_filled(Rect::from_x_y_ranges(column, rows), 0.0, style::COLUMN_BG);
     }
@@ -581,14 +598,14 @@ fn backdrop(painter: &Painter, columns: &Columns, lanes: u16, rows: Rangef) {
 }
 
 /// Measure and beat lines over the visible time, with measure numbers.
-fn grid(painter: &Painter, columns: &Columns, song: &Song, view: View, rows: Rangef) {
+fn grid(painter: &Canvas, columns: &Columns, song: &Song, view: View, rows: Rangef) {
     let timing = song.timing();
     let beat = song
         .document()
         .document()
         .ticks_per_beat
         .note_length(QUARTER);
-    let ruler = painter.with_clip_rect(Rect::from_x_y_ranges(columns.ruler, rows));
+    let ruler = painter.clipped(Rect::from_x_y_ranges(columns.ruler, rows));
     let first = latest_tick_by(timing, view.seconds_at(rows.min));
     for measure in timing.measures_from(first) {
         let y = view.y(timing.time_at(measure.start));
@@ -621,17 +638,15 @@ const QUARTER: NonZeroU16 = NonZeroU16::new(4).unwrap();
 
 /// Sections, bookmarks and plugin markers as lines across the time axis, named in the ruler.
 fn markers(
-    painter: &Painter,
+    painter: &Canvas,
     columns: &Columns,
     song: &Song,
     view: View,
+    rows: Rangef,
     (first, last): (Tick, Tick),
 ) {
     let timing = song.timing();
-    let ruler = painter.with_clip_rect(Rect::from_x_y_ranges(
-        columns.ruler,
-        painter.clip_rect().y_range(),
-    ));
+    let ruler = painter.clipped(Rect::from_x_y_ranges(columns.ruler, rows));
     let markers = &song.document().document().markers;
     for marker in between(markers, |marker| marker.tick, first, last) {
         let colour = match marker.kind {
@@ -654,17 +669,15 @@ fn markers(
 
 /// The chart's timing events in the gutter, each named with its value.
 fn events(
-    painter: &Painter,
+    painter: &Canvas,
     columns: &Columns,
     song: &Song,
     view: View,
+    rows: Rangef,
     (first, last): (Tick, Tick),
 ) {
     let timing = song.timing();
-    let gutter = painter.with_clip_rect(Rect::from_x_y_ranges(
-        columns.timing,
-        painter.clip_rect().y_range(),
-    ));
+    let gutter = painter.clipped(Rect::from_x_y_ranges(columns.timing, rows));
     for event in between(&timing.events, |event| event.tick, first, last) {
         let y = view.y(timing.time_at(event.tick));
         painter.hline(columns.timing, y, Stroke::new(2.0, style::TIMING_MARK));
@@ -690,7 +703,7 @@ fn events(
 /// One object on lanes, in the shared vocabulary's glyphs: the ruleset draws its own kinds
 /// once plugins can draw.
 fn draw_object(
-    painter: &Painter,
+    painter: &Canvas,
     columns: &Columns,
     timing: Valid<'_, Timing>,
     view: View,
@@ -731,7 +744,7 @@ fn draw_object(
                     ));
                 }
             }
-            painter.add(egui::Shape::line(line, Stroke::new(4.0, body)));
+            painter.line(line, Stroke::new(4.0, body));
         }
     }
     let rect = Rect::from_x_y_ranges(across, start - 5.0..=start + 5.0);
@@ -783,15 +796,11 @@ fn between<T>(items: &[T], tick: impl Fn(&T) -> Tick, first: Tick, last: Tick) -
 }
 
 /// The cursor: a line across every column on the time axis, with a handle on the ruler.
-fn now_line(painter: &Painter, columns: &Columns, now_y: f32) {
+fn now_line(painter: &Canvas, columns: &Columns, now_y: f32) {
     painter.hline(columns.timeline(), now_y, Stroke::new(2.0, style::NOW_LINE));
     let tip = pos2(columns.ruler.max, now_y);
     let handle = vec![tip + vec2(-11.0, -6.0), tip, tip + vec2(-11.0, 6.0)];
-    painter.add(egui::Shape::convex_polygon(
-        handle,
-        style::NOW_LINE,
-        Stroke::NONE,
-    ));
+    painter.convex_polygon(handle, style::NOW_LINE, Stroke::NONE);
 }
 
 /// Cursor steps the mouse wheel asks for in `events`, later first, keeping part-steps in

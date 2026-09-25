@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use charter_editor::SNAPS;
 
+use crate::flip::Direction;
 use crate::panels::ordinal;
 use crate::style::table;
 
@@ -22,6 +23,8 @@ pub struct Settings {
     pub zoom: f32,
     /// How large the whole window draws, as a factor.
     pub scale: f32,
+    /// Which way the notefield runs.
+    pub direction: Direction,
 }
 
 impl Default for Settings {
@@ -31,6 +34,7 @@ impl Default for Settings {
             snap: NonZeroU16::new(16).unwrap_or(NonZeroU16::MIN),
             zoom: 100.0,
             scale: 1.0,
+            direction: Direction::Up,
         }
     }
 }
@@ -88,6 +92,21 @@ pub fn show(ctx: &egui::Context, settings: &mut Settings, open: &mut bool) {
                         }
                     });
                 ui.end_row();
+                let caption = ui.weak("Notefield");
+                egui::ComboBox::from_id_salt("direction")
+                    .selected_text(settings.direction.name())
+                    .show_ui(ui, |ui| {
+                        for direction in Direction::ALL {
+                            ui.selectable_value(
+                                &mut settings.direction,
+                                direction,
+                                direction.name(),
+                            );
+                        }
+                    })
+                    .response
+                    .labelled_by(caption.id);
+                ui.end_row();
             });
         });
 }
@@ -110,12 +129,18 @@ mod tests {
     }
 
     #[test]
+    fn notes_travel_up_to_start_with() {
+        assert_eq!(Settings::default().direction, Direction::Up);
+    }
+
+    #[test]
     fn stored_settings_come_back_and_missing_ones_take_their_defaults() {
         let settings = Settings {
             auto_jump: false,
             snap: NonZeroU16::new(24).unwrap(),
             zoom: 150.0,
             scale: 1.25,
+            direction: Direction::Right,
         };
         let stored = serde_json::to_string(&settings).unwrap();
         assert_eq!(serde_json::from_str::<Settings>(&stored).unwrap(), settings);

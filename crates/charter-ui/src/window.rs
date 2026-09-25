@@ -729,7 +729,8 @@ impl Window {
                 Some(song) => {
                     let (zoom, scrolled, gesture) =
                         (self.zoom, &mut self.scrolled, &mut self.gesture);
-                    notefield::show(ui, song, zoom, scrolled, gesture, &mut actions);
+                    let direction = self.settings.direction;
+                    notefield::show(ui, song, zoom, direction, scrolled, gesture, &mut actions);
                 }
                 None => panels::empty(ui, &mut actions),
             }
@@ -800,6 +801,7 @@ mod tests {
     use egui_kittest::kittest::{NodeT, Queryable};
 
     use super::*;
+    use crate::flip::{Direction, Flip};
     use crate::recovery;
 
     /// The format chapter, embedded at compile time so the tests do no I/O.
@@ -1675,6 +1677,75 @@ mod tests {
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Comma);
         harness.run();
         assert!(harness.query_by_label("Settings").is_none());
+    }
+
+    #[test]
+    fn the_settings_window_turns_the_notefield() {
+        let mut harness = editable_demo();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Comma);
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::ComboBox, "Notefield")
+            .click();
+        harness.run();
+        harness
+            .get_by_label("Horizontal, notes travel left")
+            .click();
+        harness.run();
+        assert_eq!(harness.state().settings().direction, Direction::Left);
+    }
+
+    /// The demo, open for editing with the notefield running `direction`.
+    fn turned_demo(direction: Direction) -> Harness<'static, Window> {
+        let settings = Settings {
+            direction,
+            ..Settings::default()
+        };
+        let mut app = Window::new(PLUGINS).with_settings(settings);
+        app.open_demo();
+        window(app)
+    }
+
+    /// Where the middle of `lane` meets the line of `tick` on screen, however the notefield runs.
+    fn turned_spot(harness: &Harness<'_, Window>, lane: u16, tick: i32) -> egui::Pos2 {
+        let area = harness.get_by_label("Notefield").rect();
+        let app = harness.state();
+        let song = app.song.as_ref().unwrap();
+        let chart = song.chart().unwrap();
+        let timing = chart.timing();
+        let lanes = chart.lanes.map_or(0, u16::from);
+        let flip = Flip {
+            area,
+            direction: app.settings().direction,
+        };
+        let field =
+            notefield::Field::new(flip.field(), lanes, timing.time_at(song.cursor()), app.zoom);
+        let x = field
+            .columns
+            .span(LaneIndex::new(lane), LaneCount::ONE)
+            .center();
+        flip.pos(egui::pos2(x, field.view.y(timing.time_at(Tick::new(tick)))))
+    }
+
+    #[test]
+    fn ctrl_clicking_places_a_tap_however_the_notefield_runs() {
+        for direction in Direction::ALL {
+            let mut harness = turned_demo(direction);
+            let at = turned_spot(&harness, 1, 240);
+            click(&mut harness, at, egui::Modifiers::COMMAND);
+            assert_eq!(lanes_at(&harness, 240), [1], "{direction:?}");
+        }
+    }
+
+    #[test]
+    fn clicking_a_note_selects_it_however_the_notefield_runs() {
+        for direction in [Direction::Down, Direction::Right] {
+            let mut harness = turned_demo(direction);
+            let at = turned_spot(&harness, 3, 0);
+            click(&mut harness, at, egui::Modifiers::NONE);
+            let song = harness.state().song.as_ref().unwrap();
+            assert_eq!(song.selection().count(), 1, "{direction:?}");
+        }
     }
 
     #[test]

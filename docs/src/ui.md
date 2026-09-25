@@ -16,10 +16,10 @@ glyphs, since no ruleset plugin draws yet, and starts and edits songs of the bui
 keys and Ctrl with the mouse place taps, holds and mines; the mouse selects and Delete removes the
 selection; undo and redo return to where each edit was made. Songs open and save through native file
 dialogs, unsaved changes are asked about before they are lost and autosaved half a minute after they
-are made, and a settings window holds what the user chooses. The inspector shows the selection but
-cannot change it yet. A new song takes its game, the layout every chart shares, its title, artist
-and chart names from a dialog, and asks for audio until an audio file is dropped on the window;
-saving copies that file beside the song.
+are made, and a settings window holds what the user chooses, including which way the notefield runs.
+The inspector shows the selection but cannot change it yet. A new song takes its game, the layout
+every chart shares, its title, artist and chart names from a dialog, and asks for audio until an
+audio file is dropped on the window; saving copies that file beside the song.
 
 ## Main window
 
@@ -122,7 +122,11 @@ dark playfield, often in a dim room, and notes read best as bright shapes on dar
 
 - It scrolls vertically, as ArrowVortex, StepMania, osu!mania, Quaver and Moonscraper do, and as
   all three rulesets here play. StepMania's editor runs time downward and osu!mania's upward, so
-  direction is a view setting whose default comes from the ruleset.
+  direction is a view setting whose default comes from the ruleset. The settings window turns the
+  notefield today: vertical with notes travelling up (the default) or down, or horizontal with
+  them travelling left or right. The notefield lays itself out one way and is turned onto the
+  screen as a whole, pointer included, so every edit and selection works in each direction. A
+  default per ruleset is still to come.
 - The columns share one time axis, and only the lanes column belongs to the ruleset. The ruleset
   draws and hit-tests its own kinds there, including ones the core has never heard of, such as a
   Tap Tap Revenge slice or a mega tap across every lane. A plane-based ruleset draws its own

@@ -3,6 +3,7 @@
 //! write and choose files through [`Request`]s, so the binary that hosts it opens the window and
 //! does that I/O.
 
+mod flip;
 mod keys;
 mod new_song;
 mod notefield;
@@ -12,6 +13,7 @@ mod settings;
 mod style;
 mod window;
 
+pub use flip::Direction;
 pub use settings::Settings;
 use window::{Action, Note};
 pub use window::{Request, Saved, Window};
