@@ -311,6 +311,19 @@ impl fmt::Display for LaneIndex {
     }
 }
 
+/// A view places lanes by number, which is the one place a lane stops being a type.
+impl From<LaneIndex> for u16 {
+    fn from(lane: LaneIndex) -> Self {
+        lane.0
+    }
+}
+
+impl From<LaneCount> for u16 {
+    fn from(lanes: LaneCount) -> Self {
+        lanes.0.get()
+    }
+}
+
 impl fmt::Display for LaneCount {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
@@ -320,6 +333,12 @@ impl fmt::Display for LaneCount {
 impl fmt::Display for TimeSignature {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}/{}", self.numerator, self.denominator)
+    }
+}
+
+impl fmt::Display for Ticks {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
     }
 }
 
@@ -477,6 +496,17 @@ mod tests {
         );
         assert_eq!(Tick::new(5).ticks_until(Tick::new(5)), None);
         assert_eq!(Tick::new(5).ticks_until(Tick::new(4)), None);
+    }
+
+    #[test]
+    fn a_span_of_ticks_shows_as_its_count() {
+        assert_eq!(Ticks::new(1920).unwrap().to_string(), "1920");
+    }
+
+    #[test]
+    fn lanes_give_their_numbers_to_a_view_that_places_them() {
+        assert_eq!(u16::from(LaneIndex::new(3)), 3);
+        assert_eq!(u16::from(LaneCount::new(4).unwrap()), 4);
     }
 
     #[test]

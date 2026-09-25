@@ -687,8 +687,8 @@ shown.
 | `AudioTime` | `i64` millionths, 0 or more | A point in the audio file, from its start | Converts to a `ResolvedTime` |
 | `Origin` | `i64` millionths | The audio time of tick 0, negative before the file starts | Converts to a `ResolvedTime` |
 | `ResolvedTime` | `f64` | An audio time resolved from a timing map, never stored | Compares; gives seconds for an audio API or a display |
-| `LaneIndex` | `u16` | A lane, counting from 0 | |
-| `LaneCount` | `NonZeroU16` | A number of lanes | Names its last and middle lanes |
+| `LaneIndex` | `u16` | A lane, counting from 0 | Gives its number to a view |
+| `LaneCount` | `NonZeroU16` | A number of lanes | Names its last and middle lanes; gives its number to a view |
 | `LaneSpan` | Two `u32` | The lanes a lane position covers | Tells whether it fits a chart or overlaps another span |
 | `Decimal` | `i64` millionths | A quantity the ruleset defines, such as a plane coordinate | |
 
