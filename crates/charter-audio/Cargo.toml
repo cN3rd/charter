@@ -1,0 +1,11 @@
+[package]
+name = "charter-audio"
+version = "0.0.0"
+edition = "2024"
+
+[lints]
+workspace = true
+
+[dependencies]
+symphonia-wrap.workspace = true
+thiserror.workspace = true

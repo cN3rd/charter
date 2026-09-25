@@ -617,6 +617,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "charter-audio"
+version = "0.0.0"
+dependencies = [
+ "symphonia-wrap",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "charter-core"
 version = "0.0.0"
 dependencies = [
