@@ -13,11 +13,11 @@ use std::collections::BTreeMap;
 use std::num::NonZeroU16;
 
 use charter_core::{
-    Bpm, Chart as CoreChart, Decimal, Document, Extensions, FORMAT_VERSION, InvalidValue, Key,
-    Kind, LaneCount, LaneIndex, Location, Marker, MarkerKind, Metadata, Name, Namespace, Object,
-    Origin, Position, ResourcePath, Ruleset, RulesetPlugin, SampleId, Settings, Shape, Stream,
-    Tick, Ticks, TicksPerBeat, TimeSignature, Timing as CoreTiming, TimingEvent as CoreEvent,
-    TimingKind as CoreKind, ValidDocument,
+    Bpm, Chart as CoreChart, DEFAULT_TICKS_PER_BEAT, Decimal, Document, Extensions, FORMAT_VERSION,
+    InvalidValue, Key, Kind, LaneCount, LaneIndex, Layout, Location, Marker, MarkerKind, Metadata,
+    Name, Namespace, NewSong, Object, Origin, Position, ResourcePath, Ruleset, RulesetPlugin,
+    SampleId, Settings, Shape, Stream, Tick, Ticks, TicksPerBeat, TimeSignature,
+    Timing as CoreTiming, TimingEvent as CoreEvent, TimingKind as CoreKind, ValidDocument,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -504,7 +504,88 @@ impl RulesetPlugin for Plugin {
         Song::try_from(document)?;
         Ok(())
     }
+
+    fn name(&self) -> &'static str {
+        "osu!mania"
+    }
+
+    fn layout_kind(&self) -> &'static str {
+        "Keys"
+    }
+
+    fn layouts(&self) -> Vec<Layout> {
+        NEW_SONG_KEYS
+            .iter()
+            .map(|keys| Layout {
+                name: format!("{}K", keys.lanes()),
+                lanes: keys.lanes(),
+            })
+            .collect()
+    }
+
+    /// Every chart gets the keys and HP and OD of 5.
+    fn new_song(
+        &self,
+        song: &NewSong,
+    ) -> Result<ValidDocument, Box<dyn std::error::Error + Send + Sync>> {
+        let keys = *NEW_SONG_KEYS
+            .get(song.layout)
+            .ok_or("osu!mania has no such key count")?;
+        let middling = Difficulty::new(whole(5)).ok_or("5 is a difficulty")?;
+        let charts = song
+            .charts
+            .iter()
+            .map(|name| Chart {
+                name: name.clone(),
+                keys,
+                hp: middling,
+                od: middling,
+                timing: None,
+                notes: Vec::new(),
+            })
+            .collect();
+        let at_zero = |kind| TimingEvent {
+            tick: Tick::new(0),
+            kind,
+        };
+        let four = NonZeroU16::new(4).ok_or("4 is not zero")?;
+        let timing = Timing {
+            offset_seconds: Origin::try_from(0.0)?,
+            events: vec![
+                at_zero(TimingKind::Bpm(Bpm::try_from(120.0)?)),
+                at_zero(TimingKind::Meter(four)),
+            ],
+        };
+        let song = Song::new(
+            song.metadata.clone(),
+            DEFAULT_TICKS_PER_BEAT,
+            BTreeMap::new(),
+            timing,
+            Vec::new(),
+            charts,
+        )?;
+        Ok(song.to_document())
+    }
 }
+
+/// The key counts a new song can have, the usual one first.
+const NEW_SONG_KEYS: [Keys; 15] = [
+    Keys::K4,
+    Keys::K1,
+    Keys::K2,
+    Keys::K3,
+    Keys::K5,
+    Keys::K6,
+    Keys::K7,
+    Keys::K8,
+    Keys::K9,
+    Keys::K10,
+    Keys::K12,
+    Keys::K14,
+    Keys::K16,
+    Keys::K18,
+    Keys::K20,
+];
 
 fn read_chart(chart: &CoreChart, c: usize) -> Result<Chart, Error> {
     reject_own_keys(&chart.ext, Location::ChartExt(c))?;
@@ -1030,6 +1111,59 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    fn new_song(layout: usize, charts: &[&str]) -> charter_core::NewSong {
+        charter_core::NewSong {
+            metadata: Metadata {
+                title: "t".to_owned(),
+                artist: "a".to_owned(),
+                audio: charter_core::ResourcePath::new("audio.ogg").unwrap(),
+                preview: None,
+                ext: Extensions::new(),
+            },
+            layout,
+            charts: charts.iter().map(|&name| name.to_owned()).collect(),
+        }
+    }
+
+    #[test]
+    fn a_new_song_offers_every_key_count_with_four_keys_first() {
+        let layouts = Plugin.layouts();
+        assert_eq!(layouts.len(), Keys::ALL.len());
+        assert_eq!(layouts[0].name, "4K");
+        assert_eq!(layouts[0].lanes, LaneCount::new(4).unwrap());
+        assert_eq!(Plugin.layout_kind(), "Keys");
+        assert_eq!(Plugin.name(), "osu!mania");
+    }
+
+    #[test]
+    fn a_new_song_gives_every_chart_its_keys_and_middling_difficulty() {
+        let seven = Plugin
+            .layouts()
+            .iter()
+            .position(|layout| layout.name == "7K")
+            .unwrap();
+        let document = Plugin
+            .new_song(&new_song(seven, &["Normal", "Hard"]))
+            .unwrap();
+        Plugin.check(&document).unwrap();
+        let song = Song::try_from(&document).unwrap();
+        assert_eq!(song.charts().len(), 2);
+        assert!(
+            song.charts()
+                .iter()
+                .all(|chart| chart.keys == Keys::K7 && chart.notes.is_empty())
+        );
+    }
+
+    #[test]
+    fn a_new_song_refuses_a_key_count_it_does_not_have() {
+        assert!(
+            Plugin
+                .new_song(&new_song(Keys::ALL.len(), &["Easy"]))
+                .is_err()
+        );
     }
 }
 

@@ -13,11 +13,11 @@
 use std::collections::BTreeMap;
 
 use charter_core::{
-    Bpm, Chart as CoreChart, Decimal, Document, Extensions, FORMAT_VERSION, InvalidValue, Key,
-    Kind, LaneCount, LaneIndex, Location, Marker, MarkerKind, Metadata, Name, Namespace, Object,
-    Origin, Position, ResourcePath, Ruleset, RulesetPlugin, SampleId, Seconds, Settings, Shape,
-    Stream, Tick, Ticks, TicksPerBeat, TimeSignature, Timing as CoreTiming,
-    TimingEvent as CoreEvent, TimingKind as CoreKind, ValidDocument,
+    Bpm, Chart as CoreChart, DEFAULT_TICKS_PER_BEAT, Decimal, Document, Extensions, FORMAT_VERSION,
+    InvalidValue, Key, Kind, LaneCount, LaneIndex, Layout, Location, Marker, MarkerKind, Metadata,
+    Name, Namespace, NewSong, Object, Origin, Position, ResourcePath, Ruleset, RulesetPlugin,
+    SampleId, Seconds, Settings, Shape, Stream, Tick, Ticks, TicksPerBeat, TimeSignature,
+    Timing as CoreTiming, TimingEvent as CoreEvent, TimingKind as CoreKind, ValidDocument,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::Value;
@@ -558,6 +558,69 @@ impl RulesetPlugin for Plugin {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Song::try_from(document)?;
         Ok(())
+    }
+
+    fn name(&self) -> &'static str {
+        "StepMania"
+    }
+
+    fn layout_kind(&self) -> &'static str {
+        "Style"
+    }
+
+    fn layouts(&self) -> Vec<Layout> {
+        Style::ALL
+            .iter()
+            .map(|style| Layout {
+                name: style.name().to_owned(),
+                lanes: style.lanes(),
+            })
+            .collect()
+    }
+
+    /// Every chart gets the style, meter 1, and the difficulty its name spells, if it spells one,
+    /// or `edit`.
+    fn new_song(
+        &self,
+        song: &NewSong,
+    ) -> Result<ValidDocument, Box<dyn std::error::Error + Send + Sync>> {
+        let style = *Style::ALL
+            .get(song.layout)
+            .ok_or("StepMania has no such style")?;
+        let charts = song
+            .charts
+            .iter()
+            .map(|name| Chart {
+                name: name.clone(),
+                style,
+                difficulty: serde_json::from_value(Value::String(name.to_lowercase()))
+                    .unwrap_or(Difficulty::Edit),
+                meter: 1,
+                description: String::new(),
+                timing: None,
+                notes: Vec::new(),
+            })
+            .collect();
+        let at_zero = |kind| TimingEvent {
+            tick: Tick::new(0),
+            kind,
+        };
+        let timing = Timing {
+            offset_seconds: Origin::try_from(0.0)?,
+            events: vec![
+                at_zero(TimingKind::Bpm(Bpm::try_from(120.0)?)),
+                at_zero(TimingKind::TimeSignature(TimeSignature::COMMON)),
+            ],
+        };
+        let song = Song::new(
+            song.metadata.clone(),
+            DEFAULT_TICKS_PER_BEAT,
+            BTreeMap::new(),
+            timing,
+            Vec::new(),
+            charts,
+        )?;
+        Ok(song.to_document())
     }
 }
 
@@ -1224,5 +1287,67 @@ mod tests {
     fn labels_travel_as_section_markers_rather_than_timing_segments() {
         let label = with_events(&[other(0, "sm.label", json!("drop"))]);
         assert!(matches!(read(&label), Err(Error::UnknownKey { .. })));
+    }
+
+    fn new_song(layout: usize, charts: &[&str]) -> charter_core::NewSong {
+        charter_core::NewSong {
+            metadata: Metadata {
+                title: "t".to_owned(),
+                artist: "a".to_owned(),
+                audio: ResourcePath::new("audio.ogg").unwrap(),
+                preview: None,
+                ext: Extensions::new(),
+            },
+            layout,
+            charts: charts.iter().map(|&name| name.to_owned()).collect(),
+        }
+    }
+
+    #[test]
+    fn a_new_song_offers_every_style_with_dance_single_first() {
+        let layouts = Plugin.layouts();
+        assert_eq!(layouts.len(), Style::ALL.len());
+        assert_eq!(layouts[0].name, "dance-single");
+        assert_eq!(layouts[0].lanes, LaneCount::new(4).unwrap());
+        assert_eq!(Plugin.layout_kind(), "Style");
+        assert_eq!(Plugin.name(), "StepMania");
+    }
+
+    #[test]
+    fn a_new_song_gives_every_chart_its_style_and_a_difficulty_named_like_the_chart() {
+        let pump = Style::ALL
+            .iter()
+            .position(|style| *style == Style::PumpSingle)
+            .unwrap();
+        let document = Plugin.new_song(&new_song(pump, &["Hard", "Wild"])).unwrap();
+        Plugin.check(&document).unwrap();
+        let song = Song::try_from(&document).unwrap();
+        let charts = song.charts();
+        assert_eq!(charts.len(), 2);
+        assert_eq!(
+            (charts[0].name.as_str(), charts[0].style),
+            ("Hard", Style::PumpSingle)
+        );
+        assert_eq!(charts[0].difficulty, Difficulty::Hard);
+        assert_eq!(charts[1].difficulty, Difficulty::Edit);
+        assert!(charts.iter().all(|chart| chart.notes.is_empty()));
+        assert_eq!(document.document().charts[0].lanes, LaneCount::new(5));
+    }
+
+    #[test]
+    fn a_new_song_starts_at_120_bpm_in_four_four() {
+        let document = Plugin.new_song(&new_song(0, &["Easy"])).unwrap();
+        let events = &document.document().timing.events;
+        assert_eq!(events.len(), 2);
+        assert!(events.iter().all(|event| event.tick == Tick::new(0)));
+    }
+
+    #[test]
+    fn a_new_song_refuses_a_style_it_does_not_have() {
+        assert!(
+            Plugin
+                .new_song(&new_song(Style::ALL.len(), &["Easy"]))
+                .is_err()
+        );
     }
 }

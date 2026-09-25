@@ -30,6 +30,14 @@ and checks every edit, undo and redo through the same plugin, so an edit the gam
 is refused. Without its plugin a song is read-only. `charter-app` compiles the built-in plugins in,
 and nothing loads a plugin at runtime yet.
 
+A plugin can also start songs. `name` is the game's name, `layouts` lists the lane layouts a new
+song can have, the usual one first, and `layout_kind` says what the game calls one. `new_song`
+makes a song with no notes from metadata, a layout and chart names, with every chart on that
+layout, at 120 BPM in 4/4. StepMania's layouts are its styles, and a chart whose name spells a
+difficulty, such as `Hard`, gets it; others are `edit`, all at meter 1. osu!mania's are its key
+counts, 4K first, with HP and OD 5, and Tap Tap Revenge's are its 3, 4 and 5 lanes. A plugin
+without layouts cannot start songs.
+
 | Ruleset | Namespace | Kinds | Timing | Chart settings |
 |---|---|---|---|---|
 | StepMania | `sm` | `tap`, `hold`, `roll`, `mine`, `lift`, `fake`, `sm.auto_keysound` | Every core kind, `sm.tickcount`, `sm.combo`, `sm.speed`, `sm.scroll`, `sm.fake` | `style`, `difficulty`, `meter`, `description` |

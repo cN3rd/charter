@@ -380,6 +380,15 @@ pub struct TimeSignature {
 }
 
 impl TimeSignature {
+    /// Four quarter notes a measure, the meter a song has unless it says otherwise.
+    pub const COMMON: Self = match (NonZeroU16::new(4), NonZeroU16::new(4)) {
+        (Some(numerator), Some(denominator)) => Self {
+            numerator,
+            denominator,
+        },
+        _ => unreachable!(),
+    };
+
     /// Whether a measure, `numerator * 4 / denominator` beats, is a whole number of ticks at
     /// `resolution`.
     #[must_use]

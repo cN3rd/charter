@@ -13,10 +13,11 @@
 use std::collections::BTreeMap;
 
 use charter_core::{
-    Bpm, Chart as CoreChart, Document, Extensions, FORMAT_VERSION, InvalidValue, Key, Kind,
-    LaneCount, LaneIndex, Location, Marker, MarkerKind, Metadata, Name, Namespace, Object, Origin,
-    Position, Ruleset, RulesetPlugin, Settings, Shape, Stream, Tick, Ticks, TicksPerBeat,
-    TimeSignature, Timing, TimingEvent, TimingKind, ValidDocument,
+    Bpm, Chart as CoreChart, DEFAULT_TICKS_PER_BEAT, Document, Extensions, FORMAT_VERSION,
+    InvalidValue, Key, Kind, LaneCount, LaneIndex, Layout, Location, Marker, MarkerKind, Metadata,
+    Name, Namespace, NewSong, Object, Origin, Position, Ruleset, RulesetPlugin, Settings, Shape,
+    Stream, Tick, Ticks, TicksPerBeat, TimeSignature, Timing, TimingEvent, TimingKind,
+    ValidDocument,
 };
 
 /// The ruleset namespace.
@@ -262,9 +263,7 @@ impl Lanes {
     }
 
     fn of(width: LaneCount) -> Option<Self> {
-        [Self::Three, Self::Four, Self::Five]
-            .into_iter()
-            .find(|lanes| lanes.width() == width)
+        LANES.into_iter().find(|lanes| lanes.width() == width)
     }
 
     /// Where a note of `kind` sits. A shake or slice takes the lane of its direction; a down
@@ -447,7 +446,62 @@ impl RulesetPlugin for Plugin {
         Song::try_from(document)?;
         Ok(())
     }
+
+    fn name(&self) -> &'static str {
+        "Tap Tap Revenge"
+    }
+
+    fn layouts(&self) -> Vec<Layout> {
+        LANES
+            .iter()
+            .map(|lanes| Layout {
+                name: format!("{} lanes", lanes.width()),
+                lanes: lanes.width(),
+            })
+            .collect()
+    }
+
+    fn new_song(
+        &self,
+        song: &NewSong,
+    ) -> Result<ValidDocument, Box<dyn std::error::Error + Send + Sync>> {
+        let lanes = *LANES
+            .get(song.layout)
+            .ok_or("Tap Tap Revenge has no such lane count")?;
+        let charts = song
+            .charts
+            .iter()
+            .map(|name| Chart {
+                name: name.clone(),
+                tempo: None,
+                notes: Vec::new(),
+            })
+            .collect();
+        let at_zero = |kind| TempoChange {
+            tick: Tick::new(0),
+            kind,
+        };
+        let tempo = Tempo {
+            offset_seconds: Origin::try_from(0.0)?,
+            changes: vec![
+                at_zero(TempoKind::Bpm(Bpm::try_from(120.0)?)),
+                at_zero(TempoKind::TimeSignature(TimeSignature::COMMON)),
+            ],
+        };
+        let song = Song::new(
+            song.metadata.clone(),
+            DEFAULT_TICKS_PER_BEAT,
+            lanes,
+            tempo,
+            Vec::new(),
+            charts,
+        )?;
+        Ok(song.to_document())
+    }
 }
+
+/// Every lane count a song can have.
+const LANES: [Lanes; 3] = [Lanes::Three, Lanes::Four, Lanes::Five];
 
 fn read_chart(c: usize, chart: &CoreChart, lanes: Lanes) -> Result<Chart, Error> {
     reject_keys(chart.settings.keys(), Location::ChartSettings(c))?;
@@ -1076,6 +1130,49 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    fn new_song(layout: usize, charts: &[&str]) -> charter_core::NewSong {
+        charter_core::NewSong {
+            metadata: Metadata {
+                title: "t".to_owned(),
+                artist: "a".to_owned(),
+                audio: charter_core::ResourcePath::new("audio.ogg").unwrap(),
+                preview: None,
+                ext: Extensions::new(),
+            },
+            layout,
+            charts: charts.iter().map(|&name| name.to_owned()).collect(),
+        }
+    }
+
+    #[test]
+    fn a_new_song_offers_three_four_or_five_lanes() {
+        let lanes: Vec<_> = Plugin.layouts().iter().map(|layout| layout.lanes).collect();
+        assert_eq!(lanes, [3, 4, 5].map(|n| LaneCount::new(n).unwrap()));
+        assert_eq!(Plugin.layouts()[1].name, "4 lanes");
+        assert_eq!(Plugin.name(), "Tap Tap Revenge");
+    }
+
+    #[test]
+    fn a_new_song_has_the_lanes_and_charts_asked_for_and_no_notes() {
+        let document = Plugin.new_song(&new_song(2, &["Easy", "Extreme"])).unwrap();
+        Plugin.check(&document).unwrap();
+        let song = Song::try_from(&document).unwrap();
+        assert_eq!(song.lanes(), Lanes::Five);
+        let names: Vec<_> = song
+            .charts()
+            .iter()
+            .map(|chart| chart.name.as_str())
+            .collect();
+        assert_eq!(names, ["Easy", "Extreme"]);
+        assert!(song.charts().iter().all(|chart| chart.notes.is_empty()));
+    }
+
+    #[test]
+    fn a_new_song_refuses_a_lane_count_it_does_not_have_or_no_charts() {
+        assert!(Plugin.new_song(&new_song(3, &["Easy"])).is_err());
+        assert!(Plugin.new_song(&new_song(0, &[])).is_err());
     }
 }
 
