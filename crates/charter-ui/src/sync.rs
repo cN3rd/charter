@@ -26,12 +26,22 @@ const QUARTER: std::num::NonZeroU16 = std::num::NonZeroU16::new(4).unwrap();
 /// Measures shown past the song's last object, room to sync an outro.
 const TAIL: usize = 4;
 
-/// Whether the sync window shows, and the hit being dragged in it.
+/// Whether the sync window shows, and what is being dragged in it.
 #[derive(Debug, Default)]
 pub struct Sync {
     pub open: bool,
-    /// Where in the audio the hit being dragged was picked up, in seconds.
-    grabbed: Option<f64>,
+    grabbed: Option<Grab>,
+}
+
+/// What a drag in the sync window holds, the way Tempora's gestures have it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Grab {
+    /// A moment of the audio, picked up this many seconds in, to drop on a grid line.
+    Hit(f64),
+    /// An anchor, moved on the grid while it keeps its moment in the audio.
+    Anchor(Tick),
+    /// An anchor, moved in the audio while it keeps its beat: a Ctrl-drag.
+    AnchorInAudio(Tick),
 }
 
 /// A measure's row: which measure, and where its beats lie across the screen.
@@ -108,8 +118,10 @@ fn header(ui: &mut egui::Ui, song: &Song, peaks: Option<&Peaks>) {
         ui.label(format!("Snap 1/{}", song.snap()));
         ui.weak("·");
         ui.weak(
-            "Drag a hit onto its grid line. Click adds an anchor, double-click removes one, \
-             Ctrl+wheel nudges the nearest by 2 ms (Shift: 10 ms), right-click plays from there.",
+            "Click a hit to pin the nearest grid line to it, or drag it onto a line. Drag an \
+             anchor to move it on the grid, Ctrl-drag to move it in the audio; double-click \
+             removes one, Ctrl+wheel nudges the nearest by 2 ms (Shift: 10 ms), right-click \
+             plays from there.",
         );
     });
     if peaks.is_none() {
@@ -199,27 +211,48 @@ fn rows(
         });
     if let (Some(grabbed), Some(step)) = (sync.grabbed, step) {
         let hovered = ui.input(|input| input.pointer.latest_pos());
+        let now = |tick: Tick| timing.time_at(tick).seconds();
         if let Some(pos) = released {
             sync.grabbed = None;
             if let Some(row) = laid.iter().find(|row| row.rect.y_range().contains(pos.y)) {
-                let tick = row.snapped(pos.x, step);
-                actions.push(Action::Sync {
-                    tick,
-                    seconds: grabbed,
+                let to = row.snapped(pos.x, step);
+                actions.push(match grabbed {
+                    Grab::Hit(seconds) => Action::Sync { tick: to, seconds },
+                    Grab::Anchor(from) => Action::MoveAnchor { from, to },
+                    Grab::AnchorInAudio(tick) => Action::Sync {
+                        tick,
+                        seconds: now(row.tick_at(pos.x)),
+                    },
                 });
             }
         } else if let Some(pos) = hovered
             && let Some(row) = laid.iter().find(|row| row.rect.contains(pos))
         {
-            let x = row.x(row.snapped(pos.x, step));
+            // Where the drop goes: a grid line, or for a Ctrl-drag, the moment under the pointer.
+            let x = match grabbed {
+                Grab::AnchorInAudio(_) => pos.x,
+                Grab::Hit(_) | Grab::Anchor(_) => row.x(row.snapped(pos.x, step)),
+            };
             let painter = ui.painter();
             painter.vline(x, row.rect.y_range(), Stroke::new(2.0, style::ACCENT));
         }
     }
 }
 
-/// The row's input: a drag picks a hit up, a click adds an anchor, a double-click removes one,
-/// Ctrl+wheel nudges one and a right-click plays.
+/// The anchor in `row` whose line is within grabbing distance of `x`, the nearest if several.
+fn anchor_near(row: &Row, timing: Valid<'_, Timing>, x: f32) -> Option<Tick> {
+    anchors_in(row, timing)
+        .into_iter()
+        .map(|(tick, _)| (tick, (row.x(tick) - x).abs()))
+        .filter(|(_, off)| *off <= GRAB)
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(tick, _)| tick)
+}
+
+/// The row's input, as Tempora's timeline takes it: a click pins the nearest grid line to the
+/// moment clicked, a drag on an anchor moves it on the grid and a Ctrl-drag in the audio, a drag
+/// elsewhere carries a hit to a grid line, a double-click removes an anchor, Ctrl+wheel nudges
+/// one and a right-click plays.
 fn answer(
     response: &egui::Response,
     row: &Row,
@@ -230,20 +263,18 @@ fn answer(
     actions: &mut Vec<Action>,
 ) {
     let pointer = response.interact_pointer_pos().or(response.hover_pos());
-    let anchor = pointer.and_then(|pos| {
-        anchors_in(row, timing)
-            .into_iter()
-            .map(|(tick, _)| (tick, (row.x(tick) - pos.x).abs()))
-            .filter(|(_, off)| *off <= GRAB)
-            .min_by(|a, b| a.1.total_cmp(&b.1))
-            .map(|(tick, _)| tick)
-    });
+    let anchor = pointer.and_then(|pos| anchor_near(row, timing, pos.x));
     let now = |tick: Tick| timing.time_at(tick).seconds();
     // Where the button went down, not where the drag was first noticed a few points on.
     if response.drag_started()
         && let Some(pos) = response.ctx.input(|input| input.pointer.press_origin())
     {
-        sync.grabbed = Some(now(row.tick_at(pos.x)));
+        let ctrl = response.ctx.input(|input| input.modifiers.command);
+        sync.grabbed = Some(match anchor_near(row, timing, pos.x) {
+            Some(tick) if ctrl => Grab::AnchorInAudio(tick),
+            Some(tick) => Grab::Anchor(tick),
+            None => Grab::Hit(now(row.tick_at(pos.x))),
+        });
     }
     if response.double_clicked() {
         if let Some(tick) = anchor {
@@ -253,10 +284,9 @@ fn answer(
         && anchor.is_none()
         && let (Some(pos), Some(step)) = (pointer, step)
     {
-        let tick = row.snapped(pos.x, step);
         actions.push(Action::Sync {
-            tick,
-            seconds: now(tick),
+            tick: row.snapped(pos.x, step),
+            seconds: now(row.tick_at(pos.x)),
         });
     }
     if response.secondary_clicked()

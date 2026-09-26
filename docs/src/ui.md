@@ -239,8 +239,12 @@ and the notes over a waveform that stays put.
   [sync anchors](research/topics/sync-anchors.md), without the format storing anchors: dragging
   a hit onto a grid line anchors that line to the hit, and the tempo on either side changes so
   the neighbouring anchors stay where they are in the audio. The first anchor moves the offset
-  instead. Clicking adds an anchor where the beat already is, double-clicking removes one,
-  Ctrl+wheel nudges the nearest by 2 ms (10 ms with Shift), and right-clicking plays from there.
+  instead. The gestures are Tempora's, as its documentation gives them; its code is CC BY-NC-ND
+  and was not read. Clicking a hit pins the nearest grid line to it, dragging an anchor moves it
+  on the grid while it keeps its moment, so the waveform slides under the grid, and Ctrl-dragging
+  moves it in the audio while it keeps its beat. Double-clicking removes an anchor, Ctrl+wheel
+  nudges the nearest by 2 ms (10 ms with Shift), and right-clicking plays from there. An anchor
+  never passes its neighbours in either direction.
   The waveform shows here whether or not the notefield's is on.
 - Timing > Import timing… reads another program's timing, pasted or from a file, and shows what
   it holds before it replaces the open chart's tempo, meters and offset as one step. Each ruleset

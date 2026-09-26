@@ -300,6 +300,11 @@ pub(crate) enum Action {
     },
     /// Removes the anchor on the tick.
     Unsync(Tick),
+    /// Moves the anchor on `from` to the beat `to`, keeping its moment in the audio.
+    MoveAnchor {
+        from: Tick,
+        to: Tick,
+    },
     ToggleSync,
     /// Moves every timing event at `from` to `to`, as one timing point.
     MoveTiming {
@@ -1213,6 +1218,7 @@ impl Window {
             | Action::ImportTiming(_)
             | Action::Sync { .. }
             | Action::Unsync(_)
+            | Action::MoveAnchor { .. }
             | Action::MoveTiming { .. } => self.failure = retime(song, &action),
             Action::JumpTo(tick) => song.jump_to(tick),
             Action::JumpEnd => song.jump_to(song.end()),
@@ -1663,6 +1669,7 @@ fn retime(song: &mut Song, action: &Action) -> Option<String> {
         }
         Action::Sync { tick, seconds } => song.sync(*tick, *seconds),
         Action::Unsync(tick) => song.unsync(*tick),
+        Action::MoveAnchor { from, to } => song.move_anchor(*from, *to),
         Action::MoveTiming { from, to } => song.move_timing_at(*from, *to),
         _ => Ok(()),
     };
@@ -3370,6 +3377,57 @@ mod tests {
     }
 
     #[test]
+    fn the_metronome_follows_every_timing_point_offset_tempo_meter_and_stop() {
+        let song = serde_json::json!({
+            "format_version": 0,
+            "ruleset": { "id": "sm", "version": "1" },
+            "metadata": { "title": "Timed", "artist": "a", "audio": "a.ogg" },
+            "timing": { "offset_seconds": 0.5, "events": [
+                { "tick": 0, "kind": { "bpm": 120.0 } },
+                { "tick": 3840, "kind": { "bpm": 240.0 } },
+                { "tick": 3840, "kind": { "time_signature": [3, 4] } },
+                { "tick": 4800, "kind": { "stop": 0.5 } }
+            ] },
+            "charts": [ { "name": "Easy", "lanes": 4 } ]
+        });
+        let settings = Settings {
+            metronome: true,
+            metronome_sound: Kit::PureSine,
+            ..Settings::default()
+        };
+        let mut app = Window::new(PLUGINS).with_settings(settings);
+        app.open(
+            Path::new("/songs/timed.json"),
+            &serde_json::to_vec(&song).unwrap(),
+        );
+        let mut harness = window(app);
+        harness
+            .state_mut()
+            .audio_ready(Path::new("/songs/a.ogg"), 4.2);
+        harness.run();
+        let clicks = clicks_played(&mut harness);
+        let (a, b) = (Tone::Accent(Kit::PureSine), Tone::Beat(Kit::PureSine));
+        // 120 BPM in 4/4 from 0.5 s; from 2.5 s, 240 BPM in 3/4, with half a second stopped
+        // after the beat at 2.75 s.
+        let expected = [
+            (0.5, a),
+            (1.0, b),
+            (1.5, b),
+            (2.0, b),
+            (2.5, a),
+            (2.75, b),
+            (3.5, b),
+            (3.75, a),
+            (4.0, b),
+        ];
+        assert_eq!(clicks.len(), expected.len(), "{clicks:?}");
+        for ((at, tone), (want_at, want_tone)) in clicks.iter().zip(expected) {
+            assert!((at - want_at).abs() < 1e-9, "{clicks:?}");
+            assert_eq!(*tone, want_tone, "{clicks:?}");
+        }
+    }
+
+    #[test]
     fn f3_and_f4_turn_the_metronome_and_the_note_ticks_on_and_off() {
         let mut harness = editable_demo();
         harness.key_press(egui::Key::F3);
@@ -3778,16 +3836,36 @@ mod tests {
     }
 
     #[test]
-    fn clicking_in_the_sync_window_anchors_the_nearest_grid_line_where_it_is() {
+    fn clicking_in_the_sync_window_pins_the_nearest_grid_line_to_the_moment_clicked() {
         let mut harness = syncing();
-        let heard = seconds_at(&harness, 1920);
+        let heard = seconds_at(&harness, 1950);
         let near = in_row(&harness, 1950);
         click(&mut harness, near, egui::Modifiers::NONE);
         assert_eq!(
             event_ticks(&harness),
             [Tick::new(0), Tick::new(960), Tick::new(1920)]
         );
-        assert!((seconds_at(&harness, 1920) - heard).abs() < 1e-9);
+        assert!((seconds_at(&harness, 1920) - heard).abs() < 5e-3);
+        assert!((seconds_at(&harness, 960) - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn dragging_an_anchor_in_the_sync_window_moves_it_on_the_grid_keeping_its_moment() {
+        let mut harness = syncing();
+        let (from, to) = (in_row(&harness, 960), in_row(&harness, 1440));
+        drag(&mut harness, from, to, egui::Modifiers::NONE);
+        assert_eq!(event_ticks(&harness), [Tick::new(0), Tick::new(1440)]);
+        assert!((seconds_at(&harness, 1440) - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn ctrl_dragging_an_anchor_in_the_sync_window_moves_it_in_the_audio() {
+        let mut harness = syncing();
+        let heard = seconds_at(&harness, 1200);
+        let (from, to) = (in_row(&harness, 960), in_row(&harness, 1200));
+        drag(&mut harness, from, to, egui::Modifiers::COMMAND);
+        assert_eq!(event_ticks(&harness), [Tick::new(0), Tick::new(960)]);
+        assert!((seconds_at(&harness, 960) - heard).abs() < 5e-3);
     }
 
     #[test]
