@@ -297,6 +297,8 @@ pub(crate) enum Action {
     JumpEnd,
     /// An edit the timing window asks for.
     Timing(charter_timing::Edit),
+    /// Play from this many seconds into the audio with the metronome on, to hear an edit.
+    Audition(f64),
     ToggleSync,
     /// Moves every timing event at `from` to `to`, as one timing point.
     MoveTiming {
@@ -350,6 +352,8 @@ pub struct Window {
     settings_open: bool,
     /// The timing window.
     sync: charter_timing::TimingWindow,
+    /// The frame clock this frame, in seconds.
+    frame_time: f64,
     /// The import timing window.
     import: import::Import,
     /// How tall a second of the open song is on screen.
@@ -617,6 +621,32 @@ impl Window {
             self.toggle_play();
             self.toggle_play();
         }
+    }
+
+    /// Plays from `from` seconds with the metronome on, whatever the settings say, so an edit to
+    /// the timing is heard at once. Does nothing until the audio is ready.
+    fn audition(&mut self, from: f64) {
+        let (Some(song), Some(&Loaded::Ready(seconds))) = (&self.song, self.loaded()) else {
+            return;
+        };
+        if self.playing {
+            self.requests.push(Request::Pause);
+        }
+        let from = from.max(0.0);
+        let settings = Settings {
+            metronome: true,
+            ..self.settings.clone()
+        };
+        let clicks = clicks(song, &settings, from, seconds);
+        let volumes = self.settings.volumes;
+        self.playing = true;
+        self.played = Some((volumes, !clicks.is_empty()));
+        self.requests.push(Request::Play {
+            from,
+            rate: self.rate.factor(),
+            clicks,
+            volumes,
+        });
     }
 
     fn toggle_play(&mut self) {
@@ -1108,6 +1138,7 @@ impl Window {
             Action::ToggleMetronome => self.settings.metronome = !self.settings.metronome,
             Action::ToggleTicks => self.settings.tick_sound = self.settings.tick_sound.toggled(),
             Action::TogglePlay => self.toggle_play(),
+            Action::Audition(from) => self.audition(from),
             Action::ChooseAudio => self.requests.push(Request::ChooseAudio),
             Action::NudgeRate(step) => self.set_rate(self.rate.by(step)),
             Action::SetRate(factor) => self.set_rate(Rate::of(factor)),
@@ -1214,6 +1245,7 @@ impl Window {
             | Action::ToggleMetronome
             | Action::ToggleTicks
             | Action::TogglePlay
+            | Action::Audition(_)
             | Action::ChooseAudio
             | Action::NudgeRate(_)
             | Action::SetRate(_)
@@ -1230,8 +1262,14 @@ impl Window {
             | Action::AddBpm
             | Action::NudgeOffset(_)
             | Action::ImportTiming(_)
-            | Action::Timing(_)
             | Action::MoveTiming { .. } => self.failure = retime(song, &action),
+            // The timing window says itself why its edits were refused.
+            Action::Timing(edit) => {
+                if let Err(why) = edit.apply(song) {
+                    let now = self.frame_time;
+                    self.sync.refused(&edit, &why, song.timing(), now);
+                }
+            }
             Action::JumpTo(tick) => song.jump_to(tick),
             Action::JumpEnd => song.jump_to(song.end()),
             Action::MoveMarker { index, to } => {
@@ -1321,6 +1359,10 @@ impl Window {
             || self.restoring.is_some()
             || self.offer.is_some();
         let typing = ui.ctx().egui_wants_keyboard_input();
+        // The timing window, once clicked, takes the keys it has a use for; undo and redo still
+        // reach the song.
+        let timing = self.sync.has_keyboard();
+        let history = |action: &Action| matches!(action, Action::Undo | Action::Redo);
         let ends_a_chord =
             |action: &Action| matches!(action, Action::LaneUp(_) | Action::LanesReleased);
         // Commands a text field has no use for of its own still work while one has the keyboard.
@@ -1338,7 +1380,16 @@ impl Window {
         };
         asked
             .into_iter()
-            .filter(|action| ends_a_chord(action) || !asking && (!typing || global(action)))
+            .filter(|action| {
+                let open = if typing {
+                    global(action)
+                } else if timing {
+                    global(action) || history(action)
+                } else {
+                    true
+                };
+                ends_a_chord(action) || !asking && open
+            })
             .collect()
     }
 
@@ -1346,6 +1397,7 @@ impl Window {
     #[allow(clippy::too_many_lines)] // one frame, panel by panel in the order they draw
     pub fn ui(&mut self, ui: &mut Ui) {
         style::apply(ui.ctx(), &self.fallback_fonts);
+        self.frame_time = ui.input(|input| input.time);
         let scale = self.settings.scale();
         if (ui.ctx().zoom_factor() - scale).abs() > f32::EPSILON {
             ui.ctx().set_zoom_factor(scale);
@@ -1483,9 +1535,19 @@ impl Window {
                 .as_ref()
                 .filter(|(of, _)| Some(of.as_path()) == file.as_deref())
                 .map(|(_, peaks)| peaks.as_ref());
-            let song = self.song.as_ref();
+            let onsets = self
+                .onsets
+                .as_ref()
+                .filter(|(of, _)| Some(of.as_path()) == file.as_deref())
+                .map_or(&[][..], |(_, onsets)| onsets.as_ref());
+            let inputs = charter_timing::Inputs {
+                song: self.song.as_ref(),
+                peaks,
+                onsets,
+                playing: self.playing,
+            };
             let mut commands = Vec::new();
-            charter_timing::show(ui.ctx(), song, peaks, &mut self.sync, &mut commands);
+            charter_timing::show(ui.ctx(), inputs, &mut self.sync, &mut commands);
             for command in commands {
                 match command {
                     charter_timing::Command::Edit(edit) => actions.push(Action::Timing(edit)),
@@ -1495,6 +1557,8 @@ impl Window {
                             actions.push(Action::TogglePlay);
                         }
                     }
+                    charter_timing::Command::Audition(from) => actions.push(Action::Audition(from)),
+                    charter_timing::Command::TogglePlay => actions.push(Action::TogglePlay),
                 }
             }
         }
@@ -1686,7 +1750,6 @@ fn retime(song: &mut Song, action: &Action) -> Option<String> {
                 Err(_) => return Some(format!("{moved} s is not an offset")),
             }
         }
-        Action::Timing(edit) => edit.apply(song),
         Action::MoveTiming { from, to } => song.move_timing_at(*from, *to),
         _ => Ok(()),
     };
@@ -3872,16 +3935,18 @@ mod tests {
         harness
     }
 
-    /// Where `tick` lies across its measure's row in the timing window.
+    /// Where `tick` lies across its bar's row in the timing window, a bar a row with a tenth of
+    /// the bar before showing ahead of its downbeat.
     fn in_row(harness: &Harness<'_, Window>, tick: i32) -> egui::Pos2 {
         let song = harness.state().song.as_ref().unwrap();
         let measure = song.timing().measures_from(Tick::new(tick)).next().unwrap();
         let row = harness
             .get_by_label(&format!("Measure {}", measure.number))
             .rect();
+        let lead = charter_timing::rows::LEAD_IN;
         #[allow(clippy::cast_possible_truncation)] // a fraction of a row
-        let across = measure.fraction(Tick::new(tick)) as f32;
-        egui::pos2(row.left() + across * row.width(), row.center().y)
+        let across = ((measure.fraction(Tick::new(tick)) + lead) / (1.0 + lead)) as f32;
+        egui::pos2(row.left() + across * row.width(), row.top() + 30.0)
     }
 
     fn seconds_at(harness: &Harness<'_, Window>, tick: i32) -> f64 {
@@ -3889,8 +3954,13 @@ mod tests {
         song.timing().time_at(Tick::new(tick)).seconds()
     }
 
+    fn anchor_seconds(harness: &Harness<'_, Window>) -> Vec<f64> {
+        let song = harness.state().song.as_ref().unwrap();
+        song.anchors().iter().map(|pin| pin.seconds).collect()
+    }
+
     #[test]
-    fn ctrl_t_opens_and_closes_the_sync_window() {
+    fn ctrl_t_opens_and_closes_the_timing_window() {
         let mut harness = timed_song();
         assert!(harness.query_by_label("Measure 0").is_none());
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
@@ -3902,21 +3972,7 @@ mod tests {
     }
 
     #[test]
-    fn dragging_a_hit_onto_a_grid_line_in_the_sync_window_puts_that_beat_there() {
-        let mut harness = syncing();
-        let heard = seconds_at(&harness, 2160);
-        let (from, to) = (in_row(&harness, 2160), in_row(&harness, 1920));
-        drag(&mut harness, from, to, egui::Modifiers::NONE);
-        assert!((seconds_at(&harness, 1920) - heard).abs() < 2e-3);
-        assert_eq!(
-            event_ticks(&harness),
-            [Tick::new(0), Tick::new(960), Tick::new(1920)]
-        );
-        assert!((seconds_at(&harness, 960) - 0.5).abs() < 1e-9);
-    }
-
-    #[test]
-    fn clicking_in_the_sync_window_pins_the_nearest_grid_line_to_the_moment_clicked() {
+    fn clicking_a_row_adds_an_anchor_pinning_the_nearest_grid_line_to_the_moment_clicked() {
         let mut harness = syncing();
         let heard = seconds_at(&harness, 1950);
         let near = in_row(&harness, 1950);
@@ -3930,16 +3986,29 @@ mod tests {
     }
 
     #[test]
-    fn dragging_an_anchor_in_the_sync_window_moves_it_on_the_grid_keeping_its_moment() {
+    fn an_anchor_is_not_added_within_half_a_grid_step_of_another_and_says_why() {
         let mut harness = syncing();
-        let (from, to) = (in_row(&harness, 960), in_row(&harness, 1440));
-        drag(&mut harness, from, to, egui::Modifiers::NONE);
-        assert_eq!(event_ticks(&harness), [Tick::new(0), Tick::new(1440)]);
-        assert!((seconds_at(&harness, 1440) - 0.5).abs() < 1e-6);
+        let near = in_row(&harness, 1150);
+        click(&mut harness, near, egui::Modifiers::NONE);
+        assert_eq!(event_ticks(&harness), [Tick::new(0), Tick::new(960)]);
+        assert!(
+            harness
+                .query_by_label_contains("Too close to the anchor")
+                .is_some()
+        );
     }
 
     #[test]
-    fn ctrl_dragging_an_anchor_in_the_sync_window_moves_it_in_the_audio() {
+    fn dragging_an_anchor_moves_it_on_the_grid_keeping_its_moment() {
+        let mut harness = syncing();
+        let (from, to) = (in_row(&harness, 960), in_row(&harness, 1900));
+        drag(&mut harness, from, to, egui::Modifiers::NONE);
+        assert_eq!(event_ticks(&harness), [Tick::new(0), Tick::new(1920)]);
+        assert!((seconds_at(&harness, 1920) - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn ctrl_dragging_an_anchor_moves_it_in_the_audio_keeping_its_beat() {
         let mut harness = syncing();
         let heard = seconds_at(&harness, 1200);
         let (from, to) = (in_row(&harness, 960), in_row(&harness, 1200));
@@ -3949,31 +4018,35 @@ mod tests {
     }
 
     #[test]
-    fn the_end_of_a_row_in_the_sync_window_is_clear_of_its_scroll_bar() {
-        // The demo runs to more measures than the window shows, so its rows scroll.
-        let mut harness = editable_demo();
-        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
-        harness.run();
-        // The last points of measure 0, where a scroll bar floating over the rows would sit.
-        let from = in_row(&harness, 3830);
-        let heard = seconds_at(&harness, 3830);
-        let to = in_row(&harness, 3360);
-        harness.hover_at(from);
-        harness.run();
-        drag(&mut harness, from, to, egui::Modifiers::NONE);
-        assert!(
-            event_ticks(&harness).contains(&Tick::new(3360)),
-            "{:?}",
-            event_ticks(&harness)
+    fn an_anchor_dragged_into_its_neighbour_stops_short_of_it_in_one_step() {
+        let mut harness = syncing();
+        // Into the tenth of the bar before, shown ahead of the first downbeat.
+        let (from, to) = (
+            in_row(&harness, 960),
+            in_row(&harness, 0) - egui::vec2(30.0, 0.0),
         );
-        assert!((seconds_at(&harness, 3360) - heard).abs() < 5e-3);
+        drag(&mut harness, from, to, egui::Modifiers::COMMAND);
+        let seconds = anchor_seconds(&harness);
+        assert!(seconds[1] > seconds[0] && seconds[1] < 0.01, "{seconds:?}");
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.run();
+        assert!((anchor_seconds(&harness)[1] - 0.5).abs() < 1e-9);
     }
 
     #[test]
-    fn double_clicking_an_anchor_in_the_sync_window_removes_it() {
+    fn dragging_across_a_row_selects_the_anchors_inside_and_delete_removes_them() {
         let mut harness = syncing();
-        // Each harness pass moves the clock a quarter second, more than egui allows between the
-        // clicks of a double-click.
+        let (from, to) = (in_row(&harness, 200), in_row(&harness, 1500));
+        drag(&mut harness, from, to, egui::Modifiers::NONE);
+        assert_eq!(event_ticks(&harness), [Tick::new(0), Tick::new(960)]);
+        harness.key_press(egui::Key::Delete);
+        harness.run();
+        assert_eq!(event_ticks(&harness), [Tick::new(0)]);
+    }
+
+    #[test]
+    fn a_double_click_on_an_anchor_opens_its_moment_to_type_not_a_removal() {
+        let mut harness = syncing();
         harness
             .ctx
             .options_mut(|options| options.input_options.max_double_click_delay = 2.0);
@@ -3985,12 +4058,27 @@ mod tests {
             harness.step();
         }
         harness.run();
-        assert_eq!(event_ticks(&harness), [Tick::new(0)]);
+        harness.run();
+        assert_eq!(event_ticks(&harness), [Tick::new(0), Tick::new(960)]);
+        let field = harness.get_by_role_and_label(Role::TextInput, "t");
+        assert_eq!(field.value().as_deref(), Some("0.5000"));
+        field.type_text("0.6");
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness
+            .get_by_role_and_label(Role::TextInput, "t")
+            .type_text("0.6");
+        harness.run();
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+        assert!((anchor_seconds(&harness)[1] - 0.6).abs() < 1e-6);
     }
 
     #[test]
-    fn ctrl_wheel_in_the_sync_window_nudges_the_nearest_anchor_by_two_milliseconds() {
+    fn ctrl_wheel_nudges_the_focused_anchor_by_a_millisecond() {
         let mut harness = syncing();
+        let at = in_row(&harness, 960);
+        click(&mut harness, at, egui::Modifiers::NONE);
         harness.hover_at(in_row(&harness, 1000));
         harness.event(egui::Event::MouseWheel {
             unit: egui::MouseWheelUnit::Line,
@@ -3999,7 +4087,52 @@ mod tests {
             phase: egui::TouchPhase::Move,
         });
         harness.run();
-        assert!((seconds_at(&harness, 960) - 0.502).abs() < 1e-6);
+        assert!((seconds_at(&harness, 960) - 0.501).abs() < 1e-6);
+    }
+
+    #[test]
+    fn twenty_arrow_presses_nudge_twenty_milliseconds_as_one_step() {
+        let mut harness = syncing();
+        let at = in_row(&harness, 960);
+        click(&mut harness, at, egui::Modifiers::NONE);
+        for _ in 0..20 {
+            harness.key_press(egui::Key::ArrowRight);
+        }
+        harness.run();
+        assert!((anchor_seconds(&harness)[1] - 0.52).abs() < 1e-6);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.run();
+        assert!((anchor_seconds(&harness)[1] - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn number_keys_set_the_grid_while_the_timing_window_has_the_keyboard() {
+        let mut harness = syncing();
+        let at = in_row(&harness, 960);
+        click(&mut harness, at, egui::Modifiers::NONE);
+        harness.key_press(egui::Key::Num8);
+        harness.run();
+        assert_eq!(harness.state().sync.grid.resolution.get(), 16);
+        assert!(lanes_at(&harness, 0).is_empty());
+        let grid = harness.get_by_role_and_label(Role::ComboBox, "Grid");
+        assert_eq!(grid.value().as_deref(), Some("1/16"));
+    }
+
+    #[test]
+    fn the_end_of_a_row_in_the_timing_window_is_clear_of_its_scroll_bar() {
+        // The demo runs to more bars than the window shows, so its rows scroll.
+        let mut harness = editable_demo();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
+        harness.run();
+        let heard = seconds_at(&harness, 3830);
+        let at = in_row(&harness, 3830);
+        click(&mut harness, at, egui::Modifiers::NONE);
+        assert!(
+            event_ticks(&harness).contains(&Tick::new(3840)),
+            "{:?}",
+            event_ticks(&harness)
+        );
+        assert!((seconds_at(&harness, 3840) - heard).abs() < 5e-3);
     }
 
     /// Reads `offset,bpm` as a timing, standing in for a game's timing format.
@@ -5095,8 +5228,7 @@ mod tests {
     #[test]
     fn the_tempo_section_opens_the_sync_window() {
         let mut harness = editable_demo();
-        harness.get_by_label("Sync to the audio").click();
-        harness.run();
+        click_in_panel(&mut harness, "Sync to the audio");
         assert!(harness.query_by_label("Measure 0").is_some());
     }
 

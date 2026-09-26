@@ -241,19 +241,29 @@ and the notes over a waveform that stays put.
   Shift-dragging does it by changing the BPM leading up to that line. The modifiers are Tempora's,
   and the effect is ArrowVortex's visual sync, which moves a row to a target time through the
   offset or a BPM. Fine and coarse nudges take Tempora's 2 ms and 10 ms.
-- The timing window (Timing > Timing window, Ctrl+T) is Tempora's measure-per-row view as an optional
-  lens over the same song, per the [sync workstation](research/topics/sync-workstation.md)
-  topic. Each row is one measure of audio laid out by beat, so hits on the grid line up down the
-  rows. Every BPM change is an anchor pinning its beat to the audio, as in
-  [sync anchors](research/topics/sync-anchors.md), without the format storing anchors: dragging
-  a hit onto a grid line anchors that line to the hit, and the tempo on either side changes so
-  the neighbouring anchors stay where they are in the audio. The first anchor moves the offset
-  instead. The gestures are Tempora's, as its documentation gives them; its code is CC BY-NC-ND
-  and was not read. Clicking a hit pins the nearest grid line to it, dragging an anchor moves it
-  on the grid while it keeps its moment, so the waveform slides under the grid, and Ctrl-dragging
-  moves it in the audio while it keeps its beat. Double-clicking removes an anchor, Ctrl+wheel
-  nudges the nearest by 2 ms (10 ms with Shift), and right-clicking plays from there. An anchor
-  never passes its neighbours in either direction.
+- The timing window (Timing > Timing window, Ctrl+T), in its own crate, `charter-timing`, follows
+  the Beatline specification for the parts in scope. Each row holds half a bar to four bars laid
+  out by bar position, a tenth of the bar before shown ahead of each downbeat, so a correct map
+  lines beats up down the rows; downbeats draw thick, beats solid, the lines between dashed, or
+  dotted for triplets, with beats numbered. The grid is 1/1 to 1/32 of a whole note, keys 1 to 0,
+  and restarts on every downbeat. Every BPM change is an anchor pinning a beat to a moment of the
+  audio, as in [sync anchors](research/topics/sync-anchors.md); edits rebuild the tempo from
+  the anchors, so the others keep their moments. The window measures the map against the onsets
+  the host finds in the audio: ticks along each row's foot, a strip under it coloured by how
+  early or late each onset near a line falls, a badge on bars more than 5 ms off, and an issue
+  list (bars off, segments shorter than a beat, tempo jumps over 3%, anchors more than 2 ms from
+  their onset, metre changes without an anchor) that N and Shift+N step through.
+  A click adds an anchor, its moment snapped to the strongest onset within 25 ms and its beat to
+  the grid, refused within half a grid step of another, and auditioned from a beat before. A drag
+  on an anchor moves its beat, Ctrl-drag its moment, Shift finer and unsnapped; a drag elsewhere
+  selects the anchors inside. An anchor never passes its neighbours: a drag stops short and the
+  neighbour pulses, a refused edit says why in the status line. Arrows nudge 1 ms (Shift 0.1 ms,
+  Ctrl 10 ms) and move a grid step, + and − set the tail tempo, Del removes, and a run of nudges
+  undoes as one step. The inspector shows the focused anchor's moment, bar position, tempo and
+  distance to its onset, each editable, and its segment's fit error and coverage; F fits the
+  focused anchor or the selection to the onsets by least squares, Shift+F to half BPMs, shown
+  before Enter applies it. D and Shift+D double and halve the tempo. The window takes the keyboard
+  after a click in it and gives it back after a click elsewhere; ? lists its keys.
   The waveform shows here whether or not the notefield's is on.
 - Timing > Import timing… reads another program's timing, pasted or from a file, and shows what
   it holds before it replaces the open chart's tempo, meters and offset as one step. Each ruleset

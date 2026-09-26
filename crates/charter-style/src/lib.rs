@@ -65,6 +65,16 @@ pub const MARQUEE: Color32 = ACCENT;
 pub const WAVE: Color32 = Color32::from_rgb(92, 128, 176);
 pub const WAVE_BG: Color32 = Color32::from_gray(16);
 pub const MARQUEE_FILL: Color32 = Color32::from_rgba_unmultiplied_const(110, 170, 255, 28);
+/// The timing window: onsets, how far they miss the grid either way, and anchors as they stand,
+/// focused and selected. Early and late differ in lightness as well as hue, so they read without
+/// colour.
+pub const ONSET: Color32 = Color32::from_rgb(170, 180, 196);
+pub const RESIDUAL_EARLY: Color32 = Color32::from_rgb(90, 160, 255);
+pub const RESIDUAL_LATE: Color32 = Color32::from_rgb(255, 190, 110);
+pub const ANCHOR: Color32 = TIMING_MARK;
+pub const ANCHOR_FOCUS: Color32 = Color32::from_rgb(255, 214, 140);
+pub const ANCHOR_SELECTED: Color32 = ACCENT;
+pub const REACH_DIM: Color32 = Color32::from_rgba_unmultiplied_const(0, 0, 0, 120);
 
 /// The family for titles and emphasis.
 fn semibold() -> FontFamily {
