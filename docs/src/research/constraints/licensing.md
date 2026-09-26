@@ -21,6 +21,12 @@ review.
 | Tempora source | CC BY-NC-ND 4.0 | Cannot be copied or derived from at all |
 | Etterna | MIT per repository metadata | Licensing of every dependency it pulls was not established |
 
+charter itself is MIT, in `LICENSE` at the repository root, which every crate inherits through
+`license.workspace = true`. What it bundles keeps its own terms: Inter under the OFL
+(`crates/charter-ui/assets/fonts`) and the metronome sounds under CC0
+(`crates/charter-audio/assets/clicks`). A dependency whose licence would bind the app beyond MIT's
+terms, as the copyleft entries above would, stays out of the shipped path.
+
 Two consequences worth stating plainly:
 
 - **ArrowVortex's detection quality cannot be matched by linking the same library on the same
