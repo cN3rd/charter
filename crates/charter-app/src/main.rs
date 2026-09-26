@@ -70,6 +70,7 @@ impl eframe::App for Host {
                 }
                 Request::Play { .. }
                 | Request::Preview { .. }
+                | Request::Volume(_)
                 | Request::Pause
                 | Request::Seek(_)
                 | Request::Rate(_) => {

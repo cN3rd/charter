@@ -87,6 +87,75 @@ impl Kit {
     }
 }
 
+/// How loud something plays, from silent at 0 to as recorded at 1: a factor on its samples.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(from = "f32", into = "f32")]
+pub struct Gain(f32);
+
+impl Gain {
+    pub const FULL: Self = Self(1.0);
+
+    /// The factor on the samples, from 0 to 1.
+    #[must_use]
+    pub fn amplitude(self) -> f32 {
+        self.0
+    }
+
+    /// The gain in decibels, as audio libraries take it, with silence as `floor`.
+    #[must_use]
+    pub fn decibels(self, floor: f32) -> f32 {
+        if self.0 <= 0.0 {
+            floor
+        } else {
+            (20.0 * self.0.log10()).max(floor)
+        }
+    }
+}
+
+impl Default for Gain {
+    fn default() -> Self {
+        Self::FULL
+    }
+}
+
+/// Any number as a gain: kept from 0 to 1, and full for one that is not a number.
+impl From<f32> for Gain {
+    fn from(factor: f32) -> Self {
+        if factor.is_nan() {
+            Self::FULL
+        } else {
+            Self(factor.clamp(0.0, 1.0))
+        }
+    }
+}
+
+impl From<Gain> for f32 {
+    fn from(gain: Gain) -> Self {
+        gain.0
+    }
+}
+
+/// How loud the song's audio plays, and the sounds mixed over it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Volumes {
+    pub music: Gain,
+    /// The tick on each note.
+    pub ticks: Gain,
+    pub metronome: Gain,
+}
+
+impl Volumes {
+    /// How loud `tone` mixes in.
+    #[must_use]
+    pub fn of(self, tone: Tone) -> Gain {
+        match tone {
+            Tone::Click | Tone::Beep => self.ticks,
+            Tone::Beat(_) | Tone::Accent(_) => self.metronome,
+        }
+    }
+}
+
 /// `tone` as frames at `rate` frames per second.
 #[must_use]
 pub fn render(tone: Tone, rate: u32) -> Vec<[f32; 2]> {
@@ -151,10 +220,11 @@ fn resample(frames: &[[f32; 2]], from: u32, to: u32) -> Vec<[f32; 2]> {
         .collect()
 }
 
-/// `track` with each tone mixed in at its time, in seconds into the audio. Tones past either
-/// end are left out.
+/// `track` with each tone mixed in at its time, in seconds into the audio, at the volume
+/// `volumes` gives its kind. Tones past either end are left out. The track's own volume is left
+/// to whatever plays it.
 #[must_use]
-pub fn mix(track: &Track, clicks: &[(f64, Tone)]) -> Track {
+pub fn mix(track: &Track, clicks: &[(f64, Tone)], volumes: Volumes) -> Track {
     let rate = track.rate().get();
     let mut tones: Vec<(Tone, Vec<[f32; 2]>)> = Vec::new();
     let mut frames = track.frames().to_vec();
@@ -174,9 +244,10 @@ pub fn mix(track: &Track, clicks: &[(f64, Tone)]) -> Track {
         let Some(under) = frames.get_mut(start..) else {
             continue;
         };
+        let gain = volumes.of(tone).amplitude();
         for (frame, added) in under.iter_mut().zip(sound) {
             for (sample, add) in frame.iter_mut().zip(added) {
-                *sample = (*sample + add).clamp(-1.0, 1.0);
+                *sample = (*sample + add * gain).clamp(-1.0, 1.0);
             }
         }
     }
@@ -238,16 +309,55 @@ mod tests {
     #[test]
     fn a_metronome_accent_lands_where_its_time_says() {
         let silence = Track::silence(8000, 8000);
-        let mixed = mix(&silence, &[(0.5, Tone::Accent(Kit::ToneGate))]);
+        let mixed = mix(
+            &silence,
+            &[(0.5, Tone::Accent(Kit::ToneGate))],
+            Volumes::default(),
+        );
         let frames = mixed.frames();
         assert!(loudest(&frames[..4000]) < f32::EPSILON);
         assert!(loudest(&frames[4000..4100]) > 0.05);
     }
 
     #[test]
+    fn a_gain_stays_between_silence_and_full() {
+        assert!((Gain::from(1.7).amplitude() - 1.0).abs() < f32::EPSILON);
+        assert!(Gain::from(-0.2).amplitude().abs() < f32::EPSILON);
+        assert!((Gain::from(f32::NAN).amplitude() - 1.0).abs() < f32::EPSILON);
+        assert!((Gain::from(0.25).amplitude() - 0.25).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn a_gain_reads_in_decibels_down_to_a_floor() {
+        assert!(Gain::FULL.decibels(-60.0).abs() < 1e-6);
+        assert!((Gain::from(0.5).decibels(-60.0) + 6.0206).abs() < 1e-3);
+        assert!((Gain::from(0.0).decibels(-60.0) + 60.0).abs() < f32::EPSILON);
+        assert!((Gain::from(0.000_01).decibels(-60.0) + 60.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn a_click_is_mixed_at_its_group_s_volume() {
+        let silence = Track::silence(8000, 800);
+        let clicks = [(0.0, Tone::Accent(Kit::ToneGate)), (0.05, Tone::Click)];
+        let full = mix(&silence, &clicks, Volumes::default());
+        let volumes = Volumes {
+            metronome: Gain::from(0.5),
+            ticks: Gain::from(0.0),
+            ..Volumes::default()
+        };
+        let quiet = mix(&silence, &clicks, volumes);
+        let (full_accent, quiet_accent) = (
+            loudest(&full.frames()[..300]),
+            loudest(&quiet.frames()[..300]),
+        );
+        assert!((quiet_accent - full_accent / 2.0).abs() < 1e-4);
+        assert!(loudest(&quiet.frames()[400..]) < f32::EPSILON);
+    }
+
+    #[test]
     fn a_tone_lands_where_its_time_says() {
         let silence = Track::silence(8000, 8000);
-        let mixed = mix(&silence, &[(0.5, Tone::Click)]);
+        let mixed = mix(&silence, &[(0.5, Tone::Click)], Volumes::default());
         let frames = mixed.frames();
         assert_eq!(frames.len(), 8000);
         assert!(loudest(&frames[..4000]) < f32::EPSILON);
@@ -257,7 +367,11 @@ mod tests {
     #[test]
     fn tones_past_the_ends_are_left_out() {
         let silence = Track::silence(1000, 100);
-        let mixed = mix(&silence, &[(-1.0, Tone::Beep), (5.0, Tone::Click)]);
+        let mixed = mix(
+            &silence,
+            &[(-1.0, Tone::Beep), (5.0, Tone::Click)],
+            Volumes::default(),
+        );
         assert!(loudest(mixed.frames()) < f32::EPSILON);
         assert_eq!(mixed.frames().len(), 100);
     }
@@ -268,6 +382,7 @@ mod tests {
         let mixed = mix(
             &silence,
             &[(f64::NAN, Tone::Click), (f64::INFINITY, Tone::Beep)],
+            Volumes::default(),
         );
         assert!(loudest(mixed.frames()) < f32::EPSILON);
     }
@@ -275,7 +390,7 @@ mod tests {
     #[test]
     fn a_tone_mixed_over_loud_audio_stays_within_range() {
         let loud = Track::from_frames(1000, vec![[0.95, -0.95]; 200]);
-        let mixed = mix(&loud, &[(0.0, Tone::Beep)]);
+        let mixed = mix(&loud, &[(0.0, Tone::Beep)], Volumes::default());
         assert!(loudest(mixed.frames()) <= 1.0);
     }
 }

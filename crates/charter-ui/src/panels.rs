@@ -665,7 +665,7 @@ pub fn transport_bar(
     ui: &mut Ui,
     song: Option<&Song>,
     (zoom, rate, playing, panel): (Zoom, Rate, bool, bool),
-    (metronome, ticks): (bool, bool),
+    (metronome, ticks, volumes): (bool, bool, charter_audio::Volumes),
     actions: &mut Vec<Action>,
 ) {
     ui.horizontal(|ui| {
@@ -794,6 +794,26 @@ pub fn transport_bar(
                 {
                     actions.push(Action::ToggleMetronome);
                 }
+                let button = style::tool(ui, icon::SPEAKER_HIGH, "Volume", "Volume", false);
+                let popup = egui::Popup::menu(&button)
+                    .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
+                popup.show(|ui| {
+                    let mut changed = volumes;
+                    style::table(ui, "volumes", |ui| {
+                        for (name, gain) in [
+                            ("Music volume", &mut changed.music),
+                            ("Note tick volume", &mut changed.ticks),
+                            ("Metronome volume", &mut changed.metronome),
+                        ] {
+                            let caption = ui.weak(name);
+                            crate::settings::volume(ui, gain).labelled_by(caption.id);
+                            ui.end_row();
+                        }
+                    });
+                    if changed != volumes {
+                        actions.push(Action::SetVolumes(changed));
+                    }
+                });
             });
         });
     });

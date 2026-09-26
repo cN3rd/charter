@@ -4,7 +4,7 @@ use std::num::NonZeroU16;
 
 use serde::{Deserialize, Serialize};
 
-use charter_audio::Kit;
+use charter_audio::{Gain, Kit, Volumes};
 use charter_editor::SNAPS;
 
 use crate::flip::Direction;
@@ -75,6 +75,8 @@ pub struct Settings {
     pub metronome: bool,
     /// What the metronome sounds like.
     pub metronome_sound: Kit,
+    /// How loud the music, the note ticks and the metronome play.
+    pub volumes: Volumes,
     /// Whether unsaved changes are kept where the next run finds them.
     pub autosave: bool,
     /// How long unsaved changes wait before they are autosaved, in seconds.
@@ -96,6 +98,7 @@ impl Default for Settings {
             tick_sound: Sound::Off,
             metronome: false,
             metronome_sound: Kit::default(),
+            volumes: Volumes::default(),
             autosave: true,
             autosave_seconds: 30,
             song_panel: true,
@@ -443,7 +446,38 @@ fn sounds(ui: &mut egui::Ui, settings: &mut Settings) -> Option<Kit> {
             .response
             .labelled_by(caption);
     });
+    let volumes = &mut settings.volumes;
+    for (name, about, gain) in [
+        ("Music volume", "The song's audio.", &mut volumes.music),
+        (
+            "Note tick volume",
+            "The tick on each note.",
+            &mut volumes.ticks,
+        ),
+        (
+            "Metronome volume",
+            "The metronome's clicks.",
+            &mut volumes.metronome,
+        ),
+    ] {
+        row(ui, name, about, |ui, caption| {
+            volume(ui, gain).labelled_by(caption);
+        });
+    }
     preview
+}
+
+/// A slider setting `gain` in percent.
+pub(crate) fn volume(ui: &mut egui::Ui, gain: &mut Gain) -> egui::Response {
+    let mut percent = gain.amplitude() * 100.0;
+    let slider = egui::Slider::new(&mut percent, 0.0..=100.0)
+        .suffix("%")
+        .fixed_decimals(0);
+    let response = ui.add(slider);
+    if response.changed() {
+        *gain = Gain::from(percent / 100.0);
+    }
+    response
 }
 
 fn autosave(ui: &mut egui::Ui, settings: &mut Settings) {
@@ -550,6 +584,10 @@ mod tests {
             tick_sound: Sound::Click,
             metronome: true,
             metronome_sound: Kit::ShakerBurst,
+            volumes: Volumes {
+                music: Gain::from(0.5),
+                ..Volumes::default()
+            },
             autosave: false,
             autosave_seconds: 90,
             song_panel: false,

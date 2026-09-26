@@ -52,11 +52,15 @@ pub enum Request {
     /// where it is through [`Window::playhead`], and says when it ends through
     /// [`Window::playback_ended`].
     /// `clicks` are the tones to mix over it, each at its time in seconds into the audio.
+    /// `volumes` say how loud the audio and each kind of click play.
     Play {
         from: f64,
         rate: f64,
         clicks: Vec<(f64, charter_audio::Tone)>,
+        volumes: charter_audio::Volumes,
     },
+    /// Carry on playing with the audio at this volume.
+    Volume(charter_audio::Gain),
     Pause,
     /// Carry on playing from this many seconds into the audio.
     Seek(f64),
@@ -66,6 +70,7 @@ pub enum Request {
     /// playing: a taste of a metronome sound.
     Preview {
         clicks: Vec<(f64, charter_audio::Tone)>,
+        volumes: charter_audio::Volumes,
     },
     /// Ask the user to choose an audio file for the open song, and pass it to
     /// [`Window::use_audio`].
@@ -261,6 +266,7 @@ pub(crate) enum Action {
     NudgeRate(f64),
     /// Makes the audio play at this factor of its speed.
     SetRate(f64),
+    SetVolumes(charter_audio::Volumes),
     /// Makes the tempo from the cursor on this.
     SetBpm(charter_core::Bpm),
     /// Puts tick 0 of the open timing this far into the audio.
@@ -379,6 +385,8 @@ pub struct Window {
     section_draft: Option<String>,
     /// Whether the keyboard shortcuts are showing.
     help_open: bool,
+    /// The volumes the playback under way plays at.
+    played: Option<charter_audio::Volumes>,
     /// Whether files dropped on the window never arrive, as under Wayland, so the window offers
     /// only choosing them.
     no_drops: bool,
@@ -546,6 +554,28 @@ impl Window {
     }
 
     /// Plays the audio from the cursor, or pauses it, or says why it cannot play.
+    /// Brings the playback under way to the volumes the settings now hold: the audio's at once,
+    /// and the clicks', mixed in before playing, by playing again from where it is once the
+    /// pointer lets go of whatever set them.
+    fn follow_volumes(&mut self, ui: &Ui) {
+        let (Some(played), true) = (self.played, self.playing) else {
+            return;
+        };
+        let wanted = self.settings.volumes;
+        if wanted.music != played.music {
+            self.requests.push(Request::Volume(wanted.music));
+            self.played = Some(charter_audio::Volumes {
+                music: wanted.music,
+                ..played
+            });
+        }
+        let clicks_changed = (wanted.ticks, wanted.metronome) != (played.ticks, played.metronome);
+        if clicks_changed && !ui.input(|input| input.pointer.any_down()) {
+            self.toggle_play();
+            self.toggle_play();
+        }
+    }
+
     fn toggle_play(&mut self) {
         if std::mem::take(&mut self.playing) {
             self.requests.push(Request::Pause);
@@ -560,7 +590,14 @@ impl Window {
                 let clicks = clicks(song, &self.settings, from, seconds);
                 self.playing = true;
                 let rate = self.rate.factor();
-                self.requests.push(Request::Play { from, rate, clicks });
+                let volumes = self.settings.volumes;
+                self.played = Some(volumes);
+                self.requests.push(Request::Play {
+                    from,
+                    rate,
+                    clicks,
+                    volumes,
+                });
             }
             Some(Loaded::Failed) => {}
             None if self.audio_file().is_none() => {
@@ -1015,6 +1052,7 @@ impl Window {
             Action::ChooseAudio => self.requests.push(Request::ChooseAudio),
             Action::NudgeRate(step) => self.set_rate(self.rate.by(step)),
             Action::SetRate(factor) => self.set_rate(Rate::of(factor)),
+            Action::SetVolumes(volumes) => self.settings.volumes = volumes,
             Action::NewSong => {
                 self.new_song.get_or_insert_default();
             }
@@ -1118,6 +1156,7 @@ impl Window {
             | Action::ChooseAudio
             | Action::NudgeRate(_)
             | Action::SetRate(_)
+            | Action::SetVolumes(_)
             | Action::NewSong
             | Action::Select(None, Selecting::Add | Selecting::Subtract) => {}
             Action::SelectBetween { ticks, lanes, how } => {
@@ -1277,6 +1316,7 @@ impl Window {
         let sounds = (
             self.settings.metronome,
             self.settings.tick_sound != settings::Sound::Off,
+            self.settings.volumes,
         );
         let view = (self.zoom, self.rate, self.playing, self.settings.song_panel);
         egui::Panel::top("transport")
@@ -1358,6 +1398,7 @@ impl Window {
             });
             self.requests.push(Request::Preview {
                 clicks: clicks.collect(),
+                volumes: self.settings.volumes,
             });
         }
         if self.sync.open {
@@ -1393,6 +1434,7 @@ impl Window {
             let to = song.timing().time_at(song.cursor()).seconds();
             self.requests.push(Request::Seek(to));
         }
+        self.follow_volumes(ui);
         if let Some(saving) = self.saving.take() {
             self.save(saving);
         }
@@ -1605,7 +1647,7 @@ mod tests {
     use crate::flip::{Direction, Flip};
     use crate::recovery;
     use crate::settings::Sound;
-    use charter_audio::{Kit, Tone};
+    use charter_audio::{Gain, Kit, Tone, Volumes};
 
     /// The format chapter, embedded at compile time so the tests do no I/O.
     const SPEC: &str = include_str!("../../../docs/src/format.md");
@@ -2586,7 +2628,7 @@ mod tests {
         harness.get_by_label("Preview the metronome").click();
         harness.run();
         let preview = harness.state_mut().take_requests();
-        let Some(Request::Preview { clicks }) = preview.last() else {
+        let Some(Request::Preview { clicks, .. }) = preview.last() else {
             panic!("expected a preview, got {preview:?}");
         };
         let tones: Vec<Tone> = clicks.iter().map(|(_, tone)| *tone).collect();
@@ -3153,6 +3195,71 @@ mod tests {
             panic!("expected play");
         };
         clicks
+    }
+
+    fn quieter() -> Volumes {
+        Volumes {
+            music: Gain::from(0.5),
+            ticks: Gain::from(0.25),
+            metronome: Gain::from(0.75),
+        }
+    }
+
+    #[test]
+    fn playback_plays_at_the_volumes_the_settings_hold() {
+        let mut harness = playable_with(Settings {
+            volumes: quieter(),
+            ..Settings::default()
+        });
+        space(&mut harness);
+        let Request::Play { volumes, .. } = request(&mut harness) else {
+            panic!("expected play");
+        };
+        assert_eq!(volumes, quieter());
+    }
+
+    #[test]
+    fn the_music_volume_changes_live_and_a_click_volume_replays_from_the_cursor() {
+        let mut harness = playable_with(Settings::default());
+        space(&mut harness);
+        harness.state_mut().take_requests();
+        harness.state_mut().settings.volumes.music = Gain::from(0.3);
+        harness.run();
+        assert_eq!(request(&mut harness), Request::Volume(Gain::from(0.3)));
+        harness.state_mut().settings.volumes.metronome = Gain::from(0.2);
+        harness.run();
+        let requests = harness.state_mut().take_requests();
+        assert!(
+            matches!(
+                requests.as_slice(),
+                [Request::Pause, Request::Play { volumes, .. }] if volumes.metronome == Gain::from(0.2)
+            ),
+            "{requests:?}"
+        );
+    }
+
+    #[test]
+    fn the_toolbar_and_the_sounds_page_both_set_the_volumes() {
+        let mut harness = playable_with(Settings::default());
+        harness.get_by_label("Volume").click();
+        harness.run();
+        assert!(
+            harness
+                .query_by_role_and_label(Role::Slider, "Music volume")
+                .is_some()
+        );
+        harness.key_press(egui::Key::Escape);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Comma);
+        harness.run();
+        settings_page(&mut harness, "Sounds");
+        for name in ["Music volume", "Note tick volume", "Metronome volume"] {
+            assert!(
+                harness
+                    .query_by_role_and_label(Role::Slider, name)
+                    .is_some(),
+                "{name}"
+            );
+        }
     }
 
     #[test]

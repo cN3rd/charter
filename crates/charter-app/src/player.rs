@@ -8,7 +8,7 @@ use charter_audio::{Peaks, Track};
 use charter_ui::{Request, Window};
 use kira::sound::PlaybackState;
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle, StaticSoundSettings};
-use kira::{AudioManager, AudioManagerSettings, DefaultBackend, Frame, Tween};
+use kira::{AudioManager, AudioManagerSettings, Decibels, DefaultBackend, Frame, Tween};
 
 /// A file being decoded, and where its result arrives.
 type Loading = (PathBuf, Receiver<Result<(Track, Peaks), String>>);
@@ -138,6 +138,7 @@ impl Player {
                 from,
                 rate,
                 ref clicks,
+                volumes,
             } => {
                 self.stop();
                 let Some((path, track, data)) = &self.loaded else {
@@ -146,13 +147,14 @@ impl Player {
                 };
                 let settings = StaticSoundSettings::new()
                     .start_position(from.max(0.0))
-                    .playback_rate(rate);
+                    .playback_rate(rate)
+                    .volume(decibels(volumes.music));
                 // ponytail: clicks mix into a copy of the whole track on each play, tens of
                 // milliseconds for a long song; play them as sounds of their own if that shows.
                 let data = if clicks.is_empty() {
                     data.clone()
                 } else {
-                    sound(&charter_audio::mix(track, clicks))
+                    sound(&charter_audio::mix(track, clicks, volumes))
                 };
                 let (path, data) = (path.clone(), data.with_settings(settings));
                 let played = self
@@ -166,11 +168,19 @@ impl Player {
                     }
                 }
             }
-            Request::Preview { ref clicks } => {
+            Request::Volume(gain) => {
+                if let Some(sound) = &mut self.playing {
+                    sound.set_volume(decibels(gain), Tween::default());
+                }
+            }
+            Request::Preview {
+                ref clicks,
+                volumes,
+            } => {
                 if let Some(mut sound) = self.previewing.take() {
                     sound.stop(Tween::default());
                 }
-                let data = sound(&preview(clicks));
+                let data = sound(&preview(clicks, volumes));
                 // A preview that cannot play says nothing: playing the song says why.
                 self.previewing = self.device().ok().and_then(|device| device.play(data).ok());
             }
@@ -206,12 +216,17 @@ impl Player {
 }
 
 /// `clicks` mixed over silence long enough to hold them.
-fn preview(clicks: &[(f64, charter_audio::Tone)]) -> Track {
+fn preview(clicks: &[(f64, charter_audio::Tone)], volumes: charter_audio::Volumes) -> Track {
     const RATE: u32 = 44_100;
     let last = clicks.iter().map(|(at, _)| *at).fold(0.0, f64::max);
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // a few seconds
     let frames = ((last + 0.5).clamp(0.0, 10.0) * f64::from(RATE)) as usize;
-    charter_audio::mix(&Track::silence(RATE, frames), clicks)
+    charter_audio::mix(&Track::silence(RATE, frames), clicks, volumes)
+}
+
+/// `gain` as kira's volume, silent at its floor.
+fn decibels(gain: charter_audio::Gain) -> Decibels {
+    Decibels(gain.decibels(Decibels::SILENCE.0))
 }
 
 /// Reads and decodes the file at `path`.
@@ -261,7 +276,7 @@ mod tests {
             (0.0, charter_audio::Tone::Accent(kit)),
             (1.5, charter_audio::Tone::Beat(kit)),
         ];
-        let track = preview(&clicks);
+        let track = preview(&clicks, charter_audio::Volumes::default());
         assert!((track.seconds() - 2.0).abs() < 1e-3);
         let heard = |from: usize, to: usize| {
             track.frames()[from..to]
@@ -334,6 +349,7 @@ mod tests {
             from: 0.0,
             rate: 1.0,
             clicks: Vec::new(),
+            volumes: charter_audio::Volumes::default(),
         };
         player.answer(&play, &mut window);
         assert!(player.playing.is_none());

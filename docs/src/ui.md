@@ -27,7 +27,10 @@ cursor or starts one, and any marker can be removed, each as one step. Songs ope
 native file dialogs, unsaved changes are asked about before they are lost and autosaved, half a
 minute after they are made unless the settings say otherwise, and a settings window holds what the
 user chooses, including which way the notefield runs and the tick on each note and the metronome on
-each beat, which play over the audio and which F3 and F4 turn on and off. The metronome accents the
+each beat, which play over the audio and which F3 and F4 turn on and off. The music, the note ticks and
+the metronome each have a volume, set on the Sounds page or from the toolbar's speaker; the
+music's changes as it plays, and a click volume changed while playing plays on from where it
+was. The metronome accents the
 first beat of each measure and has nine sounds to pick from, each with a preview. They are
 synthesised click pairs dedicated to the public domain, bundled under
 `crates/charter-audio/assets/clicks` with their CC0 licence and a provenance note on how they
