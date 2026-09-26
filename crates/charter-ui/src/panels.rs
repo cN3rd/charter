@@ -16,7 +16,12 @@ use crate::style::{self, fields, heading, icon, table};
 use crate::window::Rate;
 
 #[allow(clippy::too_many_lines)] // the menus in the order they show
-pub fn menu_bar(ui: &mut Ui, song: Option<&Song>, playing: bool, actions: &mut Vec<Action>) {
+pub fn menu_bar(
+    ui: &mut Ui,
+    song: Option<&Song>,
+    (playing, importable): (bool, bool),
+    actions: &mut Vec<Action>,
+) {
     let song_open = song.is_some();
     egui::MenuBar::new().ui(ui, |ui| {
         ui.menu_button("File", |ui| {
@@ -103,6 +108,11 @@ pub fn menu_bar(ui: &mut Ui, song: Option<&Song>, playing: bool, actions: &mut V
                     ("Jump to the end", "End", Action::JumpEnd),
                 ],
             );
+            ui.separator();
+            let import = egui::Button::new("Import timing…");
+            if ui.add_enabled(song_open && importable, import).clicked() {
+                actions.push(Action::ShowImport);
+            }
         });
         ui.menu_button("View", |ui| {
             let item = egui::Button::new("Song panel").shortcut_text("Ctrl+\\");

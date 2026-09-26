@@ -242,6 +242,15 @@ and the notes over a waveform that stays put.
   instead. Clicking adds an anchor where the beat already is, double-clicking removes one,
   Ctrl+wheel nudges the nearest by 2 ms (10 ms with Shift), and right-clicking plays from there.
   The waveform shows here whether or not the notefield's is on.
+- Timing > Import timing… reads another program's timing, pasted or from a file, and shows what
+  it holds before it replaces the open chart's tempo, meters and offset as one step. Each ruleset
+  plugin may read a format through `RulesetPlugin::import_timing`; osu!mania reads osu!'s
+  `[TimingPoints]`. A red line becomes a BPM change on the nearest tick, placed so rounding never
+  adds up past half a tick, with a time signature where the meter changes or the red line falls
+  inside a measure, since osu! starts a measure at each; the first sets the offset. Green lines
+  become `osu_mania.scroll_speed` in an osu!mania song, reset to 1 at each red line as osu! does,
+  and are left out of any other game's, which the window says, as it does for volumes, hit sounds
+  and kiai.
 - The ruler numbers measures from the time-signature grid and labels markers. Measure 0 is the
   one holding tick 0, and measures before it count down from -1. Sections and bookmarks draw as
   lines across every column, since the core knows them without the ruleset.

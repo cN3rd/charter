@@ -13,7 +13,7 @@ use charter_editor::{NoteAt, Refusal, Selecting, Song, Step, Toggled, demo};
 use crate::new_song::{self, NO_AUDIO};
 use crate::notefield::{self, Zoom};
 use crate::settings::{self, Settings};
-use crate::{keys, panels, recovery, style, sync};
+use crate::{import, keys, panels, recovery, style, sync};
 
 /// The extensions of the audio files a song can play.
 const AUDIO: [&str; 4] = ["ogg", "mp3", "wav", "flac"];
@@ -75,6 +75,9 @@ pub enum Request {
     /// Ask the user to choose an audio file for the open song, and pass it to
     /// [`Window::use_audio`].
     ChooseAudio,
+    /// Ask the user to choose a file holding timing in another program's format, such as a
+    /// `.osu` file, and pass its text to [`Window::timing_file_read`].
+    ChooseTimingFile,
     /// Read the tags of the audio file at `file`, and pass them to [`Window::tags_read`].
     ReadTags {
         file: PathBuf,
@@ -278,6 +281,10 @@ pub(crate) enum Action {
     /// Moves the offset by this many seconds, later in the audio when positive.
     NudgeOffset(f64),
     ShowSync,
+    ShowImport,
+    ChooseTimingFile,
+    /// Puts this timing in place of the one tempo edits go to.
+    ImportTiming(Box<charter_core::Timing>),
     /// Puts the cursor on this tick.
     JumpTo(Tick),
     /// Names the section at the cursor this, starting one there if none does.
@@ -346,6 +353,8 @@ pub struct Window {
     settings_open: bool,
     /// The sync window.
     sync: sync::Sync,
+    /// The import timing window.
+    import: import::Import,
     /// How tall a second of the open song is on screen.
     zoom: Zoom,
     /// Why the last file failed to open, or the last edit was refused.
@@ -426,6 +435,18 @@ impl Window {
             fallback_fonts,
             ..self
         }
+    }
+
+    /// Takes the text of the file chosen for [`Request::ChooseTimingFile`] into the import timing
+    /// window, which shows what it holds.
+    pub fn timing_file_read(&mut self, text: &str) {
+        text.clone_into(&mut self.import.text);
+        self.import.open = true;
+    }
+
+    /// Says a file chosen for [`Request::ChooseTimingFile`] could not be read, and `why`.
+    pub fn timing_file_failed(&mut self, why: &str) {
+        self.failure = Some(format!("Could not read the timing: {why}"));
     }
 
     /// This window where files dropped on it never arrive, as under Wayland, which winit does
@@ -1062,6 +1083,8 @@ impl Window {
             Action::Settings => self.settings_open = !self.settings_open,
             Action::ToggleSync => self.sync.open = !self.sync.open,
             Action::ShowSync => self.sync.open = true,
+            Action::ShowImport => self.import.open = true,
+            Action::ChooseTimingFile => self.requests.push(Request::ChooseTimingFile),
             Action::Help => self.help_open = !self.help_open,
             Action::ToggleSongPanel => self.settings.song_panel = !self.settings.song_panel,
             Action::ToggleMetronome => self.settings.metronome = !self.settings.metronome,
@@ -1166,6 +1189,8 @@ impl Window {
             | Action::Settings
             | Action::ToggleSync
             | Action::ShowSync
+            | Action::ShowImport
+            | Action::ChooseTimingFile
             | Action::Help
             | Action::ToggleSongPanel
             | Action::ToggleMetronome
@@ -1185,6 +1210,7 @@ impl Window {
             | Action::RemoveBpm
             | Action::AddBpm
             | Action::NudgeOffset(_)
+            | Action::ImportTiming(_)
             | Action::Sync { .. }
             | Action::Unsync(_)
             | Action::MoveTiming { .. } => self.failure = retime(song, &action),
@@ -1330,7 +1356,10 @@ impl Window {
         let playing = self.playing;
         egui::Panel::top("menu")
             .frame(style::chrome())
-            .show(ui, |ui| panels::menu_bar(ui, song, playing, &mut actions));
+            .show(ui, |ui| {
+                let importable = import::offered(self.plugins);
+                panels::menu_bar(ui, song, (playing, importable), &mut actions);
+            });
         let sounds = (
             self.settings.metronome,
             self.settings.tick_sound != settings::Sound::Off,
@@ -1420,6 +1449,13 @@ impl Window {
                 volumes: self.settings.volumes,
             });
         }
+        import::show(
+            ui.ctx(),
+            self.song.as_ref(),
+            self.plugins,
+            &mut self.import,
+            &mut actions,
+        );
         if self.sync.open {
             // The sync window shows the audio whether or not the notefield's waveform is on.
             let file = self.audio_file();
@@ -1616,6 +1652,7 @@ fn retime(song: &mut Song, action: &Action) -> Option<String> {
         Action::SetOffset(offset) => song.set_offset(*offset),
         Action::RemoveBpm => song.remove_bpm(),
         Action::AddBpm => song.add_bpm_change(),
+        Action::ImportTiming(timing) => song.replace_timing(timing.as_ref().clone()),
         Action::NudgeOffset(by) => {
             let moved = f64::from(song.timing().offset_seconds) + by;
             let micros = (moved * 1e6).round() / 1e6;
@@ -3784,6 +3821,94 @@ mod tests {
         });
         harness.run();
         assert!((seconds_at(&harness, 960) - 0.502).abs() < 1e-6);
+    }
+
+    /// Reads `offset,bpm` as a timing, standing in for a game's timing format.
+    #[derive(Debug)]
+    struct Importer;
+
+    impl RulesetPlugin for Importer {
+        fn id(&self) -> &'static str {
+            "importer"
+        }
+
+        fn check(&self, _: &ValidDocument) -> Result<(), Box<dyn Error + Send + Sync>> {
+            Ok(())
+        }
+
+        fn timing_format(&self) -> Option<&str> {
+            Some("test timing")
+        }
+
+        fn import_timing(
+            &self,
+            text: &str,
+            _: &ValidDocument,
+        ) -> Result<charter_core::ImportedTiming, Box<dyn Error + Send + Sync>> {
+            let (offset, bpm) = text.trim().split_once(',').ok_or("no comma")?;
+            let timing = serde_json::from_value(serde_json::json!({
+                "offset_seconds": offset.parse::<f64>()?,
+                "events": [ { "tick": 0, "kind": { "bpm": bpm.parse::<f64>()? } } ]
+            }))?;
+            Ok(charter_core::ImportedTiming {
+                timing,
+                left_out: vec!["kiai time".to_owned()],
+            })
+        }
+    }
+
+    const IMPORTING: &[&dyn RulesetPlugin] = &[&AnySm, &Importer];
+
+    fn importing() -> Harness<'static, Window> {
+        let mut app = Window::new(IMPORTING);
+        app.open_demo();
+        let mut harness = window(app);
+        harness.get_by_label("Timing").click();
+        harness.run();
+        harness.get_by_label("Import timing…").click();
+        harness.run();
+        harness
+    }
+
+    #[test]
+    fn imported_timing_shows_what_it_holds_and_replaces_the_songs_in_one_step() {
+        let mut harness = importing();
+        assert!(harness.query_by_label_contains("test timing").is_some());
+        harness.state_mut().timing_file_read("0.895,208.1");
+        harness.run();
+        assert!(harness.query_by_label_contains("208.1 BPM").is_some());
+        assert!(harness.query_by_label_contains("895 ms").is_some());
+        assert!(harness.query_by_label_contains("kiai time").is_some());
+        harness.get_by_label("Replace the timing").click();
+        harness.run();
+        assert_eq!(bpm_at_cursor(&harness), Some((0, "208.1".to_owned())));
+        assert_eq!(offset(&harness), serde_json::json!(0.895));
+        assert!(harness.query_by_label("Replace the timing").is_none());
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.run();
+        assert_eq!(bpm_at_cursor(&harness), Some((0, "150".to_owned())));
+    }
+
+    #[test]
+    fn timing_that_does_not_read_says_why_and_imports_nothing() {
+        let mut harness = importing();
+        harness.state_mut().timing_file_read("nonsense");
+        harness.run();
+        assert!(harness.query_by_label_contains("no comma").is_some());
+        harness.get_by_label("Replace the timing").click();
+        harness.run();
+        assert_eq!(bpm_at_cursor(&harness), Some((0, "150".to_owned())));
+    }
+
+    #[test]
+    fn the_import_window_reads_timing_from_a_file_the_host_opens() {
+        let mut harness = importing();
+        harness.get_by_label("Read a file…").click();
+        harness.run();
+        assert_eq!(
+            harness.state_mut().take_requests(),
+            [Request::ChooseTimingFile]
+        );
     }
 
     #[test]

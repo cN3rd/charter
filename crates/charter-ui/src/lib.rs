@@ -4,6 +4,7 @@
 //! does that I/O.
 
 mod flip;
+mod import;
 mod keys;
 mod new_song;
 mod notefield;

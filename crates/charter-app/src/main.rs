@@ -60,6 +60,15 @@ impl eframe::App for Host {
                         self.read(&path);
                     }
                 }
+                Request::ChooseTimingFile => {
+                    let file = rfd::FileDialog::new()
+                        .add_filter("osu! beatmap", &["osu"])
+                        .add_filter("text", &["txt"])
+                        .pick_file();
+                    if let Some(path) = file {
+                        self.read_timing(&path);
+                    }
+                }
                 Request::ChooseAudio => {
                     let audio = rfd::FileDialog::new()
                         .add_filter("audio", &["ogg", "mp3", "wav", "flac"])
@@ -158,6 +167,19 @@ impl Host {
             return;
         }
         self.write(file, bytes);
+    }
+
+    /// Hands the text of the file at `path` to the import timing window.
+    fn read_timing(&mut self, path: &Path) {
+        match self.disk.read(path) {
+            Ok(bytes) => self
+                .window
+                .timing_file_read(&String::from_utf8_lossy(&bytes)),
+            Err(error) => {
+                let why = format!("{}: {error}", path.display());
+                self.window.timing_file_failed(&why);
+            }
+        }
     }
 
     fn autosave(&mut self, bytes: &[u8]) {
@@ -386,6 +408,18 @@ mod tests {
                 .unwrap()
                 .contains("already holds a song")
         );
+    }
+
+    #[test]
+    fn a_timing_file_is_read_into_the_window_and_one_missing_says_why() {
+        let mut host = host(Memory::with(&[(
+            "/m/map.osu",
+            b"[TimingPoints]\n0,500,4,1,0,100,1,0",
+        )]));
+        host.read_timing(Path::new("/m/map.osu"));
+        assert_eq!(host.window.message(), None);
+        host.read_timing(Path::new("/m/gone.osu"));
+        assert!(host.window.message().unwrap().contains("gone.osu"));
     }
 
     #[test]
