@@ -4,6 +4,7 @@
 
 pub mod demo;
 mod edit;
+mod points;
 mod song;
 mod sync;
 
