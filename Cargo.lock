@@ -714,6 +714,7 @@ dependencies = [
  "charter-editor",
  "charter-style",
  "egui",
+ "serde_json",
 ]
 
 [[package]]
