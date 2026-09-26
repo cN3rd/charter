@@ -205,6 +205,7 @@ fn command(key: Key, modifiers: Modifiers) -> Option<Action> {
             Key::Plus | Key::Equals => Some(Action::ZoomBy(Zoom::STEP)),
             Key::Minus => Some(Action::ZoomBy(Zoom::STEP.recip())),
             Key::A => Some(Action::SelectAll),
+            Key::Backslash => Some(Action::ToggleSongPanel),
             _ => None,
         };
     }

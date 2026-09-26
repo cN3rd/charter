@@ -270,6 +270,8 @@ pub(crate) enum Action {
     NudgeBpm(f64),
     /// Shows or hides the keyboard shortcuts.
     Help,
+    /// Shows or hides the song panel.
+    ToggleSongPanel,
     /// Turns the metronome on or off.
     ToggleMetronome,
     /// Turns the tick on each note on or off.
@@ -833,6 +835,7 @@ impl Window {
             Action::SaveAs => self.saving = Some(Saving::Elsewhere),
             Action::Settings => self.settings_open = !self.settings_open,
             Action::Help => self.help_open = !self.help_open,
+            Action::ToggleSongPanel => self.settings.song_panel = !self.settings.song_panel,
             Action::ToggleMetronome => self.settings.metronome = self.settings.metronome.toggled(),
             Action::ToggleTicks => self.settings.tick_sound = self.settings.tick_sound.toggled(),
             Action::TogglePlay => self.toggle_play(),
@@ -909,6 +912,7 @@ impl Window {
             | Action::SaveAs
             | Action::Settings
             | Action::Help
+            | Action::ToggleSongPanel
             | Action::ToggleMetronome
             | Action::ToggleTicks
             | Action::TogglePlay
@@ -1051,7 +1055,7 @@ impl Window {
             self.settings.metronome != settings::Sound::Off,
             self.settings.tick_sound != settings::Sound::Off,
         );
-        let view = (self.zoom, self.rate, self.playing);
+        let view = (self.zoom, self.rate, self.playing, self.settings.song_panel);
         egui::Panel::top("transport")
             .frame(style::toolbar())
             .show(ui, |ui| {
@@ -1062,7 +1066,7 @@ impl Window {
             .show(ui, |ui| {
                 panels::status_bar(ui, self.song.as_ref(), (audio_state, self.playing));
             });
-        if let Some(song) = &self.song {
+        if let Some(song) = self.song.as_ref().filter(|_| self.settings.song_panel) {
             let (bpm, section) = (&mut self.bpm_draft, &mut self.section_draft);
             let refused = egui::Panel::left("song")
                 .frame(style::panel())
@@ -1082,10 +1086,6 @@ impl Window {
             if refused.is_some() {
                 self.failure = refused;
             }
-            egui::Panel::right("inspector")
-                .frame(style::panel())
-                .default_size(240.0)
-                .show(ui, |ui| panels::inspector(ui, song));
         }
         egui::CentralPanel::default()
             .frame(style::canvas())
@@ -1738,7 +1738,7 @@ mod tests {
         let mut harness = editable_four_taps();
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
         harness.run();
-        assert!(harness.query_by_label("4 notes").is_some());
+        assert!(harness.query_by_label("4 notes selected").is_some());
         harness.key_press(egui::Key::Delete);
         harness.run();
         assert_eq!(note_count(&harness), 0);
@@ -1747,26 +1747,47 @@ mod tests {
         assert_eq!(note_count(&harness), 4);
     }
 
+    fn nothing_selected(harness: &Harness<'_, Window>) -> bool {
+        harness.query_by_label_contains("selected").is_none()
+    }
+
+    #[test]
+    fn the_status_bar_counts_the_selection() {
+        let mut harness = editable_four_taps();
+        assert!(nothing_selected(&harness));
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.run();
+        assert!(harness.query_by_label("4 notes selected").is_some());
+    }
+
+    #[test]
+    fn the_song_panel_folds_away_and_comes_back() {
+        let mut harness = editable_demo();
+        assert!(harness.query_by_label("Verse").is_some());
+        harness.get_by_label("Hide the song panel").click();
+        harness.run();
+        assert!(harness.query_by_label("Verse").is_none());
+        assert!(!harness.state().settings().song_panel);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Backslash);
+        harness.run();
+        assert!(harness.query_by_label("Verse").is_some());
+        harness.get_by_label("View").click();
+        harness.run();
+        harness.get_by_label_contains("Song panel").click();
+        harness.run();
+        assert!(harness.query_by_label("Verse").is_none());
+    }
+
     #[test]
     fn escape_clears_the_selection() {
         let mut harness = editable_four_taps();
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
         harness.key_press(egui::Key::Escape);
         harness.run();
-        assert!(harness.query_by_label("Nothing selected").is_some());
+        assert!(nothing_selected(&harness));
         harness.key_press(egui::Key::Backspace);
         harness.run();
         assert_eq!(note_count(&harness), 4);
-    }
-
-    #[test]
-    fn the_inspector_shows_what_the_selection_shares_and_mixed_where_it_differs() {
-        let mut harness = editable_four_taps();
-        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
-        harness.run();
-        assert_eq!(harness.query_all_by_label("mixed").count(), 2);
-        assert!(harness.query_by_label("tap").is_some());
-        assert!(harness.query_by_label("instant").is_some());
     }
 
     /// Where the middle of `lane` meets the line of `tick` on screen, `below` points lower.
@@ -1862,14 +1883,14 @@ mod tests {
         let mut harness = editable_four_taps();
         let (first, second) = (spot(&harness, 0, 0, 0.0), spot(&harness, 1, 240, 2.0));
         click(&mut harness, first, egui::Modifiers::NONE);
-        assert!(harness.query_by_label("1 note").is_some());
+        assert!(harness.query_by_label("1 note selected").is_some());
         click(&mut harness, second, egui::Modifiers::SHIFT);
-        assert!(harness.query_by_label("2 notes").is_some());
+        assert!(harness.query_by_label("2 notes selected").is_some());
         click(&mut harness, first, egui::Modifiers::ALT);
-        assert!(harness.query_by_label("1 note").is_some());
+        assert!(harness.query_by_label("1 note selected").is_some());
         let empty = spot(&harness, 3, 0, 0.0);
         click(&mut harness, empty, egui::Modifiers::NONE);
-        assert!(harness.query_by_label("Nothing selected").is_some());
+        assert!(nothing_selected(&harness));
     }
 
     #[test]
@@ -1877,7 +1898,7 @@ mod tests {
         let mut harness = editable_four_taps();
         let (from, to) = (spot(&harness, 1, 180, 0.0), spot(&harness, 2, 540, 0.0));
         drag(&mut harness, from, to, egui::Modifiers::NONE);
-        assert!(harness.query_by_label("2 notes").is_some());
+        assert!(harness.query_by_label("2 notes selected").is_some());
         let song = harness.state().song.as_ref().unwrap();
         let ticks: Vec<_> = song.selection().map(|note| note.tick).collect();
         assert_eq!(ticks, [Tick::new(240), Tick::new(480)]);
@@ -2163,16 +2184,26 @@ mod tests {
     }
 
     #[test]
+    fn the_settings_window_closes_from_its_own_button() {
+        let mut harness = editable_demo();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Comma);
+        harness.run();
+        harness.get_by_label("Close settings").click();
+        harness.run();
+        assert!(harness.query_all_by_label("Settings").next().is_none());
+    }
+
+    #[test]
     fn the_settings_window_opens_from_the_file_menu_and_with_ctrl_comma() {
         let mut harness = editable_demo();
         harness.get_by_label("File").click();
         harness.run();
         harness.get_by_label_contains("Settings…").click();
         harness.run();
-        assert!(harness.query_by_label("Settings").is_some());
+        assert!(harness.query_all_by_label("Settings").next().is_some());
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Comma);
         harness.run();
-        assert!(harness.query_by_label("Settings").is_none());
+        assert!(harness.query_all_by_label("Settings").next().is_none());
     }
 
     #[test]
@@ -2980,16 +3011,6 @@ mod tests {
         assert!(harness.query_by_label("Playing").is_some());
     }
 
-    #[test]
-    fn the_inspector_says_how_to_select_when_nothing_is() {
-        let harness = editable_demo();
-        assert!(
-            harness
-                .query_by_label_contains("Click or drag over notes to select them")
-                .is_some()
-        );
-    }
-
     /// Four lanes at 120 BPM that change to 150 BPM at the second beat, with a section at the
     /// first eighth.
     fn timed_song() -> Harness<'static, Window> {
@@ -3176,7 +3197,7 @@ mod tests {
         harness.key_press(egui::Key::Escape);
         press(&harness, to, false, egui::Modifiers::NONE);
         harness.run();
-        assert!(harness.query_by_label("Nothing selected").is_some());
+        assert!(nothing_selected(&harness));
     }
 
     #[test]

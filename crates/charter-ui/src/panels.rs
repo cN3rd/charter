@@ -3,7 +3,7 @@
 
 use std::num::NonZeroU16;
 
-use charter_core::{Bpm, MarkerKind, Object, Position, ResolvedTime, Shape, Tick};
+use charter_core::{Bpm, MarkerKind, ResolvedTime, Tick};
 use egui::{self, Align, Layout, RichText, Ui};
 use serde_json::Value;
 
@@ -89,6 +89,11 @@ pub fn menu_bar(ui: &mut Ui, song: Option<&Song>, playing: bool, actions: &mut V
             );
         });
         ui.menu_button("View", |ui| {
+            let item = egui::Button::new("Song panel").shortcut_text("Ctrl+\\");
+            if ui.add(item).clicked() {
+                actions.push(Action::ToggleSongPanel);
+            }
+            ui.separator();
             let items = [
                 ("Zoom in", Action::ZoomBy(Zoom::STEP)),
                 ("Zoom out", Action::ZoomBy(Zoom::STEP.recip())),
@@ -258,6 +263,7 @@ const KEYS: [(&str, &[(&str, &str)]); 6] = [
             ("Ctrl+N", "New song"),
             ("Ctrl+O, Ctrl+S, Ctrl+Shift+S", "Open, save, save as"),
             ("Ctrl+Comma", "Settings"),
+            ("Ctrl+\\", "Show or hide the song panel"),
             ("F1", "Keyboard shortcuts"),
         ],
     ),
@@ -412,64 +418,6 @@ fn shown(value: &Value) -> String {
         .map_or_else(|| value.to_string(), str::to_owned)
 }
 
-/// What the selected notes are: their count, then each field they share, or `mixed` where they
-/// differ.
-pub fn inspector(ui: &mut Ui, song: &Song) {
-    heading(ui, "Inspector");
-    let Some(chart) = song.chart() else {
-        ui.weak("Nothing selected");
-        return;
-    };
-    let selected: Vec<&Object> = chart
-        .objects
-        .iter()
-        .filter(|object| song.is_selected(object))
-        .collect();
-    if selected.is_empty() {
-        ui.weak("Nothing selected");
-        ui.weak("Click or drag over notes to select them; Delete removes them.");
-        return;
-    }
-    let count = match selected.len() {
-        1 => "1 note".to_owned(),
-        n => format!("{n} notes"),
-    };
-    ui.label(count);
-    let timing = chart.timing();
-    let shared = |field: &dyn Fn(&Object) -> String| {
-        let mut values = selected.iter().map(|object| field(object));
-        let first = values.next().unwrap_or_default();
-        if values.all(|value| value == first) {
-            first
-        } else {
-            "mixed".to_owned()
-        }
-    };
-    let lane = |object: &Object| match object.position {
-        Position::Lane { index, .. } => (u16::from(index) + 1).to_string(),
-        Position::Plane { .. } => "plane".to_owned(),
-    };
-    let length = |object: &Object| match &object.shape {
-        Shape::Instant => "instant".to_owned(),
-        Shape::Sustain { duration } => format!("{duration} ticks"),
-        Shape::Path { .. } => "path".to_owned(),
-    };
-    fields(
-        ui,
-        "inspector",
-        &[
-            (
-                "At",
-                shared(&|object| timing.grid_position(object.tick).to_string()),
-            ),
-            ("Lane", shared(&lane)),
-            ("Kind", shared(&|object| object.kind.to_string())),
-            ("Length", shared(&length)),
-        ],
-        "",
-    );
-}
-
 /// The tempo at the cursor. In a song open for editing a BPM typed and entered sets the tempo
 /// from the cursor on, and the change at the cursor can be removed. Says why a BPM typed is not
 /// one.
@@ -540,12 +488,20 @@ fn tempo_body(
 pub fn transport_bar(
     ui: &mut Ui,
     song: Option<&Song>,
-    (zoom, rate, playing): (Zoom, Rate, bool),
+    (zoom, rate, playing, panel): (Zoom, Rate, bool, bool),
     (metronome, ticks): (bool, bool),
     actions: &mut Vec<Action>,
 ) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
+        let (name, tip) = if panel {
+            ("Hide the song panel", "Hide the song panel (Ctrl+\\)")
+        } else {
+            ("Show the song panel", "Show the song panel (Ctrl+\\)")
+        };
+        if style::tool(ui, icon::SIDEBAR_SIMPLE, name, tip, panel).clicked() {
+            actions.push(Action::ToggleSongPanel);
+        }
         ui.add_enabled_ui(song.is_some(), |ui| {
             style::chip(ui, |ui| {
                 let start = Action::JumpTo(Tick::new(0));
@@ -718,6 +674,12 @@ pub fn status_bar(ui: &mut Ui, song: Option<&Song>, (audio, playing): (&str, boo
         ui.label(RichText::new("●").color(colour).size(9.0));
         ui.label(state);
         ui.weak(audio);
+        let selected = song.selection().count();
+        if selected > 0 {
+            ui.separator();
+            let noun = if selected == 1 { "note" } else { "notes" };
+            ui.label(format!("{selected} {noun} selected"));
+        }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if song.read_only().is_some() {
                 ui.weak("Read only");

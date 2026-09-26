@@ -8,7 +8,7 @@ use charter_editor::SNAPS;
 
 use crate::flip::Direction;
 use crate::panels::ordinal;
-use crate::style::{ACCENT_FILL, PANEL, TEXT, WEAK_TEXT, glyph, icon, switch, titles};
+use crate::style::{ACCENT_FILL, PANEL, TEXT, WEAK_TEXT, glyph, icon, quiet_icon, switch, titles};
 use egui::RichText;
 
 /// A sound the editor can make while a song plays.
@@ -74,6 +74,8 @@ pub struct Settings {
     pub autosave: bool,
     /// How long unsaved changes wait before they are autosaved, in seconds.
     pub autosave_seconds: u32,
+    /// Whether the song panel shows beside the notefield.
+    pub song_panel: bool,
 }
 
 impl Default for Settings {
@@ -88,6 +90,7 @@ impl Default for Settings {
             metronome: Sound::Off,
             autosave: true,
             autosave_seconds: 30,
+            song_panel: true,
         }
     }
 }
@@ -174,8 +177,13 @@ impl Page {
 pub fn show(ctx: &egui::Context, settings: &mut Settings, open: &mut bool) {
     let page_id = egui::Id::new("settings page");
     let mut page: Page = ctx.data(|data| data.get_temp(page_id)).unwrap_or_default();
+    if !*open {
+        return;
+    }
+    // Its own header, the title over the sidebar and a close button over the page, rather than
+    // egui's title bar, which would sit flush against the edges the window draws to.
     egui::Window::new("Settings")
-        .open(open)
+        .title_bar(false)
         .resizable(false)
         .collapsible(false)
         .pivot(egui::Align2::CENTER_CENTER)
@@ -193,7 +201,19 @@ pub fn show(ctx: &egui::Context, settings: &mut Settings, open: &mut bool) {
                             ui.spacing_mut().item_spacing = egui::vec2(8.0, 4.0);
                             ui.set_width(PAGE_W);
                             let (_, _, title, about) = page.words();
-                            ui.label(RichText::new(title).family(titles(ui)).size(16.0));
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(title).family(titles(ui)).size(16.0));
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        let tip = "Close settings (Ctrl+Comma)";
+                                        if quiet_icon(ui, icon::X, "Close settings", tip).clicked()
+                                        {
+                                            *open = false;
+                                        }
+                                    },
+                                );
+                            });
                             ui.weak(about);
                             ui.add_space(14.0);
                             match page {
@@ -219,6 +239,9 @@ fn sidebar(ui: &mut egui::Ui, page: &mut Page) {
                 ui.set_width(SIDEBAR_W);
                 ui.set_min_height(360.0);
                 ui.spacing_mut().item_spacing.y = 4.0;
+                ui.add_space(4.0);
+                ui.label(RichText::new("Settings").family(titles(ui)).size(16.0));
+                ui.add_space(12.0);
                 for choice in Page::ALL {
                     let (name, symbol, _, _) = choice.words();
                     let chosen = *page == choice;
@@ -472,6 +495,7 @@ mod tests {
             metronome: Sound::Beep,
             autosave: false,
             autosave_seconds: 90,
+            song_panel: false,
         };
         let stored = serde_json::to_string(&settings).unwrap();
         assert_eq!(serde_json::from_str::<Settings>(&stored).unwrap(), settings);
