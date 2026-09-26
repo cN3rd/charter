@@ -385,8 +385,9 @@ pub struct Window {
     section_draft: Option<String>,
     /// Whether the keyboard shortcuts are showing.
     help_open: bool,
-    /// The volumes the playback under way plays at.
-    played: Option<charter_audio::Volumes>,
+    /// The volumes the playback under way plays at, and whether clicks are mixed into it, which
+    /// bakes every volume in.
+    played: Option<(charter_audio::Volumes, bool)>,
     /// Whether files dropped on the window never arrive, as under Wayland, so the window offers
     /// only choosing them.
     no_drops: bool,
@@ -554,23 +555,24 @@ impl Window {
     }
 
     /// Plays the audio from the cursor, or pauses it, or says why it cannot play.
-    /// Brings the playback under way to the volumes the settings now hold: the audio's at once,
-    /// and the clicks', mixed in before playing, by playing again from where it is once the
-    /// pointer lets go of whatever set them.
+    /// Brings the playback under way to the volumes the settings now hold. With no clicks mixed
+    /// in, the host turns the audio up or down as it plays. Clicks are mixed in before playing,
+    /// the music's volume with them, so with clicks any change plays again from where it is, once
+    /// the pointer lets go of whatever set it.
     fn follow_volumes(&mut self, ui: &Ui) {
-        let (Some(played), true) = (self.played, self.playing) else {
+        let (Some((played, mixed)), true) = (self.played, self.playing) else {
             return;
         };
         let wanted = self.settings.volumes;
-        if wanted.music != played.music {
-            self.requests.push(Request::Volume(wanted.music));
-            self.played = Some(charter_audio::Volumes {
-                music: wanted.music,
-                ..played
-            });
+        if wanted == played {
+            return;
         }
-        let clicks_changed = (wanted.ticks, wanted.metronome) != (played.ticks, played.metronome);
-        if clicks_changed && !ui.input(|input| input.pointer.any_down()) {
+        if !mixed {
+            if wanted.music != played.music {
+                self.requests.push(Request::Volume(wanted.music));
+            }
+            self.played = Some((wanted, false));
+        } else if !ui.input(|input| input.pointer.any_down()) {
             self.toggle_play();
             self.toggle_play();
         }
@@ -591,7 +593,7 @@ impl Window {
                 self.playing = true;
                 let rate = self.rate.factor();
                 let volumes = self.settings.volumes;
-                self.played = Some(volumes);
+                self.played = Some((volumes, !clicks.is_empty()));
                 self.requests.push(Request::Play {
                     from,
                     rate,
@@ -3220,23 +3222,39 @@ mod tests {
     }
 
     #[test]
-    fn the_music_volume_changes_live_and_a_click_volume_replays_from_the_cursor() {
+    fn with_no_clicks_the_music_volume_changes_live() {
         let mut harness = playable_with(Settings::default());
         space(&mut harness);
         harness.state_mut().take_requests();
         harness.state_mut().settings.volumes.music = Gain::from(0.3);
         harness.run();
         assert_eq!(request(&mut harness), Request::Volume(Gain::from(0.3)));
-        harness.state_mut().settings.volumes.metronome = Gain::from(0.2);
-        harness.run();
-        let requests = harness.state_mut().take_requests();
-        assert!(
-            matches!(
-                requests.as_slice(),
-                [Request::Pause, Request::Play { volumes, .. }] if volumes.metronome == Gain::from(0.2)
-            ),
-            "{requests:?}"
-        );
+    }
+
+    #[test]
+    fn with_clicks_mixed_in_any_volume_change_plays_on_from_the_cursor() {
+        let mut harness = playable_with(Settings {
+            metronome: true,
+            ..Settings::default()
+        });
+        space(&mut harness);
+        harness.state_mut().take_requests();
+        for change in [
+            |volumes: &mut Volumes| volumes.music = Gain::from(0.3),
+            |volumes: &mut Volumes| volumes.metronome = Gain::from(0.2),
+        ] {
+            change(&mut harness.state_mut().settings.volumes);
+            harness.run();
+            let requests = harness.state_mut().take_requests();
+            let wanted = harness.state().settings.volumes;
+            assert!(
+                matches!(
+                    requests.as_slice(),
+                    [Request::Pause, Request::Play { volumes, .. }] if *volumes == wanted
+                ),
+                "{requests:?}"
+            );
+        }
     }
 
     #[test]

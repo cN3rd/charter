@@ -220,14 +220,19 @@ fn resample(frames: &[[f32; 2]], from: u32, to: u32) -> Vec<[f32; 2]> {
         .collect()
 }
 
-/// `track` with each tone mixed in at its time, in seconds into the audio, at the volume
-/// `volumes` gives its kind. Tones past either end are left out. The track's own volume is left
-/// to whatever plays it.
+/// `track` at the music's volume in `volumes`, with each tone mixed in at its time, in seconds
+/// into the audio, at the volume `volumes` gives its kind, so turning one down leaves the rest.
+/// Tones past either end are left out.
 #[must_use]
 pub fn mix(track: &Track, clicks: &[(f64, Tone)], volumes: Volumes) -> Track {
     let rate = track.rate().get();
     let mut tones: Vec<(Tone, Vec<[f32; 2]>)> = Vec::new();
-    let mut frames = track.frames().to_vec();
+    let music = volumes.music.amplitude();
+    let mut frames: Vec<[f32; 2]> = track
+        .frames()
+        .iter()
+        .map(|&[left, right]| [left * music, right * music])
+        .collect();
     for &(at, tone) in clicks {
         if !tones.iter().any(|(kind, _)| *kind == tone) {
             tones.push((tone, render(tone, rate)));
@@ -325,6 +330,23 @@ mod tests {
         assert!(Gain::from(-0.2).amplitude().abs() < f32::EPSILON);
         assert!((Gain::from(f32::NAN).amplitude() - 1.0).abs() < f32::EPSILON);
         assert!((Gain::from(0.25).amplitude() - 0.25).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn the_music_volume_turns_down_the_track_and_not_the_clicks_over_it() {
+        let hum = Track::from_frames(8000, vec![[0.5, -0.5]; 800]);
+        let clicks = [(0.05, Tone::Accent(Kit::ToneGate))];
+        let full = mix(&hum, &clicks, Volumes::default());
+        let volumes = Volumes {
+            music: Gain::from(0.0),
+            ..Volumes::default()
+        };
+        let quiet = mix(&hum, &clicks, volumes);
+        assert!(loudest(&quiet.frames()[..400]) < f32::EPSILON);
+        let accent = |track: &Track| loudest(&track.frames()[400..700]);
+        let alone = mix(&Track::silence(8000, 800), &clicks, Volumes::default());
+        assert!((accent(&quiet) - accent(&alone)).abs() < 1e-6);
+        assert!(accent(&full) > accent(&quiet) - 1e-6);
     }
 
     #[test]

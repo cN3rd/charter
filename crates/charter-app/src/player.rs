@@ -147,8 +147,14 @@ impl Player {
                 };
                 let settings = StaticSoundSettings::new()
                     .start_position(from.max(0.0))
-                    .playback_rate(rate)
-                    .volume(decibels(volumes.music));
+                    .playback_rate(rate);
+                // Clicks are mixed in with the music at its volume; alone, kira sets it, so it can
+                // change as it plays.
+                let settings = if clicks.is_empty() {
+                    settings.volume(decibels(volumes.music))
+                } else {
+                    settings
+                };
                 // ponytail: clicks mix into a copy of the whole track on each play, tens of
                 // milliseconds for a long song; play them as sounds of their own if that shows.
                 let data = if clicks.is_empty() {
