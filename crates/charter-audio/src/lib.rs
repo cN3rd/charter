@@ -7,6 +7,6 @@ mod tags;
 mod track;
 
 pub use click::{Gain, Kit, Tone, Volumes, mix, render};
-pub use peaks::{Extent, Peaks};
+pub use peaks::{Extent, Peaks, fingerprint};
 pub use tags::{Tags, tags};
 pub use track::{DecodeError, Track};

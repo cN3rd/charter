@@ -36,6 +36,21 @@ impl Extent {
     }
 }
 
+/// What starts kept peaks, naming the layout: a change to it changes this.
+const MAGIC: &[u8; 8] = b"CHPEAKS1";
+
+/// Bytes before the extents: the magic, the source's fingerprint, the rate and the frame count.
+const HEADER: usize = MAGIC.len() + 8 + 8 + 8;
+
+/// A fingerprint of an audio file's `bytes`, 64-bit FNV-1a, to tell whether kept peaks are of
+/// it. Not for security: a file made to collide only gets itself a wrong waveform.
+#[must_use]
+pub fn fingerprint(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, &byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+    })
+}
+
 /// A track's extents over blocks of frames, each level's blocks twice as long as the last's.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Peaks {
@@ -50,6 +65,12 @@ impl Peaks {
     #[must_use]
     pub fn of(track: &Track) -> Self {
         let finest: Vec<Extent> = track.frames().chunks(FINEST).map(Extent::of).collect();
+        Self::from_finest(f64::from(track.rate().get()), track.frames().len(), finest)
+    }
+
+    /// The peaks whose finest level is `finest`, of a track of `frames` frames at `rate`, with
+    /// every coarser level worked out from it.
+    fn from_finest(rate: f64, frames: usize, finest: Vec<Extent>) -> Self {
         let mut levels = vec![finest];
         while let Some(last) = levels.last()
             && last.len() > 1
@@ -61,10 +82,57 @@ impl Peaks {
             levels.push(coarser);
         }
         Self {
-            rate: f64::from(track.rate().get()),
-            frames: track.frames().len(),
+            rate,
+            frames,
             levels,
         }
+    }
+
+    /// The peaks as bytes to keep, marked as the peaks of the audio whose [`fingerprint`] is
+    /// `source`. Only the finest level is kept, since the rest follow from it.
+    #[must_use]
+    pub fn to_bytes(&self, source: u64) -> Vec<u8> {
+        let finest = self.levels.first().map_or(&[][..], Vec::as_slice);
+        let mut bytes = Vec::with_capacity(HEADER + finest.len() * 8);
+        bytes.extend_from_slice(MAGIC);
+        bytes.extend_from_slice(&source.to_le_bytes());
+        bytes.extend_from_slice(&self.rate.to_le_bytes());
+        bytes.extend_from_slice(&(self.frames as u64).to_le_bytes());
+        for extent in finest {
+            bytes.extend_from_slice(&extent.low.to_le_bytes());
+            bytes.extend_from_slice(&extent.high.to_le_bytes());
+        }
+        bytes
+    }
+
+    /// The peaks kept in `bytes` by [`Peaks::to_bytes`], if they are whole and of the audio
+    /// whose fingerprint is `source`. Anything else, damaged, of other audio or of an older
+    /// layout, is `None`, and the peaks are worked out again.
+    #[must_use]
+    pub fn from_bytes(bytes: &[u8], source: u64) -> Option<Self> {
+        let (header, body) = bytes.split_at_checked(HEADER)?;
+        let (magic, header) = header.split_at(MAGIC.len());
+        let word = |at: usize| -> Option<[u8; 8]> { header.get(at..at + 8)?.try_into().ok() };
+        if magic != MAGIC || u64::from_le_bytes(word(0)?) != source {
+            return None;
+        }
+        let rate = f64::from_le_bytes(word(8)?);
+        let frames = usize::try_from(u64::from_le_bytes(word(16)?)).ok()?;
+        if !(rate.is_finite() && rate > 0.0) || body.len() != frames.div_ceil(FINEST) * 8 {
+            return None;
+        }
+        let (pairs, _) = body.as_chunks::<8>();
+        let finest = pairs
+            .iter()
+            .map(|&[a, b, c, d, e, f, g, h]| {
+                let (low, high) = (
+                    f32::from_le_bytes([a, b, c, d]),
+                    f32::from_le_bytes([e, f, g, h]),
+                );
+                (low.is_finite() && high.is_finite() && low <= high).then_some(Extent { low, high })
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some(Self::from_finest(rate, frames, finest))
     }
 
     /// The extent of the audio from `from` to `to` seconds, silence outside the track. It may
@@ -122,6 +190,39 @@ mod tests {
 
     fn near(a: f32, b: f32) -> bool {
         (a - b).abs() < 1e-6
+    }
+
+    #[test]
+    fn saved_peaks_read_back_the_same_for_the_same_audio() {
+        let peaks = Peaks::of(&burst(0.8));
+        let saved = peaks.to_bytes(7);
+        assert_eq!(Peaks::from_bytes(&saved, 7), Some(peaks));
+        assert_eq!(Peaks::from_bytes(&saved, 8), None, "other audio");
+    }
+
+    #[test]
+    fn damaged_saved_peaks_are_refused_without_panicking() {
+        let saved = Peaks::of(&burst(0.8)).to_bytes(7);
+        for cut in 0..saved.len() {
+            assert_eq!(Peaks::from_bytes(&saved[..cut], 7), None, "cut at {cut}");
+        }
+        let mut longer = saved.clone();
+        longer.push(0);
+        assert_eq!(Peaks::from_bytes(&longer, 7), None);
+        let mut other = saved.clone();
+        other[0] = b'X';
+        assert_eq!(Peaks::from_bytes(&other, 7), None);
+        let mut not_a_number = saved;
+        let last = not_a_number.len() - 4;
+        not_a_number[last..].copy_from_slice(&f32::NAN.to_le_bytes());
+        assert_eq!(Peaks::from_bytes(&not_a_number, 7), None);
+    }
+
+    #[test]
+    fn a_fingerprint_tells_different_audio_apart() {
+        assert_eq!(fingerprint(b"audio"), fingerprint(b"audio"));
+        assert_ne!(fingerprint(b"audio"), fingerprint(b"audia"));
+        assert_ne!(fingerprint(b""), fingerprint(b"\0"));
     }
 
     #[test]
