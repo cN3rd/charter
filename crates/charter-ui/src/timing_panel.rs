@@ -180,6 +180,7 @@ fn list(
         .corner_radius(4)
         .inner_margin(egui::Margin::same(3))
         .show(ui, |ui| {
+            style::solid_scroll_bars(ui);
             egui::ScrollArea::vertical()
                 .id_salt("timing points")
                 .max_height(height * 6.0)

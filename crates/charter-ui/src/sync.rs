@@ -168,6 +168,7 @@ fn rows(
     let editable = song.read_only().is_none();
     let mut laid = Vec::new();
     let mut released = None;
+    style::solid_scroll_bars(ui);
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .scroll_source(egui::scroll_area::ScrollSource {

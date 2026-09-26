@@ -75,6 +75,12 @@ fn icons() -> FontFamily {
     FontFamily::Name("phosphor".into())
 }
 
+/// Scroll bars in `ui` beside what they scroll, not floating over its right edge, where they
+/// would hide the end of a row and take the clicks and drags meant for it.
+pub fn solid_scroll_bars(ui: &mut Ui) {
+    ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
+}
+
 /// `family` in `ui`, or the ordinary family on the first frame, before the fonts take.
 fn bound(ui: &Ui, family: FontFamily) -> FontFamily {
     if ui.fonts(|fonts| fonts.definitions().families.contains_key(&family)) {

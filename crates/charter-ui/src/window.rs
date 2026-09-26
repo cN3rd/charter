@@ -1390,6 +1390,7 @@ impl Window {
                 .frame(style::panel())
                 .default_size(300.0)
                 .show(ui, |ui| {
+                    style::solid_scroll_bars(ui);
                     egui::ScrollArea::vertical()
                         .show(ui, |ui| {
                             panels::song_panel(ui, song, &mut actions);
@@ -3931,6 +3932,27 @@ mod tests {
         drag(&mut harness, from, to, egui::Modifiers::COMMAND);
         assert_eq!(event_ticks(&harness), [Tick::new(0), Tick::new(960)]);
         assert!((seconds_at(&harness, 960) - heard).abs() < 5e-3);
+    }
+
+    #[test]
+    fn the_end_of_a_row_in_the_sync_window_is_clear_of_its_scroll_bar() {
+        // The demo runs to more measures than the window shows, so its rows scroll.
+        let mut harness = editable_demo();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
+        harness.run();
+        // The last points of measure 0, where a scroll bar floating over the rows would sit.
+        let from = in_row(&harness, 3830);
+        let heard = seconds_at(&harness, 3830);
+        let to = in_row(&harness, 3360);
+        harness.hover_at(from);
+        harness.run();
+        drag(&mut harness, from, to, egui::Modifiers::NONE);
+        assert!(
+            event_ticks(&harness).contains(&Tick::new(3360)),
+            "{:?}",
+            event_ticks(&harness)
+        );
+        assert!((seconds_at(&harness, 3360) - heard).abs() < 5e-3);
     }
 
     #[test]

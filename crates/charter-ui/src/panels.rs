@@ -204,6 +204,7 @@ pub fn shortcuts(ctx: &egui::Context, open: &mut bool, filter: &mut String) {
                     || entry.0.to_lowercase().contains(&wanted)
                     || entry.1.to_lowercase().contains(&wanted)
             };
+            style::solid_scroll_bars(ui);
             egui::ScrollArea::vertical()
                 .max_height(480.0)
                 .show(ui, |ui| {
