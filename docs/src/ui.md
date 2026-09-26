@@ -278,6 +278,9 @@ and the notes over a waveform that stays put.
   overview, beat-stack view, auto-seed, suggested anchors, tap tempo and band solo; selection
   changes are not undo steps.
   The waveform shows here whether or not the notefield's is on.
+- Timing > Reset timing… asks first, then puts 120 BPM in 4/4 from 0 ms in place of the open
+  chart's timing, as one step: every BPM change, meter, stop and game timing event goes, and the
+  notes keep their beats.
 - Timing > Import timing… reads another program's timing, pasted or from a file, and shows what
   it holds before it replaces the open chart's tempo, meters and offset as one step. Each ruleset
   plugin may read a format through `RulesetPlugin::import_timing`; osu!mania reads osu!'s

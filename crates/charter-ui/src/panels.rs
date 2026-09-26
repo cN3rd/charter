@@ -113,6 +113,10 @@ pub fn menu_bar(
             if ui.add_enabled(song_open && importable, import).clicked() {
                 actions.push(Action::ShowImport);
             }
+            let reset = egui::Button::new("Reset timing…");
+            if ui.add_enabled(song_open, reset).clicked() {
+                actions.push(Action::AskResetTiming);
+            }
         });
         ui.menu_button("View", |ui| {
             let item = egui::Button::new("Song panel").shortcut_text("Ctrl+\\");
@@ -904,6 +908,32 @@ pub fn ask_to_restore(ui: &Ui, name: &str) -> Option<bool> {
                 answer = Some(true);
             }
             if ui.button("Discard").clicked() {
+                answer = Some(false);
+            }
+        });
+    });
+    answer
+}
+
+/// Whether to reset the open chart's timing, which the user answers: true for Reset.
+pub fn ask_to_reset_timing(ui: &Ui) -> Option<bool> {
+    let mut answer = None;
+    egui::Modal::new(egui::Id::new("reset timing")).show(ui.ctx(), |ui| {
+        ui.set_max_width(400.0);
+        let question = "Reset the timing?";
+        ui.label(RichText::new(question).family(style::titles(ui)).size(15.0));
+        ui.add_space(4.0);
+        ui.label(
+            "Every BPM change, meter, stop and game timing event of the open chart's timing goes, \
+             and it plays at 120 BPM in 4/4 from 0 ms. Notes keep their beats. Undo brings the \
+             timing back.",
+        );
+        ui.add_space(14.0);
+        ui.horizontal(|ui| {
+            if ui.add(style::primary("Reset")).clicked() {
+                answer = Some(true);
+            }
+            if ui.button("Cancel").clicked() {
                 answer = Some(false);
             }
         });

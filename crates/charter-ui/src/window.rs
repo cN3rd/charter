@@ -301,6 +301,10 @@ pub(crate) enum Action {
     Timing(charter_timing::Edit),
     /// Play from this many seconds into the audio with the metronome on, to hear an edit.
     Audition(f64),
+    /// Ask whether to reset the open chart's timing.
+    AskResetTiming,
+    /// Put 120 BPM in 4/4 from 0 ms in place of the open chart's timing.
+    ResetTiming,
     /// Loop the ticks from `from` to `to` with the metronome, or stop looping them.
     Loop {
         from: Tick,
@@ -373,6 +377,8 @@ pub struct Window {
     frame_time: f64,
     /// The latency calibration window.
     calibration: latency::Calibration,
+    /// Whether the window asks whether to reset the timing.
+    resetting: bool,
     /// The import timing window.
     import: import::Import,
     /// How tall a second of the open song is on screen.
@@ -1207,6 +1213,7 @@ impl Window {
             Action::ToggleTicks => self.settings.tick_sound = self.settings.tick_sound.toggled(),
             Action::TogglePlay => self.toggle_play(),
             Action::Audition(from) => self.audition(from),
+            Action::AskResetTiming => self.resetting = true,
             Action::Loop { from, to } => self.toggle_loop(from, to),
             Action::ToggleRate => self.toggle_rate(),
             Action::MuteMetronome(muted) => {
@@ -1320,6 +1327,7 @@ impl Window {
             | Action::ToggleTicks
             | Action::TogglePlay
             | Action::Audition(_)
+            | Action::AskResetTiming
             | Action::Loop { .. }
             | Action::ToggleRate
             | Action::MuteMetronome(_)
@@ -1339,6 +1347,7 @@ impl Window {
             | Action::AddBpm
             | Action::NudgeOffset(_)
             | Action::ImportTiming(_)
+            | Action::ResetTiming
             | Action::MoveTiming { .. } => self.failure = retime(song, &action),
             // The timing window says itself why its edits were refused.
             Action::Timing(edit) => match edit.apply(song) {
@@ -1438,7 +1447,8 @@ impl Window {
             || self.discard.is_some()
             || self.restoring.is_some()
             || self.offer.is_some()
-            || self.calibration.open;
+            || self.calibration.open
+            || self.resetting;
         let typing = ui.ctx().egui_wants_keyboard_input();
         // The timing window, once clicked, takes the keys it has a use for; undo and redo still
         // reach the song.
@@ -1597,6 +1607,14 @@ impl Window {
             latency::show(ui.ctx(), &mut self.calibration, time, &mut self.settings)
         {
             self.requests.push(request);
+        }
+        if self.resetting
+            && let Some(answer) = panels::ask_to_reset_timing(ui)
+        {
+            self.resetting = false;
+            if answer {
+                actions.push(Action::ResetTiming);
+            }
         }
         if let Some(settings::Asked::Preview(kit)) = asked {
             let clicks = (0..4u8).map(|beat| {
@@ -1838,6 +1856,15 @@ fn shown_peaks<'a>(
     (settings.waveform && Some(of.as_path()) == file).then_some(peaks.as_ref())
 }
 
+/// The timing a reset leaves: 120 BPM in 4/4 from 0 ms, as a new song starts with.
+fn fresh_timing() -> charter_core::Timing {
+    let fresh = serde_json::json!({
+        "offset_seconds": 0.0,
+        "events": [ { "tick": 0, "kind": { "bpm": 120.0 } } ]
+    });
+    serde_json::from_value(fresh).unwrap_or_else(|_| unreachable!("the fresh timing reads"))
+}
+
 /// Makes the timing edit `action` asks for, and says why if it cannot.
 fn retime(song: &mut Song, action: &Action) -> Option<String> {
     let done = match action {
@@ -1847,6 +1874,7 @@ fn retime(song: &mut Song, action: &Action) -> Option<String> {
         Action::SetOffset(offset) => song.set_offset(*offset),
         Action::AddBpm => song.add_bpm_change(),
         Action::ImportTiming(timing) => song.replace_timing(timing.as_ref().clone()),
+        Action::ResetTiming => song.replace_timing(fresh_timing()),
         Action::NudgeOffset(by) => {
             let moved = f64::from(song.timing().offset_seconds) + by;
             let micros = (moved * 1e6).round() / 1e6;
@@ -4216,6 +4244,52 @@ mod tests {
     fn anchor_seconds(harness: &Harness<'_, Window>) -> Vec<f64> {
         let song = harness.state().song.as_ref().unwrap();
         song.anchors().iter().map(|pin| pin.seconds).collect()
+    }
+
+    fn reset_from_the_menu(harness: &mut Harness<'_, Window>) {
+        harness.query_all_by_label("Timing").next().unwrap().click();
+        harness.run();
+        harness.get_by_label("Reset timing…").click();
+        harness.run();
+    }
+
+    #[test]
+    fn resetting_the_timing_asks_first_then_leaves_120_bpm_from_zero_in_one_step() {
+        let mut harness = editable_demo();
+        let before = harness
+            .state()
+            .song
+            .as_ref()
+            .unwrap()
+            .timing()
+            .events
+            .clone();
+        reset_from_the_menu(&mut harness);
+        harness.get_by_label("Cancel").click();
+        harness.run();
+        assert_eq!(
+            harness.state().song.as_ref().unwrap().timing().events,
+            before
+        );
+        reset_from_the_menu(&mut harness);
+        harness.get_by_label("Reset").click();
+        harness.run();
+        let song = harness.state().song.as_ref().unwrap();
+        let events = serde_json::to_value(&song.timing().events).unwrap();
+        assert_eq!(
+            events,
+            serde_json::json!([{ "tick": 0, "kind": { "bpm": 120.0 } }])
+        );
+        assert_eq!(
+            serde_json::to_value(song.timing().offset_seconds).unwrap(),
+            serde_json::json!(0.0)
+        );
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.run();
+        assert_eq!(
+            harness.state().song.as_ref().unwrap().timing().events,
+            before
+        );
     }
 
     #[test]
