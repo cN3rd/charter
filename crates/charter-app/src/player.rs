@@ -4,17 +4,18 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError};
 
-use charter_audio::{Peaks, Track};
+use charter_audio::{Onset, Peaks, Track};
 use charter_ui::{Request, Window};
 use kira::sound::PlaybackState;
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle, StaticSoundSettings};
 use kira::{AudioManager, AudioManagerSettings, Decibels, DefaultBackend, Frame, Tween};
 
 /// What the loading thread sends: kept peaks as soon as they are read, then the audio, with its
-/// peaks unless they came first.
+/// peaks unless they came first, then its onsets, which take longest.
 enum Loaded {
     Peaks(Peaks),
-    Audio(Result<(Track, Option<Peaks>), String>),
+    Audio(Result<(Arc<Track>, Option<Peaks>), String>),
+    Onsets(Arc<[Onset]>),
 }
 
 /// A file being decoded, and where its results arrive.
@@ -30,7 +31,7 @@ pub struct Player {
     inline: bool,
     loading: Option<Loading>,
     /// The audio, decoded and as sound kira plays.
-    loaded: Option<(PathBuf, Track, StaticSoundData)>,
+    loaded: Option<(PathBuf, Arc<Track>, StaticSoundData)>,
     /// Audio that failed to load, which is not tried again until the window wants other audio.
     failed: Option<PathBuf>,
     playing: Option<StaticSoundHandle>,
@@ -87,34 +88,15 @@ impl Player {
             self.loading = wanted.map(|path| {
                 let (send, receive) = std::sync::mpsc::channel();
                 let file = path.clone();
-                let cache = if inline {
-                    None
+                let (cache, onset_cache) = if inline {
+                    (None, None)
                 } else {
-                    cache_file(project.as_deref(), &file)
+                    let file = &file;
+                    let at = |kind: &str| cache_file(project.as_deref(), file, kind);
+                    (at("peaks"), at("onsets"))
                 };
                 // The peaks are read or worked out beside the decoding, off the window's thread.
-                // The window has moved on if nobody is listening; that is fine.
-                let summarize = move || {
-                    let disk = crate::disk::Real;
-                    let source = cache.as_ref().and_then(|_| std::fs::read(&file).ok());
-                    let source = source.map(|bytes| charter_audio::fingerprint(&bytes));
-                    let kept = cache
-                        .as_deref()
-                        .zip(source)
-                        .and_then(|(cache, source)| kept_peaks(&disk, cache, source));
-                    let had = kept.is_some();
-                    if let Some(peaks) = kept {
-                        let _ = send.send(Loaded::Peaks(peaks));
-                    }
-                    let audio = load(&file).map(|track| {
-                        let peaks = (!had).then(|| Peaks::of(&track));
-                        if let (Some(cache), Some(source), Some(peaks)) = (&cache, source, &peaks) {
-                            keep_peaks(&disk, cache, source, peaks);
-                        }
-                        (track, peaks)
-                    });
-                    let _ = send.send(Loaded::Audio(audio));
-                };
+                let summarize = move || summarize(load, &file, (cache, onset_cache), &send);
                 if inline {
                     summarize();
                 } else {
@@ -124,33 +106,39 @@ impl Player {
             });
         }
         if let Some((path, receive)) = &self.loading {
-            let mut received = receive.try_recv();
-            if let Ok(Loaded::Peaks(peaks)) = received {
-                window.waveform_ready(path, Arc::new(peaks));
-                received = receive.try_recv();
-            }
-            match received {
-                Ok(Loaded::Audio(Ok((track, peaks)))) => {
-                    window.audio_ready(path, track.seconds());
-                    if let Some(peaks) = peaks {
-                        window.waveform_ready(path, Arc::new(peaks));
+            // Everything that has arrived, in order: peaks, then the audio, then its onsets.
+            let mut done = false;
+            loop {
+                match receive.try_recv() {
+                    Ok(Loaded::Peaks(peaks)) => window.waveform_ready(path, Arc::new(peaks)),
+                    Ok(Loaded::Onsets(onsets)) => window.onsets_ready(path, onsets),
+                    Ok(Loaded::Audio(Ok((track, peaks)))) => {
+                        window.audio_ready(path, track.seconds());
+                        if let Some(peaks) = peaks {
+                            window.waveform_ready(path, Arc::new(peaks));
+                        }
+                        let data = sound(&track);
+                        self.loaded = Some((path.clone(), track, data));
                     }
-                    let data = sound(&track);
-                    self.loaded = Some((path.clone(), track, data));
-                    self.loading = None;
+                    Ok(Loaded::Audio(Err(why))) => {
+                        window.audio_failed(path, &why);
+                        self.failed = Some(path.clone());
+                        done = true;
+                        break;
+                    }
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => {
+                        if self.loaded.is_none() {
+                            window.audio_failed(path, "loading stopped");
+                            self.failed = Some(path.clone());
+                        }
+                        done = true;
+                        break;
+                    }
                 }
-                Ok(Loaded::Audio(Err(why))) => {
-                    window.audio_failed(path, &why);
-                    self.failed = Some(path.clone());
-                    self.loading = None;
-                }
-                // A second peaks message cannot come; either way, nothing to do yet.
-                Ok(Loaded::Peaks(_)) | Err(TryRecvError::Empty) => {}
-                Err(TryRecvError::Disconnected) => {
-                    window.audio_failed(path, "loading stopped");
-                    self.failed = Some(path.clone());
-                    self.loading = None;
-                }
+            }
+            if done {
+                self.loading = None;
             }
         }
         let Some(sound) = &self.playing else {
@@ -276,15 +264,63 @@ fn load(path: &Path) -> Result<Track, String> {
     Track::decode(bytes, extension).map_err(|error| error.to_string())
 }
 
-/// Where the peaks of `audio` are kept: in the `cache` folder of the song's project folder
-/// `project`, when the audio is in it, so nothing is written among the user's own music.
-fn cache_file(project: Option<&Path>, audio: &Path) -> Option<PathBuf> {
+/// Reads `file` with `load` and sends what the window needs of it through `send`, as the loading
+/// thread does: peaks kept at the first of `caches` as soon as they are read, then the audio with
+/// its peaks unless they came first, then its onsets, kept at the second.
+fn summarize(
+    load: fn(&Path) -> Result<Track, String>,
+    file: &Path,
+    (cache, onset_cache): (Option<PathBuf>, Option<PathBuf>),
+    send: &std::sync::mpsc::Sender<Loaded>,
+) {
+    let disk = crate::disk::Real;
+    let source = cache.as_ref().and_then(|_| std::fs::read(file).ok());
+    let source = source.map(|bytes| charter_audio::fingerprint(&bytes));
+    let kept = cache
+        .as_deref()
+        .zip(source)
+        .and_then(|(cache, source)| kept_peaks(&disk, cache, source));
+    let had = kept.is_some();
+    if let Some(peaks) = kept {
+        let _ = send.send(Loaded::Peaks(peaks));
+    }
+    let audio = load(file).map(|track| {
+        let peaks = (!had).then(|| Peaks::of(&track));
+        if let (Some(cache), Some(source), Some(peaks)) = (&cache, source, &peaks) {
+            keep_peaks(&disk, cache, source, peaks);
+        }
+        (Arc::new(track), peaks)
+    });
+    let track = audio.as_ref().ok().map(|(track, _)| Arc::clone(track));
+    let _ = send.send(Loaded::Audio(audio));
+    let Some(track) = track else {
+        return;
+    };
+    let kept = onset_cache
+        .as_deref()
+        .zip(source)
+        .and_then(|(cache, source)| kept_onsets(&disk, cache, source));
+    let onsets = kept.unwrap_or_else(|| {
+        let found: Arc<[Onset]> = charter_audio::onsets(&track).into();
+        if let (Some(cache), Some(source)) = (&onset_cache, source) {
+            keep_onsets(&disk, cache, source, &found);
+        }
+        found
+    });
+    let _ = send.send(Loaded::Onsets(onsets));
+}
+
+/// Where what is worked out from `audio`, of the `kind` such as `peaks`, is kept: in the `cache`
+/// folder of the song's project folder `project`, when the audio is in it, so nothing is written
+/// among the user's own music.
+fn cache_file(project: Option<&Path>, audio: &Path, kind: &str) -> Option<PathBuf> {
     let project = project?;
     if audio.parent() != Some(project) {
         return None;
     }
     let mut name = audio.file_name()?.to_owned();
-    name.push(".peaks");
+    name.push(".");
+    name.push(kind);
     Some(project.join("cache").join(name))
 }
 
@@ -302,6 +338,22 @@ fn keep_peaks(disk: &dyn crate::disk::Disk, cache: &Path, source: u64, peaks: &P
         let _ = disk.make_folder(folder);
     }
     let _ = crate::disk::write_whole(disk, cache, &peaks.to_bytes(source));
+}
+
+/// The onsets kept at `cache` for the audio whose fingerprint is `source`, if they are there,
+/// whole and of it.
+fn kept_onsets(disk: &dyn crate::disk::Disk, cache: &Path, source: u64) -> Option<Arc<[Onset]>> {
+    let bytes = disk.read(cache).ok()?;
+    charter_audio::onsets_from_bytes(&bytes, source)
+}
+
+/// Keeps `onsets` at `cache` for next time; a cache that cannot be written only costs finding
+/// them again.
+fn keep_onsets(disk: &dyn crate::disk::Disk, cache: &Path, source: u64, onsets: &[Onset]) {
+    if let Some(folder) = cache.parent() {
+        let _ = disk.make_folder(folder);
+    }
+    let _ = crate::disk::write_whole(disk, cache, &charter_audio::onsets_to_bytes(onsets, source));
 }
 
 /// `track` as sound data kira plays.
@@ -359,11 +411,14 @@ mod tests {
     fn peaks_are_kept_in_the_project_folder_only_for_audio_beside_the_song() {
         let project = Some(Path::new("/s/Song"));
         assert_eq!(
-            cache_file(project, Path::new("/s/Song/a.ogg")),
+            cache_file(project, Path::new("/s/Song/a.ogg"), "peaks"),
             Some(PathBuf::from("/s/Song/cache/a.ogg.peaks"))
         );
-        assert_eq!(cache_file(project, Path::new("/music/a.ogg")), None);
-        assert_eq!(cache_file(None, Path::new("/s/Song/a.ogg")), None);
+        assert_eq!(
+            cache_file(project, Path::new("/music/a.ogg"), "peaks"),
+            None
+        );
+        assert_eq!(cache_file(None, Path::new("/s/Song/a.ogg"), "peaks"), None);
     }
 
     #[test]
@@ -377,6 +432,46 @@ mod tests {
         keep_peaks(&disk, cache, source, &peaks);
         assert_eq!(kept_peaks(&disk, cache, source), Some(peaks));
         assert_eq!(kept_peaks(&disk, cache, source + 1), None);
+    }
+
+    #[test]
+    fn audio_that_loads_gives_the_window_its_onsets_after_it() {
+        let mut player = player(clicking);
+        let mut window = song_window();
+        player.update(&mut window);
+        let onsets = window.onsets().expect("onsets");
+        let strong: Vec<_> = onsets.iter().filter(|onset| onset.strength > 0.2).collect();
+        assert_eq!(strong.len(), 2, "{onsets:?}");
+        assert!((onsets[0].seconds - 0.5).abs() < 0.002);
+    }
+
+    #[test]
+    fn onsets_kept_are_read_back_for_the_same_audio() {
+        use crate::disk::memory::Memory;
+        let disk = Memory::default();
+        let cache = Path::new("/s/cache/a.ogg.onsets");
+        assert_eq!(kept_onsets(&disk, cache, 3), None);
+        let found = [charter_audio::Onset {
+            seconds: 0.5,
+            strength: 1.0,
+        }];
+        keep_onsets(&disk, cache, 3, &found);
+        assert_eq!(kept_onsets(&disk, cache, 3).as_deref(), Some(&found[..]));
+        assert_eq!(kept_onsets(&disk, cache, 4), None);
+    }
+
+    #[allow(clippy::unnecessary_wraps)] // a loader's signature
+    fn clicking(_: &Path) -> Result<Track, String> {
+        let mut frames = vec![[0.0f32; 2]; 44_100 * 2];
+        for start in [22_050, 44_100] {
+            for (offset, frame) in frames.iter_mut().skip(start).take(1500).enumerate() {
+                #[allow(clippy::cast_precision_loss)]
+                let t = offset as f32 / 44_100.0;
+                let sample = (std::f32::consts::TAU * 2000.0 * t).sin() * (-t / 0.008).exp();
+                *frame = [sample * 0.8; 2];
+            }
+        }
+        Ok(Track::from_frames(44_100, frames))
     }
 
     static FAILED_LOADS: AtomicUsize = AtomicUsize::new(0);

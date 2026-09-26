@@ -401,6 +401,8 @@ pub struct Window {
     help_filter: String,
     /// The waveform of an audio file, once the host has summarized it.
     waveform: Option<(PathBuf, Arc<Peaks>)>,
+    /// The onsets of an audio file the host found, and which file.
+    onsets: Option<(PathBuf, Arc<[charter_audio::Onset]>)>,
     /// The audio file the host last reported on, and how it went.
     audio: Option<(PathBuf, Loaded)>,
     /// Whether the audio is playing.
@@ -757,6 +759,20 @@ impl Window {
     /// Takes the peaks of `file`, to draw its waveform while the song plays it.
     pub fn waveform_ready(&mut self, file: &Path, peaks: Arc<Peaks>) {
         self.waveform = Some((file.to_path_buf(), peaks));
+    }
+
+    /// Takes the onsets the host found in the audio `file`, which the timing window snaps to
+    /// and measures the grid against.
+    pub fn onsets_ready(&mut self, file: &Path, onsets: Arc<[charter_audio::Onset]>) {
+        self.onsets = Some((file.to_path_buf(), onsets));
+    }
+
+    /// The onsets of the audio the open song plays, once the host has found them.
+    #[must_use]
+    pub fn onsets(&self) -> Option<&[charter_audio::Onset]> {
+        let file = self.audio_file();
+        let (of, onsets) = self.onsets.as_ref()?;
+        (Some(of.as_path()) == file.as_deref()).then_some(onsets.as_ref())
     }
 
     /// Whether the notefield shows a waveform: the settings want one, and the host has
