@@ -670,7 +670,7 @@ impl Song {
     }
 
     /// The document with `edit` made to chart `chart`, if the format and the game allow it.
-    fn edited(&self, chart: usize, edit: &Edit) -> Result<ValidDocument, Refusal> {
+    pub(crate) fn edited(&self, chart: usize, edit: &Edit) -> Result<ValidDocument, Refusal> {
         let Rules::Checked(plugin) = self.rules else {
             return Err(Refusal::ReadOnly);
         };
