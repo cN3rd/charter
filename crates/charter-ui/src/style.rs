@@ -57,6 +57,9 @@ pub const FAKE: Color32 = Color32::from_gray(110);
 pub const OTHER: Color32 = Color32::from_rgb(170, 170, 120);
 pub const SELECTED: Color32 = Color32::from_rgb(200, 224, 255);
 pub const MARQUEE: Color32 = ACCENT;
+/// The waveform, quieter than the notes it sits beside, on a strip of its own.
+pub const WAVE: Color32 = Color32::from_rgb(92, 128, 176);
+pub const WAVE_BG: Color32 = Color32::from_gray(16);
 pub const MARQUEE_FILL: Color32 = Color32::from_rgba_unmultiplied_const(110, 170, 255, 28);
 
 /// The family for titles and emphasis.

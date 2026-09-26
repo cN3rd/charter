@@ -4,14 +4,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError};
 
-use charter_audio::Track;
+use charter_audio::{Peaks, Track};
 use charter_ui::{Request, Window};
 use kira::sound::PlaybackState;
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle, StaticSoundSettings};
 use kira::{AudioManager, AudioManagerSettings, DefaultBackend, Frame, Tween};
 
 /// A file being decoded, and where its result arrives.
-type Loading = (PathBuf, Receiver<Result<Track, String>>);
+type Loading = (PathBuf, Receiver<Result<(Track, Peaks), String>>);
 
 /// The audio device, the song's audio and the sound playing it.
 pub struct Player {
@@ -76,12 +76,19 @@ impl Player {
             self.loading = wanted.map(|path| {
                 let (send, receive) = std::sync::mpsc::channel();
                 let file = path.clone();
+                // The peaks are worked out beside the decoding, off the window's thread.
+                let summarized = move |file: &Path| {
+                    load(file).map(|track| {
+                        let peaks = Peaks::of(&track);
+                        (track, peaks)
+                    })
+                };
                 // The window has moved on if nobody is listening; that is fine.
                 if inline {
-                    let _ = send.send(load(&file));
+                    let _ = send.send(summarized(&file));
                 } else {
                     std::thread::spawn(move || {
-                        let _ = send.send(load(&file));
+                        let _ = send.send(summarized(&file));
                     });
                 }
                 (path, receive)
@@ -89,8 +96,9 @@ impl Player {
         }
         if let Some((path, receive)) = &self.loading {
             match receive.try_recv() {
-                Ok(Ok(track)) => {
+                Ok(Ok((track, peaks))) => {
                     window.audio_ready(path, track.seconds());
+                    window.waveform_ready(path, Arc::new(peaks));
                     let data = sound(&track);
                     self.loaded = Some((path.clone(), track, data));
                     self.loading = None;
@@ -268,6 +276,16 @@ mod tests {
         assert_eq!(path, Path::new("/s/a.wav"));
         assert_eq!(data.frames.len(), 2000);
         assert_eq!(window.message(), None);
+    }
+
+    #[test]
+    fn audio_that_loads_gives_the_window_its_waveform() {
+        let mut player = player(silent);
+        let mut window = song_window();
+        assert!(!window.shows_waveform());
+        player.update(&mut window);
+        player.update(&mut window);
+        assert!(window.shows_waveform());
     }
 
     #[test]

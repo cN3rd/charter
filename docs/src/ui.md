@@ -43,10 +43,11 @@ the new-song dialog picks the game from a segmented control, sketches the layout
 the song's audio dropped on it or chosen. An audio file's tags fill in a title and artist still at
 their defaults, in the dialog or on a new song; where the user has written their own, charter asks
 whether to import them. The song panel folds away with Ctrl+\\, and the tempo section sets the
-offset, where tick 0 sits in the audio, for songs that open with silence. In the notefield, BPM and
-other timing changes drag along the timing column and markers along the ruler to another snap line,
-each as one step, with a guide where they will land; the song's first BPM change stays put. The
-cursor's handle on the ruler drags to scrub, and seeks while playing.
+offset, where tick 0 sits in the audio, for songs that open with silence. Once the audio has loaded,
+its waveform draws in a strip between the timing column and the lanes, lined up with the notes. In
+the notefield, BPM and other timing changes drag along the timing column and markers along the ruler
+to another snap line, each as one step, with a guide where they will land; the song's first BPM
+change stays put. The cursor's handle on the ruler drags to scrub, and seeks while playing.
 
 ## Main window
 

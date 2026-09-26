@@ -55,6 +55,7 @@ impl Sound {
 /// kept, such as ones newer than it, take their defaults.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
+#[allow(clippy::struct_excessive_bools)] // independent choices, each its own switch
 pub struct Settings {
     /// Whether the cursor moves on a snap once the lane keys that placed a note are up.
     pub auto_jump: bool,
@@ -76,6 +77,8 @@ pub struct Settings {
     pub autosave_seconds: u32,
     /// Whether the song panel shows beside the notefield.
     pub song_panel: bool,
+    /// Whether the notefield draws the audio's waveform beside the lanes.
+    pub waveform: bool,
 }
 
 impl Default for Settings {
@@ -91,6 +94,7 @@ impl Default for Settings {
             autosave: true,
             autosave_seconds: 30,
             song_panel: true,
+            waveform: true,
         }
     }
 }
@@ -368,6 +372,15 @@ fn display(ui: &mut egui::Ui, settings: &mut Settings) {
                 .labelled_by(caption);
         },
     );
+    let name = "Waveform";
+    row(
+        ui,
+        name,
+        "The song's audio in a strip beside the lanes.",
+        |ui, _| {
+            switch(ui, &mut settings.waveform, name);
+        },
+    );
 }
 
 fn sounds(ui: &mut egui::Ui, settings: &mut Settings) {
@@ -496,6 +509,7 @@ mod tests {
             autosave: false,
             autosave_seconds: 90,
             song_panel: false,
+            waveform: false,
         };
         let stored = serde_json::to_string(&settings).unwrap();
         assert_eq!(serde_json::from_str::<Settings>(&stored).unwrap(), settings);

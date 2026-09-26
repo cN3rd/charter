@@ -13,6 +13,8 @@ use egui::{
 
 use charter_editor::{NoteAt, Selecting, Song, Step};
 
+use charter_audio::Peaks;
+
 use crate::flip::{Canvas, Direction, Flip};
 use crate::style;
 use crate::{Action, Note};
@@ -139,6 +141,8 @@ const RULER_W: f32 = 80.0;
 const TIMING_W: f32 = 160.0;
 const TIMING_MIN_W: f32 = 72.0;
 const LANE_W: f32 = 56.0;
+/// How wide the waveform strip is, when there is a waveform to show.
+const WAVE_W: f32 = 64.0;
 const LANE_MIN_W: f32 = 20.0;
 const HEADER_H: f32 = 26.0;
 /// How far down the notefield the now line sits.
@@ -153,6 +157,8 @@ const MOST_BEATS: usize = 64;
 pub(crate) struct Columns {
     ruler: Rangef,
     timing: Rangef,
+    /// The waveform strip, empty when there is no waveform.
+    wave: Rangef,
     lanes: Rangef,
     lane_w: f32,
 }
@@ -160,23 +166,27 @@ pub(crate) struct Columns {
 impl Columns {
     /// Centres the columns in `across`. Short of room, the timing gutter narrows first, then the
     /// lanes, and past that the columns start at the left edge.
-    fn laid_out(across: Rangef, lanes: u16) -> Self {
+    fn laid_out(across: Rangef, lanes: u16, wave: bool) -> Self {
         let count = f32::from(lanes);
-        let room = across.span() - RULER_W - TIMING_MIN_W;
+        let wave_w = if wave { WAVE_W } else { 0.0 };
+        let room = across.span() - RULER_W - TIMING_MIN_W - wave_w;
         let lane_w = if lanes == 0 {
             0.0
         } else {
             (room / count).clamp(LANE_MIN_W, LANE_W)
         };
-        let timing = (across.span() - RULER_W - lane_w * count).clamp(TIMING_MIN_W, TIMING_W);
-        let total = RULER_W + timing + lane_w * count;
+        let timing =
+            (across.span() - RULER_W - wave_w - lane_w * count).clamp(TIMING_MIN_W, TIMING_W);
+        let total = RULER_W + timing + wave_w + lane_w * count;
         let left = (across.center() - total / 2.0).max(across.min);
         let ruler = Rangef::new(left, left + RULER_W);
         let timing = Rangef::new(ruler.max, ruler.max + timing);
+        let wave = Rangef::new(timing.max, timing.max + wave_w);
         Self {
             ruler,
             timing,
-            lanes: Rangef::new(timing.max, timing.max + lane_w * count),
+            wave,
+            lanes: Rangef::new(wave.max, wave.max + lane_w * count),
             lane_w,
         }
     }
@@ -287,10 +297,10 @@ pub(crate) struct Field {
 
 impl Field {
     /// The notefield filling `area` for a chart of `lanes` lanes, with the cursor at `now`.
-    pub(crate) fn new(area: Rect, lanes: u16, now: ResolvedTime, zoom: Zoom) -> Self {
+    pub(crate) fn new(area: Rect, lanes: u16, now: ResolvedTime, zoom: Zoom, wave: bool) -> Self {
         let rows = Rangef::new(area.top() + HEADER_H, area.bottom());
         Self {
-            columns: Columns::laid_out(area.x_range(), lanes),
+            columns: Columns::laid_out(area.x_range(), lanes, wave),
             rows,
             view: View::new(rows.min + rows.span() * NOW_AT, now, zoom),
             lanes,
@@ -346,8 +356,11 @@ impl Field {
 pub fn show(
     ui: &mut Ui,
     song: &Song,
-    zoom: Zoom,
-    direction: Direction,
+    Shown {
+        zoom,
+        direction,
+        peaks,
+    }: Shown<'_>,
     scrolled: &mut f32,
     gesture: &mut Option<Gesture>,
     actions: &mut Vec<Action>,
@@ -359,7 +372,9 @@ pub fn show(
     let lanes = chart.lanes.map_or(0, u16::from);
     let across = ui.available_rect_before_wrap().x_range();
     let indent = match direction {
-        Direction::Up | Direction::Down => Columns::laid_out(across, lanes).ruler.min,
+        Direction::Up | Direction::Down => {
+            Columns::laid_out(across, lanes, peaks.is_some()).ruler.min
+        }
         Direction::Left | Direction::Right => across.min,
     };
     let planar = chart
@@ -410,7 +425,13 @@ pub fn show(
     let painter = Canvas::new(ui.painter_at(response.rect), flip);
     let area = flip.field();
     let timing = chart.timing();
-    let field = Field::new(area, lanes, timing.time_at(song.cursor()), zoom);
+    let field = Field::new(
+        area,
+        lanes,
+        timing.time_at(song.cursor()),
+        zoom,
+        peaks.is_some(),
+    );
     let (columns, rows, view) = (&field.columns, field.rows, field.view);
     // ponytail: every visible item still resolves its time from tick 0, which is slow once a
     // timing map holds thousands of events; walk the map once per frame when that shows.
@@ -427,6 +448,9 @@ pub fn show(
     );
     let clipped = painter.clipped(Rect::from_x_y_ranges(area.x_range(), rows));
     backdrop(&clipped, columns, lanes, rows);
+    if let Some(peaks) = peaks {
+        waveform(&clipped, columns, view, rows, peaks);
+    }
     grid(&clipped, columns, song, view, rows);
     markers(&clipped, columns, song, view, rows, (first, last));
     events(&clipped, columns, song, view, rows, (first, last));
@@ -687,6 +711,9 @@ fn header(
         }
         .to_owned(),
     );
+    if columns.wave.span() > 0.0 {
+        caption(columns.wave.center(), "audio".to_owned());
+    }
     for lane in 0..lanes {
         let span = columns.span(LaneIndex::new(lane), LaneCount::ONE);
         caption(span.center(), (lane + 1).to_string());
@@ -706,13 +733,60 @@ fn backdrop(painter: &Canvas, columns: &Columns, lanes: u16, rows: Rangef) {
         let x = columns.span(LaneIndex::new(lane), LaneCount::ONE).min;
         painter.vline(x, rows, Stroke::new(1.0, style::BEAT_LINE));
     }
+    if columns.wave.span() > 0.0 {
+        painter.rect_filled(
+            Rect::from_x_y_ranges(columns.wave, rows),
+            0.0,
+            style::WAVE_BG,
+        );
+    }
     for x in [
         columns.ruler.min,
         columns.timing.min,
+        columns.wave.min,
         columns.lanes.min,
         columns.lanes.max,
     ] {
         painter.vline(x, rows, Stroke::new(1.0, style::DIVIDER));
+    }
+}
+
+/// How the notefield is shown: how close, which way it runs, and the waveform of the song's
+/// audio when there is one to draw.
+#[derive(Clone, Copy, Debug)]
+pub struct Shown<'a> {
+    pub zoom: Zoom,
+    pub direction: Direction,
+    pub peaks: Option<&'a Peaks>,
+}
+
+/// The audio under each row of `rows`, a point apart: the row, and the lowest and highest
+/// sample in the time it covers.
+fn wave_rows(peaks: &Peaks, view: View, rows: Rangef) -> Vec<(f32, f32, f32)> {
+    let mut drawn = Vec::new();
+    let mut y = rows.min.floor();
+    while y < rows.max {
+        let (from, to) = (view.seconds_at(y), view.seconds_at(y + 1.0));
+        let extent = peaks.between(from.min(to), from.max(to));
+        drawn.push((y, extent.low, extent.high));
+        y += 1.0;
+    }
+    drawn
+}
+
+/// The song's audio in its strip, one line a row across the extent of the audio it covers, so
+/// it lines up with the notes whatever the tempo.
+fn waveform(painter: &Canvas, columns: &Columns, view: View, rows: Rangef, peaks: &Peaks) {
+    let (middle, half) = (columns.wave.center(), columns.wave.span() / 2.0 - 3.0);
+    for (y, low, high) in wave_rows(peaks, view, rows) {
+        if high - low < 0.004 {
+            continue;
+        }
+        let across = Rangef::new(
+            middle + low.clamp(-1.0, 1.0) * half,
+            middle + high.clamp(-1.0, 1.0) * half,
+        );
+        painter.hline(across, y + 0.5, Stroke::new(1.0, style::WAVE));
     }
 }
 
@@ -986,6 +1060,7 @@ mod tests {
     use egui::{Modifiers, MouseWheelUnit, TouchPhase, Vec2};
 
     use super::*;
+    use charter_audio::Track;
     use charter_editor::demo;
 
     fn wheel(unit: MouseWheelUnit, down: f32, modifiers: Modifiers) -> egui::Event {
@@ -1104,10 +1179,52 @@ mod tests {
     }
 
     #[test]
+    fn the_waveform_gets_a_strip_between_the_timing_and_the_lanes() {
+        let across = Rangef::new(0.0, 1000.0);
+        let with = Columns::laid_out(across, 4, true);
+        assert!((with.wave.min - with.timing.max).abs() < f32::EPSILON);
+        assert!((with.lanes.min - with.wave.max).abs() < f32::EPSILON);
+        assert!(with.wave.span() > 40.0);
+        let without = Columns::laid_out(across, 4, false);
+        assert!(without.wave.span() < f32::EPSILON);
+        assert!((without.lanes.min - without.timing.max).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn each_row_of_the_waveform_shows_the_audio_it_covers() {
+        // A second of silence, then a second at half volume, at 1000 frames a second.
+        let mut frames = vec![[0.0, 0.0]; 1000];
+        frames.extend((0..1000).map(|frame| {
+            if frame % 2 == 0 {
+                [0.5, 0.5]
+            } else {
+                [-0.5, -0.5]
+            }
+        }));
+        let peaks = Peaks::of(&Track::from_frames(1000, frames));
+        let now = song().timing().time_at(Tick::new(0));
+        let view = View::new(0.0, now, Zoom::START);
+        let rows = wave_rows(&peaks, view, Rangef::new(0.0, view.y_of(2.0)));
+        let at = |seconds: f64| {
+            let y = view.y_of(seconds);
+            rows.iter()
+                .find(|row| (row.0 - y).abs() < 1.0)
+                .map(|row| (row.1, row.2))
+                .unwrap()
+        };
+        assert_eq!(at(0.5), (0.0, 0.0));
+        let loud = at(1.5);
+        assert!(
+            (loud.0 + 0.5).abs() < 1e-6 && (loud.1 - 0.5).abs() < 1e-6,
+            "{loud:?}"
+        );
+    }
+
+    #[test]
     fn a_box_over_a_chart_without_lanes_reaches_no_lane() {
         let area = Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0));
         let now = song().timing().time_at(Tick::new(0));
-        let field = Field::new(area, 0, now, Zoom::START);
+        let field = Field::new(area, 0, now, Zoom::START, false);
         assert_eq!(field.lanes_between(0.0, 800.0), None);
     }
 
@@ -1115,7 +1232,7 @@ mod tests {
     fn a_box_past_either_side_of_the_lanes_reaches_the_lane_on_that_side() {
         let area = Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0));
         let now = song().timing().time_at(Tick::new(0));
-        let field = Field::new(area, 4, now, Zoom::START);
+        let field = Field::new(area, 4, now, Zoom::START, false);
         let lanes = field.columns.lanes;
         let (first, last) = (LaneIndex::new(0), LaneIndex::new(3));
         assert_eq!(field.lanes_between(0.0, 800.0), Some((first, last)));

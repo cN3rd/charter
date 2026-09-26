@@ -1,6 +1,9 @@
 //! The editor window's state, and how actions from its panels, keys and gestures change it.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use charter_audio::Peaks;
 
 use charter_core::{Kind, LaneIndex, RulesetPlugin, Tick};
 use egui::Ui;
@@ -355,6 +358,8 @@ pub struct Window {
     help_open: bool,
     /// What the keyboard shortcuts are filtered to.
     help_filter: String,
+    /// The waveform of an audio file, once the host has summarized it.
+    waveform: Option<(PathBuf, Arc<Peaks>)>,
     /// The audio file the host last reported on, and how it went.
     audio: Option<(PathBuf, Loaded)>,
     /// Whether the audio is playing.
@@ -625,6 +630,19 @@ impl Window {
                 file: file.to_path_buf(),
             });
         }
+    }
+
+    /// Takes the peaks of `file`, to draw its waveform while the song plays it.
+    pub fn waveform_ready(&mut self, file: &Path, peaks: Arc<Peaks>) {
+        self.waveform = Some((file.to_path_buf(), peaks));
+    }
+
+    /// Whether the notefield shows a waveform: the settings want one, and the host has
+    /// summarized the audio the song plays.
+    #[must_use]
+    pub fn shows_waveform(&self) -> bool {
+        let file = self.audio_file();
+        shown_peaks(&self.settings, self.waveform.as_ref(), file.as_deref()).is_some()
     }
 
     /// Whether the window takes the audio to be playing.
@@ -1235,20 +1253,19 @@ impl Window {
                 }
                 match &self.song {
                     Some(song) => {
-                        let (zoom, scrolled, gesture) =
-                            (self.zoom, &mut self.scrolled, &mut self.gesture);
-                        let direction = self.settings.direction;
+                        let shown = notefield::Shown {
+                            zoom: self.zoom,
+                            direction: self.settings.direction,
+                            peaks: shown_peaks(
+                                &self.settings,
+                                self.waveform.as_ref(),
+                                self.audio_file().as_deref(),
+                            ),
+                        };
+                        let (scrolled, gesture) = (&mut self.scrolled, &mut self.gesture);
                         style::stage().show(ui, |ui| {
                             ui.set_min_size(ui.available_size());
-                            notefield::show(
-                                ui,
-                                song,
-                                zoom,
-                                direction,
-                                scrolled,
-                                gesture,
-                                &mut actions,
-                            );
+                            notefield::show(ui, song, shown, scrolled, gesture, &mut actions);
                         });
                     }
                     None => panels::empty(ui, &mut actions),
@@ -1356,6 +1373,17 @@ fn clicks(
     }
     clicks.sort_by(|a, b| a.0.total_cmp(&b.0));
     clicks
+}
+
+/// The peaks to draw, when `settings` want a waveform and `waveform` is of `file`, the audio the
+/// song plays.
+fn shown_peaks<'a>(
+    settings: &Settings,
+    waveform: Option<&'a (PathBuf, Arc<Peaks>)>,
+    file: Option<&Path>,
+) -> Option<&'a Peaks> {
+    let (of, peaks) = waveform?;
+    (settings.waveform && Some(of.as_path()) == file).then_some(peaks.as_ref())
 }
 
 /// Raises the tempo at the cursor by `by` BPM, and says why if it cannot.
@@ -1928,7 +1956,13 @@ mod tests {
         let chart = song.chart().unwrap();
         let timing = chart.timing();
         let lanes = chart.lanes.map_or(0, u16::from);
-        let field = notefield::Field::new(area, lanes, timing.time_at(song.cursor()), app.zoom);
+        let field = notefield::Field::new(
+            area,
+            lanes,
+            timing.time_at(song.cursor()),
+            app.zoom,
+            app.shows_waveform(),
+        );
         let x = field
             .columns
             .span(LaneIndex::new(lane), LaneCount::ONE)
@@ -2389,8 +2423,13 @@ mod tests {
             area,
             direction: app.settings().direction,
         };
-        let field =
-            notefield::Field::new(flip.field(), lanes, timing.time_at(song.cursor()), app.zoom);
+        let field = notefield::Field::new(
+            flip.field(),
+            lanes,
+            timing.time_at(song.cursor()),
+            app.zoom,
+            app.shows_waveform(),
+        );
         let x = field
             .columns
             .span(LaneIndex::new(lane), LaneCount::ONE)
@@ -3166,7 +3205,13 @@ mod tests {
         let song = app.song.as_ref().unwrap();
         let chart = song.chart().unwrap();
         let lanes = chart.lanes.map_or(0, u16::from);
-        notefield::Field::new(area, lanes, chart.timing().time_at(song.cursor()), app.zoom)
+        notefield::Field::new(
+            area,
+            lanes,
+            chart.timing().time_at(song.cursor()),
+            app.zoom,
+            app.shows_waveform(),
+        )
     }
 
     /// Where the line of `tick` crosses the column at `x`.
@@ -3243,6 +3288,50 @@ mod tests {
         let (from, to) = (on_line(&harness, x, 960), on_line(&harness, x, 1920));
         drag(&mut harness, from, to, egui::Modifiers::NONE);
         assert_eq!(event_ticks(&harness), [Tick::new(0), Tick::new(960)]);
+    }
+
+    fn peaks() -> Arc<charter_audio::Peaks> {
+        let frames = vec![[0.25, -0.25]; 4000];
+        Arc::new(charter_audio::Peaks::of(
+            &charter_audio::Track::from_frames(1000, frames),
+        ))
+    }
+
+    #[test]
+    fn the_waveform_of_the_songs_audio_shows_and_that_of_other_audio_does_not() {
+        let mut harness = four_taps_at("/songs/four.json");
+        assert!(!harness.state().shows_waveform());
+        harness
+            .state_mut()
+            .waveform_ready(Path::new("/songs/other.ogg"), peaks());
+        harness.run();
+        assert!(!harness.state().shows_waveform());
+        harness
+            .state_mut()
+            .waveform_ready(Path::new("/songs/a.ogg"), peaks());
+        harness.run();
+        assert!(harness.state().shows_waveform());
+        let lanes = field(&harness)
+            .columns
+            .span(LaneIndex::new(0), LaneCount::ONE);
+        let tap = on_line(&harness, lanes.center(), 0);
+        click(&mut harness, tap, egui::Modifiers::NONE);
+        assert!(harness.query_by_label("1 note selected").is_some());
+    }
+
+    #[test]
+    fn the_waveform_can_be_turned_off_in_the_settings() {
+        let mut app = Window::new(PLUGINS).with_settings(Settings {
+            waveform: false,
+            ..Settings::default()
+        });
+        app.open(Path::new("/songs/four.json"), &four_taps());
+        let mut harness = window(app);
+        harness
+            .state_mut()
+            .waveform_ready(Path::new("/songs/a.ogg"), peaks());
+        harness.run();
+        assert!(!harness.state().shows_waveform());
     }
 
     #[test]
