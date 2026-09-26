@@ -308,9 +308,7 @@ impl Song {
         let anchor = anchors
             .get(index.saturating_sub(1))
             .or_else(|| anchors.first())?;
-        Bpm::try_from(timing.tempo_at(anchor.tick))
-            .ok()
-            .map(|bpm| (anchor.tick, bpm))
+        Bpm::nearest(timing.tempo_at(anchor.tick)).map(|bpm| (anchor.tick, bpm))
     }
 
     /// Gives the BPM change in effect at the cursor, the one [`Song::bpm`] names, the tempo
@@ -401,7 +399,7 @@ impl Song {
         let mut new = timing.clone();
         if new.anchors.last().is_some_and(|anchor| anchor.tick == at)
             && let Some(previous) = new.anchors.iter().rev().nth(1)
-            && let Ok(tempo) = Bpm::try_from(self.timing().tempo_at(previous.tick))
+            && let Ok(tempo) = Bpm::nearest(self.timing().tempo_at(previous.tick)).ok_or(())
         {
             new.tempo = tempo;
         }
@@ -1678,7 +1676,10 @@ pub(crate) mod tests {
         let mut events: Vec<Value> = timing
             .tempos()
             .into_iter()
-            .map(|(tick, bpm)| bpm_event(i32::try_from(i64::from(tick)).unwrap(), bpm))
+            .map(|(tick, bpm)| {
+                let rounded = (bpm * 1e6).round() / 1e6;
+                bpm_event(i32::try_from(i64::from(tick)).unwrap(), rounded)
+            })
             .collect();
         events.extend(
             song.document()

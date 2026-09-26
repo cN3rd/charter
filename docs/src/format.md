@@ -299,7 +299,9 @@ by preserving everything and interpreting almost nothing.
 The timing map is a non-decreasing function from tick to audio time. Anchors fix it at exact
 beats:
 
-- Between two anchors, time advances at the derived tempo for the timed ticks in that segment.
+- Between two anchors, time advances at the derived tempo for the timed ticks in that segment,
+  kept exact rather than rounded to a stored BPM, so every tick before the next anchor falls before
+  it and the anchor lands on its own time.
 - After the last anchor, time advances at `tempo`.
 - A `stop` pauses **after** the objects on its tick and a `delay` **before** them, so an object on
   a `stop` tick is hit as the pause begins and one on a `delay` tick as it ends. The time of a tick

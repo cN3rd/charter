@@ -87,7 +87,7 @@ impl Song {
         let mut new = timing.clone();
         if new.anchors.last().is_some_and(|anchor| anchor.tick == tick)
             && let Some(previous) = new.anchors.iter().rev().nth(1)
-            && let Ok(tempo) = Bpm::try_from(self.timing().tempo_at(previous.tick))
+            && let Ok(tempo) = Bpm::nearest(self.timing().tempo_at(previous.tick)).ok_or(())
         {
             new.tempo = tempo;
         }

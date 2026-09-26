@@ -308,7 +308,11 @@ fn migrate_timing_value(
     ticks_per_beat: TicksPerBeat,
 ) -> Result<(), Error> {
     let old: V0Timing = serde_json::from_value(value.take())?;
-    let new = old.migrate(ticks_per_beat);
+    let new = old.migrate(ticks_per_beat).map_err(|why| {
+        <serde_json::Error as serde::de::Error>::custom(format!(
+            "a format 0 timing cannot become anchors: {why}"
+        ))
+    })?;
     *value = serde_json::to_value(new)?;
     Ok(())
 }
@@ -344,7 +348,10 @@ enum V0TimingKind {
 }
 
 impl V0Timing {
-    fn migrate(&self, ticks_per_beat: TicksPerBeat) -> Timing {
+    /// The timing with an anchor on every BPM change's tick at the time it resolved to, to the
+    /// microsecond, and the last BPM as the tempo after them. Refuses a BPM change whose time
+    /// does not resolve, or does not fit a time, rather than leaving its anchor out.
+    fn migrate(&self, ticks_per_beat: TicksPerBeat) -> Result<Timing, String> {
         let mut tempo = None;
         let mut anchors = Vec::new();
         let mut events = Vec::with_capacity(self.events.len());
@@ -352,13 +359,16 @@ impl V0Timing {
             match &event.kind {
                 V0TimingKind::Bpm(bpm) => {
                     tempo = Some(*bpm);
-                    if let Some(seconds) = self.seconds_at(ticks_per_beat, event.tick) {
-                        anchors.push(Anchor {
-                            tick: event.tick,
-                            seconds: micro(seconds),
-                            ext: event.ext.clone(),
-                        });
-                    }
+                    let seconds = self
+                        .seconds_at(ticks_per_beat, event.tick)
+                        .ok_or_else(|| format!("tick {} has no time", event.tick))?;
+                    let seconds = Origin::try_from((seconds * 1e6).round() / 1e6)
+                        .map_err(|why| format!("tick {}: {why}", event.tick))?;
+                    anchors.push(Anchor {
+                        tick: event.tick,
+                        seconds,
+                        ext: event.ext.clone(),
+                    });
                 }
                 kind => events.push(TimingEvent {
                     tick: event.tick,
@@ -367,11 +377,12 @@ impl V0Timing {
                 }),
             }
         }
-        Timing {
+        let tempo = tempo.ok_or("it has no bpm event")?;
+        Ok(Timing {
             anchors,
-            tempo: tempo.unwrap_or_else(default_bpm),
+            tempo,
             events,
-        }
+        })
     }
 
     fn seconds_at(&self, ticks_per_beat: TicksPerBeat, tick: Tick) -> Option<f64> {
@@ -433,15 +444,6 @@ impl From<V0TimingKind> for TimingKind {
             V0TimingKind::Other { name, value } => Self::Other { name, value },
         }
     }
-}
-
-fn micro(seconds: f64) -> Origin {
-    Origin::try_from((seconds * 1e6).round() / 1e6)
-        .unwrap_or_else(|_| Origin::try_from(0.0).unwrap_or_else(|_| unreachable!()))
-}
-
-fn default_bpm() -> Bpm {
-    Bpm::try_from(120.0).unwrap_or_else(|_| unreachable!())
 }
 
 /// Reads the version before anything else, so a newer file fails on its version rather than on
@@ -598,6 +600,67 @@ mod tests {
     fn the_format_chapter_example_survives_a_round_trip() {
         let example = spec_example();
         assert_eq!(round_trip(&example), example);
+    }
+
+    fn v0(timing: &serde_json::Value) -> Vec<u8> {
+        let value = serde_json::json!({
+            "format_version": 0,
+            "ruleset": { "id": "t", "version": "1" },
+            "metadata": { "title": "t", "artist": "a", "audio": "a.ogg" },
+            "timing": timing,
+            "charts": [ { "name": "Easy", "timing": timing } ]
+        });
+        serde_json::to_vec(&value).unwrap()
+    }
+
+    #[test]
+    fn a_format_0_map_becomes_anchors_that_keep_every_ticks_time() {
+        let timing = serde_json::json!({
+            "offset_seconds": -0.014,
+            "events": [
+                { "tick": 0, "kind": { "bpm": 174.0 } },
+                { "tick": 960, "kind": { "stop": 0.25 } },
+                { "tick": 1920, "kind": { "bpm": 87.0 } },
+                { "tick": 3840, "kind": { "time_signature": [3, 4] } }
+            ]
+        });
+        let document = ValidDocument::from_json(&v0(&timing)).unwrap();
+        assert_eq!(document.document().format_version, FORMAT_VERSION);
+        let migrated = document.timing();
+        let ticks: Vec<Tick> = migrated.anchors.iter().map(|anchor| anchor.tick).collect();
+        assert_eq!(ticks, [Tick::new(0), Tick::new(1920)]);
+        assert_eq!(migrated.tempo, Bpm::try_from(87.0).unwrap());
+        assert_eq!(migrated.events.len(), 2, "the stop and the meter stay");
+        // At 174 BPM a beat is 60/174 s; a quarter of a second stops after beat 1.
+        let beat = 60.0 / 174.0;
+        let expected = [
+            (0, -0.014),
+            (960, -0.014 + beat),
+            (1920, -0.014 + 2.0 * beat + 0.25),
+            (2880, -0.014 + 2.0 * beat + 0.25 + 60.0 / 87.0),
+        ];
+        for (tick, seconds) in expected {
+            let at = migrated.time_at(Tick::new(tick)).seconds();
+            assert!(
+                (at - seconds).abs() < 1e-6,
+                "tick {tick}: {at} vs {seconds}"
+            );
+        }
+        let chart = document.charts().next().unwrap().timing();
+        assert_eq!(chart.anchors.len(), 2);
+        let written = String::from_utf8(document.to_json().unwrap()).unwrap();
+        assert!(!written.contains("offset_seconds") && !written.contains("\"bpm\""));
+        assert_eq!(
+            ValidDocument::from_json(written.as_bytes()).unwrap(),
+            document
+        );
+    }
+
+    #[test]
+    fn a_format_0_map_without_a_bpm_is_refused_rather_than_guessed() {
+        let timing = serde_json::json!({ "offset_seconds": 0.0, "events": [] });
+        let refused = ValidDocument::from_json(&v0(&timing)).unwrap_err();
+        assert!(refused.to_string().contains("no bpm event"), "{refused}");
     }
 
     #[test]

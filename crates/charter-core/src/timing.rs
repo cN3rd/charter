@@ -1,68 +1,64 @@
-use crate::document::{Timing, TimingKind};
+use crate::document::{Anchor, Timing, TimingKind};
 use crate::unit::{Bpm, ResolvedTime, Tick, TicksPerBeat};
 
 impl Timing {
     /// Audio time of an object on `tick`; see [`Valid::time_at`](crate::Valid::time_at). Events
-    /// and anchors must be sorted by tick. `None` means a segment cannot derive a positive finite
-    /// rate, which a valid document rules out.
+    /// and anchors must be sorted by tick. `None` means there is no anchor, or a segment cannot
+    /// derive a positive finite rate, which a valid document rules out.
     pub(crate) fn seconds_at(
         &self,
         ticks_per_beat: TicksPerBeat,
         tick: Tick,
     ) -> Option<ResolvedTime> {
         let index = self.anchors.partition_point(|anchor| anchor.tick <= tick);
-        let seconds = if let Some(anchor) = self
-            .anchors
-            .get(index.wrapping_sub(1))
-            .filter(|a| a.tick == tick)
+        let seconds = if let Some(anchor) = index
+            .checked_sub(1)
+            .and_then(|at| self.anchors.get(at))
+            .filter(|anchor| anchor.tick == tick)
         {
             ResolvedTime::from(anchor.seconds).seconds()
         } else if index == 0 {
             let first = self.anchors.first()?;
-            let rate = self.pre_anchor_rate(ticks_per_beat)?;
+            let per_tick = self.before_first(ticks_per_beat)?;
             ResolvedTime::from(first.seconds).seconds()
-                - self.elapsed_at_rate(ticks_per_beat, tick, first.tick, rate)?
+                - self.elapsed(tick, first.tick, per_tick)?
         } else if let Some(next) = self.anchors.get(index) {
             let previous = self.anchors.get(index - 1)?;
-            let rate = self.segment_rate(ticks_per_beat, previous, next)?;
+            let per_tick = self.segment_rate(previous, next)?;
             ResolvedTime::from(previous.seconds).seconds()
-                + self.elapsed_at_rate(ticks_per_beat, previous.tick, tick, rate)?
+                + self.elapsed(previous.tick, tick, per_tick)?
         } else {
             let last = self.anchors.last()?;
             ResolvedTime::from(last.seconds).seconds()
-                + self.elapsed_at_rate(ticks_per_beat, last.tick, tick, self.tempo)?
+                + self.elapsed(last.tick, tick, tail_rate(self.tempo, ticks_per_beat))?
         };
         Some(ResolvedTime::new(seconds))
     }
 
-    /// The derived tempo governing `tick`, as quarter notes per minute.
+    /// The tempo governing `tick`, in quarter notes per minute: derived between anchors, the
+    /// stored tempo after the last, and the first segment's before the first.
     pub(crate) fn tempo_at(&self, ticks_per_beat: TicksPerBeat, tick: Tick) -> Option<f64> {
         let index = self.anchors.partition_point(|anchor| anchor.tick <= tick);
-        if index == 0 {
-            return self.pre_anchor_rate(ticks_per_beat).map(f64::from);
-        }
-        self.anchors
-            .get(index)
-            .and_then(|next| {
-                self.anchors
-                    .get(index - 1)
-                    .and_then(|previous| self.segment_rate(ticks_per_beat, previous, next))
-            })
-            .map_or(Some(f64::from(self.tempo)), |bpm| Some(f64::from(bpm)))
+        let per_tick = if index == 0 {
+            self.before_first(ticks_per_beat)?
+        } else {
+            match (self.anchors.get(index - 1), self.anchors.get(index)) {
+                (Some(previous), Some(next)) => self.segment_rate(previous, next)?,
+                _ => tail_rate(self.tempo, ticks_per_beat),
+            }
+        };
+        Some(bpm_of(per_tick, ticks_per_beat))
     }
 
-    /// One tempo per anchor. Each interior anchor reports the derived tempo for the following
-    /// anchored segment; the last reports the tail tempo.
+    /// One tempo per anchor, in quarter notes per minute: each the derived tempo of the segment
+    /// it starts, and the last the stored tempo after it.
     pub(crate) fn tempos(&self, ticks_per_beat: TicksPerBeat) -> Option<Vec<(Tick, f64)>> {
         let mut tempos = Vec::with_capacity(self.anchors.len());
         for pair in self.anchors.windows(2) {
-            let [previous, next] = pair else {
-                unreachable!()
-            };
-            tempos.push((
-                previous.tick,
-                f64::from(self.segment_rate(ticks_per_beat, previous, next)?),
-            ));
+            if let [previous, next] = pair {
+                let per_tick = self.segment_rate(previous, next)?;
+                tempos.push((previous.tick, bpm_of(per_tick, ticks_per_beat)));
+            }
         }
         tempos.push((self.anchors.last()?.tick, f64::from(self.tempo)));
         Some(tempos)
@@ -77,57 +73,53 @@ impl Timing {
         to: Tick,
         seconds: f64,
     ) -> Option<Bpm> {
-        let (timed_ticks, pauses) = self.span_parts(from, to)?;
-        let beat_seconds = seconds - pauses;
-        let tempo = 60.0 * timed_ticks / (f64::from(ticks_per_beat.get()) * beat_seconds);
-        if timed_ticks <= 0.0 || !tempo.is_finite() || tempo <= 0.0 {
-            return None;
-        }
+        let per_tick = self.rate_for(from, to, seconds)?;
+        let tempo = bpm_of(per_tick, ticks_per_beat);
         Bpm::try_from((tempo * 1e6).round() / 1e6).ok()
     }
 
-    pub(crate) fn segment_rate(
-        &self,
-        ticks_per_beat: TicksPerBeat,
-        previous: &crate::Anchor,
-        next: &crate::Anchor,
-    ) -> Option<Bpm> {
-        self.tempo_for(
-            ticks_per_beat,
-            previous.tick,
-            next.tick,
-            ResolvedTime::from(next.seconds).seconds()
-                - ResolvedTime::from(previous.seconds).seconds(),
-        )
+    /// Seconds a timed tick takes between the anchors `previous` and `next`, exactly: their
+    /// time apart less the pauses between, over the ticks between that warps leave timed.
+    pub(crate) fn segment_rate(&self, previous: &Anchor, next: &Anchor) -> Option<f64> {
+        let apart = ResolvedTime::from(next.seconds).seconds()
+            - ResolvedTime::from(previous.seconds).seconds();
+        self.rate_for(previous.tick, next.tick, apart)
     }
 
-    fn pre_anchor_rate(&self, ticks_per_beat: TicksPerBeat) -> Option<Bpm> {
+    /// Seconds a timed tick takes if the ticks from `from` to `to` last `seconds`, pauses
+    /// included; none unless that is positive and finite.
+    fn rate_for(&self, from: Tick, to: Tick, seconds: f64) -> Option<f64> {
+        let (timed_ticks, pauses) = self.span_parts(from, to)?;
+        let per_tick = (seconds - pauses) / timed_ticks;
+        (timed_ticks > 0.0 && per_tick.is_finite() && per_tick > 0.0).then_some(per_tick)
+    }
+
+    /// Seconds a timed tick takes before the first anchor: the first segment's, or the stored
+    /// tempo's when there is one anchor.
+    fn before_first(&self, ticks_per_beat: TicksPerBeat) -> Option<f64> {
         match self.anchors.as_slice() {
-            [_] => Some(self.tempo),
-            [first, second, ..] => self.segment_rate(ticks_per_beat, first, second),
+            [_] => Some(tail_rate(self.tempo, ticks_per_beat)),
+            [first, second, ..] => self.segment_rate(first, second),
             [] => None,
         }
     }
 
-    /// Seconds between objects on `from` and on `to`, where `from <= to`, at `bpm` for timed
-    /// ticks and with the stored pauses.
-    fn elapsed_at_rate(
-        &self,
-        ticks_per_beat: TicksPerBeat,
-        from: Tick,
-        to: Tick,
-        bpm: Bpm,
-    ) -> Option<f64> {
+    /// Seconds between objects on `from` and on `to`, where `from <= to`, at `per_tick` seconds
+    /// a timed tick, with the pauses between.
+    fn elapsed(&self, from: Tick, to: Tick, per_tick: f64) -> Option<f64> {
         let (timed_ticks, pauses) = self.span_parts(from, to)?;
-        Some(pauses + timed_ticks * 60.0 / (f64::from(bpm) * f64::from(ticks_per_beat.get())))
+        Some(pauses + timed_ticks * per_tick)
     }
 
-    /// Timed ticks and pause seconds in `[from, to]` using the format's stop, delay and warp
-    /// rules. `from` must not be after `to`.
+    /// The ticks from `from` to `to` that warps leave timed, and the seconds of the pauses
+    /// between them, by the format's rules: a stop on a tick counts from it, a delay up to it.
+    /// None when `to` is before `from` or a warp ends past the last tick.
     pub(crate) fn span_parts(&self, from: Tick, to: Tick) -> Option<(f64, f64)> {
         if to < from {
             return None;
         }
+        // Ticks before `warp_end` take no time. A warp starts at its own tick, which the cursor
+        // has always reached, so only the part of a span after `warp_end` counts.
         let timed = |cursor: Tick, until: Tick, warp_end: Option<Tick>| {
             let start = warp_end.map_or(cursor, |end| end.max(cursor));
             start
@@ -151,6 +143,7 @@ impl Timing {
                 TimingKind::Stop(pause) if at >= from && at < to => pauses += pause.seconds(),
                 TimingKind::Delay(pause) if at > from => pauses += pause.seconds(),
                 TimingKind::Warp(ticks) => warp_end = Some(at.checked_add(ticks)?),
+                // Meter shapes the grid, not time; plugin events are never interpreted.
                 TimingKind::Stop(_)
                 | TimingKind::Delay(_)
                 | TimingKind::TimeSignature(..)
@@ -162,26 +155,36 @@ impl Timing {
     }
 }
 
+/// Seconds a tick takes at `tempo`.
+fn tail_rate(tempo: Bpm, ticks_per_beat: TicksPerBeat) -> f64 {
+    60.0 / (f64::from(tempo) * f64::from(ticks_per_beat.get()))
+}
+
+/// The tempo, in quarter notes per minute, at which a tick takes `per_tick` seconds.
+fn bpm_of(per_tick: f64, ticks_per_beat: TicksPerBeat) -> f64 {
+    60.0 / (per_tick * f64::from(ticks_per_beat.get()))
+}
+
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, HashSet};
+    use std::mem::discriminant;
+
+    use proptest::collection::vec;
+    use proptest::prelude::*;
 
     use super::*;
-    use crate::document::{Anchor, DEFAULT_TICKS_PER_BEAT, TimingEvent};
+    use crate::document::{DEFAULT_TICKS_PER_BEAT, TimingEvent};
     use crate::unit::{Origin, Seconds, Ticks};
 
     fn bpm(value: f64) -> Bpm {
         Bpm::try_from(value).unwrap()
     }
 
-    fn origin(value: f64) -> Origin {
-        Origin::try_from(value).unwrap()
-    }
-
     fn anchor(tick: i32, seconds: f64) -> Anchor {
         Anchor {
             tick: Tick::new(tick),
-            seconds: origin(seconds),
+            seconds: Origin::try_from(seconds).unwrap(),
             ext: BTreeMap::new(),
         }
     }
@@ -205,12 +208,28 @@ mod tests {
         }
     }
 
-    #[track_caller]
-    fn assert_time(timing: &Timing, tick: i32, expected: f64) {
-        let actual = timing
+    fn stop(seconds: f64) -> TimingKind {
+        TimingKind::Stop(Seconds::try_from(seconds).unwrap())
+    }
+
+    fn delay(seconds: f64) -> TimingKind {
+        TimingKind::Delay(Seconds::try_from(seconds).unwrap())
+    }
+
+    fn warp(ticks: u32) -> TimingKind {
+        TimingKind::Warp(Ticks::new(ticks).unwrap())
+    }
+
+    fn time(timing: &Timing, tick: i32) -> f64 {
+        timing
             .seconds_at(DEFAULT_TICKS_PER_BEAT, Tick::new(tick))
             .unwrap()
-            .seconds();
+            .seconds()
+    }
+
+    #[track_caller]
+    fn assert_time(timing: &Timing, tick: i32, expected: f64) {
+        let actual = time(timing, tick);
         assert!(
             (actual - expected).abs() < 1e-9,
             "tick {tick}: {actual} != {expected}"
@@ -223,23 +242,35 @@ mod tests {
         assert_time(&t, 0, 1.0);
         assert_time(&t, 960, 2.0);
         assert_time(&t, 1920, 3.0);
-        assert!((t.tempo_at(DEFAULT_TICKS_PER_BEAT, Tick::new(960)).unwrap() - 60.0).abs() < 1e-9);
+        let tempo = t.tempo_at(DEFAULT_TICKS_PER_BEAT, Tick::new(960)).unwrap();
+        assert!((tempo - 60.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_tempo_that_does_not_come_out_on_six_places_is_kept_exact() {
+        // Seven beats in two seconds is 210 BPM; three in 1.4 s is 128.571428…, which a BPM of six
+        // places would round and land the next anchor a little off.
+        let t = timing(&[(0, 0.0), (2880, 1.4), (5760, 2.8)], 128.0, Vec::new());
+        let tempo = t.tempo_at(DEFAULT_TICKS_PER_BEAT, Tick::new(1)).unwrap();
+        assert!((tempo - 180.0 / 1.4).abs() < 1e-9, "{tempo}");
+        assert!(time(&t, 2879) < 1.4);
+        assert_time(&t, 2880, 1.4);
     }
 
     #[test]
     fn the_tail_uses_the_stored_tempo() {
         let t = timing(&[(0, 0.0), (960, 1.0)], 120.0, Vec::new());
         assert_time(&t, 1920, 1.5);
-        assert_eq!(
-            t.tempos(DEFAULT_TICKS_PER_BEAT).unwrap(),
-            vec![(Tick::new(0), 60.0), (Tick::new(960), 120.0)]
-        );
+        let tempos = t.tempos(DEFAULT_TICKS_PER_BEAT).unwrap();
+        assert_eq!(tempos.len(), 2);
+        assert!((tempos[0].1 - 60.0).abs() < 1e-9 && (tempos[1].1 - 120.0).abs() < 1e-9);
     }
 
     #[test]
     fn before_the_first_anchor_extrapolates_with_the_first_segment() {
-        let t = timing(&[(960, 1.0), (1920, 2.0)], 240.0, Vec::new());
+        let t = timing(&[(960, 1.0), (1920, 2.0)], 30.0, Vec::new());
         assert_time(&t, 0, 0.0);
+        assert_time(&t, -960, -1.0);
     }
 
     #[test]
@@ -249,21 +280,44 @@ mod tests {
     }
 
     #[test]
-    fn stops_and_delays_keep_stepmania_tick_semantics() {
-        let events = vec![
-            event(960, TimingKind::Stop(Seconds::try_from(2.0).unwrap())),
-            event(1920, TimingKind::Delay(Seconds::try_from(3.0).unwrap())),
-        ];
-        let t = timing(&[(0, 0.0)], 60.0, events);
+    fn a_stop_pauses_after_the_objects_on_its_tick() {
+        let t = timing(&[(0, 0.0)], 60.0, vec![event(960, stop(2.0))]);
         assert_time(&t, 960, 1.0);
-        assert_time(&t, 1920, 7.0);
-        assert_time(&t, 2880, 8.0);
+        assert_time(&t, 961, 3.0 + 1.0 / 960.0);
+        assert_time(&t, 1920, 4.0);
     }
 
     #[test]
-    fn warps_skip_ticks_without_taking_time() {
-        let events = vec![event(960, TimingKind::Warp(Ticks::new(960).unwrap()))];
-        let t = timing(&[(0, 0.0)], 60.0, events);
+    fn a_delay_pauses_before_the_objects_on_its_tick() {
+        let t = timing(&[(0, 0.0)], 60.0, vec![event(960, delay(3.0))]);
+        assert_time(&t, 959, 959.0 / 960.0);
+        assert_time(&t, 960, 4.0);
+        assert_time(&t, 1920, 5.0);
+    }
+
+    #[test]
+    fn an_anchor_on_a_delay_is_the_time_after_the_delay() {
+        let t = timing(&[(0, 0.0), (960, 4.0)], 60.0, vec![event(960, delay(3.0))]);
+        let tempo = t.tempo_at(DEFAULT_TICKS_PER_BEAT, Tick::new(480)).unwrap();
+        assert!(
+            (tempo - 60.0).abs() < 1e-9,
+            "the delay takes three of the four seconds"
+        );
+        assert_time(&t, 959, 959.0 / 960.0);
+    }
+
+    #[test]
+    fn a_stop_inside_a_segment_shortens_the_time_its_beats_get() {
+        let t = timing(&[(0, 0.0), (1920, 3.0)], 60.0, vec![event(960, stop(1.0))]);
+        let tempo = t.tempo_at(DEFAULT_TICKS_PER_BEAT, Tick::new(1)).unwrap();
+        assert!((tempo - 60.0).abs() < 1e-9);
+        assert_time(&t, 960, 1.0);
+        assert_time(&t, 961, 2.0 + 1.0 / 960.0);
+    }
+
+    #[test]
+    fn a_warp_skips_its_ticks_without_taking_time() {
+        let t = timing(&[(0, 0.0)], 60.0, vec![event(960, warp(960))]);
         assert_time(&t, 960, 1.0);
         assert_time(&t, 1500, 1.0);
         assert_time(&t, 1920, 1.0);
@@ -271,13 +325,246 @@ mod tests {
     }
 
     #[test]
-    fn tempo_for_uses_timed_ticks_after_pauses() {
-        let events = vec![event(
-            480,
-            TimingKind::Stop(Seconds::try_from(0.5).unwrap()),
-        )];
-        let t = timing(&[(0, 0.0)], 120.0, events);
-        let tempo = t.tempo_for(DEFAULT_TICKS_PER_BEAT, Tick::new(0), Tick::new(1920), 1.5);
-        assert_eq!(tempo.map(f64::from), Some(120.0));
+    fn pauses_inside_a_warp_still_pause() {
+        let events = vec![event(960, warp(960)), event(1200, stop(0.5))];
+        let t = timing(&[(0, 0.0)], 60.0, events);
+        assert_time(&t, 1200, 1.0);
+        assert_time(&t, 1201, 1.5);
+        assert_time(&t, 1920, 1.5);
+    }
+
+    #[test]
+    fn negative_ticks_resolve_backward_through_pauses() {
+        let t = timing(&[(0, 0.0)], 60.0, vec![event(-960, stop(1.0))]);
+        assert_time(&t, -960, -2.0);
+        assert_time(&t, -1920, -3.0);
+    }
+
+    #[test]
+    fn a_timing_without_anchors_has_no_times() {
+        let empty = timing(&[], 60.0, Vec::new());
+        assert_eq!(empty.seconds_at(DEFAULT_TICKS_PER_BEAT, Tick::new(0)), None);
+        assert_eq!(empty.tempo_at(DEFAULT_TICKS_PER_BEAT, Tick::new(0)), None);
+    }
+
+    #[test]
+    fn a_segment_its_pauses_outlast_has_no_rate() {
+        let t = timing(&[(0, 0.0), (1920, 1.0)], 60.0, vec![event(960, stop(1.0))]);
+        assert_eq!(t.seconds_at(DEFAULT_TICKS_PER_BEAT, Tick::new(480)), None);
+        let warped = timing(&[(0, 0.0), (960, 1.0)], 60.0, vec![event(0, warp(960))]);
+        assert_eq!(
+            warped.seconds_at(DEFAULT_TICKS_PER_BEAT, Tick::new(480)),
+            None
+        );
+    }
+
+    #[test]
+    fn the_resolution_sets_how_many_ticks_make_a_beat() {
+        let t = timing(&[(0, 0.0)], 60.0, Vec::new());
+        let half = TicksPerBeat::new(480).unwrap();
+        let seconds = t.seconds_at(half, Tick::new(480)).unwrap().seconds();
+        assert!((seconds - 1.0).abs() < 1e-9, "{seconds}");
+    }
+
+    #[test]
+    fn a_span_takes_the_tempo_that_makes_it_last_the_seconds_asked_to_six_places() {
+        let t = timing(&[(0, 0.0)], 60.0, vec![event(480, stop(0.5))]);
+        let tempo = |to: i32, seconds: f64| {
+            t.tempo_for(DEFAULT_TICKS_PER_BEAT, Tick::new(0), Tick::new(to), seconds)
+                .map(f64::from)
+        };
+        assert_eq!(tempo(1920, 1.5), Some(120.0));
+        assert_eq!(tempo(1920, 0.5), None);
+        assert_eq!(tempo(960, 1.2), Some(85.714_286));
+        assert_eq!(
+            t.tempo_for(DEFAULT_TICKS_PER_BEAT, Tick::new(960), Tick::new(0), 1.0),
+            None
+        );
+    }
+
+    /// A valid timing: `events` kept one of a kind a tick with warps that do not overlap, then
+    /// anchors on unwarped ticks, each after the last by its segment's pauses and `slack` more.
+    fn valid_timing(
+        events: Vec<(i32, TimingKind)>,
+        anchors: Vec<(i32, f64)>,
+        (first, tempo): (f64, Bpm),
+    ) -> Timing {
+        let mut events = events;
+        events.sort_by_key(|(tick, _)| *tick);
+        let mut seen = HashSet::new();
+        let mut warp_end = None;
+        let mut kept = Vec::new();
+        for (tick, kind) in events {
+            let tick = Tick::new(tick);
+            if !seen.insert((tick, discriminant(&kind))) {
+                continue;
+            }
+            if let TimingKind::Warp(span) = kind {
+                match tick.checked_add(span) {
+                    Some(end) if warp_end.is_none_or(|last| tick >= last) => warp_end = Some(end),
+                    _ => continue,
+                }
+            }
+            kept.push(TimingEvent {
+                tick,
+                kind,
+                ext: BTreeMap::new(),
+            });
+        }
+        let mut timing = Timing {
+            anchors: Vec::new(),
+            tempo,
+            events: kept,
+        };
+        let warped = |timing: &Timing, tick: Tick| {
+            timing.events.iter().any(|event| match event.kind {
+                TimingKind::Warp(span) => {
+                    event.tick <= tick && event.tick.checked_add(span).is_none_or(|end| tick < end)
+                }
+                _ => false,
+            })
+        };
+        let mut anchors = anchors;
+        anchors.sort_by_key(|(tick, _)| *tick);
+        anchors.dedup_by_key(|(tick, _)| *tick);
+        let mut seconds = first;
+        for (tick, slack) in anchors {
+            let tick = Tick::new(tick);
+            if warped(&timing, tick) {
+                continue;
+            }
+            if let Some(last) = timing.anchors.last() {
+                let Some((timed, pauses)) = timing.span_parts(last.tick, tick) else {
+                    continue;
+                };
+                if timed <= 0.0 {
+                    continue;
+                }
+                seconds += pauses + slack;
+            }
+            let Ok(at) = Origin::try_from((seconds * 1e6).round() / 1e6) else {
+                continue;
+            };
+            timing.anchors.push(Anchor {
+                tick,
+                seconds: at,
+                ext: BTreeMap::new(),
+            });
+            seconds = ResolvedTime::from(at).seconds();
+        }
+        timing
+    }
+
+    /// The time of `tick` found by walking one tick at a time from the anchor governing it, at
+    /// the rate its segment derives: the format chapter's pause rules restated without spans.
+    fn walked(timing: &Timing, tick: i32) -> f64 {
+        let at = |k: i32| Tick::new(k);
+        let warped = |k: i32| {
+            timing.events.iter().any(|event| match event.kind {
+                TimingKind::Warp(span) => {
+                    event.tick <= at(k)
+                        && event.tick.checked_add(span).is_none_or(|end| at(k) < end)
+                }
+                _ => false,
+            })
+        };
+        let pauses = |k: i32, stops: bool| -> f64 {
+            timing
+                .events
+                .iter()
+                .filter(|event| event.tick == at(k))
+                .map(|event| match event.kind {
+                    TimingKind::Stop(pause) if stops => pause.seconds(),
+                    TimingKind::Delay(pause) if !stops => pause.seconds(),
+                    _ => 0.0,
+                })
+                .sum()
+        };
+        let index = timing
+            .anchors
+            .partition_point(|anchor| anchor.tick <= at(tick));
+        let from = timing.anchors.get(index.max(1) - 1).unwrap();
+        let per_tick = timing
+            .tempo_at(DEFAULT_TICKS_PER_BEAT, at(tick))
+            .map(|tempo| 60.0 / (tempo * f64::from(DEFAULT_TICKS_PER_BEAT.get())))
+            .unwrap();
+        let start = i64::from(from.tick);
+        let (low, high) = if i64::from(tick) >= start {
+            (start, i64::from(tick))
+        } else {
+            (i64::from(tick), start)
+        };
+        let mut elapsed = 0.0;
+        for k in low..high {
+            let k = i32::try_from(k).unwrap();
+            // A stop on `k` holds after its objects; a delay on `k + 1` holds before its own.
+            elapsed += pauses(k, true);
+            if !warped(k) {
+                elapsed += per_tick;
+            }
+            elapsed += pauses(k + 1, false);
+        }
+        let base = ResolvedTime::from(from.seconds).seconds();
+        if i64::from(tick) >= start {
+            base + elapsed
+        } else {
+            base - elapsed
+        }
+    }
+
+    fn kind() -> impl Strategy<Value = TimingKind> {
+        let pause = (1u32..=2_000_000).prop_map(|m| Seconds::try_from(f64::from(m) / 1e6).unwrap());
+        prop_oneof![
+            pause.clone().prop_map(TimingKind::Stop),
+            pause.prop_map(TimingKind::Delay),
+            (1u32..=2000).prop_map(|w| TimingKind::Warp(Ticks::new(w).unwrap())),
+        ]
+    }
+
+    fn map() -> impl Strategy<Value = Timing> {
+        (
+            vec((-8000i32..8000, kind()), 0..8),
+            vec((-8000i32..8000, 0.01f64..5.0), 1..6),
+            (-5.0f64..5.0, 20.0f64..400.0),
+        )
+            .prop_map(|(events, anchors, (first, tempo))| {
+                valid_timing(events, anchors, (first, bpm((tempo * 1e6).round() / 1e6)))
+            })
+            .prop_filter("has an anchor", |timing| !timing.anchors.is_empty())
+    }
+
+    proptest! {
+        #![proptest_config(crate::proptest_config())]
+
+        #[test]
+        fn every_anchor_of_a_valid_map_resolves_to_its_own_time(timing in map()) {
+            for anchor in &timing.anchors {
+                let at = timing.seconds_at(DEFAULT_TICKS_PER_BEAT, anchor.tick).unwrap();
+                prop_assert!((at.seconds() - ResolvedTime::from(anchor.seconds).seconds()).abs() < 1e-9);
+            }
+        }
+
+        #[test]
+        fn time_never_runs_backwards_even_across_an_anchor(timing in map(), tick in -9000i32..9000) {
+            let now = timing.seconds_at(DEFAULT_TICKS_PER_BEAT, Tick::new(tick)).unwrap().seconds();
+            let next = timing.seconds_at(DEFAULT_TICKS_PER_BEAT, Tick::new(tick + 1)).unwrap().seconds();
+            prop_assert!(now.is_finite() && next.is_finite());
+            prop_assert!(next >= now - 1e-9, "{tick}: {now} then {next}");
+            for anchor in &timing.anchors {
+                let before = i32::try_from(i64::from(anchor.tick) - 1).unwrap();
+                let just = timing.seconds_at(DEFAULT_TICKS_PER_BEAT, Tick::new(before)).unwrap().seconds();
+                prop_assert!(just <= ResolvedTime::from(anchor.seconds).seconds() + 1e-9);
+            }
+        }
+
+        #[test]
+        fn resolving_a_tick_agrees_with_walking_the_map_one_tick_at_a_time(
+            timing in map(),
+            tick in -9000i32..9000,
+        ) {
+            let resolved = timing.seconds_at(DEFAULT_TICKS_PER_BEAT, Tick::new(tick)).unwrap().seconds();
+            let walked = walked(&timing, tick);
+            prop_assert!((resolved - walked).abs() < 1e-6, "{tick}: {resolved} vs {walked}");
+        }
     }
 }

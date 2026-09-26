@@ -190,10 +190,7 @@ fn check_timing(timing: &Timing, ticks_per_beat: TicksPerBeat) -> Result<(), Rul
         let [previous, next] = pair else {
             unreachable!()
         };
-        if timing
-            .segment_rate(ticks_per_beat, previous, next)
-            .is_none()
-        {
+        if timing.segment_rate(previous, next).is_none() {
             return Err(Rule::BadAnchorSegment { tick: next.tick });
         }
     }
@@ -440,6 +437,43 @@ mod tests {
         for value in [song, chart] {
             assert_eq!(broken_rule(&value), Rule::NoAnchor);
         }
+    }
+
+    #[test]
+    fn anchors_rise_in_ticks_and_seconds_stay_off_warps_and_leave_their_beats_time() {
+        let timing = |anchors: Value, events: Value| {
+            with(|v| v["timing"] = json!({ "anchors": anchors, "tempo": 120.0, "events": events }))
+        };
+        let backwards = timing(
+            json!([{ "tick": 960, "seconds": 1.0 }, { "tick": 0, "seconds": 2.0 }]),
+            json!([]),
+        );
+        assert_eq!(broken_rule(&backwards), Rule::AnchorsNotIncreasing);
+        let earlier = timing(
+            json!([{ "tick": 0, "seconds": 2.0 }, { "tick": 960, "seconds": 1.0 }]),
+            json!([]),
+        );
+        assert_eq!(broken_rule(&earlier), Rule::AnchorsNotIncreasing);
+        let warped = timing(
+            json!([{ "tick": 0, "seconds": 0.0 }, { "tick": 1200, "seconds": 1.0 }]),
+            json!([{ "tick": 960, "kind": { "warp": 960 } }]),
+        );
+        assert_eq!(
+            broken_rule(&warped),
+            Rule::AnchorInWarp {
+                tick: Tick::new(1200)
+            }
+        );
+        let outlasted = timing(
+            json!([{ "tick": 0, "seconds": 0.0 }, { "tick": 1920, "seconds": 1.0 }]),
+            json!([{ "tick": 960, "kind": { "stop": 1.5 } }]),
+        );
+        assert_eq!(
+            broken_rule(&outlasted),
+            Rule::BadAnchorSegment {
+                tick: Tick::new(1920)
+            }
+        );
     }
 
     #[test]

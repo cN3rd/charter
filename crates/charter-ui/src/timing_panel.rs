@@ -35,7 +35,7 @@ fn points(timing: Valid<'_, charter_core::Timing>) -> Vec<Point> {
         .iter()
         .map(|anchor| Point {
             tick: anchor.tick,
-            bpm: Bpm::try_from(timing.tempo_at(anchor.tick)).ok(),
+            bpm: Bpm::nearest(timing.tempo_at(anchor.tick)),
             meter: None,
             others: Vec::new(),
         })
@@ -84,7 +84,7 @@ fn points(timing: Valid<'_, charter_core::Timing>) -> Vec<Point> {
 
 /// The tempo in effect on `tick`: the latest BPM change at or before it, or the first.
 fn tempo_at(timing: Valid<'_, charter_core::Timing>, tick: Tick) -> Option<Bpm> {
-    Bpm::try_from(timing.tempo_at(tick)).ok()
+    Bpm::nearest(timing.tempo_at(tick))
 }
 
 /// The meter in effect on `tick`: the latest time signature at or before it, or common time.
