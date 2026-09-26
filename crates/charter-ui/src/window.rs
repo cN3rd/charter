@@ -267,6 +267,11 @@ pub(crate) enum Action {
     SetOffset(charter_core::Origin),
     /// Removes the BPM change at the cursor.
     RemoveBpm,
+    /// Starts a BPM change at the cursor, at the tempo in effect there.
+    AddBpm,
+    /// Moves the offset by this many seconds, later in the audio when positive.
+    NudgeOffset(f64),
+    ShowSync,
     /// Puts the cursor on this tick.
     JumpTo(Tick),
     /// Names the section at the cursor this, starting one there if none does.
@@ -976,6 +981,7 @@ impl Window {
             Action::SaveAs => self.saving = Some(Saving::Elsewhere),
             Action::Settings => self.settings_open = !self.settings_open,
             Action::ToggleSync => self.sync.open = !self.sync.open,
+            Action::ShowSync => self.sync.open = true,
             Action::Help => self.help_open = !self.help_open,
             Action::ToggleSongPanel => self.settings.song_panel = !self.settings.song_panel,
             Action::ToggleMetronome => self.settings.metronome = !self.settings.metronome,
@@ -991,6 +997,7 @@ impl Window {
         }
     }
 
+    #[allow(clippy::too_many_lines)] // one arm for every action
     fn apply(&mut self, action: Action) {
         self.apply_to_window(&action);
         let Some(song) = &mut self.song else {
@@ -1054,6 +1061,7 @@ impl Window {
             | Action::SaveAs
             | Action::Settings
             | Action::ToggleSync
+            | Action::ShowSync
             | Action::Help
             | Action::ToggleSongPanel
             | Action::ToggleMetronome
@@ -1070,6 +1078,8 @@ impl Window {
             Action::SetBpm(_)
             | Action::SetOffset(_)
             | Action::RemoveBpm
+            | Action::AddBpm
+            | Action::NudgeOffset(_)
             | Action::Sync { .. }
             | Action::Unsync(_)
             | Action::MoveTiming { .. } => self.failure = retime(song, &action),
@@ -1446,6 +1456,15 @@ fn retime(song: &mut Song, action: &Action) -> Option<String> {
         Action::SetBpm(bpm) => song.set_bpm(*bpm),
         Action::SetOffset(offset) => song.set_offset(*offset),
         Action::RemoveBpm => song.remove_bpm(),
+        Action::AddBpm => song.add_bpm_change(),
+        Action::NudgeOffset(by) => {
+            let moved = f64::from(song.timing().offset_seconds) + by;
+            let micros = (moved * 1e6).round() / 1e6;
+            match charter_core::Origin::try_from(micros) {
+                Ok(offset) => song.set_offset(offset),
+                Err(_) => return Some(format!("{moved} s is not an offset")),
+            }
+        }
         Action::Sync { tick, seconds } => song.sync(*tick, *seconds),
         Action::Unsync(tick) => song.unsync(*tick),
         Action::MoveTiming { from, to } => song.move_timing_at(*from, *to),
@@ -2571,15 +2590,40 @@ mod tests {
     }
 
     #[test]
-    fn a_bpm_typed_and_entered_changes_the_tempo_from_the_cursor_on() {
+    fn a_bpm_typed_changes_the_tempo_of_the_section_the_cursor_is_in() {
         let mut harness = editable_demo();
         harness.key_press(egui::Key::ArrowDown);
         harness.run();
         enter_bpm(&mut harness, "175.5", egui::Key::Enter);
-        assert_eq!(bpm_at_cursor(&harness), Some((240, "175.5".to_owned())));
+        assert_eq!(bpm_at_cursor(&harness), Some((0, "175.5".to_owned())));
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
         harness.run();
         assert_eq!(bpm_at_cursor(&harness), Some((0, "150".to_owned())));
+    }
+
+    #[test]
+    fn a_bpm_typed_applies_when_the_field_is_left() {
+        let mut harness = editable_demo();
+        bpm_field(&harness).focus();
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        bpm_field(&harness).type_text("160");
+        harness.run();
+        offset_field(&harness).focus();
+        harness.run();
+        assert_eq!(bpm_at_cursor(&harness), Some((0, "160".to_owned())));
+    }
+
+    #[test]
+    fn the_bpm_steps_up_and_down_a_whole_bpm_at_a_time() {
+        let mut harness = editable_demo();
+        harness.get_by_label("Raise the BPM by 1").click();
+        harness.run();
+        assert_eq!(bpm_at_cursor(&harness), Some((0, "151".to_owned())));
+        harness.get_by_label("Lower the BPM by 1").click();
+        harness.get_by_label("Lower the BPM by 1").click();
+        harness.run();
+        assert_eq!(bpm_at_cursor(&harness), Some((0, "149".to_owned())));
     }
 
     #[test]
@@ -2603,16 +2647,18 @@ mod tests {
     }
 
     #[test]
-    fn a_bpm_change_at_the_cursor_can_be_removed() {
+    fn a_bpm_change_is_added_at_the_cursor_and_removed_by_buttons_but_not_the_first() {
         let mut harness = editable_demo();
-        harness.get_by_label("Remove this BPM change").click();
-        harness.run();
-        let (tick, bpm) = bpm_at_cursor(&harness).unwrap();
-        assert_ne!(tick, 0);
-        assert_eq!(bpm, "180");
+        assert!(harness.query_by_label("Remove this BPM change").is_none());
         harness.key_press(egui::Key::ArrowDown);
         harness.run();
-        assert!(harness.query_by_label("Remove this BPM change").is_none());
+        harness.get_by_label("Add a BPM change here").click();
+        harness.run();
+        assert_eq!(bpm_at_cursor(&harness), Some((240, "150".to_owned())));
+        assert!(harness.query_by_label("Add a BPM change here").is_none());
+        harness.get_by_label("Remove this BPM change").click();
+        harness.run();
+        assert_eq!(bpm_at_cursor(&harness), Some((0, "150".to_owned())));
     }
 
     #[test]
@@ -2652,6 +2698,9 @@ mod tests {
     #[test]
     fn clicking_a_marker_in_the_list_jumps_there() {
         let mut harness = editable_demo();
+        // The list sits below the tempo controls, past the bottom of a short window.
+        harness.get_by_label("Chorus").scroll_to_me();
+        harness.run();
         harness.get_by_label("Chorus").click();
         harness.run();
         assert!(cursor_shows(&harness, "16:0:0"));
@@ -2689,9 +2738,10 @@ mod tests {
     #[test]
     fn a_marker_can_be_removed_from_the_list() {
         let mut harness = editable_demo();
-        harness
-            .get_by_label("Remove marker Check the stream")
-            .click();
+        let remove = "Remove marker Check the stream";
+        harness.get_by_label(remove).scroll_to_me();
+        harness.run();
+        harness.get_by_label(remove).click();
         harness.run();
         assert!(!marker_texts(&harness).contains(&"Check the stream".to_owned()));
         assert!(harness.query_by_label("Check the stream").is_none());
@@ -4356,47 +4406,69 @@ mod tests {
         assert_eq!(facts(&harness), ("Four".to_owned(), "a".to_owned()));
     }
 
-    #[test]
-    fn the_offset_moves_where_the_grid_starts_in_the_audio() {
-        let mut harness = editable_demo();
-        harness
-            .get_by_role_and_label(Role::TextInput, "Offset")
-            .focus();
+    fn offset_field<'a>(harness: &'a Harness<'_, Window>) -> egui_kittest::Node<'a> {
+        harness.get_by_role_and_label(Role::TextInput, "Offset")
+    }
+
+    fn offset(harness: &Harness<'_, Window>) -> serde_json::Value {
+        let song = harness.state().song.as_ref().unwrap();
+        serde_json::to_value(song.document().document().timing.offset_seconds).unwrap()
+    }
+
+    fn enter_offset(harness: &mut Harness<'_, Window>, text: &str) {
+        offset_field(harness).focus();
         harness.run();
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
-        harness
-            .get_by_role_and_label(Role::TextInput, "Offset")
-            .type_text("1.5");
+        offset_field(harness).type_text(text);
         harness.run();
         harness.key_press(egui::Key::Enter);
         harness.run();
-        let song = harness.state().song.as_ref().unwrap();
-        let offset = song.document().document().timing.offset_seconds;
-        assert_eq!(
-            serde_json::to_value(offset).unwrap(),
-            serde_json::json!(1.5)
-        );
+    }
+
+    #[test]
+    fn the_offset_is_typed_in_milliseconds() {
+        let mut harness = editable_demo();
+        assert_eq!(offset_field(&harness).value().as_deref(), Some("0"));
+        enter_offset(&mut harness, "1500.25");
+        assert_eq!(offset(&harness), serde_json::json!(1.50025));
+        assert_eq!(offset_field(&harness).value().as_deref(), Some("1500.25"));
     }
 
     #[test]
     fn an_offset_that_is_not_a_time_says_so() {
         let mut harness = editable_demo();
-        harness
-            .get_by_role_and_label(Role::TextInput, "Offset")
-            .focus();
-        harness.run();
-        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
-        harness
-            .get_by_role_and_label(Role::TextInput, "Offset")
-            .type_text("soon");
-        harness.run();
-        harness.key_press(egui::Key::Enter);
-        harness.run();
+        enter_offset(&mut harness, "soon");
         assert!(
             harness
-                .query_by_label_contains("soon is not an offset")
+                .query_by_label_contains("soon is not an offset in milliseconds")
                 .is_some()
         );
+    }
+
+    #[test]
+    fn alt_arrows_and_the_offset_steppers_nudge_it_by_a_millisecond_or_ten_with_shift() {
+        let mut harness = editable_demo();
+        harness.key_press_modifiers(egui::Modifiers::ALT, egui::Key::ArrowRight);
+        harness.run();
+        assert_eq!(offset(&harness), serde_json::json!(0.001));
+        let coarse = egui::Modifiers::ALT.plus(egui::Modifiers::SHIFT);
+        harness.key_press_modifiers(coarse, egui::Key::ArrowLeft);
+        harness.run();
+        assert_eq!(offset(&harness), serde_json::json!(-0.009));
+        harness.get_by_label("Raise the offset by 1 ms").click();
+        harness.run();
+        assert_eq!(offset(&harness), serde_json::json!(-0.008));
+        harness.get_by_label("Lower the offset by 1 ms").click();
+        harness.run();
+        assert_eq!(offset(&harness), serde_json::json!(-0.009));
+    }
+
+    #[test]
+    fn the_tempo_section_opens_the_sync_window() {
+        let mut harness = editable_demo();
+        harness.get_by_label("Sync to the audio").click();
+        harness.run();
+        assert!(harness.query_by_label("Measure 0").is_some());
     }
 
     fn no_audio(harness: &Harness<'_, Window>) -> bool {

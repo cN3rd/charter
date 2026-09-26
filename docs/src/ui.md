@@ -15,8 +15,13 @@ Arcaea. `cargo run -p charter-app` is the editor so far. It draws charts in the 
 glyphs, since no ruleset plugin draws yet, and starts and edits songs of the built-in rulesets. Lane
 keys and Ctrl with the mouse place taps, holds and mines; the mouse selects and Delete removes the
 selection; undo and redo return to where each edit was made. The song panel shows the tempo at the
-cursor: a BPM typed there and entered changes the tempo from the cursor on, as one step, and the BPM
-change at the cursor can be removed, unless it is the only one. Below it the song's markers are
+cursor and the stretch of the song it rules, from its BPM change to the next. A BPM typed there, or
+stepped with its − and + buttons or F7 and F8, changes that stretch's tempo as one step, and never
+adds a change on its own: "Add a BPM change here" starts one at the cursor, and "Remove this BPM
+change" lets the tempo before it carry on, though the song's first stays. The offset, where beat 0
+falls in the audio, reads in milliseconds, steps by 1 ms with its buttons or Alt+Left and
+Alt+Right, 10 ms with Shift, and sits beside a button that opens the sync window. A value typed
+into a field applies on Enter or when the field is left; Escape leaves it as it was. Below it the song's markers are
 listed; clicking one jumps the cursor there, a name typed and entered names the section at the
 cursor or starts one, and any marker can be removed, each as one step. Songs open and save through
 native file dialogs, unsaved changes are asked about before they are lost and autosaved, half a

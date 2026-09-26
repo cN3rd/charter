@@ -184,9 +184,12 @@ fn command(key: Key, modifiers: Modifiers) -> Option<Action> {
         return Some(Action::Help);
     }
     if modifiers.alt {
+        let nudge = if modifiers.shift { 0.010 } else { 0.001 };
         return match key {
             Key::ArrowDown => Some(Action::JumpSection(Step::Later)),
             Key::ArrowUp => Some(Action::JumpSection(Step::Earlier)),
+            Key::ArrowRight => Some(Action::NudgeOffset(nudge)),
+            Key::ArrowLeft => Some(Action::NudgeOffset(-nudge)),
             _ => None,
         };
     }

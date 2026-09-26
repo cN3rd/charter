@@ -3,7 +3,7 @@
 
 use std::num::NonZeroU16;
 
-use charter_core::{Bpm, MarkerKind, Origin, ResolvedTime, Tick};
+use charter_core::{Bpm, MarkerKind, Origin, ResolvedTime, Tick, TimingKind};
 use egui::{self, Align, Layout, RichText, Ui};
 use serde_json::Value;
 
@@ -77,6 +77,17 @@ pub fn menu_bar(ui: &mut Ui, song: Option<&Song>, playing: bool, actions: &mut V
                     ("Sync window", "Ctrl+T", Action::ToggleSync),
                     ("Raise the tempo by 1 BPM", "F8", Action::NudgeBpm(1.0)),
                     ("Lower the tempo by 1 BPM", "F7", Action::NudgeBpm(-1.0)),
+                    ("Add a BPM change here", "", Action::AddBpm),
+                    (
+                        "Raise the offset by 1 ms",
+                        "Alt+Right",
+                        Action::NudgeOffset(0.001),
+                    ),
+                    (
+                        "Lower the offset by 1 ms",
+                        "Alt+Left",
+                        Action::NudgeOffset(-0.001),
+                    ),
                     ("Add or remove a bookmark", "Ctrl+B", Action::ToggleBookmark),
                     (
                         "Previous section",
@@ -245,6 +256,10 @@ const KEYS: [(&str, &[(&str, &str)]); 6] = [
             ("Ctrl+T", "Show or hide the sync window"),
             ("Ctrl+B", "Add or remove a bookmark at the cursor"),
             ("F7, F8", "Lower or raise the tempo at the cursor by 1 BPM"),
+            (
+                "Alt+Left, Alt+Right",
+                "Lower or raise the offset by 1 ms, or by 10 ms with Shift",
+            ),
         ],
     ),
     (
@@ -447,59 +462,167 @@ fn tempo_body(
         return None;
     };
     let editable = song.read_only().is_none();
-    let offset = song.timing().offset_seconds;
+    let timing = song.timing();
+    let offset = timing.offset_seconds;
+    let first = timing.events.iter().find_map(|event| match event.kind {
+        TimingKind::Bpm(_) => Some(event.tick),
+        _ => None,
+    });
+    let until = timing
+        .events
+        .iter()
+        .find(|event| event.tick > at && matches!(event.kind, TimingKind::Bpm(_)))
+        .map_or_else(
+            || "the end".to_owned(),
+            |event| timing.grid_position(event.tick).to_string(),
+        );
     let mut refused = None;
     table(ui, "tempo", |ui| {
         let caption = ui.weak("BPM");
         if editable {
-            let tempo = |typed: &str| {
-                let bpm = typed
-                    .parse::<f64>()
-                    .ok()
-                    .and_then(|bpm| Bpm::try_from(bpm).ok());
-                bpm.map(Action::SetBpm)
-                    .ok_or_else(|| format!("{typed} is not a tempo"))
-            };
-            refused = entry(ui, caption.id, bpm.to_string(), bpm_draft, tempo, actions);
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                if stepper(ui, "−", "Lower the BPM by 1", "F7") {
+                    actions.push(Action::NudgeBpm(-1.0));
+                }
+                let tempo = |typed: &str| {
+                    let bpm = typed
+                        .parse::<f64>()
+                        .ok()
+                        .and_then(|bpm| Bpm::try_from(bpm).ok());
+                    bpm.map(Action::SetBpm)
+                        .ok_or_else(|| format!("{typed} is not a tempo"))
+                };
+                refused = entry(ui, caption.id, &bpm.to_string(), bpm_draft, tempo, actions);
+                if stepper(ui, "+", "Raise the BPM by 1", "F8") {
+                    actions.push(Action::NudgeBpm(1.0));
+                }
+                ui.add_space(6.0);
+                ui.weak(format!("{} – {until}", timing.grid_position(at)));
+            });
         } else {
-            ui.label(bpm.to_string());
+            ui.label(format!("{bpm}   {} – {until}", timing.grid_position(at)));
         }
-        ui.weak(format!("since {}", song.timing().grid_position(at)));
         ui.end_row();
-        let caption = ui.weak("Offset");
         if editable {
-            let seconds = |typed: &str| {
+            ui.label("");
+            ui.horizontal(|ui| {
+                if at != song.cursor()
+                    && style::icon_button(ui, icon::PLUS, "Add a BPM change here", false)
+                        .on_hover_text("Start a new tempo at the cursor")
+                        .clicked()
+                {
+                    actions.push(Action::AddBpm);
+                }
+                if Some(at) != first
+                    && style::icon_button(ui, icon::TRASH, "Remove this BPM change", false)
+                        .on_hover_text("The tempo before it carries on")
+                        .clicked()
+                {
+                    actions.push(Action::RemoveBpm);
+                }
+            });
+            ui.end_row();
+        }
+        let caption = ui.weak("Offset").on_hover_text(OFFSET_ABOUT);
+        let offered = offset_rows(
+            ui,
+            (editable, caption.id),
+            f64::from(offset),
+            offset_draft,
+            actions,
+        );
+        refused = refused.take().or(offered);
+        if editable {
+            ui.label("");
+            let sync = style::icon_button(ui, icon::WAVEFORM, "Sync to the audio", false)
+                .on_hover_text("Open the sync window (Ctrl+T) to line beats up with the waveform");
+            if sync.clicked() {
+                actions.push(Action::ShowSync);
+            }
+            ui.end_row();
+        }
+    });
+    refused
+}
+
+/// What the offset is, for its tooltips.
+const OFFSET_ABOUT: &str = "Where beat 0 falls in the audio, in milliseconds. Raise it if the \
+    notes come before the music, lower it if they come after.";
+
+/// The offset's rows of the tempo table: a field in milliseconds with steppers, and what it is.
+fn offset_rows(
+    ui: &mut Ui,
+    (editable, caption): (bool, egui::Id),
+    seconds: f64,
+    draft: &mut Option<String>,
+    actions: &mut Vec<Action>,
+) -> Option<String> {
+    let mut refused = None;
+    if editable {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            let coarse = ui.input(|input| input.modifiers.shift);
+            let by = if coarse { 0.010 } else { 0.001 };
+            if stepper(
+                ui,
+                "−",
+                "Lower the offset by 1 ms",
+                "Alt+Left, 10 ms with Shift",
+            ) {
+                actions.push(Action::NudgeOffset(-by));
+            }
+            let milliseconds = |typed: &str| {
                 let offset = typed
                     .parse::<f64>()
                     .ok()
-                    .and_then(|at| Origin::try_from(at).ok());
+                    .filter(|ms| ms.is_finite())
+                    .and_then(|ms| Origin::try_from((ms * 1000.0).round() / 1e6).ok());
                 offset
                     .map(Action::SetOffset)
-                    .ok_or_else(|| format!("{typed} is not an offset in seconds"))
+                    .ok_or_else(|| format!("{typed} is not an offset in milliseconds"))
             };
-            let offered = entry(
+            let shown = milliseconds_of(seconds);
+            refused = entry(ui, caption, &shown, draft, milliseconds, actions);
+            if stepper(
                 ui,
-                caption.id,
-                offset.to_string(),
-                offset_draft,
-                seconds,
-                actions,
-            );
-            refused = refused.take().or(offered);
-        } else {
-            ui.label(offset.to_string());
-        }
-        ui.weak("seconds, tick 0 in the audio");
-        ui.end_row();
-    });
-    ui.add_space(4.0);
-    if editable
-        && at == song.cursor()
-        && style::icon_button(ui, style::icon::TRASH, "Remove this BPM change", false).clicked()
-    {
-        actions.push(Action::RemoveBpm);
+                "+",
+                "Raise the offset by 1 ms",
+                "Alt+Right, 10 ms with Shift",
+            ) {
+                actions.push(Action::NudgeOffset(by));
+            }
+            ui.weak("ms");
+        });
+    } else {
+        ui.label(format!("{} ms", milliseconds_of(seconds)));
     }
+    ui.end_row();
+    ui.label("");
+    ui.weak("Raise it if notes come early")
+        .on_hover_text(OFFSET_ABOUT);
+    ui.end_row();
     refused
+}
+
+/// A small step button showing `symbol`, named `name`, with its key in the tooltip.
+fn stepper(ui: &mut Ui, symbol: &str, name: &str, key: &str) -> bool {
+    let button = egui::Button::new(symbol).min_size(egui::vec2(20.0, 0.0));
+    let response = ui.add(button).on_hover_text(format!("{name} ({key})"));
+    let clicked = response.clicked();
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, name));
+    clicked
+}
+
+/// `seconds` as milliseconds to the microsecond, without trailing zeros.
+fn milliseconds_of(seconds: f64) -> String {
+    let text = format!("{:.3}", seconds * 1000.0);
+    let text = text.trim_end_matches('0').trim_end_matches('.');
+    if text == "-0" {
+        "0".to_owned()
+    } else {
+        text.to_owned()
+    }
 }
 
 /// A value typed into a field named by `caption`, showing `current` until typing starts and
@@ -508,19 +631,23 @@ fn tempo_body(
 fn entry(
     ui: &mut Ui,
     caption: egui::Id,
-    current: String,
+    current: &str,
     draft: &mut Option<String>,
     read: impl FnOnce(&str) -> Result<Action, String>,
     actions: &mut Vec<Action>,
 ) -> Option<String> {
-    let mut text = draft.take().unwrap_or(current);
+    let mut text = draft.take().unwrap_or_else(|| current.to_owned());
     let field = ui
         .add(egui::TextEdit::singleline(&mut text).desired_width(72.0))
         .labelled_by(caption);
-    let entered = field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
+    // Leaving the field takes what was typed, as Enter does; only Escape drops it. A field left
+    // as it was does nothing.
+    let left = field.lost_focus()
+        && !ui.input(|input| input.key_pressed(egui::Key::Escape))
+        && text.trim() != current;
     if field.has_focus() {
         *draft = Some(text);
-    } else if entered {
+    } else if left {
         match read(text.trim()) {
             Ok(action) => actions.push(action),
             Err(why) => return Some(why),

@@ -313,52 +313,81 @@ impl Song {
         latest.or(first)
     }
 
-    /// Makes the tempo from the cursor on `bpm`: the BPM change at the cursor takes it, or a new
-    /// change there does. Does nothing when `bpm` is already in effect there.
+    /// Gives the BPM change in effect at the cursor, the one [`Song::bpm`] names, the tempo
+    /// `bpm`, as one step. Does nothing when it already has it.
     ///
     /// # Errors
     ///
     /// Refuses on a read-only song, or when the game refuses the tempo.
     pub fn set_bpm(&mut self, bpm: Bpm) -> Result<(), Refusal> {
-        let at = self.cursor;
-        if self.bpm().is_some_and(|(_, held)| held == bpm) {
+        let Some((at, held)) = self.bpm() else {
+            return Ok(());
+        };
+        if held == bpm {
             return Ok(());
         }
         let (own, timing) = self.edited_timing();
         let mut new = timing.clone();
-        let here = new
+        if let Some(change) = new
             .events
             .iter_mut()
-            .find(|event| event.tick == at && matches!(event.kind, TimingKind::Bpm(_)));
-        if let Some(change) = here {
+            .find(|event| event.tick == at && matches!(event.kind, TimingKind::Bpm(_)))
+        {
             change.kind = TimingKind::Bpm(bpm);
-        } else {
-            let index = new.events.partition_point(|event| event.tick <= at);
-            let change = TimingEvent {
-                tick: at,
-                kind: TimingKind::Bpm(bpm),
-                ext: Extensions::new(),
-            };
-            new.events.insert(index, change);
         }
         self.retime(own, new)
     }
 
-    /// Removes the BPM change at the cursor, if there is one.
+    /// Starts a new BPM change at the cursor, at the tempo already in effect there, as one
+    /// step, so the tempo from the cursor on can be set apart. Does nothing when one is there.
     ///
     /// # Errors
     ///
-    /// Refuses on a read-only song, and when the change is the timing's only one.
-    pub fn remove_bpm(&mut self) -> Result<(), Refusal> {
+    /// Refuses on a read-only song.
+    pub fn add_bpm_change(&mut self) -> Result<(), Refusal> {
         let at = self.cursor;
-        let (own, timing) = self.edited_timing();
-        let mut new = timing.clone();
-        let before = new.events.len();
-        new.events
-            .retain(|event| !(event.tick == at && matches!(event.kind, TimingKind::Bpm(_))));
-        if new.events.len() == before {
+        let Some((from, held)) = self.bpm() else {
+            return Ok(());
+        };
+        if from == at {
             return Ok(());
         }
+        let (own, timing) = self.edited_timing();
+        let mut new = timing.clone();
+        let index = new.events.partition_point(|event| event.tick <= at);
+        let change = TimingEvent {
+            tick: at,
+            kind: TimingKind::Bpm(held),
+            ext: Extensions::new(),
+        };
+        new.events.insert(index, change);
+        self.retime(own, new)
+    }
+
+    /// Removes the BPM change in effect at the cursor, as one step, so the one before it rules
+    /// on.
+    ///
+    /// # Errors
+    ///
+    /// Refuses on a read-only song, and for the first BPM change, which starts the tempo.
+    pub fn remove_bpm(&mut self) -> Result<(), Refusal> {
+        if self.read_only().is_some() {
+            return Err(Refusal::ReadOnly);
+        }
+        let Some((at, _)) = self.bpm() else {
+            return Ok(());
+        };
+        let (own, timing) = self.edited_timing();
+        let first = timing.events.iter().find_map(|event| match event.kind {
+            TimingKind::Bpm(_) => Some(event.tick),
+            _ => None,
+        });
+        if first == Some(at) {
+            return Err(Refusal::FirstTempo);
+        }
+        let mut new = timing.clone();
+        new.events
+            .retain(|event| !(event.tick == at && matches!(event.kind, TimingKind::Bpm(_))));
         self.retime(own, new)
     }
 
@@ -1526,25 +1555,18 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_bpm_set_between_changes_is_a_new_change_undo_takes_back() {
+    fn a_bpm_set_between_changes_changes_the_one_in_effect_undo_takes_back() {
         let meter = json!({ "tick": 960, "kind": { "time_signature": [3, 4] } });
-        let mut song = timed(&json!([bpm_event(0, 120.0), meter.clone()]), None);
+        let events = json!([bpm_event(0, 120.0), meter.clone(), bpm_event(1920, 90.0)]);
+        let mut song = timed(&events, None);
         song.step(Step::Later);
-        let at = song.cursor();
-        assert_eq!(at, Tick::new(240));
+        assert_eq!(song.cursor(), Tick::new(240));
         song.set_bpm(tempo(150.0)).unwrap();
-        let expected = json!([bpm_event(0, 120.0), bpm_event(240, 150.0), meter]);
+        let expected = json!([bpm_event(0, 150.0), meter.clone(), bpm_event(1920, 90.0)]);
         assert_eq!(song_events(&song), expected);
-        assert_eq!(song.bpm(), Some((at, tempo(150.0))));
+        assert_eq!(song.bpm(), Some((Tick::new(0), tempo(150.0))));
         song.undo().unwrap();
         assert_eq!(song.bpm(), Some((Tick::new(0), tempo(120.0))));
-    }
-
-    #[test]
-    fn a_bpm_set_on_a_change_changes_it() {
-        let mut song = timed(&json!([bpm_event(0, 120.0)]), None);
-        song.set_bpm(tempo(90.5)).unwrap();
-        assert_eq!(song_events(&song), json!([bpm_event(0, 90.5)]));
     }
 
     #[test]
@@ -1555,30 +1577,30 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_bpm_change_removed_at_the_cursor_goes_and_the_last_one_stays() {
-        let mut song = timed(&json!([bpm_event(0, 120.0), bpm_event(480, 150.0)]), None);
+    fn a_bpm_change_added_at_the_cursor_keeps_the_tempo_until_it_is_set() {
+        let mut song = timed(&json!([bpm_event(0, 120.0)]), None);
         song.step(Step::Later);
-        song.step(Step::Later);
-        assert_eq!(song.cursor(), Tick::new(480));
-        song.remove_bpm().unwrap();
-        assert_eq!(song_events(&song), json!([bpm_event(0, 120.0)]));
-        song.undo().unwrap();
-        song.step(Step::Earlier);
-        song.step(Step::Earlier);
-        song.remove_bpm().unwrap();
-        assert_eq!(song_events(&song), json!([bpm_event(480, 150.0)]));
-        song.step(Step::Later);
-        song.step(Step::Later);
-        assert!(song.remove_bpm().is_err());
-        assert_eq!(song_events(&song), json!([bpm_event(480, 150.0)]));
+        song.add_bpm_change().unwrap();
+        let split = json!([bpm_event(0, 120.0), bpm_event(240, 120.0)]);
+        assert_eq!(song_events(&song), split);
+        song.add_bpm_change().unwrap();
+        assert_eq!(song_events(&song), split);
+        song.set_bpm(tempo(150.0)).unwrap();
+        let set = json!([bpm_event(0, 120.0), bpm_event(240, 150.0)]);
+        assert_eq!(song_events(&song), set);
     }
 
     #[test]
-    fn removing_where_no_bpm_changes_changes_nothing() {
-        let mut song = timed(&json!([bpm_event(0, 120.0)]), None);
-        song.step(Step::Later);
+    fn the_bpm_change_in_effect_can_be_removed_but_not_the_first() {
+        let mut song = timed(&json!([bpm_event(0, 120.0), bpm_event(480, 150.0)]), None);
+        for _ in 0..3 {
+            song.step(Step::Later);
+        }
+        assert_eq!(song.cursor(), Tick::new(720));
         song.remove_bpm().unwrap();
-        assert!(!song.can_undo());
+        assert_eq!(song_events(&song), json!([bpm_event(0, 120.0)]));
+        assert!(matches!(song.remove_bpm(), Err(Refusal::FirstTempo)));
+        assert_eq!(song_events(&song), json!([bpm_event(0, 120.0)]));
     }
 
     #[test]
@@ -1603,7 +1625,9 @@ pub(crate) mod tests {
             .clone();
         let mut song = Song::new(document, &[]);
         assert!(matches!(song.set_bpm(tempo(90.0)), Err(Refusal::ReadOnly)));
-        assert!(matches!(song.remove_bpm(), Ok(()) | Err(Refusal::ReadOnly)));
+        assert!(matches!(song.remove_bpm(), Err(Refusal::ReadOnly)));
+        song.step(Step::Later);
+        assert!(matches!(song.add_bpm_change(), Err(Refusal::ReadOnly)));
     }
 
     /// A song with `markers`.
