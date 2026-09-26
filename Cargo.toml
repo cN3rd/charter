@@ -36,6 +36,9 @@ rfd = "0.17.2"
 # kira frames.
 kira = { version = "0.12.4", default-features = false, features = ["cpal"] }
 egui-phosphor = "0.14.0"
+# ponytail: finds installed fonts by family for CJK song titles; egui-system-fonts wraps it but
+# writes into the egui context, which the window's own font setup would then replace.
+system-fonts = "0.1.2"
 egui_kittest = "0.36.2"
 # ponytail: std only; the fork and timeout features pull in a temp-file runner the sans-io tests
 # do not need.

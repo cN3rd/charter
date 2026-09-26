@@ -17,3 +17,4 @@ charter-ui.workspace = true
 eframe = { workspace = true, features = ["persistence"] }
 kira.workspace = true
 rfd.workspace = true
+system-fonts.workspace = true

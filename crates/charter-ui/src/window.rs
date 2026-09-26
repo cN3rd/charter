@@ -385,6 +385,8 @@ pub struct Window {
     section_draft: Option<String>,
     /// Whether the keyboard shortcuts are showing.
     help_open: bool,
+    /// Fonts for what the bundled ones cannot draw, such as CJK titles, named.
+    fallback_fonts: Vec<(String, Arc<egui::FontData>)>,
     /// The volumes the playback under way plays at, and whether clicks are mixed into it, which
     /// bakes every volume in.
     played: Option<(charter_audio::Volumes, bool)>,
@@ -410,6 +412,20 @@ impl Window {
     #[must_use]
     pub fn with_settings(self, settings: Settings) -> Self {
         Self { settings, ..self }
+    }
+
+    /// This window drawing what its own fonts cannot, such as CJK song titles, in `fonts`: each
+    /// a name and a font file's bytes, tried in order. The host finds them among the system's.
+    #[must_use]
+    pub fn with_fallback_fonts(self, fonts: Vec<(String, Vec<u8>)>) -> Self {
+        let fallback_fonts = fonts
+            .into_iter()
+            .map(|(name, bytes)| (name, Arc::new(egui::FontData::from_owned(bytes))))
+            .collect();
+        Self {
+            fallback_fonts,
+            ..self
+        }
     }
 
     /// This window where files dropped on it never arrive, as under Wayland, which winit does
@@ -1285,7 +1301,7 @@ impl Window {
     /// Draws the window into `ui` and answers this frame's input.
     #[allow(clippy::too_many_lines)] // one frame, panel by panel in the order they draw
     pub fn ui(&mut self, ui: &mut Ui) {
-        style::apply(ui.ctx());
+        style::apply(ui.ctx(), &self.fallback_fonts);
         let scale = self.settings.scale();
         if (ui.ctx().zoom_factor() - scale).abs() > f32::EPSILON {
             ui.ctx().set_zoom_factor(scale);

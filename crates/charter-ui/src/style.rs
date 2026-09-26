@@ -96,8 +96,9 @@ pub fn glyph(ui: &Ui, symbol: &str) -> RichText {
 
 /// Inter for every word, `SemiBold` for titles, and Phosphor in a family of its own for icons,
 /// which are always asked for by name: Phosphor draws letters as icons, and Inter has glyphs of
-/// its own where Phosphor keeps its icons.
-fn fonts() -> egui::FontDefinitions {
+/// its own where Phosphor keeps its icons. `fallbacks`, such as the system's CJK fonts, draw
+/// what Inter and egui's own fonts cannot, in words, titles and monospace alike.
+fn fonts(fallbacks: &[(String, Arc<egui::FontData>)]) -> egui::FontDefinitions {
     let mut fonts = egui::FontDefinitions::default();
     let inter = |bytes: &'static [u8]| Arc::new(egui::FontData::from_static(bytes));
     fonts.font_data.insert(
@@ -112,17 +113,28 @@ fn fonts() -> egui::FontDefinitions {
     let proportional = fonts.families.entry(FontFamily::Proportional).or_default();
     proportional.retain(|font| font != "phosphor");
     proportional.insert(0, "inter".to_owned());
+    for (name, data) in fallbacks {
+        fonts.font_data.insert(name.clone(), data.clone());
+    }
+    let names = fallbacks.iter().map(|(name, _)| name.clone());
+    let proportional = fonts.families.entry(FontFamily::Proportional).or_default();
+    proportional.extend(names.clone());
     let mut titles = vec!["inter-semibold".to_owned()];
     titles.extend(proportional.iter().skip(1).cloned());
     fonts.families.insert(semibold(), titles);
+    fonts
+        .families
+        .entry(FontFamily::Monospace)
+        .or_default()
+        .extend(names);
     fonts
 }
 
 /// Dark whatever the system prefers, since charting means long sessions against a game's dark
 /// playfield, and with text bright enough to read at small sizes. Ctrl+Plus and Ctrl+Minus zoom
 /// the notefield, so egui's own use of them to scale the whole window is off. Runs until it has
-/// taken.
-pub fn apply(ctx: &egui::Context) {
+/// taken. `fallbacks` are fonts for what the bundled ones cannot draw.
+pub fn apply(ctx: &egui::Context, fallbacks: &[(String, Arc<egui::FontData>)]) {
     if ctx.global_style().visuals.weak_text_color == Some(WEAK_TEXT) {
         return;
     }
@@ -133,7 +145,7 @@ pub fn apply(ctx: &egui::Context) {
     if taken {
         ctx.style_mut_of(egui::Theme::Dark, look);
     } else {
-        ctx.set_fonts(fonts());
+        ctx.set_fonts(fonts(fallbacks));
         ctx.request_repaint();
     }
 }
@@ -399,4 +411,23 @@ pub fn table(ui: &mut Ui, id: &str, rows: impl FnOnce(&mut Ui)) {
         .min_col_width(LABEL_W)
         .spacing([12.0, 6.0])
         .show(ui, rows);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fallback_fonts_come_after_inter_in_text_titles_and_monospace() {
+        let cjk = ("cjk".to_owned(), Arc::new(egui::FontData::from_static(&[])));
+        let fonts = fonts(std::slice::from_ref(&cjk));
+        assert!(fonts.font_data.contains_key("cjk"));
+        for family in [FontFamily::Proportional, semibold(), FontFamily::Monospace] {
+            let names = &fonts.families[&family];
+            assert_eq!(names.last().map(String::as_str), Some("cjk"), "{family:?}");
+        }
+        let text = &fonts.families[&FontFamily::Proportional];
+        assert_eq!(text.first().map(String::as_str), Some("inter"));
+        assert!(!fonts.families[&icons()].contains(&"cjk".to_owned()));
+    }
 }

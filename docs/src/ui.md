@@ -58,7 +58,9 @@ keyboard. With no song open the centre offers Open song…, New song and the dem
 pro audio and creative tools: a transport toolbar under the menus with a large position readout and
 grouped tempo, snap, speed and zoom controls, collapsible sections in the side panels, the notefield
 in a dark well, one blue accent for selection and primary actions, Inter for text and Phosphor for
-icons, bundled under `crates/charter-ui/assets/fonts` with Inter's OFL licence; messages float over
+icons, bundled under `crates/charter-ui/assets/fonts` with Inter's OFL licence, and the system's
+Japanese, Chinese and Korean fonts after them, whatever the locale, so titles in any of those
+scripts draw; the app finds them with the `system-fonts` crate and reads each file once; messages float over
 the canvas rather than moving it. The settings window has a sidebar of pages, Editing, Display,
 Sounds and Autosave, each setting with a line on what it does and on and off choices as switches;
 the new-song dialog picks the game from a segmented control, sketches the layout's lanes, and takes

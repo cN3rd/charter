@@ -204,6 +204,37 @@ fn project_file(chosen: &Path) -> Option<PathBuf> {
     Some(beside.join(name).join(file))
 }
 
+/// The system's fonts for Japanese, Chinese and Korean, whatever the locale, since song titles
+/// come in any script: each a name and its file's bytes, one of each file, in that order. A font
+/// that cannot be read is left out, and a system without any draws those titles as boxes.
+fn cjk_fonts() -> Vec<(String, Vec<u8>)> {
+    use system_fonts::{FontPreset, FontStyle, FoundFontSource};
+    let presets = [
+        FontPreset::Japanese,
+        FontPreset::SimplifiedChinese,
+        FontPreset::TraditionalChinese,
+        FontPreset::Korean,
+    ];
+    let mut seen = std::collections::HashSet::new();
+    // ponytail: one CJK collection can run to tens of megabytes, read on the window's thread at
+    // start; read it off the thread if startup shows it.
+    system_fonts::find_from_presets(presets, FontStyle::Sans)
+        .into_iter()
+        .filter_map(|font| {
+            let bytes = match font.source {
+                FoundFontSource::Path(path) => {
+                    if !seen.insert(path.clone()) {
+                        return None;
+                    }
+                    std::fs::read(path).ok()?
+                }
+                FoundFontSource::Bytes(bytes) => bytes.to_vec(),
+            };
+            Some((font.key, bytes))
+        })
+        .collect()
+}
+
 /// Whether the window opens under Wayland, which winit prefers wherever a Wayland display is set
 /// and where it takes no dropped files yet (rust-windowing/winit#1881).
 fn on_wayland() -> bool {
@@ -228,7 +259,9 @@ fn main() -> eframe::Result {
                 .storage
                 .and_then(|storage| eframe::get_value(storage, SETTINGS));
             let settings: Settings = kept.unwrap_or_default();
-            let window = Window::new(PLUGINS).with_settings(settings);
+            let window = Window::new(PLUGINS)
+                .with_settings(settings)
+                .with_fallback_fonts(cjk_fonts());
             let window = if on_wayland() {
                 window.without_file_drops()
             } else {
