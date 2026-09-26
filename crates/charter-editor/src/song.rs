@@ -356,22 +356,27 @@ impl Song {
         self.retime(own, new)
     }
 
-    /// Moves the event at `index` of the timing tempo edits go to onto `to`, among the events
-    /// there, as one step. Does nothing when there is no such event or it is already there.
+    /// Moves every event at `from` of the timing tempo edits go to onto `to`, a BPM change and
+    /// a meter at one tick moving as one timing point, as one step. Does nothing when there are
+    /// none at `from` or `from` is `to`.
     ///
     /// # Errors
     ///
-    /// Refuses on a read-only song, and when an event of its kind is already at `to`.
-    pub fn move_timing(&mut self, index: usize, to: Tick) -> Result<(), Refusal> {
+    /// Refuses on a read-only song, and when an event of a kind moved is already at `to`.
+    pub fn move_timing_at(&mut self, from: Tick, to: Tick) -> Result<(), Refusal> {
         let (own, timing) = self.edited_timing();
-        let mut new = timing.clone();
-        if new.events.get(index).is_none_or(|event| event.tick == to) {
+        if from == to || !timing.events.iter().any(|event| event.tick == from) {
             return Ok(());
         }
-        let mut event = new.events.remove(index);
-        event.tick = to;
+        let mut new = timing.clone();
+        let (mut moved, kept): (Vec<_>, Vec<_>) =
+            new.events.drain(..).partition(|event| event.tick == from);
+        new.events = kept;
+        for event in &mut moved {
+            event.tick = to;
+        }
         let at = new.events.partition_point(|event| event.tick <= to);
-        new.events.insert(at, event);
+        new.events.splice(at..at, moved);
         self.retime(own, new)
     }
 
@@ -1751,7 +1756,8 @@ mod tests {
             &json!([bpm_event(0, 120.0), bpm_event(480, 150.0), meter.clone()]),
             None,
         );
-        song.move_timing(1, Tick::new(1920)).unwrap();
+        song.move_timing_at(Tick::new(480), Tick::new(1920))
+            .unwrap();
         assert_eq!(
             song_events(&song),
             json!([bpm_event(0, 120.0), meter, bpm_event(1920, 150.0)])
@@ -1761,17 +1767,32 @@ mod tests {
     }
 
     #[test]
+    fn every_timing_event_at_a_tick_moves_together_as_one_step() {
+        let meter = |tick: i32| json!({ "tick": tick, "kind": { "time_signature": [3, 4] } });
+        let events = json!([bpm_event(0, 120.0), bpm_event(960, 150.0), meter(960)]);
+        let mut song = timed(&events, None);
+        song.move_timing_at(Tick::new(960), Tick::new(1920))
+            .unwrap();
+        assert_eq!(
+            song_events(&song),
+            json!([bpm_event(0, 120.0), bpm_event(1920, 150.0), meter(1920)])
+        );
+        song.undo().unwrap();
+        assert_eq!(song_events(&song), events);
+    }
+
+    #[test]
     fn a_bpm_change_moved_onto_another_is_refused() {
         let mut song = timed(&json!([bpm_event(0, 120.0), bpm_event(480, 150.0)]), None);
-        assert!(song.move_timing(1, Tick::new(0)).is_err());
+        assert!(song.move_timing_at(Tick::new(480), Tick::new(0)).is_err());
         assert_eq!(song_events(&song)[1], bpm_event(480, 150.0));
     }
 
     #[test]
-    fn moving_a_timing_event_to_where_it_is_or_one_not_there_changes_nothing() {
+    fn moving_timing_to_where_it_is_or_from_where_there_is_none_changes_nothing() {
         let mut song = timed(&json!([bpm_event(0, 120.0)]), None);
-        song.move_timing(0, Tick::new(0)).unwrap();
-        song.move_timing(7, Tick::new(480)).unwrap();
+        song.move_timing_at(Tick::new(0), Tick::new(0)).unwrap();
+        song.move_timing_at(Tick::new(240), Tick::new(480)).unwrap();
         assert!(!song.can_undo());
     }
 
@@ -1780,7 +1801,7 @@ mod tests {
         let own = json!([bpm_event(0, 100.0), bpm_event(480, 90.0)]);
         let mut song = timed(&json!([bpm_event(0, 120.0)]), Some(&own));
         song.open_chart(1);
-        song.move_timing(1, Tick::new(960)).unwrap();
+        song.move_timing_at(Tick::new(480), Tick::new(960)).unwrap();
         assert_eq!(song_events(&song), json!([bpm_event(0, 120.0)]));
         let chart = &song.document().document().charts[1];
         let events = serde_json::to_value(&chart.timing.as_ref().unwrap().events).unwrap();
@@ -1813,7 +1834,7 @@ mod tests {
             Err(Refusal::ReadOnly)
         ));
         assert!(matches!(
-            song.move_timing(0, Tick::new(480)),
+            song.move_timing_at(Tick::new(0), Tick::new(480)),
             Err(Refusal::ReadOnly)
         ));
     }

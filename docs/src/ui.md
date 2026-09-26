@@ -45,9 +45,10 @@ their defaults, in the dialog or on a new song; where the user has written their
 whether to import them. The song panel folds away with Ctrl+\\, and the tempo section sets the
 offset, where tick 0 sits in the audio, for songs that open with silence. Once the audio has loaded,
 its waveform draws in a strip between the timing column and the lanes, lined up with the notes. In
-the notefield, BPM and other timing changes drag along the timing column and markers along the ruler
-to another snap line, each as one step, with a guide where they will land; the song's first BPM
-change stays put. The cursor's handle on the ruler drags to scrub, and seeks while playing.
+the notefield, the timing events at one tick form a single timing point, as osu! has them: one
+line, its values stacked beneath it (`150 BPM`, then `3/4`), and one handle. Timing points drag
+along the timing column and markers along the ruler to another snap line, each as one step, with a
+guide where they will land; the point holding the song's first BPM change stays put. The cursor's handle on the ruler drags to scrub, and seeks while playing.
 
 ## Main window
 

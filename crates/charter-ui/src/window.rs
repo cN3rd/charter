@@ -270,9 +270,9 @@ pub(crate) enum Action {
     RemoveMarker(usize),
     /// Puts the cursor where the open chart's last note ends.
     JumpEnd,
-    /// Moves the open timing's event at `index` to `to`.
+    /// Moves every timing event at `from` to `to`, as one timing point.
     MoveTiming {
-        index: usize,
+        from: Tick,
         to: Tick,
     },
     /// Moves the song's marker at `index` to `to`.
@@ -1055,8 +1055,8 @@ impl Window {
             Action::RemoveBpm => self.failure = refused(song.remove_bpm().err()),
             Action::JumpTo(tick) => song.jump_to(tick),
             Action::JumpEnd => song.jump_to(song.end()),
-            Action::MoveTiming { index, to } => {
-                self.failure = refused(song.move_timing(index, to).err());
+            Action::MoveTiming { from, to } => {
+                self.failure = refused(song.move_timing_at(from, to).err());
             }
             Action::MoveMarker { index, to } => {
                 self.failure = refused(song.move_marker(index, to).err());
@@ -3241,6 +3241,34 @@ mod tests {
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
         harness.run();
         assert_eq!(event_ticks(&harness), [Tick::new(0), Tick::new(960)]);
+    }
+
+    #[test]
+    fn a_bpm_change_and_a_meter_at_one_tick_drag_as_one_timing_point() {
+        let mut harness = timed_song();
+        let meter = serde_json::json!({ "tick": 960, "kind": { "time_signature": [3, 4] } });
+        let mut document = harness
+            .state()
+            .song
+            .as_ref()
+            .unwrap()
+            .document()
+            .document()
+            .clone();
+        document
+            .timing
+            .events
+            .push(serde_json::from_value(meter).unwrap());
+        let bytes = serde_json::to_vec(&document).unwrap();
+        harness.state_mut().open(Path::new("timed.json"), &bytes);
+        harness.run();
+        let x = field(&harness).columns.timing_x();
+        let (from, to) = (on_line(&harness, x, 960), on_line(&harness, x, 1920));
+        drag(&mut harness, from, to, egui::Modifiers::NONE);
+        assert_eq!(
+            event_ticks(&harness),
+            [Tick::new(0), Tick::new(1920), Tick::new(1920)]
+        );
     }
 
     #[test]

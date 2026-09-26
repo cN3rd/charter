@@ -233,15 +233,15 @@ pub enum Gesture {
         seconds: f64,
     },
     /// The event at `index` of the open timing, being dragged to another line.
-    MoveTiming { index: usize },
+    MoveTiming { from: Tick },
     /// The song's marker at `index`, being dragged to another line.
     MoveMarker { index: usize },
     /// The cursor's handle, dragged from `y` on screen while the cursor was at `seconds`.
     Scrub { seconds: f64, y: f32 },
 }
 
-/// The handle under `pos`, if one is: the cursor's on the ruler, a timing event in the gutter or
-/// a marker on the ruler, each within grabbing distance of its line. The song's first BPM
+/// The handle under `pos`, if one is: the cursor's on the ruler, a timing point (every event at one
+/// tick) in the gutter or a marker on the ruler, each within grabbing distance of its line. The song's first BPM
 /// change stays put, so the song keeps a tempo to start from. Only the cursor's handle moves in a
 /// song that cannot be edited.
 fn handle_at(song: &Song, field: &Field, pos: Pos2) -> Option<Gesture> {
@@ -264,17 +264,22 @@ fn handle_at(song: &Song, field: &Field, pos: Pos2) -> Option<Gesture> {
             .map(|(index, _)| index)
     };
     if columns.timing.contains(pos.x) {
+        // The timing point holding the song's first BPM change stays put, so the song keeps a
+        // tempo to start from.
         let first_bpm = timing
             .events
             .iter()
-            .position(|event| matches!(event.kind, TimingKind::Bpm(_)));
-        let mut events = timing
+            .find(|event| matches!(event.kind, TimingKind::Bpm(_)))
+            .map(|event| event.tick);
+        let points: Vec<Tick> = timing
             .events
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| Some(*index) != first_bpm)
-            .map(|(index, event)| (index, event.tick));
-        return nearest(&mut events).map(|index| Gesture::MoveTiming { index });
+            .chunk_by(|a, b| a.tick == b.tick)
+            .filter_map(|point| point.first().map(|event| event.tick))
+            .filter(|tick| Some(*tick) != first_bpm)
+            .collect();
+        return nearest(&mut points.iter().copied().enumerate())
+            .and_then(|index| points.get(index).copied())
+            .map(|from| Gesture::MoveTiming { from });
     }
     if columns.ruler.contains(pos.x) {
         let markers = &song.document().document().markers;
@@ -633,7 +638,7 @@ fn let_go(
     let pos = latest?;
     match gesture? {
         Gesture::Hold { lane, from } => line(pos).map(|to| Action::Stretch { lane, from, to }),
-        Gesture::MoveTiming { index } => line(pos).map(|to| Action::MoveTiming { index, to }),
+        Gesture::MoveTiming { from } => line(pos).map(|to| Action::MoveTiming { from, to }),
         Gesture::MoveMarker { index } => line(pos).map(|to| Action::MoveMarker { index, to }),
         Gesture::Marquee { how, x, seconds } => field
             .boxed(timing, (x, seconds), pos)
@@ -871,25 +876,33 @@ fn events(
 ) {
     let timing = song.timing();
     let gutter = painter.clipped(Rect::from_x_y_ranges(columns.timing, rows));
-    for event in between(&timing.events, |event| event.tick, first, last) {
+    let shown = between(&timing.events, |event| event.tick, first, last);
+    // Every event at a tick is one timing point, as osu! has them: one line, its values
+    // beneath it.
+    for point in shown.chunk_by(|a, b| a.tick == b.tick) {
+        let Some(event) = point.first() else {
+            continue;
+        };
         let y = view.y(timing.time_at(event.tick));
         painter.hline(columns.timing, y, Stroke::new(2.0, style::TIMING_MARK));
-        let text = match &event.kind {
-            TimingKind::Bpm(bpm) => format!("bpm {bpm}"),
-            TimingKind::Stop(pause) => format!("stop {pause} s"),
-            TimingKind::Delay(pause) => format!("delay {pause} s"),
-            TimingKind::Warp(ticks) => format!("warp {ticks} ticks"),
-            TimingKind::TimeSignature(meter) => format!("meter {meter}"),
-            TimingKind::Other { name, value } => format!("{name} {value}"),
-        };
-        let at = pos2(columns.timing.min + 6.0, y + 3.0);
-        gutter.text(
-            at,
-            Align2::LEFT_TOP,
-            text,
-            FontId::monospace(11.0),
-            style::TEXT,
-        );
+        for (row, event) in (0u8..).zip(point) {
+            let text = match &event.kind {
+                TimingKind::Bpm(bpm) => format!("{bpm} BPM"),
+                TimingKind::Stop(pause) => format!("stop {pause} s"),
+                TimingKind::Delay(pause) => format!("delay {pause} s"),
+                TimingKind::Warp(ticks) => format!("warp {ticks} ticks"),
+                TimingKind::TimeSignature(meter) => meter.to_string(),
+                TimingKind::Other { name, value } => format!("{name} {value}"),
+            };
+            let at = pos2(columns.timing.min + 6.0, y + 3.0 + 13.0 * f32::from(row));
+            gutter.text(
+                at,
+                Align2::LEFT_TOP,
+                text,
+                FontId::monospace(11.0),
+                style::TEXT,
+            );
+        }
     }
 }
 
