@@ -13,7 +13,7 @@ use charter_editor::{NoteAt, Refusal, Selecting, Song, Step, Toggled, demo};
 use crate::new_song::{self, NO_AUDIO};
 use crate::notefield::{self, Zoom};
 use crate::settings::{self, Settings};
-use crate::{import, keys, panels, recovery, style, timing_panel};
+use crate::{import, keys, latency, panels, recovery, style, timing_panel};
 
 /// The extensions of the audio files a song can play.
 const AUDIO: [&str; 4] = ["ogg", "mp3", "wav", "flac"];
@@ -52,12 +52,14 @@ pub enum Request {
     /// where it is through [`Window::playhead`], and says when it ends through
     /// [`Window::playback_ended`].
     /// `clicks` are the tones to mix over it, each at its time in seconds into the audio.
-    /// `volumes` say how loud the audio and each kind of click play.
+    /// `volumes` say how loud the audio and each kind of click play, and `looping` the stretch
+    /// to play over and over, in seconds, if any.
     Play {
         from: f64,
         rate: f64,
         clicks: Vec<(f64, charter_audio::Tone)>,
         volumes: charter_audio::Volumes,
+        looping: Option<(f64, f64)>,
     },
     /// Carry on playing with the audio at this volume.
     Volume(charter_audio::Gain),
@@ -299,6 +301,15 @@ pub(crate) enum Action {
     Timing(charter_timing::Edit),
     /// Play from this many seconds into the audio with the metronome on, to hear an edit.
     Audition(f64),
+    /// Loop the ticks from `from` to `to` with the metronome, or stop looping them.
+    Loop {
+        from: Tick,
+        to: Tick,
+    },
+    /// Switch between the usual playback speed and the alternate one.
+    ToggleRate,
+    /// Mute the metronome, or unmute it, while a key is held.
+    MuteMetronome(bool),
     ToggleSync,
     /// Moves every timing event at `from` to `to`, as one timing point.
     MoveTiming {
@@ -352,8 +363,16 @@ pub struct Window {
     settings_open: bool,
     /// The timing window.
     sync: charter_timing::TimingWindow,
+    /// The ticks being looped, while a loop plays.
+    looping: Option<(Tick, Tick)>,
+    /// The usual playback speed, while the alternate one plays.
+    usual_rate: Option<Rate>,
+    /// Whether the metronome is muted for as long as a key is held.
+    muted: bool,
     /// The frame clock this frame, in seconds.
     frame_time: f64,
+    /// The latency calibration window.
+    calibration: latency::Calibration,
     /// The import timing window.
     import: import::Import,
     /// How tall a second of the open song is on screen.
@@ -566,6 +585,8 @@ impl Window {
         if !self.playing {
             return;
         }
+        // What plays now is heard a moment later: the cursor shows what is heard.
+        let seconds = seconds - self.settings.latency_ms / 1000.0;
         if let Some(song) = &mut self.song {
             let tick = song.timing().latest_tick_by(seconds);
             song.jump_to(tick);
@@ -626,6 +647,50 @@ impl Window {
     /// Plays from `from` seconds with the metronome on, whatever the settings say, so an edit to
     /// the timing is heard at once. Does nothing until the audio is ready.
     fn audition(&mut self, from: f64) {
+        self.looping = None;
+        self.start(from, None, true);
+    }
+
+    /// Loops the ticks from `from` to `to` with the metronome, or stops when they loop already.
+    fn toggle_loop(&mut self, from: Tick, to: Tick) {
+        if self.looping == Some((from, to)) && self.playing {
+            self.looping = None;
+            self.playing = false;
+            self.requests.push(Request::Pause);
+            return;
+        }
+        self.looping = Some((from, to));
+        self.play_loop();
+    }
+
+    /// Plays the loop from its start, its ends where the timing puts them now, so an edit to it is
+    /// heard on the next pass.
+    fn play_loop(&mut self) {
+        let (Some(song), Some((from, to))) = (&self.song, self.looping) else {
+            return;
+        };
+        let timing = song.timing();
+        let span = (timing.time_at(from).seconds(), timing.time_at(to).seconds());
+        self.start(span.0, Some(span), true);
+    }
+
+    /// Plays again from where the cursor is, or the loop from its start, so a change to what is
+    /// mixed in is heard.
+    fn replay(&mut self) {
+        if !self.playing {
+            return;
+        }
+        if self.looping.is_some() {
+            self.play_loop();
+        } else if let Some(song) = &self.song {
+            let from = song.timing().time_at(song.cursor()).seconds();
+            self.start(from, None, false);
+        }
+    }
+
+    /// Plays from `from` seconds, looping `looping` when given, with the metronome on when
+    /// `metronome` whatever the settings say. Does nothing until the audio is ready.
+    fn start(&mut self, from: f64, looping: Option<(f64, f64)>, metronome: bool) {
         let (Some(song), Some(&Loaded::Ready(seconds))) = (&self.song, self.loaded()) else {
             return;
         };
@@ -634,10 +699,11 @@ impl Window {
         }
         let from = from.max(0.0);
         let settings = Settings {
-            metronome: true,
+            metronome: (self.settings.metronome || metronome) && !self.muted,
             ..self.settings.clone()
         };
-        let clicks = clicks(song, &settings, from, seconds);
+        let until = looping.map_or(seconds, |(_, end)| end.min(seconds));
+        let clicks = clicks(song, &settings, (from, until), self.sync.grid);
         let volumes = self.settings.volumes;
         self.playing = true;
         self.played = Some((volumes, !clicks.is_empty()));
@@ -646,7 +712,18 @@ impl Window {
             rate: self.rate.factor(),
             clicks,
             volumes,
+            looping,
         });
+    }
+
+    /// Switches between the usual speed and the alternate one.
+    fn toggle_rate(&mut self) {
+        if let Some(usual) = self.usual_rate.take() {
+            self.set_rate(usual);
+        } else {
+            self.usual_rate = Some(self.rate);
+            self.set_rate(Rate::of(self.settings.rate_b));
+        }
     }
 
     fn toggle_play(&mut self) {
@@ -659,18 +736,9 @@ impl Window {
         };
         let from = song.timing().time_at(song.cursor()).seconds();
         match self.loaded() {
-            Some(&Loaded::Ready(seconds)) => {
-                let clicks = clicks(song, &self.settings, from, seconds);
-                self.playing = true;
-                let rate = self.rate.factor();
-                let volumes = self.settings.volumes;
-                self.played = Some((volumes, !clicks.is_empty()));
-                self.requests.push(Request::Play {
-                    from,
-                    rate,
-                    clicks,
-                    volumes,
-                });
+            Some(&Loaded::Ready(_)) => {
+                self.looping = None;
+                self.start(from, None, false);
             }
             Some(Loaded::Failed) => {}
             None if self.audio_file().is_none() => {
@@ -1139,6 +1207,12 @@ impl Window {
             Action::ToggleTicks => self.settings.tick_sound = self.settings.tick_sound.toggled(),
             Action::TogglePlay => self.toggle_play(),
             Action::Audition(from) => self.audition(from),
+            Action::Loop { from, to } => self.toggle_loop(from, to),
+            Action::ToggleRate => self.toggle_rate(),
+            Action::MuteMetronome(muted) => {
+                self.muted = muted;
+                self.replay();
+            }
             Action::ChooseAudio => self.requests.push(Request::ChooseAudio),
             Action::NudgeRate(step) => self.set_rate(self.rate.by(step)),
             Action::SetRate(factor) => self.set_rate(Rate::of(factor)),
@@ -1246,6 +1320,9 @@ impl Window {
             | Action::ToggleTicks
             | Action::TogglePlay
             | Action::Audition(_)
+            | Action::Loop { .. }
+            | Action::ToggleRate
+            | Action::MuteMetronome(_)
             | Action::ChooseAudio
             | Action::NudgeRate(_)
             | Action::SetRate(_)
@@ -1264,12 +1341,15 @@ impl Window {
             | Action::ImportTiming(_)
             | Action::MoveTiming { .. } => self.failure = retime(song, &action),
             // The timing window says itself why its edits were refused.
-            Action::Timing(edit) => {
-                if let Err(why) = edit.apply(song) {
+            Action::Timing(edit) => match edit.apply(song) {
+                Err(why) => {
                     let now = self.frame_time;
                     self.sync.refused(&edit, &why, song.timing(), now);
                 }
-            }
+                // A loop plays again from its start, so the edit is heard on this pass.
+                Ok(()) if self.looping.is_some() => self.play_loop(),
+                Ok(()) => {}
+            },
             Action::JumpTo(tick) => song.jump_to(tick),
             Action::JumpEnd => song.jump_to(song.end()),
             Action::MoveMarker { index, to } => {
@@ -1357,7 +1437,8 @@ impl Window {
         let asking = self.new_song.is_some()
             || self.discard.is_some()
             || self.restoring.is_some()
-            || self.offer.is_some();
+            || self.offer.is_some()
+            || self.calibration.open;
         let typing = ui.ctx().egui_wants_keyboard_input();
         // The timing window, once clicked, takes the keys it has a use for; undo and redo still
         // reach the song.
@@ -1506,7 +1587,18 @@ impl Window {
                     None => panels::empty(ui, self.no_drops, &mut actions),
                 }
             });
-        if let Some(kit) = settings::show(ui.ctx(), &mut self.settings, &mut self.settings_open) {
+        let asked = settings::show(ui.ctx(), &mut self.settings, &mut self.settings_open);
+        if asked == Some(settings::Asked::Calibrate) {
+            self.calibration.open = true;
+        }
+        let kit = self.settings.metronome_sound;
+        let time = (self.frame_time, kit);
+        if let Some(request) =
+            latency::show(ui.ctx(), &mut self.calibration, time, &mut self.settings)
+        {
+            self.requests.push(request);
+        }
+        if let Some(settings::Asked::Preview(kit)) = asked {
             let clicks = (0..4u8).map(|beat| {
                 let tone = if beat == 0 {
                     charter_audio::Tone::Accent(kit)
@@ -1545,6 +1637,7 @@ impl Window {
                 peaks,
                 onsets,
                 playing: self.playing,
+                latency_ms: self.settings.latency_ms,
             };
             let mut commands = Vec::new();
             charter_timing::show(ui.ctx(), inputs, &mut self.sync, &mut commands);
@@ -1559,6 +1652,16 @@ impl Window {
                     }
                     charter_timing::Command::Audition(from) => actions.push(Action::Audition(from)),
                     charter_timing::Command::TogglePlay => actions.push(Action::TogglePlay),
+                    charter_timing::Command::Loop { from, to } => {
+                        actions.push(Action::Loop { from, to });
+                    }
+                    charter_timing::Command::ToggleRate => actions.push(Action::ToggleRate),
+                    charter_timing::Command::ToggleMetronome => {
+                        actions.push(Action::ToggleMetronome);
+                    }
+                    charter_timing::Command::MuteMetronome(muted) => {
+                        actions.push(Action::MuteMetronome(muted));
+                    }
                 }
             }
         }
@@ -1676,9 +1779,11 @@ fn stretch(song: &mut Song, holding: &[(LaneIndex, Tick)]) -> Option<String> {
 fn clicks(
     song: &Song,
     settings: &Settings,
-    from: f64,
-    until: f64,
+    (from, until): (f64, f64),
+    grid: charter_timing::grid::Grid,
 ) -> Vec<(f64, charter_audio::Tone)> {
+    use charter_audio::Tone;
+    use charter_timing::grid::Line;
     let timing = song.timing();
     let mut clicks = Vec::new();
     if let (Some(tone), Some(chart)) = (settings.tick_sound.tone(), song.chart()) {
@@ -1691,27 +1796,27 @@ fn clicks(
                 .map(|at| (at, tone)),
         );
     }
-    let beat = song
-        .document()
-        .document()
-        .ticks_per_beat
-        .note_length(std::num::NonZeroU16::new(4).unwrap_or(std::num::NonZeroU16::MIN));
-    if let (true, Some(beat)) = (settings.metronome, beat) {
+    if settings.metronome {
         let kit = settings.metronome_sound;
+        // On the beats, or on every line of the timing window's grid.
+        let grid = if settings.metronome_grid {
+            grid
+        } else {
+            charter_timing::grid::Grid::default()
+        };
+        let resolution = timing.ticks_per_beat();
         let first = timing.latest_tick_by(from);
         'measures: for measure in timing.measures_from(first) {
-            let end = measure.start.checked_add(measure.length);
-            let beats = std::iter::successors(Some(measure.start), |tick| tick.checked_add(beat));
-            for tick in beats.take_while(|tick| end.is_none_or(|end| *tick < end)) {
+            for (tick, line) in grid.lines(&measure, resolution) {
                 let at = timing.time_at(tick).seconds();
                 if at > until {
                     break 'measures;
                 }
                 if at >= from {
-                    let tone = if tick == measure.start {
-                        charter_audio::Tone::Accent(kit)
-                    } else {
-                        charter_audio::Tone::Beat(kit)
+                    let tone = match line {
+                        Line::Downbeat => Tone::Accent(kit),
+                        Line::Beat => Tone::Beat(kit),
+                        Line::Sub { .. } => Tone::Sub(kit),
                     };
                     clicks.push((at, tone));
                 }
@@ -3408,6 +3513,7 @@ mod tests {
             music: Gain::from(0.5),
             ticks: Gain::from(0.25),
             metronome: Gain::from(0.75),
+            subdivision: Gain::from(0.5),
         }
     }
 
@@ -3568,6 +3674,159 @@ mod tests {
             assert!((at - want_at).abs() < 1e-9, "{clicks:?}");
             assert_eq!(*tone, want_tone, "{clicks:?}");
         }
+    }
+
+    /// Four taps whose two seconds of audio have loaded, with the timing window open.
+    fn listening(settings: Settings) -> Harness<'static, Window> {
+        let mut harness = playable_with(settings);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
+        harness.run();
+        harness.state_mut().take_requests();
+        harness
+    }
+
+    /// Where a play started, what it loops and what clicks over it.
+    type Played = (f64, Option<(f64, f64)>, Vec<(f64, Tone)>);
+
+    fn played(harness: &mut Harness<'_, Window>) -> Played {
+        let requests = harness.state_mut().take_requests();
+        let play = requests
+            .into_iter()
+            .rev()
+            .find_map(|request| match request {
+                Request::Play {
+                    from,
+                    looping,
+                    clicks,
+                    ..
+                } => Some((from, looping, clicks)),
+                _ => None,
+            });
+        play.expect("a play")
+    }
+
+    #[test]
+    fn l_loops_the_bar_under_the_cursor_with_the_metronome() {
+        let mut harness = listening(Settings::default());
+        harness.key_press(egui::Key::L);
+        harness.run();
+        let (from, looping, clicks) = played(&mut harness);
+        assert!(from.abs() < 1e-9);
+        assert_eq!(looping, Some((0.0, 2.0)));
+        assert!(
+            clicks
+                .iter()
+                .any(|(_, tone)| matches!(tone, Tone::Accent(_)))
+        );
+        harness.key_press(egui::Key::L);
+        harness.run();
+        assert_eq!(harness.state_mut().take_requests(), [Request::Pause]);
+    }
+
+    #[test]
+    fn an_edit_while_looping_plays_the_loop_again_from_its_start() {
+        let mut harness = listening(Settings::default());
+        harness.key_press(egui::Key::L);
+        harness.run();
+        played(&mut harness);
+        harness.key_press(egui::Key::Plus);
+        harness.run();
+        let (from, looping, _) = played(&mut harness);
+        assert!(from.abs() < 1e-9);
+        let (_, end) = looping.expect("looping");
+        assert!(
+            (end - 2.0).abs() > 1e-3,
+            "the bar follows the new tempo: {end}"
+        );
+    }
+
+    #[test]
+    fn r_switches_to_the_alternate_speed_and_back() {
+        let mut harness = listening(Settings::default());
+        harness.key_press(egui::Key::R);
+        harness.run();
+        assert!((harness.state().rate.factor() - 0.6).abs() < 1e-9);
+        harness.key_press(egui::Key::R);
+        harness.run();
+        assert!((harness.state().rate.factor() - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_metronome_following_the_grid_clicks_between_beats_too() {
+        let mut harness = listening(Settings {
+            metronome: true,
+            metronome_grid: true,
+            ..Settings::default()
+        });
+        harness.key_press(egui::Key::Num6);
+        harness.run();
+        space(&mut harness);
+        let (_, _, clicks) = played(&mut harness);
+        let subs = clicks
+            .iter()
+            .filter(|(_, tone)| matches!(tone, Tone::Sub(_)))
+            .count();
+        let beats = clicks
+            .iter()
+            .filter(|(_, tone)| matches!(tone, Tone::Beat(_)))
+            .count();
+        assert_eq!((beats, subs), (3, 4), "{clicks:?}");
+    }
+
+    #[test]
+    fn c_toggles_the_metronome_and_shift_c_mutes_it_while_held() {
+        let mut harness = listening(Settings {
+            metronome: true,
+            ..Settings::default()
+        });
+        space(&mut harness);
+        played(&mut harness);
+        harness.event(egui::Event::ModifiersChanged(egui::Modifiers::SHIFT));
+        harness.key_down_modifiers(egui::Modifiers::SHIFT, egui::Key::C);
+        harness.run();
+        let (_, _, muted) = played(&mut harness);
+        assert!(muted.is_empty(), "{muted:?}");
+        harness.key_up_modifiers(egui::Modifiers::SHIFT, egui::Key::C);
+        harness.run();
+        let (_, _, back) = played(&mut harness);
+        assert!(!back.is_empty());
+        harness.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+        harness.key_press(egui::Key::C);
+        harness.run();
+        assert!(!harness.state().settings().metronome);
+    }
+
+    #[test]
+    fn calibrating_latency_plays_twenty_clicks_to_tap_along_to() {
+        let mut harness = editable_demo();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Comma);
+        harness.run();
+        settings_page(&mut harness, "Sounds");
+        harness.get_by_label("Calibrate…").scroll_to_me();
+        harness.run();
+        harness.get_by_label("Calibrate…").click();
+        harness.run();
+        harness.get_by_label("Start").click();
+        harness.run();
+        let requests = harness.state_mut().take_requests();
+        let Some(Request::Preview { clicks, .. }) = requests.last() else {
+            panic!("expected clicks, got {requests:?}");
+        };
+        assert_eq!(clicks.len(), 20);
+        assert!(harness.query_by_label_contains("of 16 taps").is_some());
+    }
+
+    #[test]
+    fn the_cursor_shows_what_is_heard_by_the_calibrated_latency() {
+        let mut harness = playable_with(Settings {
+            latency_ms: 250.0,
+            ..Settings::default()
+        });
+        space(&mut harness);
+        harness.state_mut().take_requests();
+        harness.state_mut().playhead(0.75);
+        harness.run();
+        assert!(cursor_shows(&harness, "0:1:0"));
     }
 
     #[test]

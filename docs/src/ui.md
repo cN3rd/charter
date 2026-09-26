@@ -264,6 +264,19 @@ and the notes over a waveform that stays put.
   focused anchor or the selection to the onsets by least squares, Shift+F to half BPMs, shown
   before Enter applies it. D and Shift+D double and halve the tempo. The window takes the keyboard
   after a click in it and gives it back after a click elsewhere; ? lists its keys.
+  To listen, L loops the bar under the cursor and Shift+L the selection, with the metronome; the
+  loop's ends follow the map, and a committed edit plays it again from its start so the fix is
+  heard at once. R switches to the alternate speed, 60% unless the Sounds page says otherwise,
+  and back. C turns the metronome on and off, and it stays muted while Shift+C is held; it can
+  follow the window's grid, with the clicks between beats at their own volume. Settings > Sounds
+  calibrates latency: a click plays twenty times, the median of how late sixteen taps come is kept,
+  and the cursor then shows what is heard rather than what plays; the status line shows it. The
+  clicks are mixed into the music before it plays, so they cannot drift from it and need no
+  correction of their own, and muting or changing them while playing plays on from where it was.
+  Not yet built from the specification: scrub, pan split, count-in, pitch-preserving slow
+  playback, the magnifier, spectrogram, locks, the metre dialog, the command palette, the
+  overview, beat-stack view, auto-seed, suggested anchors, tap tempo and band solo; selection
+  changes are not undo steps.
   The waveform shows here whether or not the notefield's is on.
 - Timing > Import timing… reads another program's timing, pasted or from a file, and shows what
   it holds before it replaces the open chart's tempo, meters and offset as one step. Each ruleset

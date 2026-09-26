@@ -87,6 +87,14 @@ pub struct Settings {
     pub waveform: bool,
     /// Whether the grid draws a line on every sixteenth, not only on every beat.
     pub sixteenths: bool,
+    /// Whether the metronome clicks on every line of the timing window's grid, not only on the
+    /// beats.
+    pub metronome_grid: bool,
+    /// The alternate playback speed, as a factor, that R switches to in the timing window.
+    pub rate_b: f64,
+    /// The output and input latency the calibration measured, in milliseconds: what plays is
+    /// heard this much later.
+    pub latency_ms: f64,
 }
 
 impl Default for Settings {
@@ -106,8 +114,20 @@ impl Default for Settings {
             song_panel: true,
             waveform: true,
             sixteenths: false,
+            metronome_grid: false,
+            rate_b: 0.6,
+            latency_ms: 0.0,
         }
     }
+}
+
+/// What the settings window asks of the window around it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Asked {
+    /// Play a measure of this metronome sound.
+    Preview(Kit),
+    /// Open the latency calibration.
+    Calibrate,
 }
 
 /// Whether the metronome is on, read from a switch or, as older versions kept it, a sound.
@@ -204,7 +224,7 @@ impl Page {
 /// The settings window, while `open` is set: a sidebar of pages and the page chosen. Choices
 /// take effect as they are made.
 /// Draws the settings window while `open`, and says which metronome to preview, if one.
-pub fn show(ctx: &egui::Context, settings: &mut Settings, open: &mut bool) -> Option<Kit> {
+pub fn show(ctx: &egui::Context, settings: &mut Settings, open: &mut bool) -> Option<Asked> {
     let page_id = egui::Id::new("settings page");
     let mut page: Page = ctx.data(|data| data.get_temp(page_id)).unwrap_or_default();
     if !*open {
@@ -421,7 +441,7 @@ fn display(ui: &mut egui::Ui, settings: &mut Settings) {
 }
 
 /// The sounds page. Says which metronome to preview, when its button was pressed.
-fn sounds(ui: &mut egui::Ui, settings: &mut Settings) -> Option<Kit> {
+fn sounds(ui: &mut egui::Ui, settings: &mut Settings) -> Option<Asked> {
     let about = "A tick on each note as it passes. F4 turns it on and off.";
     row(ui, "Note ticks", about, |ui, caption| {
         let sound = &mut settings.tick_sound;
@@ -444,7 +464,7 @@ fn sounds(ui: &mut egui::Ui, settings: &mut Settings) -> Option<Kit> {
     row(ui, "Metronome sound", about, |ui, caption| {
         let tip = "Play a measure of it";
         if quiet_icon(ui, icon::PLAY, "Preview the metronome", tip).clicked() {
-            preview = Some(settings.metronome_sound);
+            preview = Some(Asked::Preview(settings.metronome_sound));
         }
         let kit = &mut settings.metronome_sound;
         egui::ComboBox::from_id_salt("metronome sound")
@@ -458,6 +478,30 @@ fn sounds(ui: &mut egui::Ui, settings: &mut Settings) -> Option<Kit> {
             .response
             .labelled_by(caption);
     });
+    let about = "How much later than it plays a sound is heard and answered. The playhead and \
+        taps take it off.";
+    row(ui, "Latency", about, |ui, _| {
+        if ui.button("Calibrate…").clicked() {
+            preview = Some(Asked::Calibrate);
+        }
+        ui.label(format!("{:+.0} ms", settings.latency_ms));
+    });
+    let name = "Metronome follows the grid";
+    let about =
+        "A click on every line of the timing window's grid, the ones between beats quieter.";
+    row(ui, name, about, |ui, _| {
+        switch(ui, &mut settings.metronome_grid, name);
+    });
+    let about = "The speed R switches to in the timing window, to hear flams slowed down.";
+    row(ui, "Alternate speed", about, |ui, caption| {
+        let mut percent = settings.rate_b * 100.0;
+        let slider = egui::Slider::new(&mut percent, 25.0..=100.0)
+            .suffix("%")
+            .fixed_decimals(0);
+        if ui.add(slider).labelled_by(caption).changed() {
+            settings.rate_b = percent / 100.0;
+        }
+    });
     let volumes = &mut settings.volumes;
     for (name, about, gain) in [
         ("Music volume", "The song's audio.", &mut volumes.music),
@@ -470,6 +514,11 @@ fn sounds(ui: &mut egui::Ui, settings: &mut Settings) -> Option<Kit> {
             "Metronome volume",
             "The metronome's clicks.",
             &mut volumes.metronome,
+        ),
+        (
+            "Subdivision volume",
+            "Clicks between beats, as a share of the metronome's.",
+            &mut volumes.subdivision,
         ),
     ] {
         row(ui, name, about, |ui, caption| {
@@ -606,6 +655,9 @@ mod tests {
             song_panel: false,
             waveform: false,
             sixteenths: true,
+            metronome_grid: true,
+            rate_b: 0.5,
+            latency_ms: 12.0,
         };
         let stored = serde_json::to_string(&settings).unwrap();
         assert_eq!(serde_json::from_str::<Settings>(&stored).unwrap(), settings);

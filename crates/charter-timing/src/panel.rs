@@ -69,7 +69,12 @@ pub(crate) fn toolbar(ui: &mut Ui, window: &mut TimingWindow) {
 
 /// The status line: what the gesture under the pointer does, why the last edit was refused,
 /// and how many issues the map has.
-pub(crate) fn status(ui: &mut Ui, window: &TimingWindow, frame: &Frame<'_>, hovering: bool) {
+pub(crate) fn status(
+    ui: &mut Ui,
+    window: &TimingWindow,
+    frame: &Frame<'_>,
+    (hovering, latency_ms): (bool, f64),
+) {
     ui.horizontal(|ui| {
         let hint = match (&window.gesture, window.preview.is_some()) {
             (_, true) => "Enter: apply · Esc: discard",
@@ -96,6 +101,9 @@ pub(crate) fn status(ui: &mut Ui, window: &TimingWindow, frame: &Frame<'_>, hove
             } else {
                 ui.weak(issues);
             }
+            ui.weak(format!("🎧 {latency_ms:+.0} ms"))
+                .on_hover_text("The calibrated latency; Settings > Sounds calibrates it");
+            ui.separator();
             if let Some(why) = &window.status {
                 ui.separator();
                 ui.add(egui::Label::new(RichText::new(why).color(style::WARN)).truncate());

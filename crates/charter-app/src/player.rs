@@ -161,6 +161,7 @@ impl Player {
                 rate,
                 ref clicks,
                 volumes,
+                looping,
             } => {
                 self.stop();
                 let Some((path, track, data)) = &self.loaded else {
@@ -170,6 +171,10 @@ impl Player {
                 let settings = StaticSoundSettings::new()
                     .start_position(from.max(0.0))
                     .playback_rate(rate);
+                let settings = match looping {
+                    Some((start, end)) if end > start => settings.loop_region(start.max(0.0)..end),
+                    _ => settings,
+                };
                 // Clicks are mixed in with the music at its volume; alone, kira sets it, so it can
                 // change as it plays.
                 let settings = if clicks.is_empty() {
@@ -537,6 +542,7 @@ mod tests {
             rate: 1.0,
             clicks: Vec::new(),
             volumes: charter_audio::Volumes::default(),
+            looping: None,
         };
         player.answer(&play, &mut window);
         assert!(player.playing.is_none());

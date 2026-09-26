@@ -37,6 +37,15 @@ pub enum Command {
     Audition(f64),
     /// Play, or pause.
     TogglePlay,
+    /// Loop the ticks from the first to the second with the metronome, or stop looping them
+    /// when they loop already.
+    Loop { from: Tick, to: Tick },
+    /// Switch between the usual playback speed and the alternate one.
+    ToggleRate,
+    /// Turn the metronome on or off.
+    ToggleMetronome,
+    /// Mute the metronome while a key is held, or unmute it.
+    MuteMetronome(bool),
 }
 
 /// An edit the timing window makes to a song's timing.
@@ -126,6 +135,8 @@ pub struct TimingWindow {
     keys: bool,
     /// Whether the keys are listed.
     help: bool,
+    /// Whether the metronome is muted while Shift+C is held.
+    muting: bool,
     drafts: panel::Drafts,
     /// A tick whose row to scroll to, as the second row.
     scroll_to: Option<Tick>,
@@ -153,6 +164,7 @@ impl Default for TimingWindow {
             issue: None,
             keys: true,
             help: false,
+            muting: false,
             drafts: panel::Drafts::default(),
             scroll_to: None,
             cache: None,
@@ -217,6 +229,8 @@ pub struct Inputs<'a> {
     pub peaks: Option<&'a Peaks>,
     pub onsets: &'a [Onset],
     pub playing: bool,
+    /// The calibrated output and input latency, in milliseconds, shown in the status line.
+    pub latency_ms: f64,
 }
 
 impl TimingWindow {
@@ -299,6 +313,18 @@ impl TimingWindow {
         } else {
             self.selection.clone()
         }
+    }
+
+    /// The ticks from the first selected anchor to the last, or from a lone selected anchor to the
+    /// next.
+    fn selected_span(&self, frame: &Frame<'_>) -> Option<(Tick, Tick)> {
+        let (first, last) = (*self.selection.first()?, *self.selection.last()?);
+        let to = if first == last {
+            frame.pins.iter().find(|pin| pin.tick > first)?.tick
+        } else {
+            last
+        };
+        Some((first, to))
     }
 
     fn go_to_issue(&mut self, frame: &Frame<'_>, at: usize) {
@@ -419,6 +445,13 @@ enum Intent {
     Delete,
     SelectAll,
     Help,
+    /// Loop the bar under the cursor, or the selection.
+    Loop {
+        selection: bool,
+    },
+    ToggleRate,
+    ToggleMetronome,
+    Mute,
 }
 
 /// What `key` pressed with `modifiers` asks of the timing window, if anything.
@@ -449,6 +482,10 @@ fn intent(key: Key, modifiers: Modifiers) -> Option<Intent> {
         Key::F => Intent::Fit { half_bpm: shift },
         Key::D => Intent::Scale { double: !shift },
         Key::O => Intent::Follow,
+        Key::L => Intent::Loop { selection: shift },
+        Key::R => Intent::ToggleRate,
+        Key::C if shift => Intent::Mute,
+        Key::C => Intent::ToggleMetronome,
         Key::Delete | Key::Backspace => Intent::Delete,
         Key::Questionmark | Key::Slash => Intent::Help,
         _ => {
@@ -490,6 +527,9 @@ const KEYS: &[(&str, &str)] = &[
     ("F, Shift+F", "Fit tempo, fit to half BPMs"),
     ("D, Shift+D", "Double, halve the tempo"),
     ("O", "Follow the playhead"),
+    ("L, Shift+L", "Loop the bar under the cursor, the selection"),
+    ("R", "Switch to the alternate speed and back"),
+    ("C, Shift+C held", "Metronome on or off; muted while held"),
     ("Del", "Remove the focused or selected anchors"),
     ("Ctrl+A", "Select every anchor"),
     (
@@ -536,7 +576,7 @@ pub fn show(
             egui::Panel::top("timing toolbar").show(ui, |ui| panel::toolbar(ui, window));
             let mut hovering = false;
             egui::Panel::bottom("timing status").show(ui, |ui| {
-                panel::status(ui, window, &frame, hovering);
+                panel::status(ui, window, &frame, (hovering, inputs.latency_ms));
             });
             // A width of its own, so the rows keep theirs as the inspector's numbers come and go.
             egui::Panel::right("timing inspector")
@@ -1275,6 +1315,23 @@ fn keyboard(
             })
             .collect()
     });
+    // Shift+C mutes only while held.
+    let let_go = ctx.input(|input| {
+        input.events.iter().any(|event| {
+            matches!(
+                event,
+                egui::Event::Key {
+                    key: Key::C,
+                    pressed: false,
+                    ..
+                }
+            )
+        })
+    });
+    if window.muting && let_go {
+        window.muting = false;
+        commands.push(Command::MuteMetronome(false));
+    }
     let dragging = !matches!(window.gesture, Gesture::Idle);
     for (key, modifiers) in pressed {
         let Some(intent) = intent(key, modifiers) else {
@@ -1294,6 +1351,10 @@ fn keyboard(
                     | Intent::Follow
                     | Intent::Help
                     | Intent::Escape
+                    | Intent::Loop { .. }
+                    | Intent::ToggleRate
+                    | Intent::ToggleMetronome
+                    | Intent::Mute
             )
         {
             act(window, frame, intent, commands);
@@ -1418,6 +1479,28 @@ fn act(window: &mut TimingWindow, frame: &Frame<'_>, intent: Intent, commands: &
             window.focus = window.selection.first().copied();
         }
         Intent::Help => window.help = !window.help,
+        Intent::Loop { selection } => {
+            let span = if selection {
+                window.selected_span(frame)
+            } else {
+                None
+            };
+            let span = span.or_else(|| {
+                let measure = frame.timing.measures_from(frame.cursor).next()?;
+                Some((measure.start, measure.start.checked_add(measure.length)?))
+            });
+            if let Some((from, to)) = span {
+                commands.push(Command::Loop { from, to });
+            }
+        }
+        Intent::ToggleRate => commands.push(Command::ToggleRate),
+        Intent::ToggleMetronome => commands.push(Command::ToggleMetronome),
+        Intent::Mute => {
+            if !window.muting {
+                window.muting = true;
+                commands.push(Command::MuteMetronome(true));
+            }
+        }
     }
 }
 

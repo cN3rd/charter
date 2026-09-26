@@ -17,6 +17,9 @@ pub enum Tone {
     Beat(Kit),
     /// A metronome's sound for the first beat of a measure.
     Accent(Kit),
+    /// A metronome's sound for a grid line between beats: the beat's, at the subdivision
+    /// volume.
+    Sub(Kit),
 }
 
 /// A metronome's pair of sounds, one for the first beat of a measure and one for the rest.
@@ -136,13 +139,26 @@ impl From<Gain> for f32 {
 }
 
 /// How loud the song's audio plays, and the sounds mixed over it.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Volumes {
     pub music: Gain,
     /// The tick on each note.
     pub ticks: Gain,
     pub metronome: Gain,
+    /// The metronome's clicks between beats, as a share of its volume.
+    pub subdivision: Gain,
+}
+
+impl Default for Volumes {
+    fn default() -> Self {
+        Self {
+            music: Gain::FULL,
+            ticks: Gain::FULL,
+            metronome: Gain::FULL,
+            subdivision: Gain::from(0.5),
+        }
+    }
 }
 
 impl Volumes {
@@ -152,6 +168,7 @@ impl Volumes {
         match tone {
             Tone::Click | Tone::Beep => self.ticks,
             Tone::Beat(_) | Tone::Accent(_) => self.metronome,
+            Tone::Sub(_) => Gain::from(self.metronome.amplitude() * self.subdivision.amplitude()),
         }
     }
 }
@@ -163,7 +180,7 @@ pub fn render(tone: Tone, rate: u32) -> Vec<[f32; 2]> {
     let (hertz, seconds, level) = match tone {
         Tone::Click => (2_000.0, 0.015, 0.6),
         Tone::Beep => (1_000.0, 0.06, 0.4),
-        Tone::Beat(kit) => return sample(kit.wavs().1, rate),
+        Tone::Beat(kit) | Tone::Sub(kit) => return sample(kit.wavs().1, rate),
         Tone::Accent(kit) => return sample(kit.wavs().0, rate),
     };
     let rate = f64::from(rate.max(1));
@@ -347,6 +364,14 @@ mod tests {
         let alone = mix(&Track::silence(8000, 800), &clicks, Volumes::default());
         assert!((accent(&quiet) - accent(&alone)).abs() < 1e-6);
         assert!(accent(&full) > accent(&quiet) - 1e-6);
+    }
+
+    #[test]
+    fn a_subdivision_click_is_the_beat_at_its_share_of_the_metronome() {
+        let silence = Track::silence(8000, 800);
+        let beat = mix(&silence, &[(0.0, Tone::Beat(Kit::ToneGate))], Volumes::default());
+        let sub = mix(&silence, &[(0.0, Tone::Sub(Kit::ToneGate))], Volumes::default());
+        assert!((loudest(sub.frames()) - loudest(beat.frames()) / 2.0).abs() < 1e-4);
     }
 
     #[test]
