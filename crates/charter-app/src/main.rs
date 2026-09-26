@@ -45,8 +45,10 @@ impl eframe::App for Host {
         for request in self.window.take_requests() {
             match request {
                 Request::SaveAs { name, bytes } => {
+                    // The name the dialog suggests is the project's, which becomes a folder.
+                    let name = name.strip_suffix(".json").unwrap_or(&name);
                     match song_dialog().set_file_name(name).save_file() {
-                        Some(path) => self.write(path, &bytes),
+                        Some(path) => self.save_as(&path, &bytes),
                         None => self.window.saved(Saved::Cancelled),
                     }
                 }
@@ -129,6 +131,31 @@ impl Host {
         self.window.saved(saved);
     }
 
+    /// Saves a song the user chose to save as `chosen` into a project folder named for it,
+    /// where its audio is copied too and, later, anything worked out from it.
+    fn save_as(&mut self, chosen: &Path, bytes: &[u8]) {
+        let Some(file) = project_file(chosen) else {
+            let why = format!("{} cannot name a song", chosen.display());
+            self.window.saved(Saved::Failed(why));
+            return;
+        };
+        let folder = file.parent().unwrap_or(Path::new(""));
+        if file != chosen && self.disk.exists(&file) {
+            let why = format!(
+                "{} already holds a song. Choose that file to replace it, or another name",
+                folder.display()
+            );
+            self.window.saved(Saved::Failed(why));
+            return;
+        }
+        if let Err(error) = self.disk.make_folder(folder) {
+            let why = format!("{}: {error}", folder.display());
+            self.window.saved(Saved::Failed(why));
+            return;
+        }
+        self.write(file, bytes);
+    }
+
     fn autosave(&mut self, bytes: &[u8]) {
         let Some(recovery) = &self.recovery else {
             self.window
@@ -157,6 +184,22 @@ impl Host {
 }
 
 /// A native file dialog for charter songs.
+/// Where a song saved as `chosen` goes: `<name>/<name>.json` beside it, named after the file
+/// chosen without its `.json`, or `chosen` itself when it already is such a file.
+fn project_file(chosen: &Path) -> Option<PathBuf> {
+    let name = chosen.file_name()?.to_str()?;
+    let name = name.strip_suffix(".json").unwrap_or(name);
+    if name.is_empty() {
+        return None;
+    }
+    let beside = chosen.parent()?;
+    let file = format!("{name}.json");
+    if beside.file_name().and_then(|folder| folder.to_str()) == Some(name) {
+        return Some(beside.join(file));
+    }
+    Some(beside.join(name).join(file))
+}
+
 fn song_dialog() -> rfd::FileDialog {
     rfd::FileDialog::new().add_filter("charter song", &["json"])
 }
@@ -244,6 +287,54 @@ mod tests {
                 .message()
                 .unwrap()
                 .contains("gone.ogg is not there")
+        );
+    }
+
+    #[test]
+    fn saving_as_a_name_makes_a_project_folder_holding_the_song_and_its_audio() {
+        let mut host = host(Memory::with(&[("/m/a.ogg", b"audio")]));
+        host.window.open(Path::new("/m/t.json"), SONG);
+        host.save_as(Path::new("/s/My Song.json"), b"{}");
+        assert!(files(&host, "/s/My Song/My Song.json"));
+        assert!(!files(&host, "/s/My Song.json"));
+        assert_eq!(host.window.title(), "My Song.json - charter");
+        for request in host.window.take_requests() {
+            host.answer(request);
+        }
+        assert!(files(&host, "/s/My Song/a.ogg"));
+    }
+
+    #[test]
+    fn a_name_without_an_extension_names_the_folder_and_the_file() {
+        let mut host = host(Memory::default());
+        host.save_as(Path::new("/s/Song"), b"{}");
+        assert!(files(&host, "/s/Song/Song.json"));
+    }
+
+    #[test]
+    fn saving_as_the_song_in_its_own_project_folder_writes_it_there() {
+        let mut host = host(Memory::with(&[("/s/Song/Song.json", b"old")]));
+        host.save_as(Path::new("/s/Song/Song.json"), b"new");
+        assert_eq!(
+            host.disk.read(Path::new("/s/Song/Song.json")).unwrap(),
+            b"new"
+        );
+        assert!(!files(&host, "/s/Song/Song/Song.json"));
+    }
+
+    #[test]
+    fn a_project_folder_already_holding_a_song_is_left_alone() {
+        let mut host = host(Memory::with(&[("/s/Song/Song.json", b"theirs")]));
+        host.save_as(Path::new("/s/Song.json"), b"mine");
+        assert_eq!(
+            host.disk.read(Path::new("/s/Song/Song.json")).unwrap(),
+            b"theirs"
+        );
+        assert!(
+            host.window
+                .message()
+                .unwrap()
+                .contains("already holds a song")
         );
     }
 
