@@ -27,6 +27,8 @@ pub struct Player {
     /// Audio that failed to load, which is not tried again until the window wants other audio.
     failed: Option<PathBuf>,
     playing: Option<StaticSoundHandle>,
+    /// A metronome sound being previewed, beside whatever else plays.
+    previewing: Option<StaticSoundHandle>,
 }
 
 impl Default for Player {
@@ -39,6 +41,7 @@ impl Default for Player {
             loaded: None,
             failed: None,
             playing: None,
+            previewing: None,
         }
     }
 }
@@ -163,6 +166,14 @@ impl Player {
                     }
                 }
             }
+            Request::Preview { ref clicks } => {
+                if let Some(mut sound) = self.previewing.take() {
+                    sound.stop(Tween::default());
+                }
+                let data = sound(&preview(clicks));
+                // A preview that cannot play says nothing: playing the song says why.
+                self.previewing = self.device().ok().and_then(|device| device.play(data).ok());
+            }
             Request::Pause => self.stop(),
             Request::Seek(to) => {
                 if let Some(sound) = &mut self.playing {
@@ -192,6 +203,15 @@ impl Player {
         });
         device.as_mut().map_err(|why| why.clone())
     }
+}
+
+/// `clicks` mixed over silence long enough to hold them.
+fn preview(clicks: &[(f64, charter_audio::Tone)]) -> Track {
+    const RATE: u32 = 44_100;
+    let last = clicks.iter().map(|(at, _)| *at).fold(0.0, f64::max);
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // a few seconds
+    let frames = ((last + 0.5).clamp(0.0, 10.0) * f64::from(RATE)) as usize;
+    charter_audio::mix(&Track::silence(RATE, frames), clicks)
 }
 
 /// Reads and decodes the file at `path`.
@@ -232,6 +252,24 @@ mod tests {
         let mut window = Window::new(&[]);
         window.open(Path::new("/s/song.json"), SONG);
         window
+    }
+
+    #[test]
+    fn a_preview_holds_every_click_and_a_moment_after() {
+        let kit = charter_audio::Kit::StickClick;
+        let clicks = [
+            (0.0, charter_audio::Tone::Accent(kit)),
+            (1.5, charter_audio::Tone::Beat(kit)),
+        ];
+        let track = preview(&clicks);
+        assert!((track.seconds() - 2.0).abs() < 1e-3);
+        let heard = |from: usize, to: usize| {
+            track.frames()[from..to]
+                .iter()
+                .any(|frame| frame[0].abs() > 0.01)
+        };
+        assert!(heard(0, 400));
+        assert!(heard(66_150, 66_600));
     }
 
     static FAILED_LOADS: AtomicUsize = AtomicUsize::new(0);

@@ -62,6 +62,11 @@ pub enum Request {
     Seek(f64),
     /// Carry on playing at this many times the audio's speed.
     Rate(f64),
+    /// Play `clicks` over silence, each at its time in seconds from now, alongside anything
+    /// playing: a taste of a metronome sound.
+    Preview {
+        clicks: Vec<(f64, charter_audio::Tone)>,
+    },
     /// Ask the user to choose an audio file for the open song, and pass it to
     /// [`Window::use_audio`].
     ChooseAudio,
@@ -973,7 +978,7 @@ impl Window {
             Action::ToggleSync => self.sync.open = !self.sync.open,
             Action::Help => self.help_open = !self.help_open,
             Action::ToggleSongPanel => self.settings.song_panel = !self.settings.song_panel,
-            Action::ToggleMetronome => self.settings.metronome = self.settings.metronome.toggled(),
+            Action::ToggleMetronome => self.settings.metronome = !self.settings.metronome,
             Action::ToggleTicks => self.settings.tick_sound = self.settings.tick_sound.toggled(),
             Action::TogglePlay => self.toggle_play(),
             Action::ChooseAudio => self.requests.push(Request::ChooseAudio),
@@ -1212,7 +1217,7 @@ impl Window {
             .frame(style::chrome())
             .show(ui, |ui| panels::menu_bar(ui, song, playing, &mut actions));
         let sounds = (
-            self.settings.metronome != settings::Sound::Off,
+            self.settings.metronome,
             self.settings.tick_sound != settings::Sound::Off,
         );
         let view = (self.zoom, self.rate, self.playing, self.settings.song_panel);
@@ -1284,7 +1289,19 @@ impl Window {
                     None => panels::empty(ui, &mut actions),
                 }
             });
-        settings::show(ui.ctx(), &mut self.settings, &mut self.settings_open);
+        if let Some(kit) = settings::show(ui.ctx(), &mut self.settings, &mut self.settings_open) {
+            let clicks = (0..4u8).map(|beat| {
+                let tone = if beat == 0 {
+                    charter_audio::Tone::Accent(kit)
+                } else {
+                    charter_audio::Tone::Beat(kit)
+                };
+                (f64::from(beat) * 0.5, tone)
+            });
+            self.requests.push(Request::Preview {
+                clicks: clicks.collect(),
+            });
+        }
         if self.sync.open {
             // The sync window shows the audio whether or not the notefield's waveform is on.
             let file = self.audio_file();
@@ -1386,7 +1403,8 @@ fn clicks(
         .document()
         .ticks_per_beat
         .note_length(std::num::NonZeroU16::new(4).unwrap_or(std::num::NonZeroU16::MIN));
-    if let (Some(tone), Some(beat)) = (settings.metronome.tone(), beat) {
+    if let (true, Some(beat)) = (settings.metronome, beat) {
+        let kit = settings.metronome_sound;
         let first = notefield::latest_tick_by(timing, from);
         'measures: for measure in timing.measures_from(first) {
             let end = measure.start.checked_add(measure.length);
@@ -1397,6 +1415,11 @@ fn clicks(
                     break 'measures;
                 }
                 if at >= from {
+                    let tone = if tick == measure.start {
+                        charter_audio::Tone::Accent(kit)
+                    } else {
+                        charter_audio::Tone::Beat(kit)
+                    };
                     clicks.push((at, tone));
                 }
             }
@@ -1465,7 +1488,7 @@ mod tests {
     use crate::flip::{Direction, Flip};
     use crate::recovery;
     use crate::settings::Sound;
-    use charter_audio::Tone;
+    use charter_audio::{Kit, Tone};
 
     /// The format chapter, embedded at compile time so the tests do no I/O.
     const SPEC: &str = include_str!("../../../docs/src/format.md");
@@ -2432,12 +2455,26 @@ mod tests {
         assert_eq!(harness.state().settings().direction, Direction::Left);
         settings_page(&mut harness, "Sounds");
         harness
-            .get_by_role_and_label(Role::ComboBox, "Metronome")
+            .get_by_role_and_label(Role::CheckBox, "Metronome")
             .click();
         harness.run();
-        harness.get_by_label("Beep").click();
+        harness
+            .get_by_role_and_label(Role::ComboBox, "Metronome sound")
+            .click();
         harness.run();
-        assert_eq!(harness.state().settings().metronome, Sound::Beep);
+        harness.get_by_label("Shaker burst").click();
+        harness.run();
+        assert!(harness.state().settings().metronome);
+        assert_eq!(harness.state().settings().metronome_sound, Kit::ShakerBurst);
+        harness.get_by_label("Preview the metronome").click();
+        harness.run();
+        let preview = harness.state_mut().take_requests();
+        let Some(Request::Preview { clicks }) = preview.last() else {
+            panic!("expected a preview, got {preview:?}");
+        };
+        let tones: Vec<Tone> = clicks.iter().map(|(_, tone)| *tone).collect();
+        let (accent, beat) = (Tone::Accent(Kit::ShakerBurst), Tone::Beat(Kit::ShakerBurst));
+        assert_eq!(tones, [accent, beat, beat, beat]);
         assert!(
             harness
                 .query_by_role_and_label(Role::ComboBox, "Note ticks")
@@ -2935,15 +2972,18 @@ mod tests {
     }
 
     #[test]
-    fn the_metronome_plays_on_every_beat_until_the_audio_ends() {
+    fn the_metronome_plays_on_every_beat_until_the_audio_ends_accenting_each_measure() {
         let mut harness = playable_with(Settings {
-            metronome: Sound::Click,
+            metronome: true,
+            metronome_sound: Kit::PureSine,
             ..Settings::default()
         });
         let clicks = clicks_played(&mut harness);
         let times: Vec<f64> = clicks.iter().map(|(at, _)| *at).collect();
         assert_eq!(times, [0.0, 0.5, 1.0, 1.5, 2.0]);
-        assert!(clicks.iter().all(|(_, tone)| *tone == Tone::Click));
+        let tones: Vec<Tone> = clicks.iter().map(|(_, tone)| *tone).collect();
+        let (accent, beat) = (Tone::Accent(Kit::PureSine), Tone::Beat(Kit::PureSine));
+        assert_eq!(tones, [accent, beat, beat, beat, accent]);
     }
 
     #[test]
@@ -2955,11 +2995,11 @@ mod tests {
         let settings = harness.state().settings();
         assert_eq!(
             (settings.metronome, settings.tick_sound),
-            (Sound::Click, Sound::Click)
+            (true, Sound::Click)
         );
         harness.key_press(egui::Key::F3);
         harness.run();
-        assert_eq!(harness.state().settings().metronome, Sound::Off);
+        assert!(!harness.state().settings().metronome);
     }
 
     #[test]

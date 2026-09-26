@@ -4,6 +4,7 @@ use std::num::NonZeroU16;
 
 use serde::{Deserialize, Serialize};
 
+use charter_audio::Kit;
 use charter_editor::SNAPS;
 
 use crate::flip::Direction;
@@ -69,8 +70,11 @@ pub struct Settings {
     pub direction: Direction,
     /// What sounds as each note passes the now line during playback.
     pub tick_sound: Sound,
-    /// What sounds on each beat during playback.
-    pub metronome: Sound,
+    /// Whether the metronome sounds on each beat during playback.
+    #[serde(deserialize_with = "on_or_sound")]
+    pub metronome: bool,
+    /// What the metronome sounds like.
+    pub metronome_sound: Kit,
     /// Whether unsaved changes are kept where the next run finds them.
     pub autosave: bool,
     /// How long unsaved changes wait before they are autosaved, in seconds.
@@ -90,13 +94,28 @@ impl Default for Settings {
             scale: 1.0,
             direction: Direction::Up,
             tick_sound: Sound::Off,
-            metronome: Sound::Off,
+            metronome: false,
+            metronome_sound: Kit::default(),
             autosave: true,
             autosave_seconds: 30,
             song_panel: true,
             waveform: true,
         }
     }
+}
+
+/// Whether the metronome is on, read from a switch or, as older versions kept it, a sound.
+fn on_or_sound<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Kept {
+        On(bool),
+        Sound(Sound),
+    }
+    Ok(match Kept::deserialize(deserializer)? {
+        Kept::On(on) => on,
+        Kept::Sound(sound) => sound != Sound::Off,
+    })
 }
 
 /// The shortest and longest autosave waits, in seconds.
@@ -178,12 +197,14 @@ impl Page {
 
 /// The settings window, while `open` is set: a sidebar of pages and the page chosen. Choices
 /// take effect as they are made.
-pub fn show(ctx: &egui::Context, settings: &mut Settings, open: &mut bool) {
+/// Draws the settings window while `open`, and says which metronome to preview, if one.
+pub fn show(ctx: &egui::Context, settings: &mut Settings, open: &mut bool) -> Option<Kit> {
     let page_id = egui::Id::new("settings page");
     let mut page: Page = ctx.data(|data| data.get_temp(page_id)).unwrap_or_default();
     if !*open {
-        return;
+        return None;
     }
+    let mut preview = None;
     // Its own header, the title over the sidebar and a close button over the page, rather than
     // egui's title bar, which would sit flush against the edges the window draws to.
     egui::Window::new("Settings")
@@ -223,7 +244,7 @@ pub fn show(ctx: &egui::Context, settings: &mut Settings, open: &mut bool) {
                             match page {
                                 Page::Editing => editing(ui, settings),
                                 Page::Display => display(ui, settings),
-                                Page::Sounds => sounds(ui, settings),
+                                Page::Sounds => preview = sounds(ui, settings),
                                 Page::Autosave => autosave(ui, settings),
                             }
                         });
@@ -231,6 +252,7 @@ pub fn show(ctx: &egui::Context, settings: &mut Settings, open: &mut bool) {
             });
         });
     ctx.data_mut(|data| data.insert_temp(page_id, page));
+    preview
 }
 
 /// The pages, down the left of the window on a darker strip.
@@ -383,33 +405,45 @@ fn display(ui: &mut egui::Ui, settings: &mut Settings) {
     );
 }
 
-fn sounds(ui: &mut egui::Ui, settings: &mut Settings) {
-    for (name, about, id, sound) in [
-        (
-            "Note ticks",
-            "A tick on each note as it passes. F4 turns it on and off.",
-            "note ticks",
-            &mut settings.tick_sound,
-        ),
-        (
-            "Metronome",
-            "A tick on each beat. F3 turns it on and off.",
-            "metronome",
-            &mut settings.metronome,
-        ),
-    ] {
-        row(ui, name, about, |ui, caption| {
-            egui::ComboBox::from_id_salt(id)
-                .selected_text(sound.name())
-                .show_ui(ui, |ui| {
-                    for choice in Sound::ALL {
-                        ui.selectable_value(sound, choice, choice.name());
-                    }
-                })
-                .response
-                .labelled_by(caption);
-        });
-    }
+/// The sounds page. Says which metronome to preview, when its button was pressed.
+fn sounds(ui: &mut egui::Ui, settings: &mut Settings) -> Option<Kit> {
+    let about = "A tick on each note as it passes. F4 turns it on and off.";
+    row(ui, "Note ticks", about, |ui, caption| {
+        let sound = &mut settings.tick_sound;
+        egui::ComboBox::from_id_salt("note ticks")
+            .selected_text(sound.name())
+            .show_ui(ui, |ui| {
+                for choice in Sound::ALL {
+                    ui.selectable_value(sound, choice, choice.name());
+                }
+            })
+            .response
+            .labelled_by(caption);
+    });
+    let about = "A tick on each beat, accented on each measure's first. F3 turns it on and off.";
+    row(ui, "Metronome", about, |ui, _| {
+        switch(ui, &mut settings.metronome, "Metronome");
+    });
+    let mut preview = None;
+    let about = "Synthesised click pairs, public domain.";
+    row(ui, "Metronome sound", about, |ui, caption| {
+        let tip = "Play a measure of it";
+        if quiet_icon(ui, icon::PLAY, "Preview the metronome", tip).clicked() {
+            preview = Some(settings.metronome_sound);
+        }
+        let kit = &mut settings.metronome_sound;
+        egui::ComboBox::from_id_salt("metronome sound")
+            .selected_text(kit.name())
+            .height(f32::INFINITY)
+            .show_ui(ui, |ui| {
+                for choice in Kit::ALL {
+                    ui.selectable_value(kit, choice, choice.name());
+                }
+            })
+            .response
+            .labelled_by(caption);
+    });
+    preview
 }
 
 fn autosave(ui: &mut egui::Ui, settings: &mut Settings) {
@@ -493,7 +527,16 @@ mod tests {
         let settings = Settings::default();
         assert_eq!(settings.direction, Direction::Up);
         assert_eq!(settings.tick_sound, Sound::Off);
-        assert_eq!(settings.metronome, Sound::Off);
+        assert!(!settings.metronome);
+        assert_eq!(settings.metronome_sound, Kit::ToneGate);
+    }
+
+    #[test]
+    fn a_metronome_stored_as_a_sound_by_an_older_version_comes_back_on_or_off() {
+        let on: Settings = serde_json::from_str(r#"{ "metronome": "beep" }"#).unwrap();
+        assert!(on.metronome);
+        let off: Settings = serde_json::from_str(r#"{ "metronome": "off" }"#).unwrap();
+        assert!(!off.metronome);
     }
 
     #[test]
@@ -505,7 +548,8 @@ mod tests {
             scale: 1.25,
             direction: Direction::Right,
             tick_sound: Sound::Click,
-            metronome: Sound::Beep,
+            metronome: true,
+            metronome_sound: Kit::ShakerBurst,
             autosave: false,
             autosave_seconds: 90,
             song_panel: false,

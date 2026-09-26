@@ -63,7 +63,11 @@ impl eframe::App for Host {
                         self.window.use_audio(&path);
                     }
                 }
-                Request::Play { .. } | Request::Pause | Request::Seek(_) | Request::Rate(_) => {
+                Request::Play { .. }
+                | Request::Preview { .. }
+                | Request::Pause
+                | Request::Seek(_)
+                | Request::Rate(_) => {
                     self.player.answer(&request, &mut self.window);
                 }
                 files => self.answer(files),
