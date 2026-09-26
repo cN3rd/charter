@@ -3,7 +3,7 @@
 use std::error::Error;
 use std::fmt::Debug;
 
-use crate::document::Metadata;
+use crate::document::{Metadata, Timing};
 use crate::json::ValidDocument;
 use crate::unit::LaneCount;
 
@@ -22,6 +22,14 @@ pub struct NewSong {
     pub metadata: Metadata,
     pub layout: usize,
     pub charts: Vec<String>,
+}
+
+/// Timing read from another program's format, ready to take the place of a song's.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ImportedTiming {
+    pub timing: Timing,
+    /// What the format held that the timing leaves out, in words for the user.
+    pub left_out: Vec<String>,
 }
 
 /// A game's rules over the documents that name it as their ruleset, past the format's own.
@@ -66,6 +74,28 @@ pub trait RulesetPlugin: Debug {
         let _ = song;
         Err(format!("{} cannot start songs", self.name()).into())
     }
+
+    /// The timing format this plugin reads, named as its users know it, such as `osu! timing
+    /// points`. None means it reads none.
+    fn timing_format(&self) -> Option<&str> {
+        None
+    }
+
+    /// Timing read from `text`, in the plugin's [timing format](Self::timing_format), for the
+    /// song `into`: at its resolution, and keeping what only this game has only when `into` is
+    /// of this game. Timing of any game can come from any plugin's format.
+    ///
+    /// # Errors
+    ///
+    /// Returns why `text` holds no timing, such as the first line that does not read.
+    fn import_timing(
+        &self,
+        text: &str,
+        into: &ValidDocument,
+    ) -> Result<ImportedTiming, Box<dyn Error + Send + Sync>> {
+        let _ = (text, into);
+        Err(format!("{} imports no timing", self.id()).into())
+    }
 }
 
 #[cfg(test)]
@@ -103,5 +133,19 @@ mod tests {
         let refused = Checks.new_song(&song).unwrap_err();
         assert_eq!(refused.to_string(), "checks cannot start songs");
         assert_eq!(Checks.name(), "checks");
+    }
+
+    #[test]
+    fn a_plugin_that_only_checks_imports_no_timing() {
+        assert_eq!(Checks.timing_format(), None);
+        let document = ValidDocument::from_json(
+            br#"{ "format_version": 0, "ruleset": { "id": "checks", "version": "1" },
+            "metadata": { "title": "t", "artist": "a", "audio": "a.ogg" },
+            "timing": { "offset_seconds": 0.0, "events": [ { "tick": 0, "kind": { "bpm": 120.0 } } ] },
+            "charts": [] }"#,
+        )
+        .unwrap();
+        let refused = Checks.import_timing("", &document).unwrap_err();
+        assert_eq!(refused.to_string(), "checks imports no timing");
     }
 }

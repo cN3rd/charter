@@ -337,6 +337,13 @@ impl fmt::Display for LaneIndex {
     }
 }
 
+/// A format converter counts ticks by number, turning another program's times into them.
+impl From<TicksPerBeat> for u16 {
+    fn from(resolution: TicksPerBeat) -> Self {
+        resolution.0.get()
+    }
+}
+
 /// A view places lanes by number, which is the one place a lane stops being a type.
 impl From<LaneIndex> for u16 {
     fn from(lane: LaneIndex) -> Self {
