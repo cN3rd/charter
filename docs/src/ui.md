@@ -14,13 +14,16 @@ mock, with a made-up song in each of StepMania, Tap Tap Revenge, osu!mania, Proj
 Arcaea. `cargo run -p charter-app` is the editor so far. It draws charts in the shared vocabulary's
 glyphs, since no ruleset plugin draws yet, and starts and edits songs of the built-in rulesets. Lane
 keys and Ctrl with the mouse place taps, holds and mines; the mouse selects and Delete removes the
-selection; undo and redo return to where each edit was made. The song panel shows the tempo at the
-cursor and the stretch of the song it rules, from its BPM change to the next. A BPM typed there, or
-stepped with its − and + buttons or F7 and F8, changes that stretch's tempo as one step, and never
-adds a change on its own: "Add a BPM change here" starts one at the cursor, and "Remove this BPM
-change" lets the tempo before it carry on, though the song's first stays. The offset, where beat 0
-falls in the audio, reads in milliseconds, steps by 1 ms with its buttons or Alt+Left and
-Alt+Right, 10 ms with Shift, and sits beside a button that opens the sync window. A value typed
+selection; undo and redo return to where each edit was made. The song panel's Timing section is laid out as osu!'s timing panel is.
+The song's offset comes first, on its own: where beat 0 falls in the audio, in milliseconds,
+stepped by 1 ms with its buttons or Alt+Left and Alt+Right, 10 ms with Shift, beside a button that
+opens the sync window. Below it every timing point is listed, a tick's tempo, meter, stops and
+game events together as one point, with the point in effect at the cursor highlighted; clicking a
+point moves the cursor to it. Under the list are that point's BPM, with − and + buttons, and its
+meter, such as 3/4 or 7/8, each showing what is in effect there and setting it on the point, and a
+button that removes the point, except the one that starts the tempo. "Add a timing point here"
+starts one at the cursor at the tempo it has there, and says why it cannot when the cursor is on
+one already. F7 and F8 still nudge the tempo in effect at the cursor. A value typed
 into a field applies on Enter or when the field is left; Escape leaves it as it was. Below it the song's markers are
 listed; clicking one jumps the cursor there, a name typed and entered names the section at the
 cursor or starts one, and any marker can be removed, each as one step. Songs open and save through

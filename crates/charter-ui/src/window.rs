@@ -13,7 +13,7 @@ use charter_editor::{NoteAt, Refusal, Selecting, Song, Step, Toggled, demo};
 use crate::new_song::{self, NO_AUDIO};
 use crate::notefield::{self, Zoom};
 use crate::settings::{self, Settings};
-use crate::{import, keys, panels, recovery, style, sync};
+use crate::{import, keys, panels, recovery, style, sync, timing_panel};
 
 /// The extensions of the audio files a song can play.
 const AUDIO: [&str; 4] = ["ogg", "mp3", "wav", "flac"];
@@ -270,12 +270,14 @@ pub(crate) enum Action {
     /// Makes the audio play at this factor of its speed.
     SetRate(f64),
     SetVolumes(charter_audio::Volumes),
-    /// Makes the tempo from the cursor on this.
-    SetBpm(charter_core::Bpm),
+    /// Gives the timing point on the tick this tempo.
+    SetBpmAt(Tick, charter_core::Bpm),
+    /// Gives the timing point on the tick this meter.
+    SetMeterAt(Tick, charter_core::TimeSignature),
+    /// Removes the timing point on the tick.
+    RemoveTimingAt(Tick),
     /// Puts tick 0 of the open timing this far into the audio.
     SetOffset(charter_core::Origin),
-    /// Removes the BPM change at the cursor.
-    RemoveBpm,
     /// Starts a BPM change at the cursor, at the tempo in effect there.
     AddBpm,
     /// Moves the offset by this many seconds, later in the audio when positive.
@@ -391,10 +393,8 @@ pub struct Window {
     new_song: Option<new_song::Draft>,
     /// Tags that would change the title and artist, waiting on whether to take them.
     offer: Option<Offer>,
-    /// A BPM being typed, while its field has the keyboard.
-    bpm_draft: Option<String>,
-    /// An offset being typed, while its field has the keyboard.
-    offset_draft: Option<String>,
+    /// What is being typed into the timing section of the song panel.
+    timing_drafts: timing_panel::Drafts,
     /// A section name being typed, while its field has the keyboard.
     section_draft: Option<String>,
     /// Whether the keyboard shortcuts are showing.
@@ -1210,9 +1210,10 @@ impl Window {
             Action::SelectBetween { ticks, lanes, how } => {
                 song.select_between(ticks.0..=ticks.1, lanes.0..=lanes.1, how);
             }
-            Action::SetBpm(_)
+            Action::SetBpmAt(..)
+            | Action::SetMeterAt(..)
+            | Action::RemoveTimingAt(_)
             | Action::SetOffset(_)
-            | Action::RemoveBpm
             | Action::AddBpm
             | Action::NudgeOffset(_)
             | Action::ImportTiming(_)
@@ -1383,7 +1384,7 @@ impl Window {
                 panels::status_bar(ui, self.song.as_ref(), (audio_state, self.playing));
             });
         if let Some(song) = self.song.as_ref().filter(|_| self.settings.song_panel) {
-            let bpm = (&mut self.bpm_draft, &mut self.offset_draft);
+            let timing = &mut self.timing_drafts;
             let section = &mut self.section_draft;
             let refused = egui::Panel::left("song")
                 .frame(style::panel())
@@ -1392,7 +1393,7 @@ impl Window {
                     egui::ScrollArea::vertical()
                         .show(ui, |ui| {
                             panels::song_panel(ui, song, &mut actions);
-                            let refused = panels::tempo(ui, song, bpm, &mut actions);
+                            let refused = timing_panel::section(ui, song, timing, &mut actions);
                             panels::markers(ui, song, section, &mut actions);
                             panels::details(ui, song);
                             refused
@@ -1654,9 +1655,10 @@ fn shown_peaks<'a>(
 /// Makes the timing edit `action` asks for, and says why if it cannot.
 fn retime(song: &mut Song, action: &Action) -> Option<String> {
     let done = match action {
-        Action::SetBpm(bpm) => song.set_bpm(*bpm),
+        Action::SetBpmAt(tick, bpm) => song.set_bpm_at(*tick, *bpm),
+        Action::SetMeterAt(tick, meter) => song.set_meter_at(*tick, *meter),
+        Action::RemoveTimingAt(tick) => song.remove_timing_at(*tick),
         Action::SetOffset(offset) => song.set_offset(*offset),
-        Action::RemoveBpm => song.remove_bpm(),
         Action::AddBpm => song.add_bpm_change(),
         Action::ImportTiming(timing) => song.replace_timing(timing.as_ref().clone()),
         Action::NudgeOffset(by) => {
@@ -2762,6 +2764,15 @@ mod tests {
         }
     }
 
+    /// Clicks what `label` names in the song panel, scrolled into view first, since the panel
+    /// runs past the bottom of the test's window.
+    fn click_in_panel(harness: &mut Harness<'_, Window>, label: &str) {
+        harness.get_by_label(label).scroll_to_me();
+        harness.run();
+        harness.get_by_label(label).click();
+        harness.run();
+    }
+
     fn bpm_field<'a>(harness: &'a Harness<'_, Window>) -> egui_kittest::Node<'a> {
         harness.get_by_role_and_label(Role::TextInput, "BPM")
     }
@@ -2820,12 +2831,10 @@ mod tests {
     #[test]
     fn the_bpm_steps_up_and_down_a_whole_bpm_at_a_time() {
         let mut harness = editable_demo();
-        harness.get_by_label("Raise the BPM by 1").click();
-        harness.run();
+        click_in_panel(&mut harness, "Raise the BPM by 1");
         assert_eq!(bpm_at_cursor(&harness), Some((0, "151".to_owned())));
         harness.get_by_label("Lower the BPM by 1").click();
-        harness.get_by_label("Lower the BPM by 1").click();
-        harness.run();
+        click_in_panel(&mut harness, "Lower the BPM by 1");
         assert_eq!(bpm_at_cursor(&harness), Some((0, "149".to_owned())));
     }
 
@@ -2850,18 +2859,75 @@ mod tests {
     }
 
     #[test]
-    fn a_bpm_change_is_added_at_the_cursor_and_removed_by_buttons_but_not_the_first() {
+    fn a_timing_point_is_added_at_the_cursor_and_removed_but_not_the_first() {
         let mut harness = editable_demo();
-        assert!(harness.query_by_label("Remove this BPM change").is_none());
+        assert!(harness.query_by_label("Remove this timing point").is_none());
+        let add = |harness: &Harness<'_, Window>| {
+            harness
+                .get_by_label("Add a timing point here")
+                .accesskit_node()
+                .is_disabled()
+        };
+        assert!(add(&harness), "the cursor is on the first point");
         harness.key_press(egui::Key::ArrowDown);
         harness.run();
-        harness.get_by_label("Add a BPM change here").click();
+        assert!(!add(&harness));
+        harness.get_by_label("Add a timing point here").click();
         harness.run();
         assert_eq!(bpm_at_cursor(&harness), Some((240, "150".to_owned())));
-        assert!(harness.query_by_label("Add a BPM change here").is_none());
-        harness.get_by_label("Remove this BPM change").click();
-        harness.run();
+        assert!(add(&harness));
+        click_in_panel(&mut harness, "Remove this timing point");
         assert_eq!(bpm_at_cursor(&harness), Some((0, "150".to_owned())));
+    }
+
+    #[test]
+    fn the_timing_points_list_shows_every_point_and_jumps_to_one_clicked() {
+        let mut harness = editable_demo();
+        let rows = harness
+            .query_all_by_label_contains("Timing point at")
+            .count();
+        assert_eq!(rows, 5);
+        harness.get_by_label("Timing point at 16:0:0").click();
+        harness.run();
+        assert!(cursor_shows(&harness, "16:0:0"));
+        assert_eq!(bpm_field(&harness).value().as_deref(), Some("180"));
+    }
+
+    fn meter_field<'a>(harness: &'a Harness<'_, Window>) -> egui_kittest::Node<'a> {
+        harness.get_by_role_and_label(Role::TextInput, "Meter")
+    }
+
+    #[test]
+    fn a_meter_typed_starts_measures_of_it_at_the_timing_point() {
+        let mut harness = editable_demo();
+        assert_eq!(meter_field(&harness).value().as_deref(), Some("4/4"));
+        meter_field(&harness).focus();
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        meter_field(&harness).type_text("3/4");
+        harness.run();
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+        let song = harness.state().song.as_ref().unwrap();
+        let meter = song
+            .timing()
+            .measures_from(Tick::new(0))
+            .next()
+            .unwrap()
+            .meter;
+        assert_eq!(meter.to_string(), "3/4");
+        meter_field(&harness).focus();
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        meter_field(&harness).type_text("waltz");
+        harness.run();
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+        assert!(
+            harness
+                .query_by_label_contains("waltz is not a meter")
+                .is_some()
+        );
     }
 
     #[test]
@@ -2955,8 +3021,7 @@ mod tests {
         let mut harness = window(Window::new(&[]));
         harness.state_mut().open_demo();
         harness.run();
-        harness.get_by_label("Verse").click();
-        harness.run();
+        click_in_panel(&mut harness, "Verse");
         assert!(cursor_shows(&harness, "8:0:0"));
         assert!(
             harness
@@ -3941,7 +4006,8 @@ mod tests {
         let mut app = Window::new(IMPORTING);
         app.open_demo();
         let mut harness = window(app);
-        harness.get_by_label("Timing").click();
+        // The menu, which comes before the song panel's section of the same name.
+        harness.query_all_by_label("Timing").next().unwrap().click();
         harness.run();
         harness.get_by_label("Import timing…").click();
         harness.run();

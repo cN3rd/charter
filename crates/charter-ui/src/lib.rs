@@ -13,6 +13,7 @@ mod recovery;
 mod settings;
 mod style;
 mod sync;
+mod timing_panel;
 mod window;
 
 pub use flip::Direction;
