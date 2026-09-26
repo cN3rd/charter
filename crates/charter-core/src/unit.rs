@@ -337,6 +337,13 @@ impl fmt::Display for LaneIndex {
     }
 }
 
+/// A span of ticks as a number, as a grid of them is counted.
+impl From<Ticks> for u32 {
+    fn from(ticks: Ticks) -> Self {
+        ticks.0.get()
+    }
+}
+
 /// An editor counts ticks by number where it lays out or moves many of them at once.
 impl From<Tick> for i64 {
     fn from(tick: Tick) -> Self {

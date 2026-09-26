@@ -6,6 +6,9 @@
 //! The window reads a song and draws it; what the user asks of it comes back as [`Command`]s,
 //! which its host carries out, since the host owns the song, its history and its playback.
 
+pub mod accuracy;
+pub mod grid;
+
 use charter_audio::Peaks;
 use charter_core::{Measure, Tick, Ticks, Timing, TimingKind, Valid};
 use charter_editor::{Refusal, Song};

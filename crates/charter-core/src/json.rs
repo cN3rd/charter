@@ -7,7 +7,7 @@ use serde::de::{self, Deserializer, MapAccess, SeqAccess, Visitor};
 use crate::document::{Chart, Child, Document, FORMAT_VERSION, Object, Shape, Timing};
 use crate::error::Error;
 use crate::grid::{GridPosition, Measures};
-use crate::unit::{Bpm, ResolvedTime, Tick};
+use crate::unit::{Bpm, ResolvedTime, Tick, TicksPerBeat};
 use crate::validate::validate;
 
 /// Largest document a reader accepts.
@@ -175,6 +175,12 @@ impl Valid<'_, Timing> {
     pub fn tempo_for(&self, from: Tick, to: Tick, seconds: f64) -> Option<Bpm> {
         self.part
             .tempo_for(self.document.ticks_per_beat, from, to, seconds)
+    }
+
+    /// How many ticks the document counts to a beat, which a grid over this timing steps by.
+    #[must_use]
+    pub fn ticks_per_beat(&self) -> TicksPerBeat {
+        self.document.ticks_per_beat
     }
 
     /// The last tick an object on which is hit at or before `seconds`, the inverse of

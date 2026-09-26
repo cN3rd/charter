@@ -13,3 +13,6 @@ charter-core.workspace = true
 charter-editor.workspace = true
 charter-style.workspace = true
 egui.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

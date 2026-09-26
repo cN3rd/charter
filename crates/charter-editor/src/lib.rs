@@ -9,3 +9,4 @@ mod song;
 mod sync;
 
 pub use song::{NoteAt, Refusal, SNAPS, Selecting, Song, Step, Toggled};
+pub use sync::Pin;
