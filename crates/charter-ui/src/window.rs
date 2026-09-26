@@ -13,7 +13,7 @@ use charter_editor::{NoteAt, Refusal, Selecting, Song, Step, Toggled, demo};
 use crate::new_song::{self, NO_AUDIO};
 use crate::notefield::{self, Zoom};
 use crate::settings::{self, Settings};
-use crate::{keys, panels, recovery, style};
+use crate::{keys, panels, recovery, style, sync};
 
 /// The extensions of the audio files a song can play.
 const AUDIO: [&str; 4] = ["ogg", "mp3", "wav", "flac"];
@@ -270,6 +270,14 @@ pub(crate) enum Action {
     RemoveMarker(usize),
     /// Puts the cursor where the open chart's last note ends.
     JumpEnd,
+    /// Makes the beat on `tick` fall `seconds` into the audio, anchoring it there.
+    Sync {
+        tick: Tick,
+        seconds: f64,
+    },
+    /// Removes the anchor on the tick.
+    Unsync(Tick),
+    ToggleSync,
     /// Moves every timing event at `from` to `to`, as one timing point.
     MoveTiming {
         from: Tick,
@@ -320,6 +328,8 @@ pub struct Window {
     settings: Settings,
     /// Whether the settings window is showing.
     settings_open: bool,
+    /// The sync window.
+    sync: sync::Sync,
     /// How tall a second of the open song is on screen.
     zoom: Zoom,
     /// Why the last file failed to open, or the last edit was refused.
@@ -960,6 +970,7 @@ impl Window {
             Action::Save => self.saving = Some(Saving::InPlace),
             Action::SaveAs => self.saving = Some(Saving::Elsewhere),
             Action::Settings => self.settings_open = !self.settings_open,
+            Action::ToggleSync => self.sync.open = !self.sync.open,
             Action::Help => self.help_open = !self.help_open,
             Action::ToggleSongPanel => self.settings.song_panel = !self.settings.song_panel,
             Action::ToggleMetronome => self.settings.metronome = self.settings.metronome.toggled(),
@@ -1037,6 +1048,7 @@ impl Window {
             | Action::Save
             | Action::SaveAs
             | Action::Settings
+            | Action::ToggleSync
             | Action::Help
             | Action::ToggleSongPanel
             | Action::ToggleMetronome
@@ -1050,14 +1062,14 @@ impl Window {
             Action::SelectBetween { ticks, lanes, how } => {
                 song.select_between(ticks.0..=ticks.1, lanes.0..=lanes.1, how);
             }
-            Action::SetBpm(bpm) => self.failure = refused(song.set_bpm(bpm).err()),
-            Action::SetOffset(offset) => self.failure = refused(song.set_offset(offset).err()),
-            Action::RemoveBpm => self.failure = refused(song.remove_bpm().err()),
+            Action::SetBpm(_)
+            | Action::SetOffset(_)
+            | Action::RemoveBpm
+            | Action::Sync { .. }
+            | Action::Unsync(_)
+            | Action::MoveTiming { .. } => self.failure = retime(song, &action),
             Action::JumpTo(tick) => song.jump_to(tick),
             Action::JumpEnd => song.jump_to(song.end()),
-            Action::MoveTiming { from, to } => {
-                self.failure = refused(song.move_timing_at(from, to).err());
-            }
             Action::MoveMarker { index, to } => {
                 self.failure = refused(song.move_marker(index, to).err());
             }
@@ -1156,6 +1168,7 @@ impl Window {
                     | Action::Open
                     | Action::NewSong
                     | Action::Settings
+                    | Action::ToggleSync
                     | Action::Help
             )
         };
@@ -1272,6 +1285,24 @@ impl Window {
                 }
             });
         settings::show(ui.ctx(), &mut self.settings, &mut self.settings_open);
+        if self.sync.open {
+            // The sync window shows the audio whether or not the notefield's waveform is on.
+            let file = self.audio_file();
+            let peaks = self
+                .waveform
+                .as_ref()
+                .filter(|(of, _)| Some(of.as_path()) == file.as_deref())
+                .map(|(_, peaks)| peaks.as_ref());
+            let song = self.song.as_ref();
+            sync::show(
+                ui.ctx(),
+                song,
+                peaks,
+                &mut self.sync,
+                self.playing,
+                &mut actions,
+            );
+        }
         if dismissed {
             self.failure = None;
         }
@@ -1384,6 +1415,20 @@ fn shown_peaks<'a>(
 ) -> Option<&'a Peaks> {
     let (of, peaks) = waveform?;
     (settings.waveform && Some(of.as_path()) == file).then_some(peaks.as_ref())
+}
+
+/// Makes the timing edit `action` asks for, and says why if it cannot.
+fn retime(song: &mut Song, action: &Action) -> Option<String> {
+    let done = match action {
+        Action::SetBpm(bpm) => song.set_bpm(*bpm),
+        Action::SetOffset(offset) => song.set_offset(*offset),
+        Action::RemoveBpm => song.remove_bpm(),
+        Action::Sync { tick, seconds } => song.sync(*tick, *seconds),
+        Action::Unsync(tick) => song.unsync(*tick),
+        Action::MoveTiming { from, to } => song.move_timing_at(*from, *to),
+        _ => Ok(()),
+    };
+    refused(done.err())
 }
 
 /// Raises the tempo at the cursor by `by` BPM, and says why if it cannot.
@@ -3229,6 +3274,102 @@ mod tests {
             .iter()
             .map(|event| event.tick)
             .collect()
+    }
+
+    fn syncing() -> Harness<'static, Window> {
+        let mut harness = timed_song();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
+        harness.run();
+        harness
+    }
+
+    /// Where `tick` lies across its measure's row in the sync window.
+    fn in_row(harness: &Harness<'_, Window>, tick: i32) -> egui::Pos2 {
+        let song = harness.state().song.as_ref().unwrap();
+        let measure = song.timing().measures_from(Tick::new(tick)).next().unwrap();
+        let row = harness
+            .get_by_label(&format!("Measure {}", measure.number))
+            .rect();
+        #[allow(clippy::cast_possible_truncation)] // a fraction of a row
+        let across = measure.fraction(Tick::new(tick)) as f32;
+        egui::pos2(row.left() + across * row.width(), row.center().y)
+    }
+
+    fn seconds_at(harness: &Harness<'_, Window>, tick: i32) -> f64 {
+        let song = harness.state().song.as_ref().unwrap();
+        song.timing().time_at(Tick::new(tick)).seconds()
+    }
+
+    #[test]
+    fn ctrl_t_opens_and_closes_the_sync_window() {
+        let mut harness = timed_song();
+        assert!(harness.query_by_label("Measure 0").is_none());
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
+        harness.run();
+        assert!(harness.query_by_label("Measure 0").is_some());
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
+        harness.run();
+        assert!(harness.query_by_label("Measure 0").is_none());
+    }
+
+    #[test]
+    fn dragging_a_hit_onto_a_grid_line_in_the_sync_window_puts_that_beat_there() {
+        let mut harness = syncing();
+        let heard = seconds_at(&harness, 2160);
+        let (from, to) = (in_row(&harness, 2160), in_row(&harness, 1920));
+        drag(&mut harness, from, to, egui::Modifiers::NONE);
+        assert!((seconds_at(&harness, 1920) - heard).abs() < 2e-3);
+        assert_eq!(
+            event_ticks(&harness),
+            [Tick::new(0), Tick::new(960), Tick::new(1920)]
+        );
+        assert!((seconds_at(&harness, 960) - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn clicking_in_the_sync_window_anchors_the_nearest_grid_line_where_it_is() {
+        let mut harness = syncing();
+        let heard = seconds_at(&harness, 1920);
+        let near = in_row(&harness, 1950);
+        click(&mut harness, near, egui::Modifiers::NONE);
+        assert_eq!(
+            event_ticks(&harness),
+            [Tick::new(0), Tick::new(960), Tick::new(1920)]
+        );
+        assert!((seconds_at(&harness, 1920) - heard).abs() < 1e-9);
+    }
+
+    #[test]
+    fn double_clicking_an_anchor_in_the_sync_window_removes_it() {
+        let mut harness = syncing();
+        // Each harness pass moves the clock a quarter second, more than egui allows between the
+        // clicks of a double-click.
+        harness
+            .ctx
+            .options_mut(|options| options.input_options.max_double_click_delay = 2.0);
+        let at = in_row(&harness, 960);
+        harness.hover_at(at);
+        for _ in 0..2 {
+            press(&harness, at, true, egui::Modifiers::NONE);
+            press(&harness, at, false, egui::Modifiers::NONE);
+            harness.step();
+        }
+        harness.run();
+        assert_eq!(event_ticks(&harness), [Tick::new(0)]);
+    }
+
+    #[test]
+    fn ctrl_wheel_in_the_sync_window_nudges_the_nearest_anchor_by_two_milliseconds() {
+        let mut harness = syncing();
+        harness.hover_at(in_row(&harness, 1000));
+        harness.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: egui::vec2(0.0, 1.0),
+            modifiers: egui::Modifiers::COMMAND,
+            phase: egui::TouchPhase::Move,
+        });
+        harness.run();
+        assert!((seconds_at(&harness, 960) - 0.502).abs() < 1e-6);
     }
 
     #[test]

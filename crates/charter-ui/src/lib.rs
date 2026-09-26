@@ -11,6 +11,7 @@ mod panels;
 mod recovery;
 mod settings;
 mod style;
+mod sync;
 mod window;
 
 pub use flip::Direction;

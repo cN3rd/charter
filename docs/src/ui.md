@@ -205,9 +205,17 @@ and the notes over a waveform that stays put.
 - Sync happens in the notefield. Ctrl-dragging a beat line onto an onset moves the origin, and
   Shift-dragging does it by changing the BPM leading up to that line. The modifiers are Tempora's,
   and the effect is ArrowVortex's visual sync, which moves a row to a target time through the
-  offset or a BPM. Fine and coarse nudges take Tempora's 2 ms and 10 ms. The
-  [sync workstation](research/topics/sync-workstation.md) topic finds no evidence that sync needs
-  a view of its own, so this draft has none.
+  offset or a BPM. Fine and coarse nudges take Tempora's 2 ms and 10 ms.
+- The sync window (Timing > Sync window, Ctrl+T) is Tempora's measure-per-row view as an optional
+  lens over the same song, per the [sync workstation](research/topics/sync-workstation.md)
+  topic. Each row is one measure of audio laid out by beat, so hits on the grid line up down the
+  rows. Every BPM change is an anchor pinning its beat to the audio, as in
+  [sync anchors](research/topics/sync-anchors.md), without the format storing anchors: dragging
+  a hit onto a grid line anchors that line to the hit, and the tempo on either side changes so
+  the neighbouring anchors stay where they are in the audio. The first anchor moves the offset
+  instead. Clicking adds an anchor where the beat already is, double-clicking removes one,
+  Ctrl+wheel nudges the nearest by 2 ms (10 ms with Shift), and right-clicking plays from there.
+  The waveform shows here whether or not the notefield's is on.
 - The ruler numbers measures from the time-signature grid and labels markers. Measure 0 is the
   one holding tick 0, and measures before it count down from -1. Sections and bookmarks draw as
   lines across every column, since the core knows them without the ruleset.
@@ -241,7 +249,7 @@ and the notes over a waveform that stays put.
 
 - The waveform behind the notes instead of beside them
 - C-mod as the default, or a default per ruleset
-- Tempora's measure-per-row view for sync, if the notefield proves clumsy
+- Tempora's plain drag of an anchor's musical position, and its multi-select, in the sync window
 - Test play, which osu! and Quaver have and this draft leaves out
 - Two charts side by side, which the column layout would allow
 - Plugin timing keys too long for the gutter, such as `osu_mania.scroll_speed`
