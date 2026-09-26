@@ -1,4 +1,4 @@
-use crate::document::{Timing, TimingKind};
+use crate::document::{Timing, TimingEvent, TimingKind};
 use crate::unit::{Bpm, ResolvedTime, Tick, TicksPerBeat};
 
 impl Timing {
@@ -17,6 +17,45 @@ impl Timing {
         } else {
             offset - self.elapsed(ticks_per_beat, tick, zero)?
         }))
+    }
+
+    /// The tempo a single `bpm` event on `from`, in place of any others before `to`, needs for
+    /// `to` to fall `seconds` after `from`, to six places. Stops, delays and warps keep their
+    /// lengths. `None` when `to` is not after `from`, or no tempo fits because the pauses in
+    /// between already take `seconds` or longer.
+    pub(crate) fn tempo_for(
+        &self,
+        ticks_per_beat: TicksPerBeat,
+        from: Tick,
+        to: Tick,
+        seconds: f64,
+    ) -> Option<Bpm> {
+        if to <= from {
+            return None;
+        }
+        let lasting = |bpm: f64| {
+            let mut probe = self.clone();
+            probe.events.retain(|event| {
+                !(matches!(event.kind, TimingKind::Bpm(_)) && from <= event.tick && event.tick < to)
+            });
+            let at = probe.events.partition_point(|event| event.tick < from);
+            let change = TimingEvent {
+                tick: from,
+                kind: TimingKind::Bpm(Bpm::try_from(bpm).ok()?),
+                ext: crate::Extensions::new(),
+            };
+            probe.events.insert(at, change);
+            probe.elapsed(ticks_per_beat, from, to)
+        };
+        // The span lasts `beats / bpm + paused` minutes' worth: two tempos find both.
+        let (slow, fast) = (lasting(60.0)?, lasting(120.0)?);
+        let beat_minutes = 120.0 * (slow - fast);
+        let paused = 2.0 * fast - slow;
+        let tempo = beat_minutes / (seconds - paused);
+        if beat_minutes <= 0.0 || !tempo.is_finite() || tempo <= 0.0 {
+            return None;
+        }
+        Bpm::try_from((tempo * 1e6).round() / 1e6).ok()
     }
 
     /// Seconds between objects on `from` and on `to`, where `from <= to`.
@@ -107,6 +146,47 @@ mod tests {
             (actual - expected).abs() < 1e-9,
             "tick {tick}: {actual} != {expected}"
         );
+    }
+
+    #[track_caller]
+    fn assert_tempo(timing: &Timing, (from, to): (i32, i32), seconds: f64, expected: Option<f64>) {
+        let found = timing
+            .tempo_for(
+                DEFAULT_TICKS_PER_BEAT,
+                Tick::new(from),
+                Tick::new(to),
+                seconds,
+            )
+            .map(f64::from);
+        assert_eq!(found, expected);
+    }
+
+    #[test]
+    fn a_span_takes_the_tempo_that_makes_it_last_the_seconds_asked() {
+        let t = timing(&[(0, bpm(60.0)), (1920, bpm(240.0))]);
+        assert_tempo(&t, (0, 1920), 1.0, Some(120.0));
+        assert_tempo(&t, (960, 2880), 2.0, Some(60.0));
+    }
+
+    #[test]
+    fn a_stop_in_the_span_keeps_its_length_under_a_new_tempo() {
+        let stop = TimingKind::Stop(Seconds::try_from(0.5).unwrap());
+        let t = timing(&[(0, bpm(60.0)), (480, stop)]);
+        assert_tempo(&t, (0, 1920), 1.5, Some(120.0));
+    }
+
+    #[test]
+    fn no_tempo_fits_a_span_its_pauses_already_outlast() {
+        let stop = TimingKind::Stop(Seconds::try_from(2.0).unwrap());
+        let t = timing(&[(0, bpm(60.0)), (480, stop)]);
+        assert_tempo(&t, (0, 1920), 1.0, None);
+        assert_tempo(&t, (1920, 960), 1.0, None);
+    }
+
+    #[test]
+    fn a_tempo_comes_to_six_places() {
+        let t = timing(&[(0, bpm(60.0))]);
+        assert_tempo(&t, (0, 960), 0.7, Some(85.714_286));
     }
 
     #[test]

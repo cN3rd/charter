@@ -18,6 +18,29 @@ pub struct Measure {
     pub meter: TimeSignature,
 }
 
+impl Measure {
+    /// How far through the measure `tick` lies: 0 at its start and 1 at its end, outside that
+    /// for ticks outside it. A view laying a measure out across a row places ticks by this.
+    #[must_use]
+    pub fn fraction(&self, tick: Tick) -> f64 {
+        let past = i64::from(tick.get()) - i64::from(self.start.get());
+        #[allow(clippy::cast_precision_loss)] // ticks are far below 2^53
+        let past = past as f64;
+        past / f64::from(self.length.get())
+    }
+
+    /// The tick `fraction` of the way through the measure, to the nearest tick and kept within
+    /// the measure.
+    #[must_use]
+    pub fn tick_at(&self, fraction: f64) -> Tick {
+        let length = f64::from(self.length.get());
+        #[allow(clippy::cast_possible_truncation)] // clamped to the measure first
+        let past = (fraction.clamp(0.0, 1.0) * length).round() as i64;
+        let tick = i64::from(self.start.get()) + past;
+        Tick::new(i32::try_from(tick).unwrap_or(i32::MAX))
+    }
+}
+
 /// Where a tick falls in the grid: its measure, the beats since that measure started, counting
 /// from 0, and the ticks past the last of those beats. Shown as `measure:beat:tick`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -276,6 +299,16 @@ mod tests {
             .unwrap()
             .take(count)
             .collect()
+    }
+
+    #[test]
+    fn a_measure_places_its_ticks_by_fraction_and_back() {
+        let bar = measure(1, 3840, 3840, meter(4, 4));
+        assert!((bar.fraction(Tick::new(4800)) - 0.25).abs() < 1e-12);
+        assert!((bar.fraction(Tick::new(0)) + 1.0).abs() < 1e-12);
+        assert_eq!(bar.tick_at(0.25), Tick::new(4800));
+        assert_eq!(bar.tick_at(-3.0), Tick::new(3840));
+        assert_eq!(bar.tick_at(7.0), Tick::new(7680));
     }
 
     #[test]

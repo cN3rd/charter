@@ -7,7 +7,7 @@ use serde::de::{self, Deserializer, MapAccess, SeqAccess, Visitor};
 use crate::document::{Chart, Child, Document, FORMAT_VERSION, Object, Shape, Timing};
 use crate::error::Error;
 use crate::grid::{GridPosition, Measures};
-use crate::unit::{ResolvedTime, Tick};
+use crate::unit::{Bpm, ResolvedTime, Tick};
 use crate::validate::validate;
 
 /// Largest document a reader accepts.
@@ -165,6 +165,16 @@ impl Valid<'_, Timing> {
         self.part
             .seconds_at(self.document.ticks_per_beat, tick)
             .expect("a valid timing map resolves every tick")
+    }
+
+    /// The tempo a single `bpm` event on `from`, in place of any others before `to`, needs for
+    /// `to` to fall `seconds` after `from`, to six places, as when syncing a beat to the audio.
+    /// Stops, delays and warps keep their lengths. `None` when `to` is not after `from`, or the
+    /// pauses in between already take `seconds` or longer.
+    #[must_use]
+    pub fn tempo_for(&self, from: Tick, to: Tick, seconds: f64) -> Option<Bpm> {
+        self.part
+            .tempo_for(self.document.ticks_per_beat, from, to, seconds)
     }
 
     /// The measures of the grid from the one holding `from` onward. Common time rules from tick

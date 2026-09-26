@@ -325,6 +325,10 @@ impl Ticks {
             None => None,
         }
     }
+
+    pub(crate) fn get(self) -> u32 {
+        self.0.get()
+    }
 }
 
 impl fmt::Display for LaneIndex {
