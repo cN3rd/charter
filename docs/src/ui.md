@@ -65,7 +65,9 @@ the song's audio dropped on it or chosen. An audio file's tags fill in a title a
 their defaults, in the dialog or on a new song; where the user has written their own, charter asks
 whether to import them. The song panel folds away with Ctrl+\\, and the tempo section sets the
 offset, where tick 0 sits in the audio, for songs that open with silence. Once the audio has loaded,
-its waveform draws in a strip between the timing column and the lanes, lined up with the notes. In
+its waveform draws in a strip between the timing column and the lanes, lined up with the notes. The
+Display page's Sixteenth lines setting draws a grid line on every sixteenth, sixteen to a measure
+of 4/4, with each beat's line brighter; the metronome keeps to the beats. In
 the notefield, the timing events at one tick form a single timing point, as osu! has them: one
 line, its values stacked beneath it (`150 BPM`, then `3/4`), and one handle. Timing points drag
 along the timing column and markers along the ruler to another snap line, each as one step, with a

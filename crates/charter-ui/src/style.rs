@@ -43,6 +43,9 @@ pub const COLUMN_BG: Color32 = Color32::from_gray(24);
 pub const LANES_BG: Color32 = Color32::from_gray(13);
 pub const DIVIDER: Color32 = Color32::from_gray(58);
 pub const BEAT_LINE: Color32 = Color32::from_gray(36);
+/// Beat lines among sixteenth lines, a step brighter so each beat still reads.
+pub const BEAT_LINE_STRONG: Color32 = Color32::from_gray(52);
+pub const SIXTEENTH_LINE: Color32 = Color32::from_gray(26);
 pub const MEASURE_LINE: Color32 = Color32::from_gray(92);
 pub const TIMING_MARK: Color32 = Color32::from_rgb(230, 170, 90);
 pub const NOW_LINE: Color32 = Color32::from_rgb(236, 240, 245);

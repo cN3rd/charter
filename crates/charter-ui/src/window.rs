@@ -1377,6 +1377,7 @@ impl Window {
                                 self.waveform.as_ref(),
                                 self.audio_file().as_deref(),
                             ),
+                            sixteenths: self.settings.sixteenths,
                         };
                         let (scrolled, gesture) = (&mut self.scrolled, &mut self.gesture);
                         style::stage().show(ui, |ui| {

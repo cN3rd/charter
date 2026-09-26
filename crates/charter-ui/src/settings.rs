@@ -85,6 +85,8 @@ pub struct Settings {
     pub song_panel: bool,
     /// Whether the notefield draws the audio's waveform beside the lanes.
     pub waveform: bool,
+    /// Whether the grid draws a line on every sixteenth, not only on every beat.
+    pub sixteenths: bool,
 }
 
 impl Default for Settings {
@@ -103,6 +105,7 @@ impl Default for Settings {
             autosave_seconds: 30,
             song_panel: true,
             waveform: true,
+            sixteenths: false,
         }
     }
 }
@@ -406,6 +409,15 @@ fn display(ui: &mut egui::Ui, settings: &mut Settings) {
             switch(ui, &mut settings.waveform, name);
         },
     );
+    let name = "Sixteenth lines";
+    row(
+        ui,
+        name,
+        "A grid line on every sixteenth, each beat's brighter. The metronome keeps to the beats.",
+        |ui, _| {
+            switch(ui, &mut settings.sixteenths, name);
+        },
+    );
 }
 
 /// The sounds page. Says which metronome to preview, when its button was pressed.
@@ -471,6 +483,7 @@ fn sounds(ui: &mut egui::Ui, settings: &mut Settings) -> Option<Kit> {
 pub(crate) fn volume(ui: &mut egui::Ui, gain: &mut Gain) -> egui::Response {
     let mut percent = gain.amplitude() * 100.0;
     let slider = egui::Slider::new(&mut percent, 0.0..=100.0)
+        .trailing_fill(true)
         .suffix("%")
         .fixed_decimals(0);
     let response = ui.add(slider);
@@ -592,6 +605,7 @@ mod tests {
             autosave_seconds: 90,
             song_panel: false,
             waveform: false,
+            sixteenths: true,
         };
         let stored = serde_json::to_string(&settings).unwrap();
         assert_eq!(serde_json::from_str::<Settings>(&stored).unwrap(), settings);

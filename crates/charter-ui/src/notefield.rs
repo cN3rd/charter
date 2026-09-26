@@ -4,8 +4,8 @@
 use std::num::NonZeroU16;
 
 use charter_core::{
-    Kind, LaneCount, LaneIndex, MarkerKind, Object, Position, ResolvedTime, Shape, Tick, Ticks,
-    Timing, TimingKind, Valid,
+    Kind, LaneCount, LaneIndex, MarkerKind, Measure, Object, Position, ResolvedTime, Shape, Tick,
+    Ticks, TicksPerBeat, Timing, TimingKind, Valid,
 };
 use egui::{
     self, Align2, FontId, Pos2, Rangef, Rect, Sense, Stroke, StrokeKind, Ui, Visuals, pos2, vec2,
@@ -365,6 +365,7 @@ pub fn show(
         zoom,
         direction,
         peaks,
+        sixteenths,
     }: Shown<'_>,
     scrolled: &mut f32,
     gesture: &mut Option<Gesture>,
@@ -456,7 +457,7 @@ pub fn show(
     if let Some(peaks) = peaks {
         waveform(&clipped, columns, view, rows, peaks);
     }
-    grid(&clipped, columns, song, view, rows);
+    grid(&clipped, columns, (song, sixteenths), view, rows);
     markers(&clipped, columns, song, view, rows, (first, last));
     events(&clipped, columns, song, view, rows, (first, last));
     let band = Rect::from_x_y_ranges(columns.timeline(), view.now_y - 12.0..=view.now_y + 12.0);
@@ -763,6 +764,8 @@ pub struct Shown<'a> {
     pub zoom: Zoom,
     pub direction: Direction,
     pub peaks: Option<&'a Peaks>,
+    /// Whether the grid draws sixteenth lines between its beats.
+    pub sixteenths: bool,
 }
 
 /// The audio under each row of `rows`, a point apart: the row, and the lowest and highest
@@ -796,13 +799,57 @@ fn waveform(painter: &Canvas, columns: &Columns, view: View, rows: Rangef, peaks
 }
 
 /// Measure and beat lines over the visible time, with measure numbers.
-fn grid(painter: &Canvas, columns: &Columns, song: &Song, view: View, rows: Rangef) {
+/// A line of the grid inside a measure.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Line {
+    Beat,
+    Sixteenth,
+}
+
+/// The lines inside `measure`, after its start: on each beat, and when `sixteenths` also on each
+/// sixteenth between, so a measure of 4/4 has sixteen places with every fourth a beat.
+fn lines_in(measure: &Measure, resolution: TicksPerBeat, sixteenths: bool) -> Vec<(Tick, Line)> {
+    let beat = resolution.note_length(QUARTER);
+    let step = if sixteenths {
+        resolution.note_length(SIXTEENTH).or(beat)
+    } else {
+        beat
+    };
+    let (Some(beat), Some(step), Some(end)) =
+        (beat, step, measure.start.checked_add(measure.length))
+    else {
+        return Vec::new();
+    };
+    // A beat is four sixteenths, and both count from the measure's start.
+    let per_beat = if step == beat { 1 } else { 4 };
+    std::iter::successors(measure.start.checked_add(step), |tick| {
+        tick.checked_add(step)
+    })
+    .take_while(|tick| *tick < end)
+    .take(MOST_BEATS * per_beat)
+    .zip(1..)
+    .map(|(tick, place)| {
+        let line = if place % per_beat == 0 {
+            Line::Beat
+        } else {
+            Line::Sixteenth
+        };
+        (tick, line)
+    })
+    .collect()
+}
+
+/// Measure, beat and, when `sixteenths`, sixteenth lines over the visible time, with measure
+/// numbers.
+fn grid(
+    painter: &Canvas,
+    columns: &Columns,
+    (song, sixteenths): (&Song, bool),
+    view: View,
+    rows: Rangef,
+) {
     let timing = song.timing();
-    let beat = song
-        .document()
-        .document()
-        .ticks_per_beat
-        .note_length(QUARTER);
+    let resolution = song.document().document().ticks_per_beat;
     let ruler = painter.clipped(Rect::from_x_y_ranges(columns.ruler, rows));
     let first = latest_tick_by(timing, view.seconds_at(rows.min));
     for measure in timing.measures_from(first) {
@@ -819,20 +866,20 @@ fn grid(painter: &Canvas, columns: &Columns, song: &Song, view: View, rows: Rang
             FontId::monospace(12.0),
             style::TEXT,
         );
-        let (Some(beat), Some(end)) = (beat, measure.start.checked_add(measure.length)) else {
-            continue;
-        };
-        let beats = std::iter::successors(measure.start.checked_add(beat), |tick| {
-            tick.checked_add(beat)
-        });
-        for tick in beats.take_while(|tick| *tick < end).take(MOST_BEATS) {
+        for (tick, line) in lines_in(&measure, resolution, sixteenths) {
             let y = view.y(timing.time_at(tick));
-            painter.hline(columns.timeline(), y, Stroke::new(1.0, style::BEAT_LINE));
+            let color = match line {
+                Line::Beat if sixteenths => style::BEAT_LINE_STRONG,
+                Line::Beat => style::BEAT_LINE,
+                Line::Sixteenth => style::SIXTEENTH_LINE,
+            };
+            painter.hline(columns.timeline(), y, Stroke::new(1.0, color));
         }
     }
 }
 
 const QUARTER: NonZeroU16 = NonZeroU16::new(4).unwrap();
+const SIXTEENTH: NonZeroU16 = NonZeroU16::new(16).unwrap();
 
 /// Sections, bookmarks and plugin markers as lines across the time axis, named in the ruler.
 fn markers(
@@ -1106,6 +1153,41 @@ mod tests {
         let events = [quarter.clone(), quarter.clone(), quarter.clone()];
         assert_eq!(wheel_steps(&events, &mut remainder), 0);
         assert_eq!(wheel_steps(&[quarter], &mut remainder), 1);
+    }
+
+    fn common_measure() -> Measure {
+        Measure {
+            number: 0,
+            start: Tick::new(0),
+            length: Ticks::new(3840).unwrap(),
+            meter: charter_core::TimeSignature::COMMON,
+        }
+    }
+
+    #[test]
+    fn a_measure_of_four_four_has_three_beat_lines_inside_it() {
+        let resolution = charter_core::TicksPerBeat::new(960).unwrap();
+        let lines = lines_in(&common_measure(), resolution, false);
+        let beats: Vec<_> = (1..4)
+            .map(|beat| (Tick::new(beat * 960), Line::Beat))
+            .collect();
+        assert_eq!(lines, beats);
+    }
+
+    #[test]
+    fn sixteenth_lines_fill_a_four_four_measure_to_sixteen_places_every_fourth_a_beat() {
+        let resolution = charter_core::TicksPerBeat::new(960).unwrap();
+        let lines = lines_in(&common_measure(), resolution, true);
+        assert_eq!(lines.len(), 15);
+        for (place, (tick, line)) in (1..).zip(&lines) {
+            assert_eq!(*tick, Tick::new(place * 240));
+            let expected = if place % 4 == 0 {
+                Line::Beat
+            } else {
+                Line::Sixteenth
+            };
+            assert_eq!(*line, expected, "place {place}");
+        }
     }
 
     #[test]

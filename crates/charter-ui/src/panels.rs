@@ -508,7 +508,8 @@ fn tempo_body(
             ui.label(format!("{bpm}   {} – {until}", timing.grid_position(at)));
         }
         ui.end_row();
-        if editable {
+        // A row for adding and removing changes only when one of them can happen here.
+        if editable && (at != song.cursor() || Some(at) != first) {
             ui.label("");
             ui.horizontal(|ui| {
                 if at != song.cursor()
