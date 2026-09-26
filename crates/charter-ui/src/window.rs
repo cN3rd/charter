@@ -1020,18 +1020,20 @@ impl Window {
             Action::CoarserSnap => song.coarser_snap(),
             Action::ZoomBy(factor) => self.zoom = self.zoom.by(factor),
             Action::Toggle(lane, note) => {
-                let toggled = song.toggle(song.cursor(), lane, note.kind());
+                let at = placing_at(song, self.playing);
+                let toggled = song.toggle(at, lane, note.kind());
                 if let Ok(Toggled::Placed) = toggled {
                     self.placed = true;
                     if note == Note::Tap {
-                        self.holding.push((lane, song.cursor()));
+                        self.holding.push((lane, at));
                     }
                 }
                 self.failure = refused(toggled.err());
             }
             Action::LaneUp(lane) => self.holding.retain(|(held, _)| *held != lane),
+            // Playback moves the cursor on already; a jump would seek the audio ahead.
             Action::LanesReleased => {
-                if std::mem::take(&mut self.placed) && self.settings.auto_jump {
+                if std::mem::take(&mut self.placed) && self.settings.auto_jump && !self.playing {
                     song.step(Step::Later);
                 }
             }
@@ -1378,6 +1380,24 @@ fn editable_lanes(song: &Song) -> u16 {
 
 /// Stretches each tap a held lane key placed into a hold to the cursor, and says why if the song
 /// refuses one.
+/// Where a lane key places a note: at the cursor, or while `playing`, where the cursor follows
+/// the audio between snap lines, on the snap line nearest it.
+fn placing_at(song: &Song, playing: bool) -> Tick {
+    let step = song
+        .document()
+        .document()
+        .ticks_per_beat
+        .note_length(song.snap());
+    match step {
+        Some(step) if playing => {
+            let timing = song.timing();
+            let now = timing.time_at(song.cursor()).seconds();
+            notefield::nearest_line(timing, now, step)
+        }
+        _ => song.cursor(),
+    }
+}
+
 fn stretch(song: &mut Song, holding: &[(LaneIndex, Tick)]) -> Option<String> {
     let cursor = song.cursor();
     let refusals = holding
@@ -2916,6 +2936,21 @@ mod tests {
         harness.state_mut().playhead(0.5);
         harness.run();
         assert!(cursor_shows(&harness, "0:1:0"));
+        assert_eq!(harness.state_mut().take_requests(), []);
+    }
+
+    #[test]
+    fn a_lane_key_while_playing_places_on_the_nearest_snap_line_without_seeking() {
+        let mut harness = playable();
+        space(&mut harness);
+        harness.state_mut().take_requests();
+        // 0.63 s is tick 1209 at 120 BPM; the nearest sixteenth is 1200.
+        harness.state_mut().playhead(0.63);
+        harness.run();
+        assert!(lanes_at(&harness, 1200).is_empty());
+        harness.key_press(egui::Key::Num1);
+        harness.run();
+        assert_eq!(lanes_at(&harness, 1200), [0]);
         assert_eq!(harness.state_mut().take_requests(), []);
     }
 

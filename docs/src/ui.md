@@ -38,7 +38,8 @@ copies that file beside the song. Saving a song somewhere new makes it a project
 becomes a folder holding the song's JSON file under the same name and a copy of its audio, where
 anything later worked out from the audio will also go. Choosing the song's own file in its folder
 saves over it, and a folder that already holds a song under that name is left alone. Space plays the song's audio from the cursor and pauses it, the
-cursor follows the playback, and moving the cursor while playing seeks. Shift+Left and Shift+Right,
+cursor follows the playback, and moving the cursor while playing seeks. A lane key pressed while
+playing places its note on the snap line nearest the audio and leaves the playback where it is. Shift+Left and Shift+Right,
 or the Playback menu, play slower or faster from 10% to 400%, which changes the audio's pitch with
 its speed and leaves the chart alone. The status bar says whether the audio is ready, loading,
 missing or unreadable, and every message has a Dismiss button. The Edit, Timing and Playback menus
