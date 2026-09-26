@@ -651,6 +651,7 @@ dependencies = [
 name = "charter-audio"
 version = "0.0.0"
 dependencies = [
+ "rustfft",
  "serde",
  "symphonia-wrap",
  "thiserror 2.0.20",

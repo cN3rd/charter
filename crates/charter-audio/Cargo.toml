@@ -8,6 +8,7 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+rustfft.workspace = true
 symphonia-wrap.workspace = true
 serde.workspace = true
 thiserror.workspace = true
