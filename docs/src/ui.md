@@ -46,7 +46,13 @@ File > Choose audio…. Under Wayland nothing can be dropped, since winit takes 
 choosing and says why; saving
 copies that file beside the song. Saving a song somewhere new makes it a project: the name chosen
 becomes a folder holding the song's JSON file under the same name and a copy of its audio, where
-anything later worked out from the audio will also go. Choosing the song's own file in its folder
+anything worked out from the audio goes. The waveform's peaks are the first such file,
+`cache/<audio>.peaks`: the finest of the min and max levels every view reads, so the notefield,
+the sync window and any view to come draw from the same data at any zoom. The file names the
+audio by a fingerprint of its bytes, so a replaced audio file gets its peaks worked out afresh,
+and a damaged or outdated file is ignored; deleting the folder only costs the time to work them
+out again. With the peaks kept, the waveform shows as soon as a song opens, before its audio has
+decoded. Nothing is written for audio outside the project folder. Choosing the song's own file in its folder
 saves over it, and a folder that already holds a song under that name is left alone. Space plays the song's audio from the cursor and pauses it, the
 cursor follows the playback, and moving the cursor while playing seeks. A lane key pressed while
 playing places its note on the snap line nearest the audio and leaves the playback where it is;

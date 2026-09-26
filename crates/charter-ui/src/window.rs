@@ -442,6 +442,13 @@ impl Window {
         }
     }
 
+    /// The folder of the file the open song was read from or saved to: its project folder, where
+    /// the host keeps what it works out from the song's audio.
+    #[must_use]
+    pub fn song_folder(&self) -> Option<PathBuf> {
+        self.path.as_ref()?.parent().map(Path::to_path_buf)
+    }
+
     /// Takes the text of the file chosen for [`Request::ChooseTimingFile`] into the import timing
     /// window, which shows what it holds.
     pub fn timing_file_read(&mut self, text: &str) {

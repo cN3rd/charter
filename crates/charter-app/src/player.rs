@@ -10,8 +10,15 @@ use kira::sound::PlaybackState;
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle, StaticSoundSettings};
 use kira::{AudioManager, AudioManagerSettings, Decibels, DefaultBackend, Frame, Tween};
 
-/// A file being decoded, and where its result arrives.
-type Loading = (PathBuf, Receiver<Result<(Track, Peaks), String>>);
+/// What the loading thread sends: kept peaks as soon as they are read, then the audio, with its
+/// peaks unless they came first.
+enum Loaded {
+    Peaks(Peaks),
+    Audio(Result<(Track, Option<Peaks>), String>),
+}
+
+/// A file being decoded, and where its results arrive.
+type Loading = (PathBuf, Receiver<Loaded>);
 
 /// The audio device, the song's audio and the sound playing it.
 pub struct Player {
@@ -76,42 +83,69 @@ impl Player {
             self.loaded = None;
             self.failed = None;
             let (load, inline) = (self.load, self.inline);
+            let project = window.song_folder();
             self.loading = wanted.map(|path| {
                 let (send, receive) = std::sync::mpsc::channel();
                 let file = path.clone();
-                // The peaks are worked out beside the decoding, off the window's thread.
-                let summarized = move |file: &Path| {
-                    load(file).map(|track| {
-                        let peaks = Peaks::of(&track);
-                        (track, peaks)
-                    })
-                };
-                // The window has moved on if nobody is listening; that is fine.
-                if inline {
-                    let _ = send.send(summarized(&file));
+                let cache = if inline {
+                    None
                 } else {
-                    std::thread::spawn(move || {
-                        let _ = send.send(summarized(&file));
+                    cache_file(project.as_deref(), &file)
+                };
+                // The peaks are read or worked out beside the decoding, off the window's thread.
+                // The window has moved on if nobody is listening; that is fine.
+                let summarize = move || {
+                    let disk = crate::disk::Real;
+                    let source = cache.as_ref().and_then(|_| std::fs::read(&file).ok());
+                    let source = source.map(|bytes| charter_audio::fingerprint(&bytes));
+                    let kept = cache
+                        .as_deref()
+                        .zip(source)
+                        .and_then(|(cache, source)| kept_peaks(&disk, cache, source));
+                    let had = kept.is_some();
+                    if let Some(peaks) = kept {
+                        let _ = send.send(Loaded::Peaks(peaks));
+                    }
+                    let audio = load(&file).map(|track| {
+                        let peaks = (!had).then(|| Peaks::of(&track));
+                        if let (Some(cache), Some(source), Some(peaks)) = (&cache, source, &peaks) {
+                            keep_peaks(&disk, cache, source, peaks);
+                        }
+                        (track, peaks)
                     });
+                    let _ = send.send(Loaded::Audio(audio));
+                };
+                if inline {
+                    summarize();
+                } else {
+                    std::thread::spawn(summarize);
                 }
                 (path, receive)
             });
         }
         if let Some((path, receive)) = &self.loading {
-            match receive.try_recv() {
-                Ok(Ok((track, peaks))) => {
+            let mut received = receive.try_recv();
+            if let Ok(Loaded::Peaks(peaks)) = received {
+                window.waveform_ready(path, Arc::new(peaks));
+                received = receive.try_recv();
+            }
+            match received {
+                Ok(Loaded::Audio(Ok((track, peaks)))) => {
                     window.audio_ready(path, track.seconds());
-                    window.waveform_ready(path, Arc::new(peaks));
+                    if let Some(peaks) = peaks {
+                        window.waveform_ready(path, Arc::new(peaks));
+                    }
                     let data = sound(&track);
                     self.loaded = Some((path.clone(), track, data));
                     self.loading = None;
                 }
-                Ok(Err(why)) => {
+                Ok(Loaded::Audio(Err(why))) => {
                     window.audio_failed(path, &why);
                     self.failed = Some(path.clone());
                     self.loading = None;
                 }
-                Err(TryRecvError::Empty) => {}
+                // A second peaks message cannot come; either way, nothing to do yet.
+                Ok(Loaded::Peaks(_)) | Err(TryRecvError::Empty) => {}
                 Err(TryRecvError::Disconnected) => {
                     window.audio_failed(path, "loading stopped");
                     self.failed = Some(path.clone());
@@ -242,6 +276,34 @@ fn load(path: &Path) -> Result<Track, String> {
     Track::decode(bytes, extension).map_err(|error| error.to_string())
 }
 
+/// Where the peaks of `audio` are kept: in the `cache` folder of the song's project folder
+/// `project`, when the audio is in it, so nothing is written among the user's own music.
+fn cache_file(project: Option<&Path>, audio: &Path) -> Option<PathBuf> {
+    let project = project?;
+    if audio.parent() != Some(project) {
+        return None;
+    }
+    let mut name = audio.file_name()?.to_owned();
+    name.push(".peaks");
+    Some(project.join("cache").join(name))
+}
+
+/// The peaks kept at `cache` for the audio whose fingerprint is `source`, if they are there,
+/// whole and of it.
+fn kept_peaks(disk: &dyn crate::disk::Disk, cache: &Path, source: u64) -> Option<Peaks> {
+    let bytes = disk.read(cache).ok()?;
+    Peaks::from_bytes(&bytes, source)
+}
+
+/// Keeps `peaks` at `cache` for next time. A cache that cannot be written is not worth saying so:
+/// the peaks are only worked out again.
+fn keep_peaks(disk: &dyn crate::disk::Disk, cache: &Path, source: u64, peaks: &Peaks) {
+    if let Some(folder) = cache.parent() {
+        let _ = disk.make_folder(folder);
+    }
+    let _ = crate::disk::write_whole(disk, cache, &peaks.to_bytes(source));
+}
+
 /// `track` as sound data kira plays.
 fn sound(track: &Track) -> StaticSoundData {
     let frames: Arc<[Frame]> = track
@@ -291,6 +353,30 @@ mod tests {
         };
         assert!(heard(0, 400));
         assert!(heard(66_150, 66_600));
+    }
+
+    #[test]
+    fn peaks_are_kept_in_the_project_folder_only_for_audio_beside_the_song() {
+        let project = Some(Path::new("/s/Song"));
+        assert_eq!(
+            cache_file(project, Path::new("/s/Song/a.ogg")),
+            Some(PathBuf::from("/s/Song/cache/a.ogg.peaks"))
+        );
+        assert_eq!(cache_file(project, Path::new("/music/a.ogg")), None);
+        assert_eq!(cache_file(None, Path::new("/s/Song/a.ogg")), None);
+    }
+
+    #[test]
+    fn peaks_worked_out_once_are_read_back_for_the_same_audio_and_not_for_other() {
+        use crate::disk::memory::Memory;
+        let disk = Memory::with(&[("/s/a.ogg", b"audio")]);
+        let cache = Path::new("/s/cache/a.ogg.peaks");
+        let source = charter_audio::fingerprint(b"audio");
+        assert_eq!(kept_peaks(&disk, cache, source), None);
+        let peaks = Peaks::of(&Track::silence(1000, 2000));
+        keep_peaks(&disk, cache, source, &peaks);
+        assert_eq!(kept_peaks(&disk, cache, source), Some(peaks));
+        assert_eq!(kept_peaks(&disk, cache, source + 1), None);
     }
 
     static FAILED_LOADS: AtomicUsize = AtomicUsize::new(0);
