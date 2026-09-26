@@ -59,6 +59,11 @@ indexing_slicing = "warn"
 [profile.release]
 overflow-checks = true
 
+# What `just dist` packages: a release build without its symbols.
+[profile.dist]
+inherits = "release"
+strip = true
+
 # Workspace optimizations to workspace to third-party dependencies
 # which are noticeably slow on debug builds
 [profile.dev.package.symphonia]

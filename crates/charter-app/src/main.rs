@@ -3,6 +3,9 @@
 //! read and write files and to show file dialogs, and this program keeps the user's settings and
 //! the autosave of unsaved changes between runs.
 
+// A release build on Windows is a window, not a console program with a window beside it.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use std::path::{Path, PathBuf};
 
 mod disk;

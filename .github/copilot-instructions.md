@@ -21,6 +21,11 @@ cargo kani -p charter-core               # Kani proofs, also in charter-ttr and 
 git submodule update --init              # required once, see .github/skills/README.md
 ```
 
+The `justfile` wraps these and adds packaging: `just` lists every recipe, `just ci` runs format,
+lint, tests and the book, `just build-windows` cross-compiles for `x86_64-pc-windows-msvc` with
+cargo-xwin, and `just dist` writes a Linux `.tar.gz` and a Windows `.zip` to `dist/`, each holding
+the stripped binary, `LICENSE`, the bundled assets' licences and a list of the linked crates'.
+
 ## Correctness
 
 Lints do the enforcing. The root `Cargo.toml` carries `[workspace.lints]` and first-party crates
