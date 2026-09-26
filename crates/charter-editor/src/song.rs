@@ -473,6 +473,21 @@ impl Song {
         self.retime(own, new)
     }
 
+    /// Puts `timing`, such as one imported from another program, in place of the timing tempo
+    /// edits go to, offset included, as one step. The notes keep their ticks, so they move with
+    /// the new tempo. Does nothing when it is the timing there already.
+    ///
+    /// # Errors
+    ///
+    /// Refuses on a read-only song, and when the timing breaks a rule of the format or the game.
+    pub fn replace_timing(&mut self, timing: charter_core::Timing) -> Result<(), Refusal> {
+        let (own, old) = self.edited_timing();
+        if *old == timing {
+            return Ok(());
+        }
+        self.retime(own, timing)
+    }
+
     /// Gives the timing tempo edits go to the events of `new`, as one step.
     pub(crate) fn retime(&mut self, own: bool, new: charter_core::Timing) -> Result<(), Refusal> {
         let (_, old) = self.edited_timing();
@@ -1601,6 +1616,26 @@ pub(crate) mod tests {
         assert_eq!(song_events(&song), json!([bpm_event(0, 120.0)]));
         assert!(matches!(song.remove_bpm(), Err(Refusal::FirstTempo)));
         assert_eq!(song_events(&song), json!([bpm_event(0, 120.0)]));
+    }
+
+    #[test]
+    fn a_timing_put_in_place_replaces_the_offset_and_events_in_one_step() {
+        let events = json!([bpm_event(0, 120.0)]);
+        let mut song = timed(&events, None);
+        let new: charter_core::Timing = serde_json::from_value(json!({
+            "offset_seconds": 0.5,
+            "events": [bpm_event(0, 208.1), bpm_event(3840, 150.0)]
+        }))
+        .unwrap();
+        song.replace_timing(new.clone()).unwrap();
+        assert_eq!(song.document().document().timing, new);
+        song.replace_timing(new).unwrap();
+        song.undo().unwrap();
+        assert_eq!(song_events(&song), events);
+        assert!(!song.can_undo());
+        let bad: charter_core::Timing =
+            serde_json::from_value(json!({ "offset_seconds": 0.0, "events": [] })).unwrap();
+        assert!(song.replace_timing(bad).is_err());
     }
 
     #[test]
