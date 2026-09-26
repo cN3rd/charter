@@ -38,6 +38,12 @@ difficulty, such as `Hard`, gets it; others are `edit`, all at meter 1. osu!mani
 counts, 4K first, with HP and OD 5, and Tap Tap Revenge's are its 3, 4 and 5 lanes. A plugin
 without layouts cannot start songs.
 
+A plugin can also read another program's timing: `timing_format` names the format, and
+`import_timing` turns text in it into a `Timing` for a given song, with a list of what it left
+out. Any song can take timing from any plugin's format, so a plugin keeps its own timing events,
+such as osu!mania's scroll speeds, only for songs of its game. osu!mania reads osu!'s
+`[TimingPoints]`, pasted alone or in a whole `.osu` file.
+
 | Ruleset | Namespace | Kinds | Timing | Chart settings |
 |---|---|---|---|---|
 | StepMania | `sm` | `tap`, `hold`, `roll`, `mine`, `lift`, `fake`, `sm.auto_keysound` | Every core kind, `sm.tickcount`, `sm.combo`, `sm.speed`, `sm.scroll`, `sm.fake` | `style`, `difficulty`, `meter`, `description` |

@@ -22,6 +22,10 @@ use charter_core::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+mod import;
+
+pub use import::ImportError;
+
 /// The ruleset namespace.
 pub const ID: &str = "osu_mania";
 
@@ -511,6 +515,18 @@ impl RulesetPlugin for Plugin {
 
     fn layout_kind(&self) -> &'static str {
         "Keys"
+    }
+
+    fn timing_format(&self) -> Option<&str> {
+        Some("osu! timing points")
+    }
+
+    fn import_timing(
+        &self,
+        text: &str,
+        into: &ValidDocument,
+    ) -> Result<charter_core::ImportedTiming, Box<dyn std::error::Error + Send + Sync>> {
+        Ok(import::import(text, into)?)
     }
 
     fn layouts(&self) -> Vec<Layout> {

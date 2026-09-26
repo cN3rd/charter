@@ -1,0 +1,469 @@
+//! Timing read from osu!'s `[TimingPoints]`, pasted or in a whole `.osu` file.
+//!
+//! Each line is `time,beatLength,meter,sampleSet,sampleIndex,volume,uninherited,effects`, with
+//! times in milliseconds into the audio. An uninherited point, a red line, sets the tempo, a
+//! beat of `beatLength` milliseconds, and starts a measure of `meter` quarter notes. An inherited
+//! point, a green line, has a negative `beatLength` and sets the scroll speed to `-100 /
+//! beatLength` times.
+
+use std::num::NonZeroU16;
+
+use charter_core::{
+    Bpm, Decimal, Extensions, ImportedTiming, Key, Name, Namespace, Origin, Tick, TimeSignature,
+    Timing, TimingEvent, TimingKind, ValidDocument,
+};
+
+use crate::{ID, SCROLL_SPEED};
+
+/// Why pasted text holds no timing.
+#[derive(Debug, thiserror::Error, PartialEq)]
+pub enum ImportError {
+    #[error("line {line}: {why}")]
+    Line { line: usize, why: String },
+    #[error("there is no uninherited timing point, which osu! needs to start its tempo")]
+    NoTempo,
+    #[error("{0}")]
+    OutOfRange(String),
+}
+
+/// A timing point as osu! writes it, with what charter reads of it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Point {
+    /// Milliseconds into the audio.
+    time: f64,
+    beat_length: f64,
+    meter: NonZeroU16,
+    uninherited: bool,
+}
+
+/// A red line placed on charter's grid: its tick, where that tick falls in milliseconds, which
+/// is within half a tick of where osu! has it, and its beat in milliseconds.
+#[derive(Clone, Copy, Debug)]
+struct Placed {
+    tick: i64,
+    at: f64,
+    beat_length: f64,
+}
+
+/// The timing in `text` for the song `into`, at its resolution. Scroll speeds are kept only
+/// when `into` is an osu!mania song.
+pub(crate) fn import(text: &str, into: &ValidDocument) -> Result<ImportedTiming, ImportError> {
+    let points = points(text)?;
+    let ticks_per_beat = f64::from(u16::from(into.document().ticks_per_beat));
+    let mut reds: Vec<Point> = points.iter().copied().filter(|p| p.uninherited).collect();
+    reds.sort_by(|a, b| a.time.total_cmp(&b.time));
+    let first = *reds.first().ok_or(ImportError::NoTempo)?;
+    let offset = micro(first.time / 1000.0)
+        .and_then(|seconds| Origin::try_from(seconds).ok())
+        .ok_or_else(|| ImportError::OutOfRange(format!("{} ms is not an offset", first.time)))?;
+    let mut left_out = Vec::new();
+    let mut placed: Vec<(Placed, NonZeroU16)> = Vec::new();
+    let mut merged = 0;
+    for red in reds {
+        let Some((last, _)) = placed.last() else {
+            let start = Placed {
+                tick: 0,
+                at: red.time,
+                beat_length: red.beat_length,
+            };
+            placed.push((start, red.meter));
+            continue;
+        };
+        let tick = last.tick + ticks(red.time - last.at, last.beat_length, ticks_per_beat);
+        #[allow(clippy::cast_precision_loss)] // a song's worth of ticks, far below 2^52
+        let at = last.at + (tick - last.tick) as f64 * last.beat_length / ticks_per_beat;
+        let point = Placed {
+            tick,
+            at,
+            beat_length: red.beat_length,
+        };
+        // Two red lines on one tick: the later one is the one osu! plays.
+        if tick == last.tick {
+            merged += 1;
+            placed.pop();
+        }
+        placed.push((point, red.meter));
+    }
+    if merged > 0 {
+        left_out.push(format!(
+            "{merged} uninherited points on the tick of a later one"
+        ));
+    }
+    let mut events = Vec::new();
+    let four = NonZeroU16::new(4).unwrap_or(NonZeroU16::MIN);
+    let (mut measure_from, mut meter) = (0, four);
+    for &(red, beats) in &placed {
+        events.push(event(red.tick, TimingKind::Bpm(bpm(red.beat_length)?))?);
+        // osu! starts a measure at every red line; charter's grid restarts at a time signature.
+        #[allow(clippy::cast_possible_truncation)] // a resolution, whole and small
+        let measure = i64::from(meter.get()) * ticks_per_beat as i64;
+        let mid_measure = (red.tick - measure_from).rem_euclid(measure.max(1)) != 0;
+        if beats != meter || mid_measure {
+            let signature = TimeSignature {
+                numerator: beats,
+                denominator: four,
+            };
+            events.push(event(red.tick, TimingKind::TimeSignature(signature))?);
+            (measure_from, meter) = (red.tick, beats);
+        }
+    }
+    let mut greens: Vec<Point> = points.iter().copied().filter(|p| !p.uninherited).collect();
+    greens.sort_by(|a, b| a.time.total_cmp(&b.time));
+    if into.document().ruleset.id.as_str() == ID {
+        events.extend(scroll_speeds(&placed, &greens, ticks_per_beat)?);
+    } else if !greens.is_empty() {
+        left_out.push(format!(
+            "{} scroll speed changes, which only osu!mania songs keep",
+            greens.len()
+        ));
+    }
+    left_out.push("volumes, hit sounds and kiai time, which are not timing".to_owned());
+    events.sort_by_key(|event| event.tick);
+    Ok(ImportedTiming {
+        timing: Timing {
+            offset_seconds: offset,
+            events,
+        },
+        left_out,
+    })
+}
+
+/// A scroll speed change for each green line, on the red line's grid in effect there, and back
+/// to 1 on each red line without one of its own, as osu! resets it.
+fn scroll_speeds(
+    placed: &[(Placed, NonZeroU16)],
+    greens: &[Point],
+    ticks_per_beat: f64,
+) -> Result<Vec<TimingEvent>, ImportError> {
+    let mut changes: Vec<(i64, f64)> = greens
+        .iter()
+        .map(|green| {
+            let red = placed
+                .iter()
+                .rev()
+                .find(|(red, _)| red.at <= green.time + 0.5)
+                .or(placed.first())
+                .map_or(
+                    Placed {
+                        tick: 0,
+                        at: green.time,
+                        beat_length: 1.0,
+                    },
+                    |(red, _)| *red,
+                );
+            let tick = red.tick + ticks(green.time - red.at, red.beat_length, ticks_per_beat);
+            (tick, -100.0 / green.beat_length)
+        })
+        .collect();
+    let mut resets = Vec::new();
+    for (red, _) in placed {
+        // The latest change before this red line, a reset at an earlier one included.
+        let before = changes
+            .iter()
+            .chain(&resets)
+            .filter(|(tick, _)| *tick < red.tick)
+            .max_by_key(|(tick, _)| *tick)
+            .map_or(1.0, |(_, ratio)| *ratio);
+        let own = changes.iter().any(|(tick, _)| *tick == red.tick);
+        #[allow(clippy::float_cmp)] // osu!'s own 1x, exactly
+        if !own && before != 1.0 {
+            resets.push((red.tick, 1.0));
+        }
+    }
+    changes.extend(resets);
+    changes.sort_by_key(|(tick, _)| *tick);
+    // The last change on a tick is the one that plays.
+    changes.dedup_by(|later, earlier| {
+        if later.0 == earlier.0 {
+            earlier.1 = later.1;
+            true
+        } else {
+            false
+        }
+    });
+    changes
+        .into_iter()
+        .map(|(tick, ratio)| {
+            let ratio = micro(ratio)
+                .and_then(|ratio| Decimal::try_from(ratio).ok())
+                .filter(|_| ratio > 0.0)
+                .ok_or_else(|| ImportError::OutOfRange(format!("{ratio} is not a scroll speed")))?;
+            let name = Key::new(
+                Namespace::new(ID).map_err(out_of_range)?,
+                Name::new(SCROLL_SPEED).map_err(out_of_range)?,
+            );
+            let value = serde_json::to_value(ratio).map_err(out_of_range)?;
+            event(tick, TimingKind::Other { name, value })
+        })
+        .collect()
+}
+
+/// The timing points in `text`: its `[TimingPoints]` section when it has one, as a whole `.osu`
+/// file does, or else every line, as a pasted section is.
+fn points(text: &str) -> Result<Vec<Point>, ImportError> {
+    let lines: Vec<(usize, &str)> = (1..).zip(text.lines()).collect();
+    let section = lines
+        .iter()
+        .position(|(_, line)| line.trim() == "[TimingPoints]");
+    let from = section.map_or(0, |at| at + 1);
+    let mut points = Vec::new();
+    for &(number, line) in lines.get(from..).unwrap_or_default() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            if section.is_some() {
+                break;
+            }
+            continue;
+        }
+        if line.is_empty() || line.starts_with("//") {
+            continue;
+        }
+        points.push(point(line).map_err(|why| ImportError::Line { line: number, why })?);
+    }
+    Ok(points)
+}
+
+/// One line of `[TimingPoints]`. Missing fields take osu!'s defaults.
+fn point(line: &str) -> Result<Point, String> {
+    let fields: Vec<&str> = line.split(',').map(str::trim).collect();
+    let number = |index: usize, what: &str| -> Result<Option<f64>, String> {
+        match fields.get(index) {
+            None | Some(&"") => Ok(None),
+            Some(field) => field
+                .parse::<f64>()
+                .ok()
+                .filter(|value| value.is_finite())
+                .map(Some)
+                .ok_or_else(|| format!("`{field}` is not {what}")),
+        }
+    };
+    let time = number(0, "a time")?.ok_or("there is no time")?;
+    let beat_length = number(1, "a beat length")?.ok_or("there is no beat length")?;
+    let meter = number(2, "a meter")?.unwrap_or(4.0);
+    let uninherited = match number(6, "0 or 1")? {
+        None => beat_length > 0.0,
+        Some(flag) => flag != 0.0,
+    };
+    if uninherited && beat_length <= 0.0 {
+        return Err(format!(
+            "an uninherited point needs a beat length above 0, not {beat_length}"
+        ));
+    }
+    if !uninherited && beat_length >= 0.0 {
+        return Err(format!(
+            "an inherited point needs a negative beat length, not {beat_length}"
+        ));
+    }
+    // osu! reads a meter of 0 as 4.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // range checked
+    let meter = if (1.0..=f64::from(u16::MAX)).contains(&meter) && meter.fract() == 0.0 {
+        NonZeroU16::new(meter as u16)
+    } else if meter == 0.0 {
+        NonZeroU16::new(4)
+    } else {
+        None
+    };
+    let meter = meter.ok_or_else(|| {
+        let field = fields.get(2).copied().unwrap_or_default();
+        format!("`{field}` is not a meter")
+    })?;
+    Ok(Point {
+        time,
+        beat_length,
+        meter,
+        uninherited,
+    })
+}
+
+/// Whole ticks nearest `milliseconds` at a beat of `beat_length` milliseconds.
+fn ticks(milliseconds: f64, beat_length: f64, ticks_per_beat: f64) -> i64 {
+    #[allow(clippy::cast_possible_truncation)] // a song's worth of ticks
+    let ticks = (milliseconds / beat_length * ticks_per_beat).round() as i64;
+    ticks
+}
+
+/// The tempo of a beat `beat_length` milliseconds long, to six places.
+fn bpm(beat_length: f64) -> Result<Bpm, ImportError> {
+    micro(60_000.0 / beat_length)
+        .and_then(|bpm| Bpm::try_from(bpm).ok())
+        .ok_or_else(|| ImportError::OutOfRange(format!("a beat of {beat_length} ms is no tempo")))
+}
+
+fn event(tick: i64, kind: TimingKind) -> Result<TimingEvent, ImportError> {
+    let tick = i32::try_from(tick)
+        .map_err(|_| ImportError::OutOfRange(format!("tick {tick} is past the song's end")))?;
+    Ok(TimingEvent {
+        tick: Tick::new(tick),
+        kind,
+        ext: Extensions::new(),
+    })
+}
+
+/// `value` to six places, the finest the format holds.
+fn micro(value: f64) -> Option<f64> {
+    let rounded = (value * 1e6).round() / 1e6;
+    rounded.is_finite().then_some(rounded)
+}
+
+fn out_of_range(error: impl std::fmt::Display) -> ImportError {
+    ImportError::OutOfRange(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{Value, json};
+
+    use super::*;
+
+    const EXAMPLE: &str = "[TimingPoints]
+895,288.322921672273,4,1,0,60,1,0
+9833,-100,4,1,0,45,0,0
+18194,-100,4,1,0,60,0,0
+37728,-100,4,1,0,45,0,0
+38380,288.322921672273,4,1,0,60,1,0
+38380,-100,4,1,0,45,0,0
+75285,-100,4,1,0,60,0,1
+109884,-100,4,1,0,60,0,0
+112190,-100,4,1,0,60,0,1
+150249,-100,4,1,0,60,0,0
+";
+
+    fn song(ruleset: &str) -> ValidDocument {
+        let value = json!({
+            "format_version": 0,
+            "ruleset": { "id": ruleset, "version": "1" },
+            "metadata": { "title": "t", "artist": "a", "audio": "a.ogg" },
+            "timing": { "offset_seconds": 0.0, "events": [ { "tick": 0, "kind": { "bpm": 120.0 } } ] },
+            "charts": []
+        });
+        ValidDocument::from_json(&serde_json::to_vec(&value).unwrap()).unwrap()
+    }
+
+    fn events(imported: &ImportedTiming) -> Value {
+        serde_json::to_value(&imported.timing.events).unwrap()
+    }
+
+    fn speed(tick: i64) -> Value {
+        json!({ "tick": tick, "kind": { "other": { "name": "osu_mania.scroll_speed", "value": 1.0 } } })
+    }
+
+    #[test]
+    fn red_lines_become_tempo_and_green_lines_scroll_speeds_on_the_grid() {
+        let imported = import(EXAMPLE, &song(ID)).unwrap();
+        assert_eq!(
+            serde_json::to_value(imported.timing.offset_seconds).unwrap(),
+            json!(0.895)
+        );
+        let mut expected = vec![
+            json!({ "tick": 0, "kind": { "bpm": 208.1 } }),
+            speed(29760),
+            speed(57599),
+            speed(122_639),
+            json!({ "tick": 124_810, "kind": { "bpm": 208.1 } }),
+            json!({ "tick": 124_810, "kind": { "time_signature": [4, 4] } }),
+            speed(124_810),
+        ];
+        expected.extend([247_689, 362_890, 370_568, 497_289].map(speed));
+        assert_eq!(events(&imported), Value::Array(expected));
+        let timing = ValidDocument::new(charter_core::Document {
+            timing: imported.timing,
+            ..song(ID).document().clone()
+        });
+        assert!(timing.is_ok());
+    }
+
+    #[test]
+    fn a_song_of_another_game_takes_the_tempo_and_leaves_the_scroll_speeds() {
+        let imported = import(EXAMPLE, &song("sm")).unwrap();
+        let kinds: Vec<Value> = imported
+            .timing
+            .events
+            .iter()
+            .map(|e| json!(e.kind))
+            .collect();
+        assert!(kinds.iter().all(|kind| kind.get("other").is_none()));
+        assert_eq!(imported.timing.events.len(), 3);
+        assert!(
+            imported
+                .left_out
+                .iter()
+                .any(|note| note.starts_with("8 scroll speed changes"))
+        );
+    }
+
+    #[test]
+    fn a_whole_osu_file_gives_its_timing_points_alone() {
+        let file = format!(
+            "osu file format v14\n\n[General]\nAudioFilename: a.mp3\n\n{EXAMPLE}\n[HitObjects]\n64,192,1000,1,0,0:0:0:0:\n"
+        );
+        let whole = import(&file, &song(ID)).unwrap();
+        assert_eq!(whole, import(EXAMPLE, &song(ID)).unwrap());
+    }
+
+    #[test]
+    fn a_meter_other_than_four_starts_its_measures_at_its_red_line() {
+        let imported = import("0,500,3,1,0,100,1,0\n6000,500,4,1,0,100,1,0", &song("sm")).unwrap();
+        assert_eq!(
+            events(&imported),
+            json!([
+                { "tick": 0, "kind": { "bpm": 120.0 } },
+                { "tick": 0, "kind": { "time_signature": [3, 4] } },
+                { "tick": 11520, "kind": { "bpm": 120.0 } },
+                { "tick": 11520, "kind": { "time_signature": [4, 4] } },
+            ])
+        );
+    }
+
+    #[test]
+    fn a_red_line_on_a_measure_line_needs_no_new_measure() {
+        let imported = import("0,500,4,1,0,100,1,0\n4000,400,4,1,0,100,1,0", &song("sm")).unwrap();
+        assert_eq!(
+            events(&imported),
+            json!([
+                { "tick": 0, "kind": { "bpm": 120.0 } },
+                { "tick": 7680, "kind": { "bpm": 150.0 } },
+            ])
+        );
+    }
+
+    #[test]
+    fn green_lines_after_a_red_line_are_reset_by_the_next_red_line() {
+        let text = "0,500,4,1,0,100,1,0\n1000,-50,4,1,0,100,0,0\n4000,500,4,1,0,100,1,0";
+        let imported = import(text, &song(ID)).unwrap();
+        let speeds: Vec<(Value, Value)> = imported
+            .timing
+            .events
+            .iter()
+            .filter_map(|e| match &e.kind {
+                TimingKind::Other { value, .. } => Some((json!(e.tick), value.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            speeds,
+            [(json!(1920), json!(2.0)), (json!(7680), json!(1.0))]
+        );
+        let again = format!("{text}\n6000,500,4,1,0,100,1,0");
+        let imported = import(&again, &song(ID)).unwrap();
+        let speeds = imported.timing.events.iter();
+        let speeds = speeds.filter(|e| matches!(e.kind, TimingKind::Other { .. }));
+        assert_eq!(speeds.count(), 2);
+    }
+
+    #[test]
+    fn text_without_a_tempo_or_with_a_bad_line_says_so() {
+        assert_eq!(import("", &song(ID)), Err(ImportError::NoTempo));
+        assert_eq!(
+            import("100,-100,4,1,0,60,0,0", &song(ID)),
+            Err(ImportError::NoTempo)
+        );
+        let bad = import("0,500,4,1,0,100,1,0\nsoon,500", &song(ID)).unwrap_err();
+        assert_eq!(bad.to_string(), "line 2: `soon` is not a time");
+        let backwards = import("0,-500,4,1,0,100,1,0", &song(ID)).unwrap_err();
+        assert!(
+            backwards
+                .to_string()
+                .starts_with("line 1: an uninherited point")
+        );
+    }
+}
