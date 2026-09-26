@@ -254,7 +254,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
-    use crate::document::{DEFAULT_TICKS_PER_BEAT, TimingEvent, TimingKind};
+    use crate::document::{Anchor, DEFAULT_TICKS_PER_BEAT, TimingEvent, TimingKind};
     use crate::unit::{Bpm, Origin};
 
     fn meter(numerator: u16, denominator: u16) -> TimeSignature {
@@ -266,12 +266,7 @@ mod tests {
 
     /// A timing map at 120 BPM with a time signature on each of `signatures`.
     fn timing(signatures: &[(i32, TimeSignature)]) -> Timing {
-        let tempo = TimingEvent {
-            tick: Tick::new(0),
-            kind: TimingKind::Bpm(Bpm::try_from(120.0).unwrap()),
-            ext: BTreeMap::new(),
-        };
-        let mut events = vec![tempo];
+        let mut events = Vec::new();
         events.extend(signatures.iter().map(|&(tick, meter)| TimingEvent {
             tick: Tick::new(tick),
             kind: TimingKind::TimeSignature(meter),
@@ -279,7 +274,12 @@ mod tests {
         }));
         events.sort_by_key(|event| event.tick);
         Timing {
-            offset_seconds: Origin::try_from(0.0).unwrap(),
+            anchors: vec![Anchor {
+                tick: Tick::new(0),
+                seconds: Origin::try_from(0.0).unwrap(),
+                ext: BTreeMap::new(),
+            }],
+            tempo: Bpm::try_from(120.0).unwrap(),
             events,
         }
     }

@@ -9,8 +9,8 @@
 use std::num::NonZeroU16;
 
 use charter_core::{
-    Bpm, Decimal, Extensions, ImportedTiming, Key, Name, Namespace, Origin, Tick, TimeSignature,
-    Timing, TimingEvent, TimingKind, ValidDocument,
+    Anchor, Bpm, Decimal, Extensions, ImportedTiming, Key, Name, Namespace, Origin, Tick,
+    TimeSignature, Timing, TimingEvent, TimingKind, ValidDocument,
 };
 
 use crate::{ID, SCROLL_SPEED};
@@ -53,9 +53,6 @@ pub(crate) fn import(text: &str, into: &ValidDocument) -> Result<ImportedTiming,
     let mut reds: Vec<Point> = points.iter().copied().filter(|p| p.uninherited).collect();
     reds.sort_by(|a, b| a.time.total_cmp(&b.time));
     let first = *reds.first().ok_or(ImportError::NoTempo)?;
-    let offset = micro(first.time / 1000.0)
-        .and_then(|seconds| Origin::try_from(seconds).ok())
-        .ok_or_else(|| ImportError::OutOfRange(format!("{} ms is not an offset", first.time)))?;
     let mut left_out = Vec::new();
     let mut placed: Vec<(Placed, NonZeroU16)> = Vec::new();
     let mut merged = 0;
@@ -71,7 +68,7 @@ pub(crate) fn import(text: &str, into: &ValidDocument) -> Result<ImportedTiming,
         };
         let tick = last.tick + ticks(red.time - last.at, last.beat_length, ticks_per_beat);
         #[allow(clippy::cast_precision_loss)] // a song's worth of ticks, far below 2^52
-        let at = last.at + (tick - last.tick) as f64 * last.beat_length / ticks_per_beat;
+        let at = red.time;
         let point = Placed {
             tick,
             at,
@@ -90,10 +87,21 @@ pub(crate) fn import(text: &str, into: &ValidDocument) -> Result<ImportedTiming,
         ));
     }
     let mut events = Vec::new();
+    let mut anchors = Vec::new();
+    let mut tempo = bpm(first.beat_length)?;
     let four = NonZeroU16::new(4).unwrap_or(NonZeroU16::MIN);
     let (mut measure_from, mut meter) = (0, four);
     for &(red, beats) in &placed {
-        events.push(event(red.tick, TimingKind::Bpm(bpm(red.beat_length)?))?);
+        tempo = bpm(red.beat_length)?;
+        anchors.push(Anchor {
+            tick: Tick::new(i32::try_from(red.tick).map_err(|_| {
+                ImportError::OutOfRange(format!("{} ticks is out of range", red.tick))
+            })?),
+            seconds: micro(red.at / 1000.0)
+                .and_then(|seconds| Origin::try_from(seconds).ok())
+                .ok_or_else(|| ImportError::OutOfRange(format!("{} ms is not a time", red.at)))?,
+            ext: Extensions::new(),
+        });
         // osu! starts a measure at every red line; charter's grid restarts at a time signature.
         #[allow(clippy::cast_possible_truncation)] // a resolution, whole and small
         let measure = i64::from(meter.get()) * ticks_per_beat as i64;
@@ -121,7 +129,8 @@ pub(crate) fn import(text: &str, into: &ValidDocument) -> Result<ImportedTiming,
     events.sort_by_key(|event| event.tick);
     Ok(ImportedTiming {
         timing: Timing {
-            offset_seconds: offset,
+            anchors,
+            tempo,
             events,
         },
         left_out,
@@ -351,15 +360,16 @@ mod tests {
     fn red_lines_become_tempo_and_green_lines_scroll_speeds_on_the_grid() {
         let imported = import(EXAMPLE, &song(ID)).unwrap();
         assert_eq!(
-            serde_json::to_value(imported.timing.offset_seconds).unwrap(),
-            json!(0.895)
+            serde_json::to_value(&imported.timing.anchors).unwrap(),
+            json!([
+                { "tick": 0, "seconds": 0.895 },
+                { "tick": 124_810, "seconds": 38.38 }
+            ])
         );
         let mut expected = vec![
-            json!({ "tick": 0, "kind": { "bpm": 208.1 } }),
             speed(29760),
             speed(57599),
             speed(122_639),
-            json!({ "tick": 124_810, "kind": { "bpm": 208.1 } }),
             json!({ "tick": 124_810, "kind": { "time_signature": [4, 4] } }),
             speed(124_810),
         ];
@@ -382,7 +392,7 @@ mod tests {
             .map(|e| json!(e.kind))
             .collect();
         assert!(kinds.iter().all(|kind| kind.get("other").is_none()));
-        assert_eq!(imported.timing.events.len(), 3);
+        assert_eq!(imported.timing.anchors.len(), 2);
         assert!(
             imported
                 .left_out
@@ -406,9 +416,7 @@ mod tests {
         assert_eq!(
             events(&imported),
             json!([
-                { "tick": 0, "kind": { "bpm": 120.0 } },
                 { "tick": 0, "kind": { "time_signature": [3, 4] } },
-                { "tick": 11520, "kind": { "bpm": 120.0 } },
                 { "tick": 11520, "kind": { "time_signature": [4, 4] } },
             ])
         );
@@ -417,13 +425,8 @@ mod tests {
     #[test]
     fn a_red_line_on_a_measure_line_needs_no_new_measure() {
         let imported = import("0,500,4,1,0,100,1,0\n4000,400,4,1,0,100,1,0", &song("sm")).unwrap();
-        assert_eq!(
-            events(&imported),
-            json!([
-                { "tick": 0, "kind": { "bpm": 120.0 } },
-                { "tick": 7680, "kind": { "bpm": 150.0 } },
-            ])
-        );
+        assert_eq!(events(&imported), json!([]));
+        assert_eq!(imported.timing.anchors.len(), 2);
     }
 
     #[test]

@@ -11,9 +11,11 @@ decimal!(
     /// Tempo, in quarter notes per minute: a decimal above 0.
     ///
     /// ```
-    /// # use charter_core::{Bpm, TimingKind};
+    /// # use charter_core::{Bpm, Timing};
     /// let tempo = Bpm::try_from(120.0).unwrap();
-    /// let _ = TimingKind::Bpm(tempo);
+    /// # let anchors = Vec::new();
+    /// # let events = Vec::new();
+    /// let _ = Timing { anchors, tempo, events };
     /// ```
     ///
     /// A tempo is not a pause, though both are positive:
@@ -45,9 +47,11 @@ decimal!(
     /// A pause is not a tempo:
     ///
     /// ```compile_fail
-    /// # use charter_core::{Seconds, TimingKind};
+    /// # use charter_core::{Seconds, Timing};
     /// let pause = Seconds::try_from(0.5).unwrap();
-    /// let _ = TimingKind::Bpm(pause);
+    /// # let anchors = Vec::new();
+    /// # let events = Vec::new();
+    /// let _ = Timing { anchors, tempo: pause, events };
     /// ```
     Seconds, "a length of time above 0 of at most six places", |m| m > 0
 );
@@ -480,9 +484,14 @@ mod tests {
     }
 
     #[test]
-    fn a_bpm_event_carries_a_tempo() {
-        let kind: TimingKind = serde_json::from_value(json!({ "bpm": 120.0 })).unwrap();
-        assert_eq!(kind, TimingKind::Bpm(Bpm::try_from(120.0).unwrap()));
+    fn a_timing_map_carries_a_tail_tempo() {
+        let timing: crate::Timing = serde_json::from_value(json!({
+            "anchors": [ { "tick": 0, "seconds": 0.0 } ],
+            "tempo": 120.0,
+            "events": []
+        }))
+        .unwrap();
+        assert_eq!(timing.tempo, Bpm::try_from(120.0).unwrap());
     }
 
     #[test]
@@ -511,7 +520,7 @@ mod tests {
     #[test]
     fn timing_events_sit_on_ticks() {
         let event: TimingEvent =
-            serde_json::from_value(json!({ "tick": -480, "kind": { "bpm": 120.0 } })).unwrap();
+            serde_json::from_value(json!({ "tick": -480, "kind": { "stop": 1.0 } })).unwrap();
         assert_eq!(event.tick, Tick::new(-480));
     }
 

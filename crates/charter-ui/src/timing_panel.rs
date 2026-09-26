@@ -29,46 +29,62 @@ struct Point {
 }
 
 /// Every timing point of `timing`, in order.
-fn points(timing: &Timing) -> Vec<Point> {
-    timing
-        .events
-        .chunk_by(|a, b| a.tick == b.tick)
-        .filter_map(|events| {
-            let tick = events.first()?.tick;
-            let mut point = Point {
-                tick,
-                bpm: None,
-                meter: None,
-                others: Vec::new(),
-            };
-            for event in events {
-                match &event.kind {
-                    TimingKind::Bpm(bpm) => point.bpm = Some(*bpm),
-                    TimingKind::TimeSignature(meter) => point.meter = Some(*meter),
-                    TimingKind::Stop(pause) => point.others.push(format!("stop {pause} s")),
-                    TimingKind::Delay(pause) => point.others.push(format!("delay {pause} s")),
-                    TimingKind::Warp(ticks) => point.others.push(format!("warp {ticks}")),
-                    TimingKind::Other { name, value } => {
-                        point.others.push(format!("{} {value}", name.name()));
+fn points(timing: Valid<'_, charter_core::Timing>) -> Vec<Point> {
+    let mut points: Vec<Point> = timing
+        .anchors
+        .iter()
+        .map(|anchor| Point {
+            tick: anchor.tick,
+            bpm: Bpm::try_from(timing.tempo_at(anchor.tick)).ok(),
+            meter: None,
+            others: Vec::new(),
+        })
+        .collect();
+    points.extend(
+        timing
+            .events
+            .chunk_by(|a, b| a.tick == b.tick)
+            .filter_map(|events| {
+                let tick = events.first()?.tick;
+                let mut point = Point {
+                    tick,
+                    bpm: None,
+                    meter: None,
+                    others: Vec::new(),
+                };
+                for event in events {
+                    match &event.kind {
+                        TimingKind::TimeSignature(meter) => point.meter = Some(*meter),
+                        TimingKind::Stop(pause) => point.others.push(format!("stop {pause} s")),
+                        TimingKind::Delay(pause) => point.others.push(format!("delay {pause} s")),
+                        TimingKind::Warp(ticks) => point.others.push(format!("warp {ticks}")),
+                        TimingKind::Other { name, value } => {
+                            point.others.push(format!("{} {value}", name.name()));
+                        }
                     }
                 }
-            }
-            Some(point)
-        })
-        .collect()
+                Some(point)
+            }),
+    );
+    points.sort_by_key(|point| point.tick);
+    let mut merged: Vec<Point> = Vec::new();
+    for point in points {
+        if let Some(last) = merged.last_mut()
+            && last.tick == point.tick
+        {
+            last.bpm = last.bpm.or(point.bpm);
+            last.meter = last.meter.or(point.meter);
+            last.others.extend(point.others);
+            continue;
+        }
+        merged.push(point);
+    }
+    merged
 }
 
 /// The tempo in effect on `tick`: the latest BPM change at or before it, or the first.
-fn tempo_at(timing: &Timing, tick: Tick) -> Option<Bpm> {
-    let mut changes = timing.events.iter().filter_map(|event| match event.kind {
-        TimingKind::Bpm(bpm) => Some((event.tick, bpm)),
-        _ => None,
-    });
-    let first = changes.clone().next();
-    changes
-        .rfind(|(at, _)| *at <= tick)
-        .or(first)
-        .map(|(_, bpm)| bpm)
+fn tempo_at(timing: Valid<'_, charter_core::Timing>, tick: Tick) -> Option<Bpm> {
+    Bpm::try_from(timing.tempo_at(tick)).ok()
 }
 
 /// The meter in effect on `tick`: the latest time signature at or before it, or common time.
@@ -119,7 +135,7 @@ fn body(
     let mut refused = None;
     table(ui, "offset", |ui| {
         let caption = ui.weak("Offset").on_hover_text(OFFSET_ABOUT);
-        let seconds = f64::from(timing.offset_seconds);
+        let seconds = timing.time_at(Tick::new(0)).seconds();
         refused = offset_rows(
             ui,
             (editable, caption.id),
@@ -136,7 +152,7 @@ fn body(
         }
     }
     ui.add_space(10.0);
-    let points = points(&timing);
+    let points = points(timing);
     let current = song.timing_point();
     ui.horizontal(|ui| {
         ui.label(RichText::new("Timing points").strong());
@@ -231,7 +247,7 @@ fn point_fields(
 ) -> Option<String> {
     let timing = song.timing();
     let editable = song.read_only().is_none();
-    let bpm = tempo_at(&timing, tick);
+    let bpm = tempo_at(timing, tick);
     let meter_now = meter_at(&timing, tick);
     let mut refused = None;
     table(ui, "timing point", |ui| {
@@ -298,10 +314,7 @@ fn point_fields(
         }
         ui.end_row();
     });
-    let first = timing.events.iter().find_map(|event| match event.kind {
-        TimingKind::Bpm(_) => Some(event.tick),
-        _ => None,
-    });
+    let first = timing.anchors.first().map(|anchor| anchor.tick);
     if editable && Some(tick) != first {
         let remove = style::icon_button(ui, icon::TRASH, "Remove this timing point", false)
             .on_hover_text("The tempo and meter before it carry on");
@@ -409,17 +422,26 @@ mod tests {
 
     #[test]
     fn events_on_one_tick_make_one_point() {
-        let timing: Timing = serde_json::from_value(serde_json::json!({
-            "offset_seconds": 0.0,
-            "events": [
-                { "tick": 0, "kind": { "bpm": 120.0 } },
-                { "tick": 960, "kind": { "bpm": 150.0 } },
-                { "tick": 960, "kind": { "time_signature": [3, 4] } },
-                { "tick": 1920, "kind": { "stop": 0.5 } }
-            ]
-        }))
-        .unwrap();
-        let points = points(&timing);
+        let value = serde_json::json!({
+            "format_version": 1,
+            "ruleset": { "id": "test", "version": "1" },
+            "metadata": { "title": "t", "artist": "a", "audio": "a.ogg" },
+            "timing": {
+                "anchors": [
+                    { "tick": 0, "seconds": 0.0 },
+                    { "tick": 960, "seconds": 0.8 }
+                ],
+                "tempo": 150.0,
+                "events": [
+                    { "tick": 960, "kind": { "time_signature": [3, 4] } },
+                    { "tick": 1920, "kind": { "stop": 0.5 } }
+                ]
+            }
+        });
+        let document =
+            charter_core::ValidDocument::from_json(&serde_json::to_vec(&value).unwrap()).unwrap();
+        let timing = document.timing();
+        let points = points(timing);
         assert_eq!(points.len(), 3);
         assert_eq!(
             points[1].meter.map(|m| m.to_string()),
@@ -427,7 +449,7 @@ mod tests {
         );
         assert_eq!(points[2].others, ["stop 0.5 s"]);
         assert_eq!(
-            tempo_at(&timing, Tick::new(1920)).map(|b| b.to_string()),
+            tempo_at(timing, Tick::new(1920)).map(|b| b.to_string()),
             Some("150".to_owned())
         );
         assert_eq!(meter_at(&timing, Tick::new(0)).to_string(), "4/4");

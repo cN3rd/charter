@@ -1,11 +1,9 @@
-//! Syncing beats to the audio with anchors, as a tempo mapper does: every BPM change pins its
+//! Syncing beats to the audio with anchors, as a tempo mapper does: every anchor pins its
 //! beat to a moment of the audio, the tempo between two anchors follows from where they are,
 //! and only the tempo after the last one is set. Every edit here is a new set of pins, from
 //! which the tempo is rebuilt, so no edit can leave the pins out of order.
 
-use charter_core::{
-    Bpm, Extensions, Origin, Tick, Timing, TimingEvent, TimingKind, Valid, ValidDocument,
-};
+use charter_core::{Anchor, Bpm, Extensions, Origin, Tick, Timing, ValidDocument};
 
 use crate::edit::{Edit, Op};
 use crate::song::{Refusal, Song};
@@ -25,12 +23,12 @@ impl Song {
     /// The anchors of the timing tempo edits go to, in order, each where it falls now.
     #[must_use]
     pub fn anchors(&self) -> Vec<Pin> {
-        let timing = self.timing();
-        anchors(&timing.events)
-            .into_iter()
-            .map(|(tick, _)| Pin {
-                tick,
-                seconds: timing.time_at(tick).seconds(),
+        self.timing()
+            .anchors
+            .iter()
+            .map(|anchor| Pin {
+                tick: anchor.tick,
+                seconds: charter_core::ResolvedTime::from(anchor.seconds).seconds(),
             })
             .collect()
     }
@@ -38,7 +36,7 @@ impl Song {
     /// The tempo after the last anchor, the one tempo set rather than following from anchors.
     #[must_use]
     pub fn tail_bpm(&self) -> Option<Bpm> {
-        anchors(&self.timing().events).last().map(|(_, bpm)| *bpm)
+        Some(self.timing().tempo)
     }
 
     /// Makes the beat on `tick` fall `seconds` into the audio, as one step, anchoring it there
@@ -127,21 +125,18 @@ impl Song {
     /// Refuses on a read-only song, and with [`Refusal::OnlyTempo`] when no anchor would be left.
     pub fn unsync_anchors(&mut self, ticks: &[Tick]) -> Result<(), Refusal> {
         let before = self.anchors();
-        let timing = self.timing();
-        let kept: Vec<(Pin, Bpm)> = before
+        let kept: Vec<Pin> = before
             .iter()
-            .zip(anchors(&timing.events))
-            .filter(|(pin, _)| !ticks.contains(&pin.tick))
-            .map(|(pin, (_, bpm))| (*pin, bpm))
+            .filter(|pin| !ticks.contains(&pin.tick))
+            .copied()
             .collect();
         if kept.len() == before.len() {
             return Ok(());
         }
-        let Some(&(_, tail)) = kept.last() else {
+        if kept.is_empty() {
             return Err(Refusal::OnlyTempo);
-        };
-        let pins: Vec<Pin> = kept.iter().map(|(pin, _)| *pin).collect();
-        self.repin(&pins, tail, false)
+        }
+        self.repin(&kept, self.tail(), false)
     }
 
     /// Removes the anchor on `tick`; see [`Song::unsync_anchors`].
@@ -264,61 +259,27 @@ impl Song {
         }
     }
 
-    /// `base` with its BPM changes rebuilt from `pins` and `tail`.
+    /// `base` with its anchors rebuilt from `pins` and `tail`.
     fn rebuilt(&self, base: Timing, pins: &[Pin], tail: Bpm) -> Result<Timing, Refusal> {
-        let Some(&first) = pins.first() else {
+        if pins.is_empty() {
             return Err(Refusal::OnlyTempo);
-        };
+        }
         in_order(pins, |pin| i64::from(pin.tick))?;
         in_order_in_time(pins)?;
-        let old_pins = self.anchors();
-        let old_tempos = anchors(&self.timing().events);
-        // A segment keeps its tempo when both its ends are where they were.
-        let unmoved = |from: &Pin, to: &Pin| -> Option<Bpm> {
-            let at = old_pins.iter().position(|old| old.tick == from.tick)?;
-            let (was, next) = (old_pins.get(at)?, old_pins.get(at + 1)?);
-            let same =
-                |a: &Pin, b: &Pin| a.tick == b.tick && (a.seconds - b.seconds).abs() <= APART;
-            let tempo = old_tempos.get(at).map(|(_, bpm)| *bpm);
-            tempo.filter(|_| same(was, from) && same(next, to))
-        };
         let mut new = base;
-        new.events
-            .retain(|event| !matches!(event.kind, TimingKind::Bpm(_)));
-        for pin in pins {
-            set_tempo(&mut new.events, pin.tick, tail);
-        }
-        let checked = self.checked(&new)?;
-        let timing = timing_of(&checked, self.chart_index());
-        let mut tempos = Vec::with_capacity(pins.len());
-        for pair in pins.windows(2) {
-            if let [from, to] = pair {
-                let bpm = unmoved(from, to)
-                    .or_else(|| timing.tempo_for(from.tick, to.tick, to.seconds - from.seconds));
-                tempos.push((from.tick, bpm.ok_or(Refusal::Crosses(to.tick))?));
-            }
-        }
-        for (tick, bpm) in tempos {
-            set_tempo(&mut new.events, tick, bpm);
-        }
-        let kept_offset = old_pins.first().is_some_and(|old| {
-            old.tick == first.tick
-                && (old.seconds - first.seconds).abs() <= APART
-                && pins
-                    .get(1)
-                    .is_none_or(|next| unmoved(&first, next).is_some())
-        });
-        if kept_offset {
-            return Ok(new);
-        }
-        new.offset_seconds = Origin::try_from(0.0).map_err(|_| Refusal::NotWhole)?;
-        let checked = self.checked(&new)?;
-        let landed = timing_of(&checked, self.chart_index())
-            .time_at(first.tick)
-            .seconds();
-        new.offset_seconds = micro(first.seconds - landed)
-            .and_then(|offset| Origin::try_from(offset).ok())
-            .ok_or(Refusal::NotWhole)?;
+        new.anchors = pins
+            .iter()
+            .map(|pin| {
+                Ok(Anchor {
+                    tick: pin.tick,
+                    seconds: Origin::try_from(micro(pin.seconds).ok_or(Refusal::NotWhole)?)
+                        .map_err(|_| Refusal::NotWhole)?,
+                    ext: Extensions::new(),
+                })
+            })
+            .collect::<Result<Vec<_>, Refusal>>()?;
+        new.tempo = tail;
+        self.checked(&new)?;
         Ok(new)
     }
 
@@ -365,43 +326,6 @@ fn in_order_in_time(pins: &[Pin]) -> Result<(), Refusal> {
     Ok(())
 }
 
-/// The timing the open chart `chart` of `document` resolves through.
-fn timing_of(document: &ValidDocument, chart: usize) -> Valid<'_, Timing> {
-    document
-        .charts()
-        .nth(chart)
-        .map_or_else(|| document.timing(), |chart| chart.timing())
-}
-
-/// The BPM changes among `events`, each by its tick.
-fn anchors(events: &[TimingEvent]) -> Vec<(Tick, Bpm)> {
-    events
-        .iter()
-        .filter_map(|event| match event.kind {
-            TimingKind::Bpm(bpm) => Some((event.tick, bpm)),
-            _ => None,
-        })
-        .collect()
-}
-
-/// Gives the BPM change on `tick` among `events` the tempo `bpm`, adding one if there is none.
-fn set_tempo(events: &mut Vec<TimingEvent>, tick: Tick, bpm: Bpm) {
-    let here = events
-        .iter_mut()
-        .find(|event| event.tick == tick && matches!(event.kind, TimingKind::Bpm(_)));
-    if let Some(change) = here {
-        change.kind = TimingKind::Bpm(bpm);
-    } else {
-        let at = events.partition_point(|event| event.tick <= tick);
-        let change = TimingEvent {
-            tick,
-            kind: TimingKind::Bpm(bpm),
-            ext: Extensions::new(),
-        };
-        events.insert(at, change);
-    }
-}
-
 /// `seconds` to the nearest microsecond, the finest time the format holds.
 fn micro(seconds: f64) -> Option<f64> {
     let rounded = (seconds * 1e6).round() / 1e6;
@@ -410,6 +334,7 @@ fn micro(seconds: f64) -> Option<f64> {
 
 #[cfg(test)]
 mod tests {
+    use charter_core::TimingKind;
     use serde_json::{Value, json};
 
     use super::*;
@@ -420,7 +345,7 @@ mod tests {
     }
 
     fn offset(song: &Song) -> f64 {
-        f64::from(song.document().document().timing.offset_seconds)
+        song.document().timing().time_at(Tick::new(0)).seconds()
     }
 
     #[test]
@@ -591,7 +516,7 @@ mod tests {
         assert_eq!(events[3], bpm_event(5760, 97.5));
         assert_ne!(events[1], bpm_event(1920, 150.0));
         assert_eq!(
-            serde_json::to_value(song.timing().offset_seconds).unwrap(),
+            serde_json::to_value(song.timing().anchors[0].seconds).unwrap(),
             json!(0.0)
         );
     }

@@ -1,8 +1,8 @@
 ---
-type: Open Decision
+type: Decision
 title: Sync anchors
 description: Whether audio-to-music anchors are persistent project data or ephemeral handles over a timing map.
-tags: [topic, data-model, sync, timing, open]
+tags: [topic, data-model, sync, timing]
 status: draft
 ---
 
@@ -17,26 +17,26 @@ neighbouring anchors rather than stored, `MPS = dMeasure / dOffset`.
 StepMania-family formats invert this: they store BPM segments and stops, and the anchor
 relationship is implicit in `#OFFSET`.
 
-## Open decision
+## Decision
 
-- Anchors persist as native project data, with tempo derived
-- Anchors are ephemeral editing handles compiled into stored timing channels
-- Both, with anchors as an authoring layer above a canonical timing map
+Anchors persist as native timing data. Segment tempo is derived between neighbouring anchors, and
+the tail tempo is stored after the last anchor.
 
 ## Evidence
 
 Tempora demonstrates the derived-tempo model works for sync-only work. Whether it survives contact
 with `.ssc` gimmicks is untested.
 
-Grade: **observed** for the model; **unresolved** for charter.
+Grade: **decided** for charter format v1.
 
 ## Unresolved
 
-- How anchors interact with `.ssc` stops, delays and warps.
-- Whether an anchor may target a post-warp row at all, given warps skip time.
-- What manual BPM editing does in anchor mode: move the next anchor's offset, move its row, or
-  split the segment.
+- Stops and delays inside a segment keep their StepMania timing semantics and shorten the time
+  available to that segment's beats.
+- Anchors may not fall on warped ticks.
+- Editing a derived tempo moves the next anchor's seconds; editing the tail changes `tempo`.
 
 ## Draft position
 
-**Not in v0.** Excluded as redundant with `bpm` events and unresolved; if it returns it should be editor project data, not chart data. See [known gaps](../../format.md#known-gaps).
+**Stored in v1.** Anchors are the chart format's tempo model because they keep authored sync times
+exact and avoid cumulative BPM rounding drift.

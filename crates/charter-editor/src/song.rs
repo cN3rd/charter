@@ -8,7 +8,7 @@ use std::ops::RangeInclusive;
 use charter_core::{
     Bpm, Chart, Error, Extensions, Kind, LaneCount, LaneIndex, LaneSpan, Marker, MarkerKind,
     Metadata, Object, Position, ResourcePath, RulesetPlugin, Shape, Tick, Ticks, Timing,
-    TimingEvent, TimingKind, Valid, ValidDocument,
+    TimingKind, Valid, ValidDocument,
 };
 
 use crate::edit::{Edit, Op};
@@ -299,24 +299,18 @@ impl Song {
         own.map_or((false, &document.timing), |own| (true, own))
     }
 
-    /// The BPM change in effect at the cursor, and its tick: the latest at or before the
-    /// cursor, or the first when the cursor is before every change.
+    /// The tempo in effect at the cursor, and the anchor tick whose segment owns it.
     #[must_use]
     pub fn bpm(&self) -> Option<(Tick, Bpm)> {
-        let (_, timing) = self.edited_timing();
-        let changes = timing.events.iter().filter_map(|event| match event.kind {
-            TimingKind::Bpm(bpm) => Some((event.tick, bpm)),
-            _ => None,
-        });
-        let mut first = None;
-        let mut latest = None;
-        for change in changes {
-            first.get_or_insert(change);
-            if change.0 <= self.cursor {
-                latest = Some(change);
-            }
-        }
-        latest.or(first)
+        let timing = self.timing();
+        let anchors = &timing.anchors;
+        let index = anchors.partition_point(|anchor| anchor.tick <= self.cursor);
+        let anchor = anchors
+            .get(index.saturating_sub(1))
+            .or_else(|| anchors.first())?;
+        Bpm::try_from(timing.tempo_at(anchor.tick))
+            .ok()
+            .map(|bpm| (anchor.tick, bpm))
     }
 
     /// Gives the BPM change in effect at the cursor, the one [`Song::bpm`] names, the tempo
@@ -334,12 +328,26 @@ impl Song {
         }
         let (own, timing) = self.edited_timing();
         let mut new = timing.clone();
-        if let Some(change) = new
-            .events
-            .iter_mut()
-            .find(|event| event.tick == at && matches!(event.kind, TimingKind::Bpm(_)))
-        {
-            change.kind = TimingKind::Bpm(bpm);
+        let Some(index) = new.anchors.iter().position(|anchor| anchor.tick == at) else {
+            return Ok(());
+        };
+        if index + 1 == new.anchors.len() {
+            new.tempo = bpm;
+        } else {
+            let Some(anchor) = new.anchors.get(index) else {
+                return Ok(());
+            };
+            let Some(next) = new.anchors.get(index + 1) else {
+                return Ok(());
+            };
+            let next_tick = next.tick;
+            let span = elapsed_at_rate(&new, at, next_tick, bpm, self.timing().ticks_per_beat())
+                .ok_or(Refusal::NotWhole)?;
+            let seconds = charter_core::ResolvedTime::from(anchor.seconds).seconds() + span;
+            if let Some(next) = new.anchors.get_mut(index + 1) {
+                next.seconds = charter_core::Origin::try_from((seconds * 1e6).round() / 1e6)
+                    .map_err(|_| Refusal::NotWhole)?;
+            }
         }
         self.retime(own, new)
     }
@@ -352,7 +360,7 @@ impl Song {
     /// Refuses on a read-only song.
     pub fn add_bpm_change(&mut self) -> Result<(), Refusal> {
         let at = self.cursor;
-        let Some((from, held)) = self.bpm() else {
+        let Some((from, _held)) = self.bpm() else {
             return Ok(());
         };
         if from == at {
@@ -360,13 +368,16 @@ impl Song {
         }
         let (own, timing) = self.edited_timing();
         let mut new = timing.clone();
-        let index = new.events.partition_point(|event| event.tick <= at);
-        let change = TimingEvent {
+        let index = new.anchors.partition_point(|anchor| anchor.tick <= at);
+        let change = charter_core::Anchor {
             tick: at,
-            kind: TimingKind::Bpm(held),
+            seconds: charter_core::Origin::try_from(
+                (self.timing().time_at(at).seconds() * 1e6).round() / 1e6,
+            )
+            .map_err(|_| Refusal::NotWhole)?,
             ext: Extensions::new(),
         };
-        new.events.insert(index, change);
+        new.anchors.insert(index, change);
         self.retime(own, new)
     }
 
@@ -384,16 +395,17 @@ impl Song {
             return Ok(());
         };
         let (own, timing) = self.edited_timing();
-        let first = timing.events.iter().find_map(|event| match event.kind {
-            TimingKind::Bpm(_) => Some(event.tick),
-            _ => None,
-        });
-        if first == Some(at) {
+        if timing.anchors.len() == 1 {
             return Err(Refusal::FirstTempo);
         }
         let mut new = timing.clone();
-        new.events
-            .retain(|event| !(event.tick == at && matches!(event.kind, TimingKind::Bpm(_))));
+        if new.anchors.last().is_some_and(|anchor| anchor.tick == at)
+            && let Some(previous) = new.anchors.iter().rev().nth(1)
+            && let Ok(tempo) = Bpm::try_from(self.timing().tempo_at(previous.tick))
+        {
+            new.tempo = tempo;
+        }
+        new.anchors.retain(|anchor| anchor.tick != at);
         self.retime(own, new)
     }
 
@@ -406,10 +418,19 @@ impl Song {
     /// Refuses on a read-only song, and when an event of a kind moved is already at `to`.
     pub fn move_timing_at(&mut self, from: Tick, to: Tick) -> Result<(), Refusal> {
         let (own, timing) = self.edited_timing();
-        if from == to || !timing.events.iter().any(|event| event.tick == from) {
+        if from == to
+            || (!timing.events.iter().any(|event| event.tick == from)
+                && !timing.anchors.iter().any(|anchor| anchor.tick == from))
+        {
             return Ok(());
         }
         let mut new = timing.clone();
+        for anchor in &mut new.anchors {
+            if anchor.tick == from {
+                anchor.tick = to;
+            }
+        }
+        new.anchors.sort_by_key(|anchor| anchor.tick);
         let (mut moved, kept): (Vec<_>, Vec<_>) =
             new.events.drain(..).partition(|event| event.tick == from);
         new.events = kept;
@@ -471,11 +492,18 @@ impl Song {
     /// Refuses on a read-only song.
     pub fn set_offset(&mut self, offset: charter_core::Origin) -> Result<(), Refusal> {
         let (own, timing) = self.edited_timing();
-        if timing.offset_seconds == offset {
+        let current = self.timing().time_at(Tick::new(0)).seconds();
+        let wanted = charter_core::ResolvedTime::from(offset).seconds();
+        let delta = wanted - current;
+        if delta.abs() <= 1e-9 {
             return Ok(());
         }
         let mut new = timing.clone();
-        new.offset_seconds = offset;
+        for anchor in &mut new.anchors {
+            let seconds = charter_core::ResolvedTime::from(anchor.seconds).seconds() + delta;
+            anchor.seconds = charter_core::Origin::try_from((seconds * 1e6).round() / 1e6)
+                .map_err(|_| Refusal::NotWhole)?;
+        }
         self.retime(own, new)
     }
 
@@ -1023,6 +1051,46 @@ fn note(tick: Tick, lane: LaneIndex, kind: Kind) -> Object {
     }
 }
 
+fn elapsed_at_rate(
+    timing: &Timing,
+    from: Tick,
+    to: Tick,
+    bpm: Bpm,
+    ticks_per_beat: charter_core::TicksPerBeat,
+) -> Option<f64> {
+    let timed = |cursor: Tick, until: Tick, warp_end: Option<Tick>| {
+        let start = warp_end.map_or(cursor, |end| end.max(cursor));
+        start
+            .ticks_until(until)
+            .map_or(0.0, |ticks| f64::from(u32::from(ticks)))
+    };
+    let mut timed_ticks = 0.0;
+    let mut pauses = 0.0;
+    let mut cursor = from;
+    let mut warp_end = None;
+    for event in &timing.events {
+        let at = event.tick;
+        if at > to {
+            break;
+        }
+        if at > from {
+            timed_ticks += timed(cursor, at, warp_end);
+            cursor = at;
+        }
+        match event.kind {
+            TimingKind::Stop(pause) if at >= from && at < to => pauses += f64::from(pause),
+            TimingKind::Delay(pause) if at > from => pauses += f64::from(pause),
+            TimingKind::Warp(ticks) => warp_end = Some(at.checked_add(ticks)?),
+            TimingKind::Stop(_)
+            | TimingKind::Delay(_)
+            | TimingKind::TimeSignature(..)
+            | TimingKind::Other { .. } => {}
+        }
+    }
+    timed_ticks += timed(cursor, to, warp_end);
+    Some(pauses + timed_ticks * 60.0 / (f64::from(bpm) * f64::from(u16::from(ticks_per_beat))))
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use std::error::Error;
@@ -1118,10 +1186,10 @@ pub(crate) mod tests {
     /// A `test` document with one four-lane chart holding `objects`, then a second, empty one.
     fn document(objects: Value) -> ValidDocument {
         let mut value = json!({
-            "format_version": 0,
+            "format_version": 1,
             "ruleset": { "id": "test", "version": "1" },
             "metadata": { "title": "t", "artist": "a", "audio": "song.ogg" },
-            "timing": { "offset_seconds": 0.0, "events": [ { "tick": 0, "kind": { "bpm": 120.0 } } ] },
+            "timing": { "anchors": [ { "tick": 0, "seconds": 0.0 } ], "tempo": 120.0, "events": [] },
             "charts": [ { "name": "Easy", "lanes": 4 }, { "name": "Hard", "lanes": 4 } ]
         });
         value["charts"][0]["objects"] = objects;
@@ -1326,10 +1394,10 @@ pub(crate) mod tests {
     #[test]
     fn a_song_without_charts_has_nothing_to_edit() {
         let empty = json!({
-            "format_version": 0,
+            "format_version": 1,
             "ruleset": { "id": "test", "version": "1" },
             "metadata": { "title": "t", "artist": "a", "audio": "song.ogg" },
-            "timing": { "offset_seconds": 0.0, "events": [ { "tick": 0, "kind": { "bpm": 120.0 } } ] }
+            "timing": { "anchors": [ { "tick": 0, "seconds": 0.0 } ], "tempo": 120.0, "events": [] }
         });
         let mut song = Song::open(&serde_json::to_vec(&empty).unwrap(), EDITABLE).unwrap();
         assert!(matches!(
@@ -1606,7 +1674,26 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn song_events(song: &Song) -> Value {
-        serde_json::to_value(&song.document().document().timing.events).unwrap()
+        let timing = song.document().timing();
+        let mut events: Vec<Value> = timing
+            .tempos()
+            .into_iter()
+            .map(|(tick, bpm)| bpm_event(i32::try_from(i64::from(tick)).unwrap(), bpm))
+            .collect();
+        events.extend(
+            song.document()
+                .document()
+                .timing
+                .events
+                .iter()
+                .map(|event| serde_json::to_value(event).unwrap()),
+        );
+        events.sort_by_key(|event| {
+            let tick = event["tick"].as_i64().unwrap();
+            let is_bpm = event["kind"].get("bpm").is_some();
+            (tick, i32::from(is_bpm && tick != 0))
+        });
+        Value::Array(events)
     }
 
     fn tempo(bpm: f64) -> Bpm {
@@ -1667,8 +1754,12 @@ pub(crate) mod tests {
         let events = json!([bpm_event(0, 120.0)]);
         let mut song = timed(&events, None);
         let new: charter_core::Timing = serde_json::from_value(json!({
-            "offset_seconds": 0.5,
-            "events": [bpm_event(0, 208.1), bpm_event(3840, 150.0)]
+            "anchors": [
+                { "tick": 0, "seconds": 0.5 },
+                { "tick": 3840, "seconds": 1.653_321 }
+            ],
+            "tempo": 150.0,
+            "events": []
         }))
         .unwrap();
         song.replace_timing(new.clone()).unwrap();
@@ -1678,7 +1769,7 @@ pub(crate) mod tests {
         assert_eq!(song_events(&song), events);
         assert!(!song.can_undo());
         let bad: charter_core::Timing =
-            serde_json::from_value(json!({ "offset_seconds": 0.0, "events": [] })).unwrap();
+            serde_json::from_value(json!({ "anchors": [], "tempo": 120.0, "events": [] })).unwrap();
         assert!(song.replace_timing(bad).is_err());
     }
 
@@ -1693,8 +1784,7 @@ pub(crate) mod tests {
         song.set_bpm(tempo(200.0)).unwrap();
         assert_eq!(song_events(&song), json!([bpm_event(0, 120.0)]));
         let own = &song.document().document().charts[1].timing;
-        let own = serde_json::to_value(&own.as_ref().unwrap().events).unwrap();
-        assert_eq!(own, json!([bpm_event(0, 200.0)]));
+        assert_eq!(own.as_ref().unwrap().tempo, tempo(200.0));
     }
 
     #[test]
@@ -1869,7 +1959,7 @@ pub(crate) mod tests {
             .unwrap();
         assert_eq!(
             song_events(&song),
-            json!([bpm_event(0, 120.0), meter, bpm_event(1920, 150.0)])
+            json!([bpm_event(0, 480.0), meter, bpm_event(1920, 150.0)])
         );
         song.undo().unwrap();
         assert_eq!(song_events(&song)[1], bpm_event(480, 150.0));
@@ -1878,13 +1968,13 @@ pub(crate) mod tests {
     #[test]
     fn every_timing_event_at_a_tick_moves_together_as_one_step() {
         let meter = |tick: i32| json!({ "tick": tick, "kind": { "time_signature": [3, 4] } });
-        let events = json!([bpm_event(0, 120.0), bpm_event(960, 150.0), meter(960)]);
+        let events = json!([bpm_event(0, 120.0), meter(960), bpm_event(960, 150.0)]);
         let mut song = timed(&events, None);
         song.move_timing_at(Tick::new(960), Tick::new(1920))
             .unwrap();
         assert_eq!(
             song_events(&song),
-            json!([bpm_event(0, 120.0), bpm_event(1920, 150.0), meter(1920)])
+            json!([bpm_event(0, 240.0), meter(1920), bpm_event(1920, 150.0)])
         );
         song.undo().unwrap();
         assert_eq!(song_events(&song), events);
@@ -1913,8 +2003,10 @@ pub(crate) mod tests {
         song.move_timing_at(Tick::new(480), Tick::new(960)).unwrap();
         assert_eq!(song_events(&song), json!([bpm_event(0, 120.0)]));
         let chart = &song.document().document().charts[1];
-        let events = serde_json::to_value(&chart.timing.as_ref().unwrap().events).unwrap();
-        assert_eq!(events[1], bpm_event(960, 90.0));
+        assert_eq!(
+            chart.timing.as_ref().unwrap().anchors[1].tick,
+            Tick::new(960)
+        );
     }
 
     #[test]
@@ -1974,7 +2066,7 @@ pub(crate) mod tests {
     }
 
     fn offset(song: &Song) -> Value {
-        serde_json::to_value(song.document().document().timing.offset_seconds).unwrap()
+        serde_json::to_value(song.document().timing().time_at(Tick::new(0)).seconds()).unwrap()
     }
 
     #[test]
@@ -1996,7 +2088,7 @@ pub(crate) mod tests {
             .unwrap();
         assert_eq!(offset(&song), json!(0.0));
         let chart = &song.document().document().charts[1];
-        let own = serde_json::to_value(chart.timing.as_ref().unwrap().offset_seconds).unwrap();
+        let own = serde_json::to_value(chart.timing.as_ref().unwrap().anchors[0].seconds).unwrap();
         assert_eq!(own, json!(-0.5));
     }
 

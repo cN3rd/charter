@@ -26,14 +26,18 @@ const END: i64 = OUTRO + 4 * MEASURE;
 #[allow(clippy::expect_used)] // see Panics
 pub fn song() -> ValidDocument {
     let document = json!({
-        "format_version": 0,
+        "format_version": 1,
         "ruleset": { "id": "sm", "version": "0.1.0" },
         "metadata": { "title": "Demo", "artist": "charter", "audio": "demo.ogg" },
         "samples": { "clap": "clap.wav" },
-        "timing": { "offset_seconds": 0.0, "events": [
-            { "tick": 0, "kind": { "bpm": 150.0 } },
+        "timing": {
+          "anchors": [
+            { "tick": 0, "seconds": 0.0 },
+            { "tick": CHORUS, "seconds": 26.1 }
+          ],
+          "tempo": 180.0,
+          "events": [
             { "tick": VERSE, "kind": { "stop": 0.5 } },
-            { "tick": CHORUS, "kind": { "bpm": 180.0 } },
             { "tick": BRIDGE, "kind": { "time_signature": [7, 8] } },
             { "tick": OUTRO, "kind": { "time_signature": [4, 4] } },
         ] },
@@ -164,13 +168,7 @@ mod tests {
         for kind in ["stop", "bpm change", "time signature"] {
             let found = match kind {
                 "stop" => timing.iter().any(|e| matches!(e.kind, TimingKind::Stop(_))),
-                "bpm change" => {
-                    timing
-                        .iter()
-                        .filter(|e| matches!(e.kind, TimingKind::Bpm(_)))
-                        .count()
-                        > 1
-                }
+                "bpm change" => song.document().timing.anchors.len() > 1,
                 _ => timing
                     .iter()
                     .any(|e| matches!(e.kind, TimingKind::TimeSignature(_))),

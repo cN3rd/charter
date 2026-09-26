@@ -1,4 +1,4 @@
-//! Timing points: every tick of a timing that holds events, a BPM change and a meter at one tick
+//! Timing points: every tick of a timing that holds events or an anchor, a tempo anchor and a meter at one tick
 //! making one point, as osu! lists them. The song panel edits the point in effect at the cursor.
 
 use charter_core::{Bpm, Extensions, Tick, TimeSignature, TimingEvent, TimingKind};
@@ -11,11 +11,19 @@ impl Song {
     #[must_use]
     pub fn timing_point(&self) -> Option<Tick> {
         let (_, timing) = self.edited_timing();
-        let ticks = timing.events.iter().map(|event| event.tick);
+        let mut ticks: Vec<_> = timing
+            .anchors
+            .iter()
+            .map(|anchor| anchor.tick)
+            .chain(timing.events.iter().map(|event| event.tick))
+            .collect();
+        ticks.sort_unstable();
+        ticks.dedup();
         ticks
-            .clone()
+            .iter()
+            .copied()
             .rfind(|tick| *tick <= self.cursor())
-            .or_else(|| timing.events.first().map(|event| event.tick))
+            .or_else(|| ticks.first().copied())
     }
 
     /// Gives the timing point on `tick` the tempo `bpm`, adding a BPM change to it if it has
@@ -25,7 +33,20 @@ impl Song {
     ///
     /// Refuses on a read-only song, or when the game refuses the tempo.
     pub fn set_bpm_at(&mut self, tick: Tick, bpm: Bpm) -> Result<(), Refusal> {
-        self.set_at(tick, TimingKind::Bpm(bpm))
+        let cursor = self.cursor();
+        self.jump_to(tick);
+        if !self
+            .edited_timing()
+            .1
+            .anchors
+            .iter()
+            .any(|anchor| anchor.tick == tick)
+        {
+            self.add_bpm_change()?;
+        }
+        let result = self.set_bpm(bpm);
+        self.jump_to(cursor);
+        result
     }
 
     /// Gives the timing point on `tick` the meter `meter`, starting the measures there, adding a
@@ -50,18 +71,28 @@ impl Song {
             return Err(Refusal::ReadOnly);
         }
         let (own, timing) = self.edited_timing();
-        let first = timing.events.iter().find_map(|event| match event.kind {
-            TimingKind::Bpm(_) => Some(event.tick),
-            _ => None,
-        });
-        if first == Some(tick) {
-            return Err(Refusal::FirstTempo);
+        if timing.anchors.len() == 1
+            && timing
+                .anchors
+                .first()
+                .is_some_and(|anchor| anchor.tick == tick)
+        {
+            return Err(Refusal::OnlyTempo);
         }
-        if !timing.events.iter().any(|event| event.tick == tick) {
+        if !timing.events.iter().any(|event| event.tick == tick)
+            && !timing.anchors.iter().any(|anchor| anchor.tick == tick)
+        {
             return Ok(());
         }
         let mut new = timing.clone();
+        if new.anchors.last().is_some_and(|anchor| anchor.tick == tick)
+            && let Some(previous) = new.anchors.iter().rev().nth(1)
+            && let Ok(tempo) = Bpm::try_from(self.timing().tempo_at(previous.tick))
+        {
+            new.tempo = tempo;
+        }
         new.events.retain(|event| event.tick != tick);
+        new.anchors.retain(|anchor| anchor.tick != tick);
         self.retime(own, new)
     }
 
@@ -145,7 +176,7 @@ mod tests {
         song.set_meter_at(Tick::new(480), meter(5, 4)).unwrap();
         assert_eq!(song_events(&song)[2], meter_event(480, 5, 4));
         song.set_meter_at(Tick::new(480), meter(5, 4)).unwrap();
-        for _ in 0..3 {
+        for _ in 0..4 {
             song.undo().unwrap();
         }
         assert!(!song.can_undo());
@@ -162,15 +193,15 @@ mod tests {
     fn a_point_is_removed_whole_but_not_the_one_starting_the_tempo() {
         let events = json!([
             bpm_event(0, 120.0),
-            bpm_event(480, 150.0),
-            meter_event(480, 3, 4)
+            meter_event(480, 3, 4),
+            bpm_event(480, 150.0)
         ]);
         let mut song = timed(&events, None);
         song.remove_timing_at(Tick::new(480)).unwrap();
         assert_eq!(song_events(&song), json!([bpm_event(0, 120.0)]));
         assert!(matches!(
             song.remove_timing_at(Tick::new(0)),
-            Err(Refusal::FirstTempo)
+            Err(Refusal::OnlyTempo)
         ));
         song.remove_timing_at(Tick::new(960)).unwrap();
         song.undo().unwrap();

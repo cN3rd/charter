@@ -133,17 +133,29 @@ fn at(location: Location) -> impl FnOnce(Rule) -> Violation {
 }
 
 fn check_timing(timing: &Timing, ticks_per_beat: TicksPerBeat) -> Result<(), Rule> {
+    if timing.anchors.is_empty() {
+        return Err(Rule::NoAnchor);
+    }
+    for pair in timing.anchors.windows(2) {
+        let [previous, next] = pair else {
+            unreachable!()
+        };
+        if previous.tick >= next.tick
+            || crate::ResolvedTime::from(previous.seconds).seconds()
+                >= crate::ResolvedTime::from(next.seconds).seconds()
+        {
+            return Err(Rule::AnchorsNotIncreasing);
+        }
+    }
     if !timing.events.is_sorted_by_key(|e| e.tick) {
         return Err(Rule::Unsorted);
     }
     let mut seen = HashSet::with_capacity(timing.events.len());
-    let mut has_bpm = false;
     let mut warp_end: Option<Tick> = None;
     for event in &timing.events {
         // One event per tick and kind, and per name among `other` events.
         let mut name = None;
         match &event.kind {
-            TimingKind::Bpm(_) => has_bpm = true,
             TimingKind::Stop(_) | TimingKind::Delay(_) => {}
             TimingKind::Warp(ticks) => {
                 if warp_end.is_some_and(|end| event.tick < end) {
@@ -167,7 +179,25 @@ fn check_timing(timing: &Timing, ticks_per_beat: TicksPerBeat) -> Result<(), Rul
             return Err(Rule::DuplicateEvent { tick: event.tick });
         }
     }
-    if has_bpm { Ok(()) } else { Err(Rule::NoBpm) }
+    for anchor in &timing.anchors {
+        if timing.events.iter().any(|event| {
+            matches!(event.kind, TimingKind::Warp(ticks) if event.tick <= anchor.tick && Some(anchor.tick) < event.tick.checked_add(ticks))
+        }) {
+            return Err(Rule::AnchorInWarp { tick: anchor.tick });
+        }
+    }
+    for pair in timing.anchors.windows(2) {
+        let [previous, next] = pair else {
+            unreachable!()
+        };
+        if timing
+            .segment_rate(ticks_per_beat, previous, next)
+            .is_none()
+        {
+            return Err(Rule::BadAnchorSegment { tick: next.tick });
+        }
+    }
+    Ok(())
 }
 
 /// Fails if two top-level objects in the group starting at `first` share a lane. Sorting keeps
@@ -302,10 +332,14 @@ mod tests {
 
     fn minimal() -> Value {
         json!({
-            "format_version": 0,
+            "format_version": 1,
             "ruleset": { "id": "test", "version": "1" },
             "metadata": { "title": "t", "artist": "a", "audio": "song.ogg" },
-            "timing": { "offset_seconds": 0.0, "events": [ { "tick": 0, "kind": { "bpm": 120.0 } } ] }
+            "timing": {
+                "anchors": [ { "tick": 0, "seconds": 0.0 } ],
+                "tempo": 120.0,
+                "events": [ { "tick": 0, "kind": { "time_signature": [4, 4] } } ]
+            }
         })
     }
 
@@ -368,7 +402,7 @@ mod tests {
             push(
                 v,
                 "/timing/events",
-                json!({ "tick": -1, "kind": { "bpm": 90.0 } }),
+                json!({ "tick": -1, "kind": { "stop": 1.0 } }),
             );
         });
         assert_eq!(broken_rule(&value), Rule::Unsorted);
@@ -384,7 +418,7 @@ mod tests {
         });
         check(&two_names).unwrap();
         for duplicate in [
-            json!({ "tick": 0, "kind": { "bpm": 90.0 } }),
+            json!({ "tick": 0, "kind": { "time_signature": [4, 4] } }),
             other("test.a"),
         ] {
             let value = with(|v| {
@@ -399,12 +433,12 @@ mod tests {
     }
 
     #[test]
-    fn every_timing_needs_a_bpm_including_a_charts_own() {
-        let meter_only = json!({ "offset_seconds": 0.0, "events": [ { "tick": 0, "kind": { "time_signature": [4, 4] } } ] });
+    fn every_timing_needs_an_anchor_including_a_charts_own() {
+        let meter_only = json!({ "anchors": [], "tempo": 120.0, "events": [ { "tick": 0, "kind": { "time_signature": [4, 4] } } ] });
         let song = with(|v| v["timing"] = meter_only.clone());
         let chart = with(|v| v["charts"] = json!([{ "name": "Easy", "timing": meter_only }]));
         for value in [song, chart] {
-            assert_eq!(broken_rule(&value), Rule::NoBpm);
+            assert_eq!(broken_rule(&value), Rule::NoAnchor);
         }
     }
 
@@ -439,7 +473,7 @@ mod tests {
                 push(
                     v,
                     "/timing/events",
-                    json!({ "tick": 0, "kind": { "warp": 480 } }),
+                    json!({ "tick": 1, "kind": { "warp": 480 } }),
                 );
                 push(
                     v,
@@ -448,8 +482,8 @@ mod tests {
                 );
             })
         };
-        check(&warps(480)).unwrap();
-        assert_eq!(broken_rule(&warps(479)), Rule::OverlappingWarps);
+        check(&warps(481)).unwrap();
+        assert_eq!(broken_rule(&warps(480)), Rule::OverlappingWarps);
     }
 
     #[test]
@@ -610,8 +644,10 @@ mod tests {
             with(|v| v["timing"]["events"][0]["ext"] = json!({ "psk.x": 1 })),
             with(|v| v["charts"] = json!([{ "name": "Easy", "ext": { "psk.x": 1 } }])),
             with(|v| {
-                let own = json!({ "offset_seconds": 0.0, "events": [
-                    { "tick": 0, "kind": { "bpm": 120.0 } },
+                let own = json!({
+                    "anchors": [ { "tick": 0, "seconds": 0.0 } ],
+                    "tempo": 120.0,
+                    "events": [
                     { "tick": 0, "kind": { "other": { "name": "psk.y", "value": 1 } } }
                 ] });
                 v["charts"] = json!([{ "name": "Easy", "timing": own }]);

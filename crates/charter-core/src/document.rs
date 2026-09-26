@@ -13,7 +13,7 @@ use crate::unit::{
 };
 
 /// The format version this crate reads and writes.
-pub const FORMAT_VERSION: u32 = 0;
+pub const FORMAT_VERSION: u32 = 1;
 
 /// Resolution when a document does not set `ticks_per_beat`.
 pub const DEFAULT_TICKS_PER_BEAT: TicksPerBeat = match TicksPerBeat::new(960) {
@@ -109,13 +109,23 @@ pub struct Preview {
     pub length_seconds: Option<Seconds>,
 }
 
-/// A tick to time mapping: an origin plus the events that shape it.
+/// A tick to time mapping: pinned beats, a tail tempo, and the pauses and meter events that
+/// shape the ticks between them.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Timing {
-    /// Audio time of tick 0.
-    pub offset_seconds: Origin,
+    pub anchors: Vec<Anchor>,
+    pub tempo: Bpm,
     pub events: Vec<TimingEvent>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Anchor {
+    pub tick: Tick,
+    pub seconds: Origin,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub ext: Extensions,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -130,8 +140,6 @@ pub struct TimingEvent {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum TimingKind {
-    /// Quarter notes per minute from this tick on.
-    Bpm(Bpm),
     /// Seconds of pause after the objects on this tick.
     Stop(Seconds),
     /// Seconds of pause before the objects on this tick.
@@ -315,10 +323,14 @@ mod tests {
 
     fn minimal() -> Value {
         json!({
-            "format_version": 0,
+            "format_version": 1,
             "ruleset": { "id": "test", "version": "1" },
             "metadata": { "title": "t", "artist": "a", "audio": "song.ogg" },
-            "timing": { "offset_seconds": 0.0, "events": [ { "tick": 0, "kind": { "bpm": 120.0 } } ] }
+            "timing": {
+                "anchors": [ { "tick": 0, "seconds": 0.0 } ],
+                "tempo": 120.0,
+                "events": [ { "tick": 0, "kind": { "time_signature": [4, 4] } } ]
+            }
         })
     }
 
@@ -482,8 +494,11 @@ mod tests {
 
     #[test]
     fn a_charts_own_timing_survives_a_round_trip() {
-        let own =
-            json!({ "offset_seconds": 0.5, "events": [ { "tick": 0, "kind": { "bpm": 90.0 } } ] });
+        let own = json!({
+            "anchors": [ { "tick": 0, "seconds": 0.5 } ],
+            "tempo": 90.0,
+            "events": []
+        });
         let value = with(|v| v["charts"] = json!([{ "name": "Beyond", "timing": own }]));
         assert_eq!(round_trip(&value), value);
     }

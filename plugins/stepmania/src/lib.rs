@@ -13,11 +13,12 @@
 use std::collections::BTreeMap;
 
 use charter_core::{
-    Bpm, Chart as CoreChart, DEFAULT_TICKS_PER_BEAT, Decimal, Document, Extensions, FORMAT_VERSION,
-    InvalidValue, Key, Kind, LaneCount, LaneIndex, Layout, Location, Marker, MarkerKind, Metadata,
-    Name, Namespace, NewSong, Object, Origin, Position, ResourcePath, Ruleset, RulesetPlugin,
-    SampleId, Seconds, Settings, Shape, Stream, Tick, Ticks, TicksPerBeat, TimeSignature,
-    Timing as CoreTiming, TimingEvent as CoreEvent, TimingKind as CoreKind, ValidDocument,
+    Anchor, Bpm, Chart as CoreChart, DEFAULT_TICKS_PER_BEAT, Decimal, Document, Extensions,
+    FORMAT_VERSION, InvalidValue, Key, Kind, LaneCount, LaneIndex, Layout, Location, Marker,
+    MarkerKind, Metadata, Name, Namespace, NewSong, Object, Origin, Position, ResourcePath,
+    Ruleset, RulesetPlugin, SampleId, Seconds, Settings, Shape, Stream, Tick, Ticks, TicksPerBeat,
+    TimeSignature, Timing as CoreTiming, TimingEvent as CoreEvent, TimingKind as CoreKind,
+    ValidDocument,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::Value;
@@ -39,7 +40,8 @@ pub struct Song {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Timing {
-    pub offset_seconds: Origin,
+    pub anchors: Vec<Anchor>,
+    pub tempo: Bpm,
     pub events: Vec<TimingEvent>,
 }
 
@@ -51,7 +53,6 @@ pub struct TimingEvent {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum TimingKind {
-    Bpm(Bpm),
     Stop(Seconds),
     Delay(Seconds),
     Warp(Ticks),
@@ -391,7 +392,6 @@ impl Timing {
         };
         let events = self.events.iter().map(|event| {
             let kind = match &event.kind {
-                TimingKind::Bpm(bpm) => CoreKind::Bpm(*bpm),
                 TimingKind::Stop(seconds) => CoreKind::Stop(*seconds),
                 TimingKind::Delay(seconds) => CoreKind::Delay(*seconds),
                 TimingKind::Warp(ticks) => CoreKind::Warp(*ticks),
@@ -409,7 +409,8 @@ impl Timing {
             })
         });
         Ok(CoreTiming {
-            offset_seconds: self.offset_seconds,
+            anchors: self.anchors.clone(),
+            tempo: self.tempo,
             events: events.collect::<Result<_, Error>>()?,
         })
     }
@@ -606,11 +607,13 @@ impl RulesetPlugin for Plugin {
             kind,
         };
         let timing = Timing {
-            offset_seconds: Origin::try_from(0.0)?,
-            events: vec![
-                at_zero(TimingKind::Bpm(Bpm::try_from(120.0)?)),
-                at_zero(TimingKind::TimeSignature(TimeSignature::COMMON)),
-            ],
+            anchors: vec![Anchor {
+                tick: Tick::new(0),
+                seconds: Origin::try_from(0.0)?,
+                ext: Extensions::new(),
+            }],
+            tempo: Bpm::try_from(120.0)?,
+            events: vec![at_zero(TimingKind::TimeSignature(TimeSignature::COMMON))],
         };
         let song = Song::new(
             song.metadata.clone(),
@@ -699,12 +702,14 @@ fn read_note(object: &Object, at: Location) -> Result<Note, Error> {
 }
 
 fn read_timing(timing: &CoreTiming, stream: Stream) -> Result<Timing, Error> {
+    for (index, anchor) in timing.anchors.iter().enumerate() {
+        reject_own_keys(&anchor.ext, Location::Event { stream, index })?;
+    }
     let mut events = Vec::with_capacity(timing.events.len());
     for (index, event) in timing.events.iter().enumerate() {
         let at = Location::Event { stream, index };
         reject_own_keys(&event.ext, at)?;
         let kind = match &event.kind {
-            CoreKind::Bpm(bpm) => TimingKind::Bpm(*bpm),
             CoreKind::Stop(seconds) => TimingKind::Stop(*seconds),
             CoreKind::Delay(seconds) => TimingKind::Delay(*seconds),
             CoreKind::Warp(ticks) => TimingKind::Warp(*ticks),
@@ -727,7 +732,8 @@ fn read_timing(timing: &CoreTiming, stream: Stream) -> Result<Timing, Error> {
         });
     }
     Ok(Timing {
-        offset_seconds: timing.offset_seconds,
+        anchors: timing.anchors.clone(),
+        tempo: timing.tempo,
         events,
     })
 }
@@ -768,10 +774,10 @@ mod tests {
     /// A one-chart dance-single document holding `objects`.
     fn document(objects: Value) -> Value {
         let mut value = json!({
-            "format_version": 0,
+            "format_version": 1,
             "ruleset": { "id": "sm", "version": "0" },
             "metadata": { "title": "t", "artist": "a", "audio": "song.ogg" },
-            "timing": { "offset_seconds": -0.014, "events": [ { "tick": 0, "kind": { "bpm": 174.0 } } ] },
+            "timing": { "anchors": [ { "tick": 0, "seconds": -0.014 } ], "tempo": 174.0, "events": [] },
             "charts": [ {
                 "name": "Single Hard",
                 "lanes": 4,
@@ -1001,7 +1007,7 @@ mod tests {
             .collect();
         let nz = |n| std::num::NonZeroU16::new(n).unwrap();
         assert_eq!(
-            kinds[1..],
+            kinds[..],
             [
                 &TimingKind::Stop(Seconds::try_from(0.5).unwrap()),
                 &TimingKind::Delay(Seconds::try_from(0.25).unwrap()),
@@ -1048,7 +1054,7 @@ mod tests {
             .collect();
         let decimal = |v| Decimal::try_from(v).unwrap();
         assert_eq!(
-            kinds[1..],
+            kinds[..],
             [
                 &TimingKind::TickCount(4),
                 &TimingKind::Combo(Combo { hit: 2, miss: 1 }),
@@ -1077,8 +1083,10 @@ mod tests {
 
     #[test]
     fn a_chart_can_carry_its_own_timing() {
-        let own = json!({ "offset_seconds": 0.0, "events": [
-            { "tick": 0, "kind": { "bpm": 87.0 } },
+        let own = json!({
+            "anchors": [ { "tick": 0, "seconds": 0.0 } ],
+            "tempo": 87.0,
+            "events": [
             { "tick": 0, "kind": { "other": { "name": "sm.scroll", "value": 2.0 } } }
         ] });
         let mut value = document(json!([]));
@@ -1086,7 +1094,7 @@ mod tests {
         let song = read(&value).unwrap();
         assert_eq!(
             song.charts()[0].timing.as_ref().map(|t| t.events.len()),
-            Some(2)
+            Some(1)
         );
         assert_eq!(written(&song)["charts"][0]["timing"], own);
     }
@@ -1132,7 +1140,7 @@ mod tests {
             |v| v["charts"][0]["objects"][0]["ext"] = json!({ "sm.color": 1 }),
             |v| v["metadata"]["ext"] = json!({ "sm.banner": "b.png" }),
             |v| v["charts"][0]["ext"] = json!({ "sm.radar": [0.5] }),
-            |v| v["timing"]["events"][0]["ext"] = json!({ "sm.x": 1 }),
+            |v| v["timing"]["anchors"][0]["ext"] = json!({ "sm.x": 1 }),
             |v| v["settings"] = json!({ "selectable": true }),
         ];
         for edit in edits {
@@ -1207,7 +1215,7 @@ mod tests {
     #[test]
     fn errors_say_where_and_which_key() {
         let mut value = document(json!([]));
-        value["timing"]["events"][0]["ext"] = json!({ "sm.color": "red" });
+        value["timing"]["anchors"][0]["ext"] = json!({ "sm.color": "red" });
         let color: Key = "sm.color".parse().unwrap();
         assert!(matches!(
             read(&value),
@@ -1338,7 +1346,11 @@ mod tests {
     fn a_new_song_starts_at_120_bpm_in_four_four() {
         let document = Plugin.new_song(&new_song(0, &["Easy"])).unwrap();
         let events = &document.document().timing.events;
-        assert_eq!(events.len(), 2);
+        assert_eq!(
+            document.document().timing.tempo,
+            Bpm::try_from(120.0).unwrap()
+        );
+        assert_eq!(events.len(), 1);
         assert!(events.iter().all(|event| event.tick == Tick::new(0)));
     }
 

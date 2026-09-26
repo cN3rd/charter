@@ -1859,8 +1859,9 @@ fn shown_peaks<'a>(
 /// The timing a reset leaves: 120 BPM in 4/4 from 0 ms, as a new song starts with.
 fn fresh_timing() -> charter_core::Timing {
     let fresh = serde_json::json!({
-        "offset_seconds": 0.0,
-        "events": [ { "tick": 0, "kind": { "bpm": 120.0 } } ]
+        "anchors": [ { "tick": 0, "seconds": 0.0 } ],
+        "tempo": 120.0,
+        "events": []
     });
     serde_json::from_value(fresh).unwrap_or_else(|_| unreachable!("the fresh timing reads"))
 }
@@ -1876,7 +1877,7 @@ fn retime(song: &mut Song, action: &Action) -> Option<String> {
         Action::ImportTiming(timing) => song.replace_timing(timing.as_ref().clone()),
         Action::ResetTiming => song.replace_timing(fresh_timing()),
         Action::NudgeOffset(by) => {
-            let moved = f64::from(song.timing().offset_seconds) + by;
+            let moved = song.timing().time_at(charter_core::Tick::new(0)).seconds() + by;
             let micros = (moved * 1e6).round() / 1e6;
             match charter_core::Origin::try_from(micros) {
                 Ok(offset) => song.set_offset(offset),
@@ -3004,7 +3005,14 @@ mod tests {
         let song = harness.state().song.as_ref().unwrap();
         let (tick, bpm) = song.bpm()?;
         let tick = serde_json::to_value(tick).unwrap().as_i64().unwrap();
-        Some((tick, bpm.to_string()))
+        let value = f64::from(bpm);
+        let one = (value * 10.0).round() / 10.0;
+        let shown = if (value - one).abs() < 1e-5 {
+            charter_core::Bpm::try_from(one).map_or_else(|_| bpm.to_string(), |bpm| bpm.to_string())
+        } else {
+            bpm.to_string()
+        };
+        Some((tick, shown))
     }
 
     #[test]
@@ -4208,11 +4216,15 @@ mod tests {
 
     fn event_ticks(harness: &Harness<'_, Window>) -> Vec<Tick> {
         let song = harness.state().song.as_ref().unwrap();
-        song.timing()
-            .events
+        let timing = song.timing();
+        let mut ticks: Vec<_> = timing
+            .anchors
             .iter()
-            .map(|event| event.tick)
-            .collect()
+            .map(|anchor| anchor.tick)
+            .chain(timing.events.iter().map(|event| event.tick))
+            .collect();
+        ticks.sort_unstable();
+        ticks
     }
 
     fn syncing() -> Harness<'static, Window> {
@@ -4275,13 +4287,9 @@ mod tests {
         harness.get_by_label("Reset").click();
         harness.run();
         let song = harness.state().song.as_ref().unwrap();
-        let events = serde_json::to_value(&song.timing().events).unwrap();
+        assert_eq!(song.timing().tempo.to_string(), "120");
         assert_eq!(
-            events,
-            serde_json::json!([{ "tick": 0, "kind": { "bpm": 120.0 } }])
-        );
-        assert_eq!(
-            serde_json::to_value(song.timing().offset_seconds).unwrap(),
+            serde_json::to_value(song.timing().anchors[0].seconds).unwrap(),
             serde_json::json!(0.0)
         );
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
@@ -4535,8 +4543,9 @@ mod tests {
         ) -> Result<charter_core::ImportedTiming, Box<dyn Error + Send + Sync>> {
             let (offset, bpm) = text.trim().split_once(',').ok_or("no comma")?;
             let timing = serde_json::from_value(serde_json::json!({
-                "offset_seconds": offset.parse::<f64>()?,
-                "events": [ { "tick": 0, "kind": { "bpm": bpm.parse::<f64>()? } } ]
+                "anchors": [ { "tick": 0, "seconds": offset.parse::<f64>()? } ],
+                "tempo": bpm.parse::<f64>()?,
+                "events": []
             }))?;
             Ok(charter_core::ImportedTiming {
                 timing,
@@ -5550,7 +5559,13 @@ mod tests {
 
     fn offset(harness: &Harness<'_, Window>) -> serde_json::Value {
         let song = harness.state().song.as_ref().unwrap();
-        serde_json::to_value(song.document().document().timing.offset_seconds).unwrap()
+        serde_json::to_value(
+            song.document()
+                .timing()
+                .time_at(charter_core::Tick::new(0))
+                .seconds(),
+        )
+        .unwrap()
     }
 
     fn enter_offset(harness: &mut Harness<'_, Window>, text: &str) {

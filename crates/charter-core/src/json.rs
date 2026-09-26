@@ -1,13 +1,16 @@
 use std::collections::HashSet;
 use std::fmt;
 
-use serde::Deserialize;
 use serde::de::{self, Deserializer, MapAccess, SeqAccess, Visitor};
+use serde::{Deserialize, Serialize};
 
-use crate::document::{Chart, Child, Document, FORMAT_VERSION, Object, Shape, Timing};
+use crate::document::{
+    Anchor, Chart, Child, Document, Extensions, FORMAT_VERSION, Object, Shape, Timing, TimingEvent,
+    TimingKind,
+};
 use crate::error::Error;
 use crate::grid::{GridPosition, Measures};
-use crate::unit::{Bpm, ResolvedTime, Tick, TicksPerBeat};
+use crate::unit::{Bpm, Origin, ResolvedTime, Seconds, Tick, Ticks, TicksPerBeat, TimeSignature};
 use crate::validate::validate;
 
 /// Largest document a reader accepts.
@@ -33,7 +36,13 @@ impl ValidDocument {
             return Err(Error::UnsupportedVersion(format_version));
         }
         serde_json::from_slice::<IJson>(bytes)?;
-        Self::new(serde_json::from_slice(bytes)?)
+        let value = serde_json::from_slice(bytes)?;
+        let document = if format_version == 0 {
+            migrate_v0(value)?
+        } else {
+            value
+        };
+        Self::new(serde_json::from_value(document)?)
     }
 
     /// Checks the version and every rule relating values to each other.
@@ -177,6 +186,32 @@ impl Valid<'_, Timing> {
             .tempo_for(self.document.ticks_per_beat, from, to, seconds)
     }
 
+    /// The tempo that governs `tick`, with anchored segments derived from their end points.
+    ///
+    /// # Panics
+    ///
+    /// Never: validation guarantees every anchored segment derives a tempo.
+    #[must_use]
+    #[allow(clippy::expect_used)] // validation guarantees every segment derives a tempo
+    pub fn tempo_at(&self, tick: Tick) -> f64 {
+        self.part
+            .tempo_at(self.document.ticks_per_beat, tick)
+            .expect("a valid timing map derives every segment tempo")
+    }
+
+    /// One tempo per anchor: each inner anchor's following segment, and the last anchor's tail.
+    ///
+    /// # Panics
+    ///
+    /// Never: validation guarantees every anchored segment derives a tempo.
+    #[must_use]
+    #[allow(clippy::expect_used)] // validation guarantees every segment derives a tempo
+    pub fn tempos(&self) -> Vec<(Tick, f64)> {
+        self.part
+            .tempos(self.document.ticks_per_beat)
+            .expect("a valid timing map derives every segment tempo")
+    }
+
     /// How many ticks the document counts to a beat, which a grid over this timing steps by.
     #[must_use]
     pub fn ticks_per_beat(&self) -> TicksPerBeat {
@@ -236,6 +271,177 @@ impl Valid<'_, Timing> {
 #[allow(clippy::expect_used)] // validation guarantees every span ends on a tick
 fn span_end(tick: Tick, shape: &Shape) -> Tick {
     shape.end(tick).expect("a valid span ends on a tick")
+}
+
+fn migrate_v0(mut value: serde_json::Value) -> Result<serde_json::Value, Error> {
+    let ticks_per_beat = value
+        .get("ticks_per_beat")
+        .cloned()
+        .map(serde_json::from_value)
+        .transpose()?
+        .unwrap_or(crate::DEFAULT_TICKS_PER_BEAT);
+    let Some(object) = value.as_object_mut() else {
+        return Ok(value);
+    };
+    object.insert(
+        "format_version".to_owned(),
+        serde_json::Value::from(FORMAT_VERSION),
+    );
+    if let Some(timing) = object.get_mut("timing") {
+        migrate_timing_value(timing, ticks_per_beat)?;
+    }
+    if let Some(charts) = object
+        .get_mut("charts")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for chart in charts {
+            if let Some(timing) = chart.get_mut("timing") {
+                migrate_timing_value(timing, ticks_per_beat)?;
+            }
+        }
+    }
+    Ok(value)
+}
+
+fn migrate_timing_value(
+    value: &mut serde_json::Value,
+    ticks_per_beat: TicksPerBeat,
+) -> Result<(), Error> {
+    let old: V0Timing = serde_json::from_value(value.take())?;
+    let new = old.migrate(ticks_per_beat);
+    *value = serde_json::to_value(new)?;
+    Ok(())
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct V0Timing {
+    offset_seconds: Origin,
+    events: Vec<V0TimingEvent>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct V0TimingEvent {
+    tick: Tick,
+    kind: V0TimingKind,
+    #[serde(default)]
+    ext: Extensions,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+enum V0TimingKind {
+    Bpm(Bpm),
+    Stop(Seconds),
+    Delay(Seconds),
+    Warp(Ticks),
+    TimeSignature(TimeSignature),
+    Other {
+        name: crate::Key,
+        value: serde_json::Value,
+    },
+}
+
+impl V0Timing {
+    fn migrate(&self, ticks_per_beat: TicksPerBeat) -> Timing {
+        let mut tempo = None;
+        let mut anchors = Vec::new();
+        let mut events = Vec::with_capacity(self.events.len());
+        for event in &self.events {
+            match &event.kind {
+                V0TimingKind::Bpm(bpm) => {
+                    tempo = Some(*bpm);
+                    if let Some(seconds) = self.seconds_at(ticks_per_beat, event.tick) {
+                        anchors.push(Anchor {
+                            tick: event.tick,
+                            seconds: micro(seconds),
+                            ext: event.ext.clone(),
+                        });
+                    }
+                }
+                kind => events.push(TimingEvent {
+                    tick: event.tick,
+                    kind: kind.clone().into(),
+                    ext: event.ext.clone(),
+                }),
+            }
+        }
+        Timing {
+            anchors,
+            tempo: tempo.unwrap_or_else(default_bpm),
+            events,
+        }
+    }
+
+    fn seconds_at(&self, ticks_per_beat: TicksPerBeat, tick: Tick) -> Option<f64> {
+        let offset = ResolvedTime::from(self.offset_seconds).seconds();
+        let zero = Tick::new(0);
+        Some(if tick >= zero {
+            offset + self.elapsed(ticks_per_beat, zero, tick)?
+        } else {
+            offset - self.elapsed(ticks_per_beat, tick, zero)?
+        })
+    }
+
+    fn elapsed(&self, ticks_per_beat: TicksPerBeat, from: Tick, to: Tick) -> Option<f64> {
+        let timed = |cursor: Tick, until: Tick, warp_end: Option<Tick>, bpm: Bpm| {
+            let start = warp_end.map_or(cursor, |end| end.max(cursor));
+            start
+                .ticks_until(until)
+                .map_or(0.0, |ticks| bpm.seconds(ticks, ticks_per_beat))
+        };
+        let mut bpm = self.events.iter().find_map(|event| match event.kind {
+            V0TimingKind::Bpm(value) => Some(value),
+            _ => None,
+        })?;
+        let mut elapsed = 0.0;
+        let mut cursor = from;
+        let mut warp_end = None;
+        for event in &self.events {
+            let at = event.tick;
+            if at > to {
+                break;
+            }
+            if at > from {
+                elapsed += timed(cursor, at, warp_end, bpm);
+                cursor = at;
+            }
+            match event.kind {
+                V0TimingKind::Bpm(value) => bpm = value,
+                V0TimingKind::Stop(pause) if at >= from && at < to => elapsed += pause.seconds(),
+                V0TimingKind::Delay(pause) if at > from => elapsed += pause.seconds(),
+                V0TimingKind::Warp(ticks) => warp_end = Some(at.checked_add(ticks)?),
+                V0TimingKind::Stop(_)
+                | V0TimingKind::Delay(_)
+                | V0TimingKind::TimeSignature(..)
+                | V0TimingKind::Other { .. } => {}
+            }
+        }
+        Some(elapsed + timed(cursor, to, warp_end, bpm))
+    }
+}
+
+impl From<V0TimingKind> for TimingKind {
+    fn from(kind: V0TimingKind) -> Self {
+        match kind {
+            V0TimingKind::Bpm(_) => unreachable!(),
+            V0TimingKind::Stop(pause) => Self::Stop(pause),
+            V0TimingKind::Delay(pause) => Self::Delay(pause),
+            V0TimingKind::Warp(ticks) => Self::Warp(ticks),
+            V0TimingKind::TimeSignature(meter) => Self::TimeSignature(meter),
+            V0TimingKind::Other { name, value } => Self::Other { name, value },
+        }
+    }
+}
+
+fn micro(seconds: f64) -> Origin {
+    Origin::try_from((seconds * 1e6).round() / 1e6)
+        .unwrap_or_else(|_| Origin::try_from(0.0).unwrap_or_else(|_| unreachable!()))
+}
+
+fn default_bpm() -> Bpm {
+    Bpm::try_from(120.0).unwrap_or_else(|_| unreachable!())
 }
 
 /// Reads the version before anything else, so a newer file fails on its version rather than on
@@ -334,8 +540,8 @@ mod tests {
 
     use super::*;
     use crate::document::{
-        Chart, Child, Extensions, Marker, Metadata, Object, PathPoint, Points, Position, Preview,
-        Ruleset, SampleId, Settings, Shape, Timing, TimingEvent, TimingKind,
+        Anchor, Chart, Child, Extensions, Marker, Metadata, Object, PathPoint, Points, Position,
+        Preview, Ruleset, SampleId, Settings, Shape, Timing, TimingEvent, TimingKind,
     };
     use crate::error::{InvalidValue, Rule, Violation};
     use crate::ident::{Ease, Key, Kind, MarkerKind, Namespace};
@@ -347,10 +553,10 @@ mod tests {
 
     fn minimal() -> Value {
         json!({
-            "format_version": 0,
+            "format_version": 1,
             "ruleset": { "id": "test", "version": "1" },
             "metadata": { "title": "t", "artist": "a", "audio": "song.ogg" },
-            "timing": { "offset_seconds": 0.0, "events": [ { "tick": 0, "kind": { "bpm": 120.0 } } ] }
+            "timing": { "anchors": [ { "tick": 0, "seconds": 0.0 } ], "tempo": 120.0, "events": [] }
         })
     }
 
@@ -397,9 +603,9 @@ mod tests {
     #[test]
     fn newer_versions_are_refused_before_their_keys_are_read() {
         let mut value = minimal();
-        value["format_version"] = json!(1);
+        value["format_version"] = json!(2);
         value["from_the_future"] = json!(true);
-        assert!(matches!(read(&value), Err(Error::UnsupportedVersion(1))));
+        assert!(matches!(read(&value), Err(Error::UnsupportedVersion(2))));
     }
 
     #[test]
@@ -435,11 +641,11 @@ mod tests {
     #[test]
     fn the_reader_refuses_documents_that_break_a_rule() {
         let mut value = minimal();
-        value["timing"]["events"][0]["kind"] = json!({ "time_signature": [4, 4] });
+        value["timing"]["anchors"] = json!([]);
         assert!(matches!(
             read(&value),
             Err(Error::Invalid(Violation {
-                rule: Rule::NoBpm,
+                rule: Rule::NoAnchor,
                 ..
             }))
         ));
@@ -448,11 +654,11 @@ mod tests {
     #[test]
     fn documents_built_in_code_are_validated_too() {
         let mut document: Document = serde_json::from_value(minimal()).unwrap();
-        document.timing.events.clear();
+        document.timing.anchors.clear();
         assert!(matches!(
             ValidDocument::new(document),
             Err(Error::Invalid(Violation {
-                rule: Rule::NoBpm,
+                rule: Rule::NoAnchor,
                 ..
             }))
         ));
@@ -644,11 +850,10 @@ mod tests {
             .boxed()
     }
 
-    /// A timing map with a tempo on tick 0 and one event on each of a few other ticks, spaced
+    /// A timing map with an anchor on tick 0 and one event on each of a few other ticks, spaced
     /// so no warp overlaps the next and every meter is whole at any resolution.
     fn timing() -> BoxedStrategy<Timing> {
         let event = prop_oneof![
-            decimal(1..=MAX_MILLIONTHS).prop_map(TimingKind::Bpm),
             decimal(1..=MAX_MILLIONTHS).prop_map(TimingKind::Stop),
             decimal(1..=MAX_MILLIONTHS).prop_map(TimingKind::Delay),
             (1_u32..=16).prop_map(|w| TimingKind::Warp(Ticks::new(w).unwrap())),
@@ -666,8 +871,7 @@ mod tests {
             decimal(1..=MAX_MILLIONTHS),
             btree_map(ticks, (event, ext()), 0..6),
         )
-            .prop_map(|(offset_seconds, bpm, mut events)| {
-                events.insert(0, (TimingKind::Bpm(bpm), Extensions::new()));
+            .prop_map(|(seconds, tempo, events)| {
                 let events = events
                     .into_iter()
                     .map(|(k, (kind, ext))| TimingEvent {
@@ -677,7 +881,12 @@ mod tests {
                     })
                     .collect();
                 Timing {
-                    offset_seconds,
+                    anchors: vec![Anchor {
+                        tick: Tick::new(0),
+                        seconds,
+                        ext: Extensions::new(),
+                    }],
+                    tempo,
                     events,
                 }
             })
@@ -804,8 +1013,11 @@ mod tests {
                            "shape": { "sustain": { "duration": 480 } },
                            "children": [ { "tick": 1200, "position": { "lane": { "index": 0 } },
                                            "kind": "tap", "shape": { "sustain": { "duration": 240 } } } ] });
-        let own =
-            json!({ "offset_seconds": 1.0, "events": [ { "tick": 0, "kind": { "bpm": 60.0 } } ] });
+        let own = json!({
+            "anchors": [ { "tick": 0, "seconds": 1.0 } ],
+            "tempo": 60.0,
+            "events": []
+        });
         value["charts"] = json!([{ "name": "Easy", "lanes": 4 }, { "name": "Hard", "lanes": 4 }]);
         value["charts"][0]["objects"] = json!([hold]);
         value["charts"][1]["timing"] = own;

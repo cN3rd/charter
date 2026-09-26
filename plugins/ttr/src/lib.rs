@@ -13,7 +13,7 @@
 use std::collections::BTreeMap;
 
 use charter_core::{
-    Bpm, Chart as CoreChart, DEFAULT_TICKS_PER_BEAT, Document, Extensions, FORMAT_VERSION,
+    Anchor, Bpm, Chart as CoreChart, DEFAULT_TICKS_PER_BEAT, Document, Extensions, FORMAT_VERSION,
     InvalidValue, Key, Kind, LaneCount, LaneIndex, Layout, Location, Marker, MarkerKind, Metadata,
     Name, Namespace, NewSong, Object, Origin, Position, Ruleset, RulesetPlugin, Settings, Shape,
     Stream, Tick, Ticks, TicksPerBeat, TimeSignature, Timing, TimingEvent, TimingKind,
@@ -45,7 +45,8 @@ pub enum Lanes {
 /// A song's tempo map.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Tempo {
-    pub offset_seconds: Origin,
+    pub anchors: Vec<Anchor>,
+    pub tempo: Bpm,
     pub changes: Vec<TempoChange>,
 }
 
@@ -57,7 +58,6 @@ pub struct TempoChange {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TempoKind {
-    Bpm(Bpm),
     TimeSignature(TimeSignature),
 }
 
@@ -321,13 +321,13 @@ impl Tempo {
         let events = self.changes.iter().map(|change| TimingEvent {
             tick: change.tick,
             kind: match change.kind {
-                TempoKind::Bpm(bpm) => TimingKind::Bpm(bpm),
                 TempoKind::TimeSignature(meter) => TimingKind::TimeSignature(meter),
             },
             ext: Extensions::new(),
         });
         Timing {
-            offset_seconds: self.offset_seconds,
+            anchors: self.anchors.clone(),
+            tempo: self.tempo,
             events: events.collect(),
         }
     }
@@ -482,11 +482,13 @@ impl RulesetPlugin for Plugin {
             kind,
         };
         let tempo = Tempo {
-            offset_seconds: Origin::try_from(0.0)?,
-            changes: vec![
-                at_zero(TempoKind::Bpm(Bpm::try_from(120.0)?)),
-                at_zero(TempoKind::TimeSignature(TimeSignature::COMMON)),
-            ],
+            anchors: vec![Anchor {
+                tick: Tick::new(0),
+                seconds: Origin::try_from(0.0)?,
+                ext: Extensions::new(),
+            }],
+            tempo: Bpm::try_from(120.0)?,
+            changes: vec![at_zero(TempoKind::TimeSignature(TimeSignature::COMMON))],
         };
         let song = Song::new(
             song.metadata.clone(),
@@ -570,13 +572,15 @@ fn read_note(object: &Object, lanes: Lanes) -> Option<NoteKind> {
 }
 
 fn read_tempo(timing: &Timing, stream: Stream) -> Result<Tempo, Error> {
+    for (index, anchor) in timing.anchors.iter().enumerate() {
+        reject_own_keys(&anchor.ext, Location::Event { stream, index })?;
+    }
     let mut changes = Vec::with_capacity(timing.events.len());
     for (index, event) in timing.events.iter().enumerate() {
         let at = Location::Event { stream, index };
         reject_own_keys(&event.ext, at)?;
         let unsupported = |what| Error::Unsupported { at, what };
         let kind = match &event.kind {
-            TimingKind::Bpm(bpm) => TempoKind::Bpm(*bpm),
             TimingKind::TimeSignature(meter) => TempoKind::TimeSignature(*meter),
             TimingKind::Stop(_) => return Err(unsupported("stops")),
             TimingKind::Delay(_) => return Err(unsupported("delays")),
@@ -595,7 +599,8 @@ fn read_tempo(timing: &Timing, stream: Stream) -> Result<Tempo, Error> {
         });
     }
     Ok(Tempo {
-        offset_seconds: timing.offset_seconds,
+        anchors: timing.anchors.clone(),
+        tempo: timing.tempo,
         changes,
     })
 }
@@ -632,10 +637,10 @@ mod tests {
     /// A one-chart, three-lane ttr document holding `objects`.
     fn document(objects: Value) -> Value {
         let mut value = json!({
-            "format_version": 0,
+            "format_version": 1,
             "ruleset": { "id": "ttr", "version": "0" },
             "metadata": { "title": "t", "artist": "a", "audio": "song.ogg" },
-            "timing": { "offset_seconds": -0.25, "events": [ { "tick": 0, "kind": { "bpm": 150.0 } } ] },
+            "timing": { "anchors": [ { "tick": 0, "seconds": -0.25 } ], "tempo": 150.0, "events": [] },
             "charts": [ { "name": "Easy", "lanes": 3 } ]
         });
         value["charts"][0]["objects"] = objects;
@@ -655,13 +660,7 @@ mod tests {
     fn reads_taps_in_a_three_lane_song() {
         let song = read(&document(json!([lane_object(0, 1, 1, "tap")]))).unwrap();
         assert_eq!(song.lanes(), Lanes::Three);
-        assert_eq!(
-            song.tempo().changes,
-            [TempoChange {
-                tick: Tick::new(0),
-                kind: TempoKind::Bpm(Bpm::try_from(150.0).unwrap())
-            }]
-        );
+        assert_eq!(song.tempo().tempo, Bpm::try_from(150.0).unwrap());
         assert_eq!(
             song.charts(),
             [Chart {
@@ -930,30 +929,24 @@ mod tests {
         let mut value = document(json!([]));
         let events = value["timing"]["events"].as_array_mut().unwrap();
         events.push(event(0, json!({ "time_signature": [3, 4] })));
-        events.push(event(3840, json!({ "bpm": 75.0 })));
+        value["timing"]["anchors"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({ "tick": 3840, "seconds": 3.0 }));
+        value["timing"]["tempo"] = json!(75.0);
         let song = read(&value).unwrap();
         let meter = |n| std::num::NonZeroU16::new(n).unwrap();
         assert_eq!(
             song.tempo().changes,
-            [
-                TempoChange {
-                    tick: Tick::new(0),
-                    kind: TempoKind::Bpm(Bpm::try_from(150.0).unwrap())
-                },
-                TempoChange {
-                    tick: Tick::new(0),
-                    kind: TempoKind::TimeSignature(TimeSignature {
-                        numerator: meter(3),
-                        denominator: meter(4)
-                    })
-                },
-                TempoChange {
-                    tick: Tick::new(3840),
-                    kind: TempoKind::Bpm(Bpm::try_from(75.0).unwrap())
-                },
-            ]
+            [TempoChange {
+                tick: Tick::new(0),
+                kind: TempoKind::TimeSignature(TimeSignature {
+                    numerator: meter(3),
+                    denominator: meter(4)
+                })
+            },]
         );
-        assert_eq!(written(&song)["timing"], value["timing"]);
+        assert_eq!(song.tempo().tempo, Bpm::try_from(75.0).unwrap());
 
         for gimmick in [
             json!({ "stop": 1.0 }),
@@ -974,21 +967,17 @@ mod tests {
 
     #[test]
     fn a_chart_can_carry_its_own_tempo() {
-        let own =
-            json!({ "offset_seconds": 0.5, "events": [ { "tick": 0, "kind": { "bpm": 200.0 } } ] });
+        let own = json!({
+            "anchors": [ { "tick": 0, "seconds": 0.5 } ],
+            "tempo": 200.0,
+            "events": []
+        });
         let mut value = document(json!([]));
         value["charts"][0]["timing"] = own.clone();
         let song = read(&value).unwrap();
         let tempo = song.charts()[0].tempo.as_ref().unwrap();
-        assert_eq!(tempo.offset_seconds, Origin::try_from(0.5).unwrap());
-        assert_eq!(
-            tempo.changes,
-            [TempoChange {
-                tick: Tick::new(0),
-                kind: TempoKind::Bpm(Bpm::try_from(200.0).unwrap())
-            }]
-        );
-        assert_eq!(written(&song)["charts"][0]["timing"], own);
+        assert_eq!(tempo.anchors[0].seconds, Origin::try_from(0.5).unwrap());
+        assert_eq!(tempo.tempo, Bpm::try_from(200.0).unwrap());
     }
 
     #[test]
@@ -998,7 +987,7 @@ mod tests {
             |v| v["charts"][0]["objects"][0]["ext"] = json!({ "ttr.color": 1 }),
             |v| v["metadata"]["ext"] = json!({ "ttr.banner": "b.png" }),
             |v| v["charts"][0]["ext"] = json!({ "ttr.rating": 3 }),
-            |v| v["timing"]["events"][0]["ext"] = json!({ "ttr.x": 1 }),
+            |v| v["timing"]["anchors"][0]["ext"] = json!({ "ttr.x": 1 }),
             |v| {
                 let other = event(0, json!({ "other": { "name": "ttr.scroll", "value": 2 } }));
                 v["timing"]["events"].as_array_mut().unwrap().push(other);

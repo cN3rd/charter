@@ -247,15 +247,12 @@ fn handle_at(song: &Song, field: &Field, pos: Pos2) -> Option<Gesture> {
     if columns.timing.contains(pos.x) {
         // The timing point holding the song's first BPM change stays put, so the song keeps a
         // tempo to start from.
-        let first_bpm = timing
-            .events
-            .iter()
-            .find(|event| matches!(event.kind, TimingKind::Bpm(_)))
-            .map(|event| event.tick);
+        let first_bpm = timing.anchors.first().map(|anchor| anchor.tick);
         let points: Vec<Tick> = timing
             .events
             .chunk_by(|a, b| a.tick == b.tick)
             .filter_map(|point| point.first().map(|event| event.tick))
+            .chain(timing.anchors.iter().map(|anchor| anchor.tick))
             .filter(|tick| Some(*tick) != first_bpm)
             .collect();
         return nearest(&mut points.iter().copied().enumerate())
@@ -915,7 +912,6 @@ fn events(
         painter.hline(columns.timing, y, Stroke::new(2.0, style::TIMING_MARK));
         for (row, event) in (0u8..).zip(point) {
             let text = match &event.kind {
-                TimingKind::Bpm(bpm) => format!("{bpm} BPM"),
                 TimingKind::Stop(pause) => format!("stop {pause} s"),
                 TimingKind::Delay(pause) => format!("delay {pause} s"),
                 TimingKind::Warp(ticks) => format!("warp {ticks} ticks"),

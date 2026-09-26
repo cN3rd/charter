@@ -235,15 +235,16 @@ do not. Every other number is an exact [decimal](#numbers).
 
 ```
 Timing {
-    offset_seconds: Origin,             // audio time of tick 0
+    anchors: Vec<Anchor>,               // at least one, rising in tick and seconds
+    tempo:   Bpm,                       // tempo after the last anchor
     events:         Vec<TimingEvent>,
 }
 
+Anchor { tick: Tick, seconds: Origin, ext: Extensions }
 TimingEvent { tick: Tick, kind: TimingKind, ext: Extensions }
 
 TimingKind =
-    Bpm(Bpm)                                // quarter notes per minute
-  | Stop(Seconds)
+    Stop(Seconds)
   | Delay(Seconds)
   | Warp(Ticks)
   | TimeSignature(TimeSignature)            // written [numerator, denominator]
@@ -252,21 +253,17 @@ TimingKind =
 TimeSignature { numerator: NonZeroU16, denominator: NonZeroU16 }
 ```
 
-### The origin
+### Anchors
 
-`bpm` sets the *rate* at which ticks become time. `offset_seconds` sets the *origin*, without
-which the mapping is incomplete: a stream of BPM changes says how fast the music moves but never
-where tick 0 sits in the audio file.
+Tempo is stored as authored beat-to-audio anchors. An anchor says that one tick falls at one exact
+audio time in seconds. The tempo of a segment between two anchors is derived from the distance
+between them after subtracting stops, delays and warped ticks. The `tempo` field is the explicit
+tail tempo after the last anchor.
 
-It is defined as **the audio time of tick 0**, in seconds from the start of the audio file. A
-positive value means beat 0 falls that many seconds into the file; a negative value means the
-chart starts before the audio does, which silence-padded exports rely on.
+The editor still shows an "offset": it is the resolved time of tick 0. Changing it shifts every
+anchor's `seconds` by the same amount.
 
-Deliberately defined as a position rather than a delta, because the surveyed formats disagree on
-the sign of their offset fields and inherit endless confusion from it. Adapters convert; charter
-has one unambiguous meaning.
-
-Its type is `Origin` rather than the `AudioTime` a preview uses, because only the origin may fall
+`seconds` is an `Origin` rather than the `AudioTime` a preview uses, because chart time may fall
 before the start of the file.
 
 ### Kinds
@@ -275,7 +272,6 @@ A kind is **interpreted** only if charter must compute with it:
 
 | Kind | Effect |
 |---|---|
-| `bpm` | Sets the rate at which ticks become time |
 | `stop` | Pauses time after the objects on its tick |
 | `delay` | Pauses time before the objects on its tick |
 | `warp` | Skips ticks without advancing time |
@@ -291,23 +287,23 @@ by preserving everything and interpreting almost nothing.
 
 ### The starting state
 
-- Every `Timing` has at least one `bpm`, and the first also applies to every earlier tick, as
-  StepMania's loader does. Tempo has no safe default, and a stream without one has no mapping at
-  all rather than a slightly wrong one.
+- Every `Timing` has at least one anchor. With one anchor, ticks before it extrapolate at the tail
+  `tempo`; with several anchors, ticks before the first extrapolate at the first segment's derived
+  tempo.
 - The meter is 4/4 until the first `time_signature`. A meter default is safe in a way a tempo
   default is not: it affects only the measure grid, and every surveyed format assumes the same
   value.
 
 ### Resolving time
 
-The timing map is a non-decreasing function from tick to audio time. `offset_seconds` fixes it at
-tick 0, and it extends from there in both directions:
+The timing map is a non-decreasing function from tick to audio time. Anchors fix it at exact
+beats:
 
-- Between events, time advances at the current `bpm`.
+- Between two anchors, time advances at the derived tempo for the timed ticks in that segment.
+- After the last anchor, time advances at `tempo`.
 - A `stop` pauses **after** the objects on its tick and a `delay` **before** them, so an object on
   a `stop` tick is hit as the pause begins and one on a `delay` tick as it ends. The time of a tick
-  includes its own `delay` and excludes its own `stop`, and `offset_seconds` is the time of tick 0
-  in that sense.
+  includes its own `delay` and excludes its own `stop`.
 - A `warp` at tick `t` of length `w` covers ticks `[t, t + w)`. They take no time, and an object on
   one is skipped in play. A warped tick carrying a `stop` or `delay` is the exception: it still
   pauses and its objects are playable, which lets gimmick charts alternate stops and warps.
@@ -375,7 +371,7 @@ browser, and `preview` to play an excerpt of it.
 `preview` earns a field on the same evidence as `title`: it appears in `.sm` as `#SAMPLESTART` and
 `#SAMPLELENGTH`, in `.osu` as `PreviewTime`, and in `.qua` as a preview time. Something present in
 nearly every surveyed format is not format-specific. `length_seconds` is optional because some
-formats give only a start point. Both fields are audio time, like `offset_seconds`, so a chart's
+formats give only a start point. Both fields are audio time, like anchor `seconds`, so a chart's
 own timing does not move the preview.
 
 Banners, backgrounds, credits and genre tags stay in `ext`. An open-ended metadata block is where
@@ -562,7 +558,7 @@ need none.
 Deserialization checks each value on its own: the types, the [identifier grammar](#identifiers),
 [resource paths](#resource-paths) and [numeric bounds](#numbers). One validation pass then checks
 every rule relating values to each other: the rules below, the [namespace rules](#ownership), the
-[`bpm` requirement](#the-starting-state), [warp overlap](#resolving-time) and
+anchor requirement, [warp overlap](#resolving-time) and
 [measure lengths](#measures). No other code sees a document that failed either.
 
 Types remove most illegal states: a `Shape` cannot hold a duration and a path at once, a nonzero
@@ -658,7 +654,7 @@ Resolved times are the only floats: `ResolvedTime` seconds computed from the tim
 stored. Every input is a bounded integer, so every resolved time is finite and no rule has to check
 it.
 
-`bpm` must be positive. Negative BPM is a StepMania time-skipping gimmick predating explicit warps,
+`tempo` must be positive. Negative BPM is a StepMania time-skipping gimmick predating explicit warps,
 and charter has `warp` for that. Zero BPM would stop position advancing while time ran on, an
 unbounded `stop`, and `stop` already expresses a pause. `stop` and `delay` must be positive too,
 since a zero-length one is a second spelling of no event at all.
@@ -830,7 +826,7 @@ not where a draft should start.
 
 ```json
 {
-  "format_version": 0,
+  "format_version": 1,
   "ruleset": { "id": "arcaea", "version": "1.2.0" },
   "settings": { "sky_input": true },
   "plugins": {
@@ -846,9 +842,9 @@ not where a draft should start.
     "kick": "keysounds/kick.wav"
   },
   "timing": {
-    "offset_seconds": -0.014,
+    "anchors": [ { "tick": 0, "seconds": -0.014 } ],
+    "tempo": 174.0,
     "events": [
-      { "tick": 0,     "kind": { "bpm": 174.0 } },
       { "tick": 30720, "kind": { "stop": 0.5 } },
       { "tick": 61440, "kind": { "time_signature": [7, 8] } },
       { "tick": 61440, "kind": { "other": { "name": "swing.groove", "value": 0.62 } } }
@@ -888,9 +884,9 @@ not where a draft should start.
       "lanes": 4,
       "settings": { "rating": 12 },
       "timing": {
-        "offset_seconds": -0.014,
-        "events": [ { "tick": 0, "kind": { "bpm": 174.0 } },
-                    { "tick": 15360, "kind": { "warp": 1920 } } ]
+        "anchors": [ { "tick": 0, "seconds": -0.014 } ],
+        "tempo": 174.0,
+        "events": [ { "tick": 15360, "kind": { "warp": 1920 } } ]
       }
     }
   ]
@@ -900,10 +896,10 @@ not where a draft should start.
 `ticks_per_beat` is absent, so it is 960: the `stop` sits on beat 32 and the 7/8 signature begins
 on beat 64.
 
-The `offset_seconds` of `-0.014` means tick 0 falls 14 milliseconds **before** the audio begins.
+The first anchor's `seconds` of `-0.014` means tick 0 falls 14 milliseconds **before** the audio begins.
 
 The file shows the things easiest to get wrong: both playfield geometries in one chart; a second
-difficulty overriding the song timing, offset included, with a warp the first does not have; a
+difficulty overriding the song timing, anchor included, with a warp the first does not have; a
 keysound referencing the file-level bank; a non-ruleset `swing` plugin contributing a timing event;
 and an `osu.` key surviving an import, declared because its data is present and for no other
 reason.
@@ -917,9 +913,5 @@ reason.
   first-class one. Revisit only if osu! becomes primary.
 - An object takes roughly 150 bytes, about 1.5 MB for a 10,000-note chart. Acceptable. If it stops
   being acceptable the fix is interning kinds and arena-allocating children, not a different model.
-- Sync anchors are not in v0. Tempora pairs an audio offset with a musical position and derives
-  tempo from it, which is a better *authoring* model than typing BPM values. Excluded because it
-  duplicates information already in `bpm` events and raises questions this draft cannot answer,
-  such as what an anchor inside a warp means and what editing a derived BPM does to the anchor
-  that produced it. If it returns it should be editor project data, not chart data. See
-  [sync anchors](research/topics/sync-anchors.md).
+- Anchors are now the tempo model rather than editor-only project data. They keep authored times
+  exact and avoid drift from cumulative BPM rounding.

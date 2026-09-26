@@ -93,6 +93,14 @@ pub enum Rule {
     DuplicateMarker { tick: Tick },
     #[error("timing has no bpm event")]
     NoBpm,
+    #[error("timing has no anchor")]
+    NoAnchor,
+    #[error("anchors do not strictly increase in both ticks and seconds")]
+    AnchorsNotIncreasing,
+    #[error("anchor on tick {tick} lies inside a warp")]
+    AnchorInWarp { tick: Tick },
+    #[error("the segment ending at anchor tick {tick} cannot derive a positive finite tempo")]
+    BadAnchorSegment { tick: Tick },
     #[error("a {0} measure is not a whole number of ticks")]
     FractionalMeasure(TimeSignature),
     #[error("span ends past the last tick")]

@@ -17,7 +17,7 @@ pub mod rows;
 use std::num::NonZeroU16;
 
 use charter_audio::{Onset, Peaks};
-use charter_core::{Bpm, Tick, Timing, TimingKind, Valid};
+use charter_core::{Bpm, Tick, Timing, Valid};
 use charter_editor::{Pin, Refusal, Song};
 use charter_style as style;
 use egui::{Key, Modifiers, Pos2, Sense, vec2};
@@ -402,17 +402,7 @@ impl TimingWindow {
 
 /// How long before `tick` an audition starts: a beat there, kept between 150 and 600 ms.
 fn lead(frame: &Frame<'_>, tick: Tick) -> f64 {
-    let bpm = frame
-        .timing
-        .events
-        .iter()
-        .filter(|event| event.tick <= tick)
-        .filter_map(|event| match event.kind {
-            TimingKind::Bpm(bpm) => Some(f64::from(bpm)),
-            _ => None,
-        })
-        .next_back()
-        .unwrap_or(120.0);
+    let bpm = frame.timing.tempo_at(tick);
     (60.0 / bpm).clamp(AUDITION.0, AUDITION.1)
 }
 
@@ -1507,14 +1497,7 @@ fn act(window: &mut TimingWindow, frame: &Frame<'_>, intent: Intent, commands: &
 /// The tempo of the BPM change on `tick`, as the song holds it: stops and delays between
 /// anchors take time the tempo does not.
 fn tempo_at(frame: &Frame<'_>, tick: Tick) -> Option<Bpm> {
-    frame
-        .timing
-        .events
-        .iter()
-        .find_map(|event| match event.kind {
-            TimingKind::Bpm(bpm) if event.tick == tick => Some(bpm),
-            _ => None,
-        })
+    Bpm::try_from(frame.timing.tempo_at(tick)).ok()
 }
 
 /// Ctrl+wheel notches among `events`, later first, and whether Shift made them coarse.

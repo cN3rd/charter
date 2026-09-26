@@ -1,28 +1,75 @@
-use crate::document::{Timing, TimingEvent, TimingKind};
+use crate::document::{Timing, TimingKind};
 use crate::unit::{Bpm, ResolvedTime, Tick, TicksPerBeat};
 
 impl Timing {
     /// Audio time of an object on `tick`; see [`Valid::time_at`](crate::Valid::time_at). Events
-    /// must be sorted by tick. `None` means there is no `bpm` event or a warp ends past the last
-    /// tick, which a valid document rules out.
+    /// and anchors must be sorted by tick. `None` means a segment cannot derive a positive finite
+    /// rate, which a valid document rules out.
     pub(crate) fn seconds_at(
         &self,
         ticks_per_beat: TicksPerBeat,
         tick: Tick,
     ) -> Option<ResolvedTime> {
-        let offset = ResolvedTime::from(self.offset_seconds).seconds();
-        let zero = Tick::new(0);
-        Some(ResolvedTime::new(if tick >= zero {
-            offset + self.elapsed(ticks_per_beat, zero, tick)?
+        let index = self.anchors.partition_point(|anchor| anchor.tick <= tick);
+        let seconds = if let Some(anchor) = self
+            .anchors
+            .get(index.wrapping_sub(1))
+            .filter(|a| a.tick == tick)
+        {
+            ResolvedTime::from(anchor.seconds).seconds()
+        } else if index == 0 {
+            let first = self.anchors.first()?;
+            let rate = self.pre_anchor_rate(ticks_per_beat)?;
+            ResolvedTime::from(first.seconds).seconds()
+                - self.elapsed_at_rate(ticks_per_beat, tick, first.tick, rate)?
+        } else if let Some(next) = self.anchors.get(index) {
+            let previous = self.anchors.get(index - 1)?;
+            let rate = self.segment_rate(ticks_per_beat, previous, next)?;
+            ResolvedTime::from(previous.seconds).seconds()
+                + self.elapsed_at_rate(ticks_per_beat, previous.tick, tick, rate)?
         } else {
-            offset - self.elapsed(ticks_per_beat, tick, zero)?
-        }))
+            let last = self.anchors.last()?;
+            ResolvedTime::from(last.seconds).seconds()
+                + self.elapsed_at_rate(ticks_per_beat, last.tick, tick, self.tempo)?
+        };
+        Some(ResolvedTime::new(seconds))
     }
 
-    /// The tempo a single `bpm` event on `from`, in place of any others before `to`, needs for
-    /// `to` to fall `seconds` after `from`, to six places. Stops, delays and warps keep their
-    /// lengths. `None` when `to` is not after `from`, or no tempo fits because the pauses in
-    /// between already take `seconds` or longer.
+    /// The derived tempo governing `tick`, as quarter notes per minute.
+    pub(crate) fn tempo_at(&self, ticks_per_beat: TicksPerBeat, tick: Tick) -> Option<f64> {
+        let index = self.anchors.partition_point(|anchor| anchor.tick <= tick);
+        if index == 0 {
+            return self.pre_anchor_rate(ticks_per_beat).map(f64::from);
+        }
+        self.anchors
+            .get(index)
+            .and_then(|next| {
+                self.anchors
+                    .get(index - 1)
+                    .and_then(|previous| self.segment_rate(ticks_per_beat, previous, next))
+            })
+            .map_or(Some(f64::from(self.tempo)), |bpm| Some(f64::from(bpm)))
+    }
+
+    /// One tempo per anchor. Each interior anchor reports the derived tempo for the following
+    /// anchored segment; the last reports the tail tempo.
+    pub(crate) fn tempos(&self, ticks_per_beat: TicksPerBeat) -> Option<Vec<(Tick, f64)>> {
+        let mut tempos = Vec::with_capacity(self.anchors.len());
+        for pair in self.anchors.windows(2) {
+            let [previous, next] = pair else {
+                unreachable!()
+            };
+            tempos.push((
+                previous.tick,
+                f64::from(self.segment_rate(ticks_per_beat, previous, next)?),
+            ));
+        }
+        tempos.push((self.anchors.last()?.tick, f64::from(self.tempo)));
+        Some(tempos)
+    }
+
+    /// The tempo a segment from `from` to `to` needs for `to` to fall `seconds` after `from`, to
+    /// six places. Stops, delays and warps keep their lengths.
     pub(crate) fn tempo_for(
         &self,
         ticks_per_beat: TicksPerBeat,
@@ -30,53 +77,65 @@ impl Timing {
         to: Tick,
         seconds: f64,
     ) -> Option<Bpm> {
-        if to <= from {
-            return None;
-        }
-        let lasting = |bpm: f64| {
-            let mut probe = self.clone();
-            probe.events.retain(|event| {
-                !(matches!(event.kind, TimingKind::Bpm(_)) && from <= event.tick && event.tick < to)
-            });
-            let at = probe.events.partition_point(|event| event.tick < from);
-            let change = TimingEvent {
-                tick: from,
-                kind: TimingKind::Bpm(Bpm::try_from(bpm).ok()?),
-                ext: crate::Extensions::new(),
-            };
-            probe.events.insert(at, change);
-            probe.elapsed(ticks_per_beat, from, to)
-        };
-        // The span lasts `beats / bpm + paused` minutes' worth: two tempos find both.
-        let (slow, fast) = (lasting(60.0)?, lasting(120.0)?);
-        let beat_minutes = 120.0 * (slow - fast);
-        let paused = 2.0 * fast - slow;
-        let tempo = beat_minutes / (seconds - paused);
-        if beat_minutes <= 0.0 || !tempo.is_finite() || tempo <= 0.0 {
+        let (timed_ticks, pauses) = self.span_parts(from, to)?;
+        let beat_seconds = seconds - pauses;
+        let tempo = 60.0 * timed_ticks / (f64::from(ticks_per_beat.get()) * beat_seconds);
+        if timed_ticks <= 0.0 || !tempo.is_finite() || tempo <= 0.0 {
             return None;
         }
         Bpm::try_from((tempo * 1e6).round() / 1e6).ok()
     }
 
-    /// Seconds between objects on `from` and on `to`, where `from <= to`.
-    fn elapsed(&self, ticks_per_beat: TicksPerBeat, from: Tick, to: Tick) -> Option<f64> {
-        // Ticks before `warp_end` take no time. A warp starts at its own tick, which the cursor
-        // has always reached, so only the part of a span after `warp_end` counts.
-        let timed = |cursor: Tick, until: Tick, warp_end: Option<Tick>, bpm: Bpm| {
+    pub(crate) fn segment_rate(
+        &self,
+        ticks_per_beat: TicksPerBeat,
+        previous: &crate::Anchor,
+        next: &crate::Anchor,
+    ) -> Option<Bpm> {
+        self.tempo_for(
+            ticks_per_beat,
+            previous.tick,
+            next.tick,
+            ResolvedTime::from(next.seconds).seconds()
+                - ResolvedTime::from(previous.seconds).seconds(),
+        )
+    }
+
+    fn pre_anchor_rate(&self, ticks_per_beat: TicksPerBeat) -> Option<Bpm> {
+        match self.anchors.as_slice() {
+            [_] => Some(self.tempo),
+            [first, second, ..] => self.segment_rate(ticks_per_beat, first, second),
+            [] => None,
+        }
+    }
+
+    /// Seconds between objects on `from` and on `to`, where `from <= to`, at `bpm` for timed
+    /// ticks and with the stored pauses.
+    fn elapsed_at_rate(
+        &self,
+        ticks_per_beat: TicksPerBeat,
+        from: Tick,
+        to: Tick,
+        bpm: Bpm,
+    ) -> Option<f64> {
+        let (timed_ticks, pauses) = self.span_parts(from, to)?;
+        Some(pauses + timed_ticks * 60.0 / (f64::from(bpm) * f64::from(ticks_per_beat.get())))
+    }
+
+    /// Timed ticks and pause seconds in `[from, to]` using the format's stop, delay and warp
+    /// rules. `from` must not be after `to`.
+    pub(crate) fn span_parts(&self, from: Tick, to: Tick) -> Option<(f64, f64)> {
+        if to < from {
+            return None;
+        }
+        let timed = |cursor: Tick, until: Tick, warp_end: Option<Tick>| {
             let start = warp_end.map_or(cursor, |end| end.max(cursor));
             start
                 .ticks_until(until)
-                .map_or(0.0, |ticks| bpm.seconds(ticks, ticks_per_beat))
+                .map_or(0.0, |ticks| f64::from(ticks.get()))
         };
-        let mut bpm = self.events.iter().find_map(|event| match event.kind {
-            TimingKind::Bpm(value) => Some(value),
-            TimingKind::Stop(_)
-            | TimingKind::Delay(_)
-            | TimingKind::Warp(_)
-            | TimingKind::TimeSignature(..)
-            | TimingKind::Other { .. } => None,
-        })?;
-        let mut elapsed = 0.0;
+        let mut timed_ticks = 0.0;
+        let mut pauses = 0.0;
         let mut cursor = from;
         let mut warp_end = None;
         for event in &self.events {
@@ -85,55 +144,65 @@ impl Timing {
                 break;
             }
             if at > from {
-                elapsed += timed(cursor, at, warp_end, bpm);
+                timed_ticks += timed(cursor, at, warp_end);
                 cursor = at;
             }
             match event.kind {
-                TimingKind::Bpm(value) => bpm = value,
-                TimingKind::Stop(pause) if at >= from && at < to => elapsed += pause.seconds(),
-                TimingKind::Delay(pause) if at > from => elapsed += pause.seconds(),
+                TimingKind::Stop(pause) if at >= from && at < to => pauses += pause.seconds(),
+                TimingKind::Delay(pause) if at > from => pauses += pause.seconds(),
                 TimingKind::Warp(ticks) => warp_end = Some(at.checked_add(ticks)?),
-                // Meter shapes the grid, not time; plugin events are never interpreted.
                 TimingKind::Stop(_)
                 | TimingKind::Delay(_)
                 | TimingKind::TimeSignature(..)
                 | TimingKind::Other { .. } => {}
             }
         }
-        Some(elapsed + timed(cursor, to, warp_end, bpm))
+        timed_ticks += timed(cursor, to, warp_end);
+        Some((timed_ticks, pauses))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, HashSet};
-    use std::mem::discriminant;
-    use std::num::NonZeroU16;
-
-    use proptest::collection::vec;
-    use proptest::prelude::*;
+    use std::collections::BTreeMap;
 
     use super::*;
-    use crate::document::{DEFAULT_TICKS_PER_BEAT, TimingEvent, TimingKind};
-    use crate::number::{MAX_MILLIONTHS, from_millionths};
-    use crate::unit::{Origin, Seconds, Ticks, TimeSignature};
+    use crate::document::{Anchor, DEFAULT_TICKS_PER_BEAT, TimingEvent};
+    use crate::unit::{Origin, Seconds, Ticks};
 
-    fn timing(events: &[(i32, TimingKind)]) -> Timing {
-        Timing {
-            offset_seconds: Origin::try_from(1.0).unwrap(),
-            events: events
-                .iter()
-                .map(|(tick, kind)| TimingEvent {
-                    tick: Tick::new(*tick),
-                    kind: kind.clone(),
-                    ext: std::collections::BTreeMap::new(),
-                })
-                .collect(),
+    fn bpm(value: f64) -> Bpm {
+        Bpm::try_from(value).unwrap()
+    }
+
+    fn origin(value: f64) -> Origin {
+        Origin::try_from(value).unwrap()
+    }
+
+    fn anchor(tick: i32, seconds: f64) -> Anchor {
+        Anchor {
+            tick: Tick::new(tick),
+            seconds: origin(seconds),
+            ext: BTreeMap::new(),
         }
     }
 
-    fn bpm(value: f64) -> TimingKind {
-        TimingKind::Bpm(Bpm::try_from(value).unwrap())
+    fn event(tick: i32, kind: TimingKind) -> TimingEvent {
+        TimingEvent {
+            tick: Tick::new(tick),
+            kind,
+            ext: BTreeMap::new(),
+        }
+    }
+
+    fn timing(anchors: &[(i32, f64)], tempo: f64, events: Vec<TimingEvent>) -> Timing {
+        Timing {
+            anchors: anchors
+                .iter()
+                .map(|&(tick, seconds)| anchor(tick, seconds))
+                .collect(),
+            tempo: bpm(tempo),
+            events,
+        }
     }
 
     #[track_caller]
@@ -148,275 +217,67 @@ mod tests {
         );
     }
 
-    #[track_caller]
-    fn assert_tempo(timing: &Timing, (from, to): (i32, i32), seconds: f64, expected: Option<f64>) {
-        let found = timing
-            .tempo_for(
-                DEFAULT_TICKS_PER_BEAT,
-                Tick::new(from),
-                Tick::new(to),
-                seconds,
-            )
-            .map(f64::from);
-        assert_eq!(found, expected);
-    }
-
     #[test]
-    fn a_span_takes_the_tempo_that_makes_it_last_the_seconds_asked() {
-        let t = timing(&[(0, bpm(60.0)), (1920, bpm(240.0))]);
-        assert_tempo(&t, (0, 1920), 1.0, Some(120.0));
-        assert_tempo(&t, (960, 2880), 2.0, Some(60.0));
-    }
-
-    #[test]
-    fn a_stop_in_the_span_keeps_its_length_under_a_new_tempo() {
-        let stop = TimingKind::Stop(Seconds::try_from(0.5).unwrap());
-        let t = timing(&[(0, bpm(60.0)), (480, stop)]);
-        assert_tempo(&t, (0, 1920), 1.5, Some(120.0));
-    }
-
-    #[test]
-    fn no_tempo_fits_a_span_its_pauses_already_outlast() {
-        let stop = TimingKind::Stop(Seconds::try_from(2.0).unwrap());
-        let t = timing(&[(0, bpm(60.0)), (480, stop)]);
-        assert_tempo(&t, (0, 1920), 1.0, None);
-        assert_tempo(&t, (1920, 960), 1.0, None);
-    }
-
-    #[test]
-    fn a_tempo_comes_to_six_places() {
-        let t = timing(&[(0, bpm(60.0))]);
-        assert_tempo(&t, (0, 960), 0.7, Some(85.714_286));
-    }
-
-    #[test]
-    fn bpm_sets_how_fast_ticks_become_seconds() {
-        let t = timing(&[(0, bpm(60.0)), (1920, bpm(120.0))]);
+    fn anchors_resolve_exactly_and_derive_the_tempo_between_them() {
+        let t = timing(&[(0, 1.0), (1920, 3.0)], 240.0, Vec::new());
         assert_time(&t, 0, 1.0);
         assert_time(&t, 960, 2.0);
-        assert_time(&t, 2880, 3.5);
+        assert_time(&t, 1920, 3.0);
+        assert!((t.tempo_at(DEFAULT_TICKS_PER_BEAT, Tick::new(960)).unwrap() - 60.0).abs() < 1e-9);
     }
 
     #[test]
-    fn the_first_bpm_also_rules_the_ticks_before_it() {
-        let t = timing(&[(960, bpm(60.0))]);
-        assert_time(&t, 480, 1.5);
-        assert_time(&t, 1440, 2.5);
-    }
-
-    #[test]
-    fn a_stop_pauses_after_the_objects_on_its_tick() {
-        let stop = TimingKind::Stop(Seconds::try_from(2.0).unwrap());
-        let t = timing(&[(0, bpm(60.0)), (960, stop)]);
-        assert_time(&t, 960, 2.0);
-        assert_time(&t, 1920, 5.0);
-    }
-
-    #[test]
-    fn a_delay_pauses_before_the_objects_on_its_tick() {
-        let delay = TimingKind::Delay(Seconds::try_from(2.0).unwrap());
-        let t = timing(&[(0, bpm(60.0)), (960, delay)]);
-        assert_time(&t, 480, 1.5);
-        assert_time(&t, 960, 4.0);
-    }
-
-    #[test]
-    fn a_warp_skips_its_ticks_without_taking_time() {
-        let warp = TimingKind::Warp(Ticks::new(960).unwrap());
-        let t = timing(&[(0, bpm(60.0)), (960, warp)]);
-        for warped in [960, 1500, 1920] {
-            assert_time(&t, warped, 2.0);
-        }
-        assert_time(&t, 2880, 3.0);
-    }
-
-    #[test]
-    fn pauses_inside_a_warp_still_pause() {
-        let warp = TimingKind::Warp(Ticks::new(960).unwrap());
-        let stop = TimingKind::Stop(Seconds::try_from(0.5).unwrap());
-        let t = timing(&[(0, bpm(60.0)), (960, warp), (1200, stop)]);
-        assert_time(&t, 1200, 2.0);
-        assert_time(&t, 1920, 2.5);
-    }
-
-    #[test]
-    fn negative_ticks_resolve_backward_through_pauses() {
-        let stop = TimingKind::Stop(Seconds::try_from(1.0).unwrap());
-        let t = timing(&[(-960, stop), (0, bpm(60.0))]);
-        assert_time(&t, -960, -1.0);
-        assert_time(&t, -1920, -2.0);
-    }
-
-    #[test]
-    fn a_delay_on_tick_zero_is_inside_the_offset() {
-        let delay = TimingKind::Delay(Seconds::try_from(2.0).unwrap());
-        let t = timing(&[(0, bpm(60.0)), (0, delay)]);
-        assert_time(&t, 0, 1.0);
-        assert_time(&t, 960, 2.0);
-    }
-
-    #[test]
-    fn timing_without_a_bpm_has_no_times() {
+    fn the_tail_uses_the_stored_tempo() {
+        let t = timing(&[(0, 0.0), (960, 1.0)], 120.0, Vec::new());
+        assert_time(&t, 1920, 1.5);
         assert_eq!(
-            timing(&[]).seconds_at(DEFAULT_TICKS_PER_BEAT, Tick::new(0)),
-            None
+            t.tempos(DEFAULT_TICKS_PER_BEAT).unwrap(),
+            vec![(Tick::new(0), 60.0), (Tick::new(960), 120.0)]
         );
     }
 
     #[test]
-    fn the_resolution_sets_how_many_ticks_make_a_beat() {
-        let t = timing(&[(0, bpm(60.0))]);
-        let half = TicksPerBeat::new(480).unwrap();
-        let seconds = t.seconds_at(half, Tick::new(480)).unwrap().seconds();
-        assert!((seconds - 2.0).abs() < 1e-9, "{seconds}");
+    fn before_the_first_anchor_extrapolates_with_the_first_segment() {
+        let t = timing(&[(960, 1.0), (1920, 2.0)], 240.0, Vec::new());
+        assert_time(&t, 0, 0.0);
     }
 
-    /// A timing map built from `first` and `events`, keeping only what validation accepts: one
-    /// event of each kind per tick, and warps that neither overlap nor end past the last tick.
-    fn valid_timing(offset: i64, first: (i32, Bpm), events: Vec<(i32, TimingKind)>) -> Timing {
-        let mut events: Vec<_> = std::iter::once((first.0, TimingKind::Bpm(first.1)))
-            .chain(events)
-            .collect();
-        events.sort_by_key(|(tick, _)| *tick);
-        let mut seen = HashSet::new();
-        let mut warp_end = None;
-        let mut kept = Vec::new();
-        for (tick, kind) in events {
-            let tick = Tick::new(tick);
-            if !seen.insert((tick, discriminant(&kind))) {
-                continue;
-            }
-            if let TimingKind::Warp(span) = kind {
-                match tick.checked_add(span) {
-                    Some(end) if warp_end.is_none_or(|last| tick >= last) => warp_end = Some(end),
-                    _ => continue,
-                }
-            }
-            kept.push(TimingEvent {
-                tick,
-                kind,
-                ext: BTreeMap::new(),
-            });
-        }
-        Timing {
-            offset_seconds: Origin::try_from(from_millionths(offset)).unwrap(),
-            events: kept,
-        }
+    #[test]
+    fn one_anchor_extrapolates_before_it_with_the_tail_tempo() {
+        let t = timing(&[(960, 1.0)], 60.0, Vec::new());
+        assert_time(&t, 0, 0.0);
     }
 
-    /// The time of `tick` found by walking the map one tick at a time: the format chapter's
-    /// rules restated without segments.
-    fn walked(timing: &Timing, resolution: TicksPerBeat, tick: i32) -> f64 {
-        let bpms = || {
-            timing.events.iter().filter_map(|event| match event.kind {
-                TimingKind::Bpm(bpm) => Some((event.tick, bpm)),
-                _ => None,
-            })
-        };
-        let first = bpms().next().unwrap().1;
-        let bpm_at = |k: Tick| bpms().rev().find(|(at, _)| *at <= k).map_or(first, |b| b.1);
-        let warped = |k: Tick| {
-            timing.events.iter().any(|event| match event.kind {
-                TimingKind::Warp(span) => event.tick <= k && Some(k) < event.tick.checked_add(span),
-                _ => false,
-            })
-        };
-        let pauses = |k: Tick, stops: bool| -> f64 {
-            timing
-                .events
-                .iter()
-                .filter(|event| event.tick == k)
-                .map(|event| match event.kind {
-                    TimingKind::Stop(pause) if stops => pause.seconds(),
-                    TimingKind::Delay(pause) if !stops => pause.seconds(),
-                    _ => 0.0,
-                })
-                .sum()
-        };
-        let one = Ticks::new(1).unwrap();
-        let (from, to) = if tick >= 0 { (0, tick) } else { (tick, 0) };
-        let mut elapsed = 0.0;
-        for k in from..to {
-            // A stop on `k` holds after its objects; a delay on `k + 1` holds before its own.
-            elapsed += pauses(Tick::new(k), true);
-            if !warped(Tick::new(k)) {
-                elapsed += bpm_at(Tick::new(k)).seconds(one, resolution);
-            }
-            elapsed += pauses(Tick::new(k + 1), false);
-        }
-        let offset = ResolvedTime::from(timing.offset_seconds).seconds();
-        if tick >= 0 {
-            offset + elapsed
-        } else {
-            offset - elapsed
-        }
+    #[test]
+    fn stops_and_delays_keep_stepmania_tick_semantics() {
+        let events = vec![
+            event(960, TimingKind::Stop(Seconds::try_from(2.0).unwrap())),
+            event(1920, TimingKind::Delay(Seconds::try_from(3.0).unwrap())),
+        ];
+        let t = timing(&[(0, 0.0)], 60.0, events);
+        assert_time(&t, 960, 1.0);
+        assert_time(&t, 1920, 7.0);
+        assert_time(&t, 2880, 8.0);
     }
 
-    fn tempo(millionths: impl Strategy<Value = i64>) -> impl Strategy<Value = Bpm> {
-        millionths.prop_map(|m| Bpm::try_from(from_millionths(m)).unwrap())
+    #[test]
+    fn warps_skip_ticks_without_taking_time() {
+        let events = vec![event(960, TimingKind::Warp(Ticks::new(960).unwrap()))];
+        let t = timing(&[(0, 0.0)], 60.0, events);
+        assert_time(&t, 960, 1.0);
+        assert_time(&t, 1500, 1.0);
+        assert_time(&t, 1920, 1.0);
+        assert_time(&t, 2880, 2.0);
     }
 
-    fn pause(millionths: impl Strategy<Value = i64>) -> impl Strategy<Value = Seconds> {
-        millionths.prop_map(|m| Seconds::try_from(from_millionths(m)).unwrap())
-    }
-
-    fn kind(
-        tempos: impl Strategy<Value = i64>,
-        pauses: impl Strategy<Value = i64> + Clone,
-        warps: impl Strategy<Value = u32>,
-    ) -> impl Strategy<Value = TimingKind> {
-        let seven_eight = TimeSignature {
-            numerator: NonZeroU16::new(7).unwrap(),
-            denominator: NonZeroU16::new(8).unwrap(),
-        };
-        prop_oneof![
-            tempo(tempos).prop_map(TimingKind::Bpm),
-            pause(pauses.clone()).prop_map(TimingKind::Stop),
-            pause(pauses).prop_map(TimingKind::Delay),
-            warps.prop_map(|w| TimingKind::Warp(Ticks::new(w).unwrap())),
-            Just(TimingKind::TimeSignature(seven_eight)),
-        ]
-    }
-
-    /// Any tick, with the ends of the range and zero drawn often.
-    fn edge_tick() -> impl Strategy<Value = i32> {
-        prop_oneof![Just(i32::MIN), Just(i32::MAX), Just(0), any::<i32>()]
-    }
-
-    /// Any count of millionths from 1 up, with both ends drawn often.
-    fn edge_positive() -> impl Strategy<Value = i64> + Clone {
-        prop_oneof![Just(1), Just(MAX_MILLIONTHS), 1..=MAX_MILLIONTHS]
-    }
-
-    proptest! {
-        #![proptest_config(crate::proptest_config())]
-
-        #[test]
-        fn resolving_a_tick_agrees_with_walking_the_map_one_tick_at_a_time(
-            offset in -5_000_000_i64..=5_000_000,
-            resolution in 1_u16..=48,
-            first in (-150_i32..150, tempo(1_000_000_i64..=600_000_000)),
-            events in vec((-150_i32..150, kind(1_000_000_i64..=600_000_000, 1_i64..=5_000_000, 1_u32..=40)), 0..12),
-            tick in -200_i32..200,
-        ) {
-            let timing = valid_timing(offset, first, events);
-            let resolution = TicksPerBeat::new(resolution).unwrap();
-            let resolved = timing.seconds_at(resolution, Tick::new(tick)).unwrap().seconds();
-            let walked = walked(&timing, resolution, tick);
-            prop_assert!((resolved - walked).abs() <= 1e-9 * walked.abs().max(1.0), "{resolved} != {walked}");
-        }
-
-        #[test]
-        fn every_tick_of_every_valid_map_resolves_to_a_finite_time(
-            offset in -MAX_MILLIONTHS..=MAX_MILLIONTHS,
-            resolution in prop_oneof![Just(1_u16), Just(u16::MAX), 1_u16..],
-            first in (edge_tick(), tempo(edge_positive())),
-            events in vec((edge_tick(), kind(edge_positive(), edge_positive(), prop_oneof![Just(u32::MAX), 1_u32..])), 0..32),
-            tick in edge_tick(),
-        ) {
-            let timing = valid_timing(offset, first, events);
-            let resolved = timing.seconds_at(TicksPerBeat::new(resolution).unwrap(), Tick::new(tick));
-            prop_assert!(resolved.is_some_and(|time| time.seconds().is_finite()), "{resolved:?}");
-        }
+    #[test]
+    fn tempo_for_uses_timed_ticks_after_pauses() {
+        let events = vec![event(
+            480,
+            TimingKind::Stop(Seconds::try_from(0.5).unwrap()),
+        )];
+        let t = timing(&[(0, 0.0)], 120.0, events);
+        let tempo = t.tempo_for(DEFAULT_TICKS_PER_BEAT, Tick::new(0), Tick::new(1920), 1.5);
+        assert_eq!(tempo.map(f64::from), Some(120.0));
     }
 }

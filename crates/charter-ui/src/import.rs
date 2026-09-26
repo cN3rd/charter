@@ -163,19 +163,22 @@ fn body(
 /// What `imported` holds, and what its format had that it leaves out.
 fn summary(ui: &mut Ui, imported: &ImportedTiming) {
     let events = &imported.timing.events;
-    let tempos: Vec<_> = events
+    let tempos: Vec<_> = imported
+        .timing
+        .anchors
         .iter()
-        .filter_map(|event| match event.kind {
-            TimingKind::Bpm(bpm) => Some(bpm),
-            _ => None,
-        })
+        .map(|_| imported.timing.tempo)
         .collect();
     let meters = events
         .iter()
         .filter(|event| matches!(event.kind, TimingKind::TimeSignature(_)))
         .count();
-    let others = events.len() - tempos.len() - meters;
-    let offset = f64::from(imported.timing.offset_seconds) * 1000.0;
+    let others = events.len().saturating_sub(meters);
+    let offset = imported
+        .timing
+        .anchors
+        .first()
+        .map_or(0.0, |anchor| f64::from(anchor.seconds) * 1000.0);
     style::table(ui, "imported", |ui| {
         ui.weak("Offset");
         ui.label(format!("{} ms", trimmed(offset)));

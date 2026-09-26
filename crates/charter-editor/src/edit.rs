@@ -202,10 +202,10 @@ mod tests {
     /// A song of one chart holding `objects`.
     fn song(objects: Vec<Object>) -> Document {
         let value = serde_json::json!({
-            "format_version": 0,
+            "format_version": 1,
             "ruleset": { "id": "test", "version": "1" },
             "metadata": { "title": "t", "artist": "a", "audio": "song.ogg" },
-            "timing": { "offset_seconds": 0.0, "events": [ { "tick": 0, "kind": { "bpm": 120.0 } } ] },
+            "timing": { "anchors": [ { "tick": 0, "seconds": 0.0 } ], "tempo": 120.0, "events": [] },
             "charts": [ { "name": "Easy", "lanes": 4 } ]
         });
         let mut document: Document = serde_json::from_value(value).unwrap();
