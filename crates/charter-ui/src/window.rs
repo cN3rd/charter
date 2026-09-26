@@ -354,6 +354,9 @@ pub struct Window {
     /// Taps placed by lane keys still down, by lane and tick. Each stretches into a hold to the
     /// cursor as it moves.
     holding: Vec<(LaneIndex, Tick)>,
+    /// When, in seconds into the audio, each lane key held down while playing went down: held
+    /// long enough, its tap grows into a hold with the playback.
+    pressed: Vec<(LaneIndex, f64)>,
     /// A drag across the notefield in progress.
     gesture: Option<notefield::Gesture>,
     /// Whether the host may be keeping an autosave.
@@ -512,6 +515,9 @@ impl Window {
         if let Some(song) = &mut self.song {
             let tick = notefield::latest_tick_by(song.timing(), seconds);
             song.jump_to(tick);
+            if let Some(why) = grow(song, &self.holding, &self.pressed, seconds) {
+                self.failure = Some(why);
+            }
         }
     }
 
@@ -967,6 +973,7 @@ impl Window {
                 self.failure = None;
                 self.placed = false;
                 self.holding.clear();
+                self.pressed.clear();
                 self.audio_file = audio;
                 if std::mem::take(&mut self.playing) {
                     self.requests.push(Request::Pause);
@@ -1025,6 +1032,7 @@ impl Window {
             Action::OpenChart(index) => {
                 song.open_chart(index);
                 self.holding.clear();
+                self.pressed.clear();
             }
             Action::Move(step) => {
                 song.step(step);
@@ -1044,11 +1052,29 @@ impl Window {
                     self.placed = true;
                     if note == Note::Tap {
                         self.holding.push((lane, at));
+                        if self.playing {
+                            let now = song.timing().time_at(song.cursor()).seconds();
+                            self.pressed.push((lane, now));
+                        }
                     }
                 }
                 self.failure = refused(toggled.err());
             }
-            Action::LaneUp(lane) => self.holding.retain(|(held, _)| *held != lane),
+            Action::LaneUp(lane) => {
+                if self.playing {
+                    // Where the key came up is where the hold ends.
+                    let now = song.timing().time_at(song.cursor()).seconds();
+                    let held: Vec<_> = self
+                        .holding
+                        .iter()
+                        .copied()
+                        .filter(|(held, _)| *held == lane)
+                        .collect();
+                    self.failure = grow(song, &held, &self.pressed, now).or(self.failure.take());
+                }
+                self.holding.retain(|(held, _)| *held != lane);
+                self.pressed.retain(|(held, _)| *held != lane);
+            }
             // Playback moves the cursor on already; a jump would seek the audio ahead.
             Action::LanesReleased => {
                 if std::mem::take(&mut self.placed) && self.settings.auto_jump && !self.playing {
@@ -1058,11 +1084,13 @@ impl Window {
             Action::Undo => {
                 self.placed = false;
                 self.holding.clear();
+                self.pressed.clear();
                 self.failure = refused(song.undo().err());
             }
             Action::Redo => {
                 self.placed = false;
                 self.holding.clear();
+                self.pressed.clear();
                 self.failure = refused(song.redo().err());
             }
             Action::Place { tick, lane, note } => {
@@ -1414,6 +1442,38 @@ fn placing_at(song: &Song, playing: bool) -> Tick {
         }
         _ => song.cursor(),
     }
+}
+
+/// How long a lane key stays down while playing, in seconds of audio, before its tap becomes a
+/// hold: longer than a quick tap lasts.
+const HOLD_AFTER: f64 = 0.2;
+
+/// Stretches each tap in `holding` whose key went down, as `pressed` says, at least
+/// [`HOLD_AFTER`] before `now` into a hold ending on the snap line nearest `now`, so holds grow
+/// with the playback. A stretch that changes nothing is no edit.
+fn grow(
+    song: &mut Song,
+    holding: &[(LaneIndex, Tick)],
+    pressed: &[(LaneIndex, f64)],
+    now: f64,
+) -> Option<String> {
+    let step = song
+        .document()
+        .document()
+        .ticks_per_beat
+        .note_length(song.snap())?;
+    let to = notefield::nearest_line(song.timing(), now, step);
+    let long = |lane: LaneIndex| {
+        pressed
+            .iter()
+            .any(|&(held, since)| held == lane && now - since >= HOLD_AFTER)
+    };
+    let refusals: Vec<_> = holding
+        .iter()
+        .filter(|(lane, _)| long(*lane))
+        .filter_map(|&(lane, from)| song.stretch(lane, from, to.max(from)).err())
+        .collect();
+    refused(refusals.into_iter().last())
 }
 
 fn stretch(song: &mut Song, holding: &[(LaneIndex, Tick)]) -> Option<String> {
@@ -2970,6 +3030,47 @@ mod tests {
         harness.run();
         assert_eq!(lanes_at(&harness, 1200), [0]);
         assert_eq!(harness.state_mut().take_requests(), []);
+    }
+
+    /// Moves the playhead of a playing song to `seconds`, as the host reports each frame.
+    fn play_to(harness: &mut Harness<'_, Window>, seconds: f64) {
+        harness.state_mut().playhead(seconds);
+        harness.run();
+    }
+
+    #[test]
+    fn a_lane_key_held_while_playing_grows_a_hold_until_it_comes_up() {
+        let mut harness = playable();
+        space(&mut harness);
+        play_to(&mut harness, 0.5);
+        harness.key_down(egui::Key::Num1);
+        harness.run();
+        play_to(&mut harness, 0.6);
+        assert_eq!(note_at(&harness, 960, 0), Some(tap()));
+        play_to(&mut harness, 0.9);
+        assert_eq!(note_at(&harness, 960, 0), Some(hold(720)));
+        play_to(&mut harness, 1.13);
+        harness.key_up(egui::Key::Num1);
+        harness.run();
+        play_to(&mut harness, 1.6);
+        assert_eq!(note_at(&harness, 960, 0), Some(hold(1200)));
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.run();
+        assert_eq!(note_at(&harness, 960, 0), None);
+    }
+
+    #[test]
+    fn a_lane_key_let_go_quickly_while_playing_stays_a_tap() {
+        let mut harness = playable();
+        space(&mut harness);
+        play_to(&mut harness, 0.5);
+        harness.key_down(egui::Key::Num1);
+        harness.run();
+        play_to(&mut harness, 0.62);
+        harness.key_up(egui::Key::Num1);
+        harness.run();
+        play_to(&mut harness, 1.0);
+        assert_eq!(note_at(&harness, 960, 0), Some(tap()));
     }
 
     #[test]
