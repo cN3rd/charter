@@ -1,0 +1,22 @@
+Licence of the rendered audio (everything under out/)
+======================================================
+
+SPDX-License-Identifier: CC0-1.0
+
+To the extent possible under law, the author(s) of this project have dedicated
+all copyright and related and neighbouring rights in the rendered audio files
+(the WAV files produced by the scripts in this repository) to the public domain
+worldwide, under the Creative Commons CC0 1.0 Universal Public Domain
+Dedication.
+
+Full legal text: https://creativecommons.org/publicdomain/zero/1.0/legalcode
+(When packaging for a distribution, include that text verbatim alongside this
+file — some policies require the complete licence text.)
+
+Why CC0 for the audio and MIT for the code: audio assets end up inside
+applications where per-file attribution is awkward, and CC0 removes that
+burden for downstream users; the scripts stay under MIT so the copyright and
+permission notice travel with the code. Change this to whatever suits your
+project — the author(s) of these files are the copyright holders and may
+relicense freely. Nothing in this repository is derived from third-party
+audio (see PROVENANCE.md).
