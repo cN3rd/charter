@@ -2,7 +2,9 @@
 //! only; the output device belongs to the program that plays.
 
 mod click;
+mod tags;
 mod track;
 
 pub use click::{Tone, mix, render};
+pub use tags::{Tags, tags};
 pub use track::{DecodeError, Track};
