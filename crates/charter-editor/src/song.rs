@@ -56,6 +56,12 @@ pub enum Refusal {
     /// The song's game cannot represent the edit.
     #[error(transparent)]
     Game(Box<dyn std::error::Error + Send + Sync>),
+    /// A beat cannot reach the time asked without passing a neighbouring BPM change.
+    #[error("that beat cannot move past the BPM change beside it")]
+    Unreachable,
+    /// The song's first BPM change starts its tempo, so it cannot go.
+    #[error("the first BPM change starts the song's tempo")]
+    FirstTempo,
 }
 
 /// The snaps in ArrowVortex's menu, coarsest first.
@@ -278,7 +284,7 @@ impl Song {
     }
 
     /// The timing tempo edits go to: the open chart's own when it has one, and whether it is.
-    fn edited_timing(&self) -> (bool, &charter_core::Timing) {
+    pub(crate) fn edited_timing(&self) -> (bool, &charter_core::Timing) {
         let document = self.document.document();
         let own = document
             .charts
@@ -439,7 +445,7 @@ impl Song {
     }
 
     /// Gives the timing tempo edits go to the events of `new`, as one step.
-    fn retime(&mut self, own: bool, new: charter_core::Timing) -> Result<(), Refusal> {
+    pub(crate) fn retime(&mut self, own: bool, new: charter_core::Timing) -> Result<(), Refusal> {
         let (_, old) = self.edited_timing();
         let edit = Edit(vec![Op::Timing {
             own,
@@ -930,7 +936,7 @@ fn note(tick: Tick, lane: LaneIndex, kind: Kind) -> Object {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::error::Error;
 
     use serde_json::{Value, json};
@@ -1492,7 +1498,7 @@ mod tests {
     }
 
     /// A song whose timing has `events`, and whose second chart has `own` timing if given.
-    fn timed(events: &Value, own: Option<&Value>) -> Song {
+    pub(crate) fn timed(events: &Value, own: Option<&Value>) -> Song {
         let mut value = json!({
             "format_version": 0,
             "ruleset": { "id": "test", "version": "1" },
@@ -1507,11 +1513,11 @@ mod tests {
         Song::new(document, EDITABLE)
     }
 
-    fn bpm_event(tick: i32, bpm: f64) -> Value {
+    pub(crate) fn bpm_event(tick: i32, bpm: f64) -> Value {
         json!({ "tick": tick, "kind": { "bpm": bpm } })
     }
 
-    fn song_events(song: &Song) -> Value {
+    pub(crate) fn song_events(song: &Song) -> Value {
         serde_json::to_value(&song.document().document().timing.events).unwrap()
     }
 

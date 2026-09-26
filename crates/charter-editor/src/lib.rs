@@ -5,5 +5,6 @@
 pub mod demo;
 mod edit;
 mod song;
+mod sync;
 
 pub use song::{NoteAt, Refusal, SNAPS, Selecting, Song, Step, Toggled};
