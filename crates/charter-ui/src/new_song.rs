@@ -116,12 +116,21 @@ pub fn games(plugins: &[&'static dyn RulesetPlugin]) -> Vec<&'static dyn Ruleset
 /// Shows the dialog over the window: the game, the layout every chart shares with a sketch of
 /// its lanes, the title and artist, the charts, and the audio still to come. Escape or a click
 /// outside cancels.
-pub fn show(ui: &Ui, plugins: &[&'static dyn RulesetPlugin], draft: &mut Draft) -> Option<Answer> {
+pub fn show(
+    ui: &Ui,
+    plugins: &[&'static dyn RulesetPlugin],
+    draft: &mut Draft,
+    no_drops: bool,
+) -> Option<Answer> {
     let games = games(plugins);
     let mut answer = None;
     let modal = egui::Modal::new(egui::Id::new("new song")).show(ui.ctx(), |ui| {
         ui.set_width(WIDTH);
-        ui.label(RichText::new("New song").family(style::titles(ui)).size(18.0));
+        ui.label(
+            RichText::new("New song")
+                .family(style::titles(ui))
+                .size(18.0),
+        );
         ui.weak("Pick the game and how its charts are laid out. Charts start empty.");
         ui.add_space(14.0);
         let Some(&game) = games.get(draft.game) else {
@@ -183,9 +192,13 @@ pub fn show(ui: &Ui, plugins: &[&'static dyn RulesetPlugin], draft: &mut Draft) 
             ui.label(style::glyph(ui, style::icon::MUSIC_NOTES).color(style::WEAK_TEXT));
             ui.add(
                 egui::Label::new(
-                    RichText::new(
-                        "Drop an audio file here, or choose one; its tags fill in the title and artist.",
-                    )
+                    RichText::new(if no_drops {
+                        "Choose an audio file; its tags fill in the title and artist. Dragging \
+                         files in doesn't work under Wayland yet."
+                    } else {
+                        "Drop an audio file here, or choose one; its tags fill in the title and \
+                         artist."
+                    })
                     .small()
                     .color(style::WEAK_TEXT),
                 )

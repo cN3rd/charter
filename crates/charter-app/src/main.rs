@@ -203,6 +203,13 @@ fn project_file(chosen: &Path) -> Option<PathBuf> {
     Some(beside.join(name).join(file))
 }
 
+/// Whether the window opens under Wayland, which winit prefers wherever a Wayland display is set
+/// and where it takes no dropped files yet (rust-windowing/winit#1881).
+fn on_wayland() -> bool {
+    cfg!(target_os = "linux")
+        && std::env::var_os("WAYLAND_DISPLAY").is_some_and(|display| !display.is_empty())
+}
+
 fn song_dialog() -> rfd::FileDialog {
     rfd::FileDialog::new().add_filter("charter song", &["json"])
 }
@@ -220,8 +227,14 @@ fn main() -> eframe::Result {
                 .storage
                 .and_then(|storage| eframe::get_value(storage, SETTINGS));
             let settings: Settings = kept.unwrap_or_default();
+            let window = Window::new(PLUGINS).with_settings(settings);
+            let window = if on_wayland() {
+                window.without_file_drops()
+            } else {
+                window
+            };
             let mut host = Host {
-                window: Window::new(PLUGINS).with_settings(settings),
+                window,
                 recovery: eframe::storage_dir(APP).map(|folder| folder.join("recovery.json")),
                 player: Player::default(),
                 disk: Box::new(disk::Real),

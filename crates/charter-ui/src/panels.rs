@@ -26,12 +26,16 @@ pub fn menu_bar(ui: &mut Ui, song: Option<&Song>, playing: bool, actions: &mut V
                 ("Save", SAVE, song_open, Action::Save),
                 ("Save as…", SAVE_AS, song_open, Action::SaveAs),
             ];
+            let choose = egui::Button::new("Choose audio…");
             for (label, shortcut, enabled, action) in items {
                 let item =
                     egui::Button::new(label).shortcut_text(ui.ctx().format_shortcut(&shortcut));
                 if ui.add_enabled(enabled, item).clicked() {
                     actions.push(action);
                 }
+            }
+            if ui.add_enabled(song_open, choose).clicked() {
+                actions.push(Action::ChooseAudio);
             }
             ui.separator();
             if ui.button("Open the demo song").clicked() {
@@ -893,7 +897,7 @@ pub fn ordinal(n: NonZeroU16) -> String {
 }
 
 /// What the centre shows with no song open.
-pub fn empty(ui: &mut Ui, actions: &mut Vec<Action>) {
+pub fn empty(ui: &mut Ui, no_drops: bool, actions: &mut Vec<Action>) {
     ui.vertical_centered(|ui| {
         ui.add_space((ui.available_height() / 3.0 - 40.0).max(0.0));
         ui.label(
@@ -924,20 +928,39 @@ pub fn empty(ui: &mut Ui, actions: &mut Vec<Action>) {
                 }
             },
         );
-        ui.add_space(16.0);
-        ui.weak("or drop a charter song (.json) on this window");
+        if !no_drops {
+            ui.add_space(16.0);
+            ui.weak("or drop a charter song (.json) on this window");
+        }
     });
 }
 
-/// That the open song has no audio yet, and how to give it some.
-pub fn no_audio(ui: &mut Ui, actions: &mut Vec<Action>) {
+/// That the open song has no audio yet, and how to give it some: choosing a file, or dropping
+/// one unless `no_drops`.
+pub fn no_audio(ui: &mut Ui, no_drops: bool, actions: &mut Vec<Action>) {
     notice(ui, style::icon::MUSIC_NOTES, |ui| {
-        ui.label("No audio yet. Drop an audio file (.ogg, .mp3, .wav, .flac) on the window, or");
-        if style::icon_button(ui, style::icon::FOLDER_OPEN, "Choose audio…", false).clicked() {
+        if no_drops {
+            ui.label("No audio yet (.ogg, .mp3, .wav, .flac).");
+        } else {
+            ui.label(
+                "No audio yet. Drop an audio file (.ogg, .mp3, .wav, .flac) on the window, or",
+            );
+        }
+        let choose = style::icon_button(ui, style::icon::FOLDER_OPEN, "Choose audio…", true);
+        let choose = if no_drops {
+            choose.on_hover_text(NO_DROPS)
+        } else {
+            choose
+        };
+        if choose.clicked() {
             actions.push(Action::ChooseAudio);
         }
     });
 }
+
+/// Why files cannot be dragged onto the window, where they cannot.
+pub(crate) const NO_DROPS: &str = "Dragging files in doesn't work under Wayland yet: the windowing library charter uses does \
+     not take drops there.";
 
 /// A strip across the top of the centre that says something about the song, led by `symbol`.
 fn notice<R>(ui: &mut Ui, symbol: &str, body: impl FnOnce(&mut Ui) -> R) -> R {

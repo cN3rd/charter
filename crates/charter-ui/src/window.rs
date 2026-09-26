@@ -376,6 +376,9 @@ pub struct Window {
     section_draft: Option<String>,
     /// Whether the keyboard shortcuts are showing.
     help_open: bool,
+    /// Whether files dropped on the window never arrive, as under Wayland, so the window offers
+    /// only choosing them.
+    no_drops: bool,
     /// What the keyboard shortcuts are filtered to.
     help_filter: String,
     /// The waveform of an audio file, once the host has summarized it.
@@ -395,6 +398,16 @@ impl Window {
     #[must_use]
     pub fn with_settings(self, settings: Settings) -> Self {
         Self { settings, ..self }
+    }
+
+    /// This window where files dropped on it never arrive, as under Wayland, which winit does
+    /// not take drops from yet: it offers choosing files instead, and says why.
+    #[must_use]
+    pub fn without_file_drops(self) -> Self {
+        Self {
+            no_drops: true,
+            ..self
+        }
     }
 
     #[must_use]
@@ -546,13 +559,18 @@ impl Window {
             Some(Loaded::Failed) => {}
             None if self.audio_file().is_none() => {
                 let name = song.document().document().metadata.audio.as_str();
-                self.failure = Some(if name == NO_AUDIO {
-                    "This song has no audio yet: drop an audio file on the window, or choose one."
-                        .to_owned()
-                } else {
-                    format!(
+                self.failure = Some(match (name == NO_AUDIO, self.no_drops) {
+                    (true, false) => "This song has no audio yet: drop an audio file on the \
+                        window, or choose one."
+                        .to_owned(),
+                    (true, true) => "This song has no audio yet: choose one.".to_owned(),
+                    (false, false) => format!(
                         "Save the song beside {name}, or drop {name} on the window, to play it."
-                    )
+                    ),
+                    (false, true) => format!(
+                        "Save the song beside {name}, or choose {name} with File > Choose \
+                         audio, to play it."
+                    ),
                 });
             }
             None => self.failure = Some("The audio is still loading.".to_owned()),
@@ -1126,7 +1144,7 @@ impl Window {
     /// Shows whichever question or dialog is waiting on the user, and takes the answer.
     fn dialogs(&mut self, ui: &Ui) {
         if let Some(draft) = &mut self.new_song {
-            match new_song::show(ui, self.plugins, draft) {
+            match new_song::show(ui, self.plugins, draft, self.no_drops) {
                 Some(new_song::Answer::Create { plugin, song }) => {
                     let audio = self.new_song.take().and_then(|draft| draft.audio);
                     self.create(plugin, &song, audio);
@@ -1279,7 +1297,7 @@ impl Window {
                 if self.song.as_ref().is_some_and(|song| {
                     song.document().document().metadata.audio.as_str() == NO_AUDIO
                 }) {
-                    panels::no_audio(ui, &mut actions);
+                    panels::no_audio(ui, self.no_drops, &mut actions);
                 }
                 match &self.song {
                     Some(song) => {
@@ -1298,7 +1316,7 @@ impl Window {
                             notefield::show(ui, song, shown, scrolled, gesture, &mut actions);
                         });
                     }
-                    None => panels::empty(ui, &mut actions),
+                    None => panels::empty(ui, self.no_drops, &mut actions),
                 }
             });
         if let Some(kit) = settings::show(ui.ctx(), &mut self.settings, &mut self.settings_open) {
@@ -3265,6 +3283,34 @@ mod tests {
         harness.run();
         assert_eq!(audio(&harness), "track.ogg");
         assert!(!no_audio(&harness));
+    }
+
+    #[test]
+    fn where_files_cannot_be_dropped_the_window_offers_choosing_them_and_says_why() {
+        let mut harness = window(Window::new(GAMES).without_file_drops());
+        assert!(
+            harness
+                .query_by_label_contains("drop a charter song")
+                .is_none()
+        );
+        harness.get_by_label("New song").click();
+        harness.run();
+        assert!(harness.query_by_label_contains("Drop an audio").is_none());
+        assert!(
+            harness
+                .query_by_label_contains("doesn't work under Wayland yet")
+                .is_some()
+        );
+        harness.get_by_label("Create").click();
+        harness.run();
+        assert!(harness.query_by_label_contains("Drop an audio").is_none());
+        harness.get_by_label("Choose audio…").click();
+        harness.run();
+        assert_eq!(harness.state_mut().take_requests(), [Request::ChooseAudio]);
+        harness.get_by_label("File").click();
+        harness.run();
+        // The banner's button, and now the File menu's.
+        assert_eq!(harness.query_all_by_label("Choose audio…").count(), 2);
     }
 
     #[test]

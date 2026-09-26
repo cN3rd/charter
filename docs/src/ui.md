@@ -33,7 +33,10 @@ synthesised click pairs dedicated to the public domain, bundled under
 `crates/charter-audio/assets/clicks` with their CC0 licence and a provenance note on how they
 were made. A new song takes its game,
 the layout every chart shares, its title, artist and chart names from a dialog, and asks for audio
-until an audio file is dropped on the window or chosen from the banner that asks for it; saving
+until an audio file is dropped on the window or chosen from the banner that asks for it or from
+File > Choose audio…. Under Wayland nothing can be dropped, since winit takes no drops there yet
+([winit#1881](https://github.com/rust-windowing/winit/issues/1881)), so the window offers only
+choosing and says why; saving
 copies that file beside the song. Saving a song somewhere new makes it a project: the name chosen
 becomes a folder holding the song's JSON file under the same name and a copy of its audio, where
 anything later worked out from the audio will also go. Choosing the song's own file in its folder
