@@ -369,8 +369,16 @@ mod tests {
     #[test]
     fn a_subdivision_click_is_the_beat_at_its_share_of_the_metronome() {
         let silence = Track::silence(8000, 800);
-        let beat = mix(&silence, &[(0.0, Tone::Beat(Kit::ToneGate))], Volumes::default());
-        let sub = mix(&silence, &[(0.0, Tone::Sub(Kit::ToneGate))], Volumes::default());
+        let beat = mix(
+            &silence,
+            &[(0.0, Tone::Beat(Kit::ToneGate))],
+            Volumes::default(),
+        );
+        let sub = mix(
+            &silence,
+            &[(0.0, Tone::Sub(Kit::ToneGate))],
+            Volumes::default(),
+        );
         assert!((loudest(sub.frames()) - loudest(beat.frames()) / 2.0).abs() < 1e-4);
     }
 

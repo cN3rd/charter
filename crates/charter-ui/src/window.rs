@@ -4244,6 +4244,49 @@ mod tests {
         assert!((seconds_at(&harness, 960) - 0.5).abs() < 1e-9);
     }
 
+    /// The timed song with its audio loaded and one strong onset `seconds` in.
+    fn syncing_with_an_onset(seconds: f64) -> Harness<'static, Window> {
+        let mut harness = syncing();
+        let file = harness.state().audio_file().unwrap();
+        harness.state_mut().audio_ready(&file, 60.0);
+        let onset = charter_audio::Onset {
+            seconds,
+            strength: 1.0,
+        };
+        harness.state_mut().onsets_ready(&file, vec![onset].into());
+        harness.run();
+        harness.state_mut().take_requests();
+        harness
+    }
+
+    #[test]
+    fn a_click_ten_ms_from_an_onset_anchors_on_it_and_auditions_a_beat_before() {
+        // Tick 1920 falls 0.9 s in; the onset is a little later.
+        let mut harness = syncing_with_an_onset(0.912);
+        let pos = in_row(&harness, 1920);
+        assert!((seconds_at(&harness, 1920) - 0.9).abs() < 1e-9);
+        click(&mut harness, pos, egui::Modifiers::NONE);
+        let seconds = anchor_seconds(&harness);
+        assert_eq!(event_ticks(&harness)[2], Tick::new(1920));
+        assert!((seconds[2] - 0.912).abs() < 1e-4, "{seconds:?}");
+        let requests = harness.state_mut().take_requests();
+        let from = requests.iter().find_map(|request| match request {
+            Request::Play { from, .. } => Some(*from),
+            _ => None,
+        });
+        assert!((from.expect("an audition") - (0.912 - 0.4)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_click_forty_ms_from_any_onset_stays_where_it_was_clicked() {
+        let mut harness = syncing_with_an_onset(0.94);
+        let heard = seconds_at(&harness, 1920);
+        let pos = in_row(&harness, 1920);
+        click(&mut harness, pos, egui::Modifiers::NONE);
+        let seconds = anchor_seconds(&harness);
+        assert!((seconds[2] - heard).abs() < 5e-3, "{seconds:?}");
+    }
+
     #[test]
     fn an_anchor_is_not_added_within_half_a_grid_step_of_another_and_says_why() {
         let mut harness = syncing();

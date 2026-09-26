@@ -676,6 +676,28 @@ mod tests {
     }
 
     #[test]
+    fn two_anchors_a_bar_and_two_seconds_apart_make_120_bpm_either_side() {
+        let mut song = timed(&json!([bpm_event(0, 90.0)]), None);
+        let pins = [
+            Pin {
+                tick: at(0),
+                seconds: 1.0,
+            },
+            Pin {
+                tick: at(3840),
+                seconds: 3.0,
+            },
+        ];
+        song.repin(&pins, Bpm::try_from(120.0).unwrap(), false)
+            .unwrap();
+        assert_eq!(song_events(&song)[0], bpm_event(0, 120.0));
+        let timing = song.timing();
+        assert!((timing.time_at(at(1920)).seconds() - 2.0).abs() < 1e-9);
+        assert_eq!(timing.latest_tick_by(4.0), at(5760));
+        assert_eq!(timing.latest_tick_by(0.0), at(-1920));
+    }
+
+    #[test]
     fn a_segment_of_an_odd_number_of_ticks_does_not_halve() {
         let mut song = timed(&json!([bpm_event(0, 120.0), bpm_event(1921, 120.0)]), None);
         assert!(matches!(
