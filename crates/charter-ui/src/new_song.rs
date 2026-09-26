@@ -1,6 +1,8 @@
 //! The dialog that starts a song: which game it is for, the layout its charts share, its title
 //! and artist, and the names of its charts.
 
+use std::path::PathBuf;
+
 use charter_core::{Extensions, Metadata, NewSong, ResourcePath, RulesetPlugin};
 use egui::{RichText, Ui};
 
@@ -8,6 +10,9 @@ use crate::style;
 
 /// The audio a new song names until the user drops a file on it.
 pub const NO_AUDIO: &str = "no-audio-yet";
+/// What a new song is called, and by whom, until the user or its audio's tags say.
+pub const UNTITLED: &str = "Untitled";
+pub const UNKNOWN_ARTIST: &str = "Unknown artist";
 
 /// The dialog's fields as the user has left them.
 #[derive(Debug)]
@@ -19,6 +24,8 @@ pub struct Draft {
     title: String,
     artist: String,
     charts: Vec<String>,
+    /// The audio file the song plays, once one is dropped on the dialog or chosen.
+    pub audio: Option<PathBuf>,
 }
 
 impl Default for Draft {
@@ -29,11 +36,33 @@ impl Default for Draft {
             title: String::new(),
             artist: String::new(),
             charts: vec!["Easy".to_owned()],
+            audio: None,
         }
     }
 }
 
 impl Draft {
+    /// Whether the title and artist are both still to be written.
+    pub fn blank(&self) -> bool {
+        self.title.trim().is_empty() && self.artist.trim().is_empty()
+    }
+
+    /// Whether `title` or `artist`, where given, differ from what the draft has.
+    pub fn differs(&self, title: Option<&str>, artist: Option<&str>) -> bool {
+        title.is_some_and(|title| title != self.title.trim())
+            || artist.is_some_and(|artist| artist != self.artist.trim())
+    }
+
+    /// Takes the title and artist given.
+    pub fn fill(&mut self, title: Option<&str>, artist: Option<&str>) {
+        if let Some(title) = title {
+            title.clone_into(&mut self.title);
+        }
+        if let Some(artist) = artist {
+            artist.clone_into(&mut self.artist);
+        }
+    }
+
     /// What the draft asks `plugin` to make, if the draft names a game and a chart.
     fn song(&self) -> Option<NewSong> {
         if self.charts.is_empty() {
@@ -45,9 +74,14 @@ impl Draft {
         };
         Some(NewSong {
             metadata: Metadata {
-                title: or(&self.title, "Untitled"),
-                artist: or(&self.artist, "Unknown artist"),
-                audio: ResourcePath::new(NO_AUDIO).ok()?,
+                title: or(&self.title, UNTITLED),
+                artist: or(&self.artist, UNKNOWN_ARTIST),
+                audio: self
+                    .audio
+                    .as_ref()
+                    .and_then(|file| file.file_name()?.to_str().map(str::to_owned))
+                    .and_then(|name| ResourcePath::new(name).ok())
+                    .or_else(|| ResourcePath::new(NO_AUDIO).ok())?,
                 preview: None,
                 ext: Extensions::new(),
             },
@@ -65,6 +99,8 @@ pub enum Answer {
         plugin: &'static dyn RulesetPlugin,
         song: NewSong,
     },
+    /// Ask the host to let the user choose the audio.
+    ChooseAudio,
     Cancel,
 }
 
@@ -135,6 +171,10 @@ pub fn show(ui: &Ui, plugins: &[&'static dyn RulesetPlugin], draft: &mut Draft) 
                 }
             });
         ui.add_space(12.0);
+        if audio_row(ui, draft) {
+            answer = Some(Answer::ChooseAudio);
+        }
+        ui.add_space(12.0);
         charts(ui, draft);
         ui.add_space(14.0);
         ui.separator();
@@ -144,7 +184,7 @@ pub fn show(ui: &Ui, plugins: &[&'static dyn RulesetPlugin], draft: &mut Draft) 
             ui.add(
                 egui::Label::new(
                     RichText::new(
-                        "Once the song is open, drop its audio file on the window, or choose it there.",
+                        "Drop an audio file here, or choose one; its tags fill in the title and artist.",
                     )
                     .small()
                     .color(style::WEAK_TEXT),
@@ -208,6 +248,42 @@ fn choose_game(ui: &mut Ui, games: &[&'static dyn RulesetPlugin], draft: &mut Dr
                 }
             });
         });
+}
+
+/// The audio the song plays, and a way to choose it or take it away. Says whether the user asked
+/// to choose it.
+fn audio_row(ui: &mut Ui, draft: &mut Draft) -> bool {
+    let mut choose = false;
+    ui.horizontal(|ui| {
+        ui.add_sized(
+            egui::vec2(CAPTION_W, 20.0),
+            egui::Label::new(RichText::new("Audio").color(style::WEAK_TEXT)),
+        );
+        let named = draft
+            .audio
+            .as_ref()
+            .and_then(|file| file.file_name())
+            .map(|name| name.to_string_lossy().into_owned());
+        match named {
+            Some(name) => {
+                ui.label(style::glyph(ui, style::icon::MUSIC_NOTES).color(style::ACCENT));
+                ui.label(name);
+                if style::quiet_icon(ui, style::icon::X, "Remove the audio", "Remove the audio")
+                    .clicked()
+                {
+                    draft.audio = None;
+                }
+            }
+            None => {
+                ui.weak("None yet");
+            }
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            choose =
+                style::icon_button(ui, style::icon::FOLDER_OPEN, "Choose audio…", false).clicked();
+        });
+    });
+    choose
 }
 
 /// A sketch of `count` lanes side by side, and how many there are when `say` is set.

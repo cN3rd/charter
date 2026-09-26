@@ -3,7 +3,7 @@
 
 use std::num::NonZeroU16;
 
-use charter_core::{Bpm, MarkerKind, ResolvedTime, Tick};
+use charter_core::{Bpm, MarkerKind, Origin, ResolvedTime, Tick};
 use egui::{self, Align, Layout, RichText, Ui};
 use serde_json::Value;
 
@@ -424,7 +424,7 @@ fn shown(value: &Value) -> String {
 pub fn tempo(
     ui: &mut Ui,
     song: &Song,
-    draft: &mut Option<String>,
+    draft: (&mut Option<String>, &mut Option<String>),
     actions: &mut Vec<Action>,
 ) -> Option<String> {
     let mut refused = None;
@@ -437,7 +437,7 @@ pub fn tempo(
 fn tempo_body(
     ui: &mut Ui,
     song: &Song,
-    draft: &mut Option<String>,
+    (bpm_draft, offset_draft): (&mut Option<String>, &mut Option<String>),
     actions: &mut Vec<Action>,
 ) -> Option<String> {
     let Some((at, bpm)) = song.bpm() else {
@@ -445,33 +445,49 @@ fn tempo_body(
         return None;
     };
     let editable = song.read_only().is_none();
+    let offset = song.timing().offset_seconds;
     let mut refused = None;
     table(ui, "tempo", |ui| {
         let caption = ui.weak("BPM");
         if editable {
-            let mut text = draft.take().unwrap_or_else(|| bpm.to_string());
-            let field = ui
-                .add(egui::TextEdit::singleline(&mut text).desired_width(72.0))
-                .labelled_by(caption.id);
-            let entered =
-                field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
-            if field.has_focus() {
-                *draft = Some(text);
-            } else if entered {
-                let typed = text.trim();
-                match typed
+            let tempo = |typed: &str| {
+                let bpm = typed
                     .parse::<f64>()
-                    .map_err(|_| ())
-                    .and_then(|bpm| Bpm::try_from(bpm).map_err(|_| ()))
-                {
-                    Ok(bpm) => actions.push(Action::SetBpm(bpm)),
-                    Err(()) => refused = Some(format!("{typed} is not a tempo")),
-                }
-            }
+                    .ok()
+                    .and_then(|bpm| Bpm::try_from(bpm).ok());
+                bpm.map(Action::SetBpm)
+                    .ok_or_else(|| format!("{typed} is not a tempo"))
+            };
+            refused = entry(ui, caption.id, bpm.to_string(), bpm_draft, tempo, actions);
         } else {
             ui.label(bpm.to_string());
         }
         ui.weak(format!("since {}", song.timing().grid_position(at)));
+        ui.end_row();
+        let caption = ui.weak("Offset");
+        if editable {
+            let seconds = |typed: &str| {
+                let offset = typed
+                    .parse::<f64>()
+                    .ok()
+                    .and_then(|at| Origin::try_from(at).ok());
+                offset
+                    .map(Action::SetOffset)
+                    .ok_or_else(|| format!("{typed} is not an offset in seconds"))
+            };
+            let offered = entry(
+                ui,
+                caption.id,
+                offset.to_string(),
+                offset_draft,
+                seconds,
+                actions,
+            );
+            refused = refused.take().or(offered);
+        } else {
+            ui.label(offset.to_string());
+        }
+        ui.weak("seconds, tick 0 in the audio");
         ui.end_row();
     });
     ui.add_space(4.0);
@@ -482,6 +498,33 @@ fn tempo_body(
         actions.push(Action::RemoveBpm);
     }
     refused
+}
+
+/// A value typed into a field named by `caption`, showing `current` until typing starts and
+/// kept in `draft` while the field has the keyboard. Entered, `read` turns it into an action,
+/// or into why it is not a value; Escape leaves it.
+fn entry(
+    ui: &mut Ui,
+    caption: egui::Id,
+    current: String,
+    draft: &mut Option<String>,
+    read: impl FnOnce(&str) -> Result<Action, String>,
+    actions: &mut Vec<Action>,
+) -> Option<String> {
+    let mut text = draft.take().unwrap_or(current);
+    let field = ui
+        .add(egui::TextEdit::singleline(&mut text).desired_width(72.0))
+        .labelled_by(caption);
+    let entered = field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
+    if field.has_focus() {
+        *draft = Some(text);
+    } else if entered {
+        match read(text.trim()) {
+            Ok(action) => actions.push(action),
+            Err(why) => return Some(why),
+        }
+    }
+    None
 }
 
 #[allow(clippy::too_many_lines)] // the toolbar's groups in the order they show
@@ -819,6 +862,37 @@ pub fn ask_to_save(ui: &Ui, name: &str) -> Option<Answer> {
         });
     });
     answer.or(modal.should_close().then_some(Answer::Cancel))
+}
+
+/// Asks whether to take the title and artist an audio file's tags carry over the song's own:
+/// true to take them. Only an answer closes it.
+pub fn offer_tags(ui: &Ui, title: Option<&str>, artist: Option<&str>) -> Option<bool> {
+    let mut answer = None;
+    egui::Modal::new(egui::Id::new("offer tags")).show(ui.ctx(), |ui| {
+        ui.set_max_width(380.0);
+        let heading = RichText::new("Import song metadata?")
+            .family(style::titles(ui))
+            .size(15.0);
+        ui.label(heading);
+        ui.add_space(4.0);
+        ui.label("Do you want to import song metadata from tags?");
+        ui.add_space(8.0);
+        let rows: Vec<_> = [("Title", title), ("Artist", artist)]
+            .into_iter()
+            .filter_map(|(name, value)| value.map(|value| (name, value.to_owned())))
+            .collect();
+        fields(ui, "offered tags", &rows, "");
+        ui.add_space(14.0);
+        ui.horizontal(|ui| {
+            if ui.add(style::primary("Import")).clicked() {
+                answer = Some(true);
+            }
+            if ui.button("Keep mine").clicked() {
+                answer = Some(false);
+            }
+        });
+    });
+    answer
 }
 
 /// Asks whether to restore the unsaved changes to the song in `name` that an earlier run kept:

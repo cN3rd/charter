@@ -91,6 +91,14 @@ impl Host {
                     self.window.audio_not_copied(&why);
                 }
             }
+            Request::ReadTags { file } => {
+                // A file that cannot be read has no tags, which leaves the song as it is.
+                if let Ok(bytes) = self.disk.read(&file) {
+                    let extension = file.extension().and_then(|extension| extension.to_str());
+                    let tags = charter_audio::tags(bytes, extension);
+                    self.window.tags_read(&file, tags.title, tags.artist);
+                }
+            }
             Request::DropAutosave => {
                 if let Some(recovery) = &self.recovery {
                     // Nothing to remove is fine, and a file left over is offered, then
@@ -288,6 +296,17 @@ mod tests {
                 .unwrap()
                 .contains("could not be restored")
         );
+    }
+
+    #[test]
+    fn tags_of_audio_that_cannot_be_read_leave_the_song_alone() {
+        let mut host = host(Memory::with(&[("/s/song.json", SONG)]));
+        host.read(Path::new("/s/song.json"));
+        host.answer(Request::ReadTags {
+            file: PathBuf::from("/s/gone.ogg"),
+        });
+        assert_eq!(host.window.message(), None);
+        assert_eq!(host.window.title(), "song.json - charter");
     }
 
     #[test]

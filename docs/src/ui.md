@@ -22,25 +22,28 @@ cursor or starts one, and any marker can be removed, each as one step. Songs ope
 native file dialogs, unsaved changes are asked about before they are lost and autosaved, half a
 minute after they are made unless the settings say otherwise, and a settings window holds what the
 user chooses, including which way the notefield runs and the tick on each note and the metronome on
-each beat, which play over the audio and which F3 and F4 turn on and off. The inspector shows the
-selection but cannot change it yet. A new song takes its game, the layout every chart shares, its
-title, artist and chart names from a dialog, and asks for audio until an audio file is dropped on
-the window or chosen from the banner that asks for it; saving copies that file beside the song.
-Space plays the song's audio from the cursor and pauses it, the cursor follows the playback, and
-moving the cursor while playing seeks. Shift+Left and Shift+Right, or the Playback menu, play slower
-or faster from 10% to 400%, which changes the audio's pitch with its speed and leaves the chart
-alone. The status bar says whether the audio is ready, loading, missing or unreadable, and every
-message has a Dismiss button. The Edit, Timing and Playback menus carry the selection, tempo, marker
-and playback commands with their keys, F1 lists every key by group with a filter, and saving,
-opening, settings and help keep working while a text field has the keyboard. With no song open the
-centre offers Open song…, New song and the demo. The look follows pro audio and creative tools: a
-transport toolbar under the menus with a large position readout and grouped tempo, snap, speed and
-zoom controls, collapsible sections in the side panels, the notefield in a dark well, one blue
-accent for selection and primary actions, Inter for text and Phosphor for icons, bundled under
-`crates/charter-ui/assets/fonts` with Inter's OFL licence; messages float over the canvas rather
-than moving it. The settings window has a sidebar of pages, Editing, Display, Sounds and Autosave,
-each setting with a line on what it does and on and off choices as switches; the new-song dialog
-picks the game from a segmented control and sketches the layout's lanes. In the notefield, BPM and
+each beat, which play over the audio and which F3 and F4 turn on and off. A new song takes its game,
+the layout every chart shares, its title, artist and chart names from a dialog, and asks for audio
+until an audio file is dropped on the window or chosen from the banner that asks for it; saving
+copies that file beside the song. Space plays the song's audio from the cursor and pauses it, the
+cursor follows the playback, and moving the cursor while playing seeks. Shift+Left and Shift+Right,
+or the Playback menu, play slower or faster from 10% to 400%, which changes the audio's pitch with
+its speed and leaves the chart alone. The status bar says whether the audio is ready, loading,
+missing or unreadable, and every message has a Dismiss button. The Edit, Timing and Playback menus
+carry the selection, tempo, marker and playback commands with their keys, F1 lists every key by
+group with a filter, and saving, opening, settings and help keep working while a text field has the
+keyboard. With no song open the centre offers Open song…, New song and the demo. The look follows
+pro audio and creative tools: a transport toolbar under the menus with a large position readout and
+grouped tempo, snap, speed and zoom controls, collapsible sections in the side panels, the notefield
+in a dark well, one blue accent for selection and primary actions, Inter for text and Phosphor for
+icons, bundled under `crates/charter-ui/assets/fonts` with Inter's OFL licence; messages float over
+the canvas rather than moving it. The settings window has a sidebar of pages, Editing, Display,
+Sounds and Autosave, each setting with a line on what it does and on and off choices as switches;
+the new-song dialog picks the game from a segmented control, sketches the layout's lanes, and takes
+the song's audio dropped on it or chosen. An audio file's tags fill in a title and artist still at
+their defaults, in the dialog or on a new song; where the user has written their own, charter asks
+whether to import them. The song panel folds away with Ctrl+\\, and the tempo section sets the
+offset, where tick 0 sits in the audio, for songs that open with silence. In the notefield, BPM and
 other timing changes drag along the timing column and markers along the ruler to another snap line,
 each as one step, with a guide where they will land; the song's first BPM change stays put. The
 cursor's handle on the ruler drags to scrub, and seeks while playing.
@@ -93,10 +96,9 @@ dark playfield, often in a dim room, and notes read best as bright shapes on dar
   supplies. Without that plugin
   they show as raw text, read-only, since the format lets a reader carry data it cannot
   meaningfully edit.
-- The inspector shows the fields of the selection: tick, lane, kind, shape, sample and `ext` for
-  objects, the value of a timing event, the text of a marker. A value that differs across the
-  selection reads `mixed`, and setting it sets it on all. Keys place notes; the inspector takes
-  what keys cannot express, such as 174.5 BPM, a 0.25 s stop or a keysound.
+- There is no inspector panel; the notefield keeps the width. The status bar counts the selection,
+  the song panel sets the tempo, offset and sections at the cursor, and what keys cannot express
+  on a note, such as a keysound, is still to find a place.
 - Every action is a named command with a rebindable key. Menus carry the common ones, and
   `Ctrl+K` searches all of them and shows each binding. All four major editors surveyed ship
   customizable shortcuts, and Tempora's drag modifiers stay invisible until learned

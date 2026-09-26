@@ -62,6 +62,19 @@ pub enum Request {
     /// Ask the user to choose an audio file for the open song, and pass it to
     /// [`Window::use_audio`].
     ChooseAudio,
+    /// Read the tags of the audio file at `file`, and pass them to [`Window::tags_read`].
+    ReadTags {
+        file: PathBuf,
+    },
+}
+
+/// What tags read from an audio file would change, waiting on whether to take them.
+#[derive(Debug)]
+struct Offer {
+    /// Whether they go to the new-song dialog rather than the open song.
+    draft: bool,
+    title: Option<String>,
+    artist: Option<String>,
 }
 
 /// How fast the audio plays, as a factor of its own speed. The chart is untouched by it.
@@ -242,6 +255,8 @@ pub(crate) enum Action {
     SetRate(f64),
     /// Makes the tempo from the cursor on this.
     SetBpm(charter_core::Bpm),
+    /// Puts tick 0 of the open timing this far into the audio.
+    SetOffset(charter_core::Origin),
     /// Removes the BPM change at the cursor.
     RemoveBpm,
     /// Puts the cursor on this tick.
@@ -328,8 +343,12 @@ pub struct Window {
     restoring: Option<Restoring>,
     /// The dialog that starts a song, while it shows.
     new_song: Option<new_song::Draft>,
+    /// Tags that would change the title and artist, waiting on whether to take them.
+    offer: Option<Offer>,
     /// A BPM being typed, while its field has the keyboard.
     bpm_draft: Option<String>,
+    /// An offset being typed, while its field has the keyboard.
+    offset_draft: Option<String>,
     /// A section name being typed, while its field has the keyboard.
     section_draft: Option<String>,
     /// Whether the keyboard shortcuts are showing.
@@ -522,9 +541,90 @@ impl Window {
         }
     }
 
-    /// Makes the file at `file`, which the host let the user choose, the open song's audio.
+    /// Makes the file at `file`, which the host let the user choose, the audio of the song
+    /// being started, or else of the open song.
     pub fn use_audio(&mut self, file: &Path) {
-        self.add_audio(file);
+        if self.new_song.is_some() {
+            self.draft_audio(file);
+        } else {
+            self.add_audio(file);
+        }
+    }
+
+    /// Takes the title and artist the tags of `file` carry. Where the song, or the song being
+    /// started, still has no title and artist of its own they are taken at once; otherwise the
+    /// user is asked. Tags of a file the window no longer wants are dropped.
+    pub fn tags_read(&mut self, file: &Path, title: Option<String>, artist: Option<String>) {
+        if title.is_none() && artist.is_none() {
+            return;
+        }
+        let (named, by) = (title.as_deref(), artist.as_deref());
+        if let Some(draft) = &mut self.new_song {
+            if draft.audio.as_deref() != Some(file) || !draft.differs(named, by) {
+                return;
+            }
+            if draft.blank() {
+                draft.fill(named, by);
+            } else {
+                self.offer = Some(Offer {
+                    draft: true,
+                    title,
+                    artist,
+                });
+            }
+            return;
+        }
+        let Some(song) = &mut self.song else {
+            return;
+        };
+        if self.audio_file.as_deref() != Some(file) {
+            return;
+        }
+        let metadata = &song.document().document().metadata;
+        let untouched =
+            metadata.title == new_song::UNTITLED && metadata.artist == new_song::UNKNOWN_ARTIST;
+        let differs = named.is_some_and(|named| named != metadata.title)
+            || by.is_some_and(|by| by != metadata.artist);
+        if !differs {
+            return;
+        }
+        if untouched {
+            self.take_tags(false, named, by);
+        } else {
+            self.offer = Some(Offer {
+                draft: false,
+                title,
+                artist,
+            });
+        }
+    }
+
+    /// Gives the song, or the song being started when `draft` is set, the title and artist
+    /// given.
+    fn take_tags(&mut self, draft: bool, title: Option<&str>, artist: Option<&str>) {
+        if draft {
+            if let Some(draft) = &mut self.new_song {
+                draft.fill(title, artist);
+            }
+            return;
+        }
+        let Some(song) = &mut self.song else {
+            return;
+        };
+        let metadata = &song.document().document().metadata;
+        let title = title.unwrap_or(&metadata.title).to_owned();
+        let artist = artist.unwrap_or(&metadata.artist).to_owned();
+        self.failure = refused(song.set_song_facts(&title, &artist).err());
+    }
+
+    /// Gives the song being started the audio at `file`, and asks for its tags.
+    fn draft_audio(&mut self, file: &Path) {
+        if let Some(draft) = &mut self.new_song {
+            draft.audio = Some(file.to_path_buf());
+            self.requests.push(Request::ReadTags {
+                file: file.to_path_buf(),
+            });
+        }
     }
 
     /// Whether the window takes the audio to be playing.
@@ -597,11 +697,19 @@ impl Window {
         self.failure = refused(song.set_audio(audio).err());
         if self.failure.is_none() {
             self.audio_file = Some(path.to_path_buf());
+            self.requests.push(Request::ReadTags {
+                file: path.to_path_buf(),
+            });
         }
     }
 
     /// Starts the song the new-song dialog asks for.
-    fn create(&mut self, plugin: &dyn charter_core::RulesetPlugin, song: &charter_core::NewSong) {
+    fn create(
+        &mut self,
+        plugin: &dyn charter_core::RulesetPlugin,
+        song: &charter_core::NewSong,
+        audio: Option<PathBuf>,
+    ) {
         self.new_song = None;
         match plugin.new_song(song) {
             Ok(document) => {
@@ -610,7 +718,7 @@ impl Window {
                     path: None,
                     song,
                     restored: false,
-                    audio: None,
+                    audio,
                 });
             }
             Err(error) => self.failure = Some(format!("Could not start the song: {error}")),
@@ -925,6 +1033,7 @@ impl Window {
                 song.select_between(ticks.0..=ticks.1, lanes.0..=lanes.1, how);
             }
             Action::SetBpm(bpm) => self.failure = refused(song.set_bpm(bpm).err()),
+            Action::SetOffset(offset) => self.failure = refused(song.set_offset(offset).err()),
             Action::RemoveBpm => self.failure = refused(song.remove_bpm().err()),
             Action::JumpTo(tick) => song.jump_to(tick),
             Action::JumpEnd => song.jump_to(song.end()),
@@ -957,7 +1066,7 @@ impl Window {
             let extension = path.extension().and_then(|extension| extension.to_str());
             if extension.is_some_and(|extension| AUDIO.contains(&extension.to_lowercase().as_str()))
             {
-                self.add_audio(path);
+                self.use_audio(path);
                 continue;
             }
             match file.bytes() {
@@ -971,9 +1080,26 @@ impl Window {
     fn dialogs(&mut self, ui: &Ui) {
         if let Some(draft) = &mut self.new_song {
             match new_song::show(ui, self.plugins, draft) {
-                Some(new_song::Answer::Create { plugin, song }) => self.create(plugin, &song),
+                Some(new_song::Answer::Create { plugin, song }) => {
+                    let audio = self.new_song.take().and_then(|draft| draft.audio);
+                    self.create(plugin, &song, audio);
+                }
+                Some(new_song::Answer::ChooseAudio) => self.requests.push(Request::ChooseAudio),
                 Some(new_song::Answer::Cancel) => self.new_song = None,
                 None => {}
+            }
+        }
+        if let Some(Offer {
+            draft,
+            title,
+            artist,
+        }) = &self.offer
+            && let Some(take) = panels::offer_tags(ui, title.as_deref(), artist.as_deref())
+        {
+            let (draft, title, artist) = (*draft, title.clone(), artist.clone());
+            self.offer = None;
+            if take {
+                self.take_tags(draft, title.as_deref(), artist.as_deref());
             }
         }
         if let Some(Restoring { path, song, .. }) = &self.restoring
@@ -996,7 +1122,10 @@ impl Window {
         let asked = ui.input(|input| keys::key_actions(input, lanes, lane_keys));
         // A focused widget or a question takes the keyboard, but a lane key coming up still ends
         // its chord.
-        let asking = self.new_song.is_some() || self.discard.is_some() || self.restoring.is_some();
+        let asking = self.new_song.is_some()
+            || self.discard.is_some()
+            || self.restoring.is_some()
+            || self.offer.is_some();
         let typing = ui.ctx().egui_wants_keyboard_input();
         let ends_a_chord =
             |action: &Action| matches!(action, Action::LaneUp(_) | Action::LanesReleased);
@@ -1067,7 +1196,8 @@ impl Window {
                 panels::status_bar(ui, self.song.as_ref(), (audio_state, self.playing));
             });
         if let Some(song) = self.song.as_ref().filter(|_| self.settings.song_panel) {
-            let (bpm, section) = (&mut self.bpm_draft, &mut self.section_draft);
+            let bpm = (&mut self.bpm_draft, &mut self.offset_draft);
+            let section = &mut self.section_draft;
             let refused = egui::Panel::left("song")
                 .frame(style::panel())
                 .default_size(300.0)
@@ -2933,7 +3063,7 @@ mod tests {
         let harness = new_song_dialog();
         assert!(
             harness
-                .query_by_label_contains("drop its audio file on the window")
+                .query_by_label_contains("Drop an audio file here")
                 .is_some()
         );
     }
@@ -3793,12 +3923,182 @@ mod tests {
         }
     }
 
+    /// Drops the file at `path` on the window, and forgets the tags it asks the host for.
     fn drop_file(harness: &mut Harness<'_, Window>, path: &'static str) {
+        drop_keeping_requests(harness, path);
+        let requests = &mut harness.state_mut().requests;
+        requests.retain(|request| !matches!(request, Request::ReadTags { .. }));
+    }
+
+    fn drop_keeping_requests(harness: &mut Harness<'_, Window>, path: &'static str) {
         harness
             .input_mut()
             .dropped_files
             .push(Arc::new(DroppedPath(path)));
         harness.run();
+    }
+
+    fn read_tags(harness: &mut Harness<'_, Window>, path: &str, title: &str, artist: &str) {
+        let file = Path::new(path);
+        let (title, artist) = (Some(title.to_owned()), Some(artist.to_owned()));
+        harness.state_mut().tags_read(file, title, artist);
+        harness.run();
+    }
+
+    fn field_value(harness: &Harness<'_, Window>, label: &str) -> Option<String> {
+        harness
+            .get_by_role_and_label(Role::TextInput, label)
+            .value()
+    }
+
+    fn facts(harness: &Harness<'_, Window>) -> (String, String) {
+        let song = harness.state().song.as_ref().unwrap();
+        let metadata = &song.document().document().metadata;
+        (metadata.title.clone(), metadata.artist.clone())
+    }
+
+    const OFFER: &str = "Do you want to import song metadata from tags?";
+
+    #[test]
+    fn audio_dropped_on_the_new_song_dialog_fills_a_blank_title_and_artist_from_its_tags() {
+        let mut harness = new_song_dialog();
+        drop_keeping_requests(&mut harness, "/music/track.ogg");
+        assert_eq!(
+            request(&mut harness),
+            Request::ReadTags {
+                file: PathBuf::from("/music/track.ogg")
+            }
+        );
+        assert!(harness.query_by_label("track.ogg").is_some());
+        read_tags(&mut harness, "/music/track.ogg", "Starlight", "The Lanes");
+        assert_eq!(field_value(&harness, "Title").as_deref(), Some("Starlight"));
+        assert!(harness.query_by_label_contains(OFFER).is_none());
+        harness.get_by_label("Create").click();
+        harness.run();
+        assert_eq!(
+            facts(&harness),
+            ("Starlight".to_owned(), "The Lanes".to_owned())
+        );
+        assert_eq!(audio(&harness), "track.ogg");
+        assert_eq!(
+            harness.state().audio_file(),
+            Some(PathBuf::from("/music/track.ogg"))
+        );
+        assert!(!harness.state().song.as_ref().unwrap().is_modified());
+    }
+
+    #[test]
+    fn tags_for_a_title_already_typed_are_offered_rather_than_taken() {
+        let mut harness = new_song_dialog();
+        let title = harness.get_by_role_and_label(Role::TextInput, "Title");
+        title.focus();
+        title.type_text("Mine");
+        harness.run();
+        drop_file(&mut harness, "/music/track.ogg");
+        read_tags(&mut harness, "/music/track.ogg", "Starlight", "The Lanes");
+        assert!(harness.query_by_label_contains(OFFER).is_some());
+        harness.get_by_label("Keep mine").click();
+        harness.run();
+        assert_eq!(field_value(&harness, "Title").as_deref(), Some("Mine"));
+        read_tags(&mut harness, "/music/track.ogg", "Starlight", "The Lanes");
+        harness.get_by_label("Import").click();
+        harness.run();
+        assert_eq!(field_value(&harness, "Title").as_deref(), Some("Starlight"));
+    }
+
+    #[test]
+    fn the_new_song_dialog_chooses_its_audio_through_the_host() {
+        let mut harness = new_song_dialog();
+        harness.get_by_label("Choose audio…").click();
+        harness.run();
+        assert_eq!(request(&mut harness), Request::ChooseAudio);
+        harness
+            .state_mut()
+            .use_audio(Path::new("/music/picked.flac"));
+        harness.run();
+        assert!(harness.query_by_label("picked.flac").is_some());
+        assert!(matches!(request(&mut harness), Request::ReadTags { .. }));
+    }
+
+    #[test]
+    fn a_new_songs_title_and_artist_follow_the_tags_of_audio_dropped_on_it() {
+        let mut harness = created();
+        drop_file(&mut harness, "/music/track.ogg");
+        read_tags(&mut harness, "/music/track.ogg", "Starlight", "The Lanes");
+        assert_eq!(
+            facts(&harness),
+            ("Starlight".to_owned(), "The Lanes".to_owned())
+        );
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.run();
+        let defaults = ("Untitled".to_owned(), "Unknown artist".to_owned());
+        assert_eq!(facts(&harness), defaults);
+    }
+
+    #[test]
+    fn a_song_with_a_title_of_its_own_asks_before_taking_the_tags() {
+        let mut harness = editable_four_taps();
+        drop_file(&mut harness, "/music/track.ogg");
+        read_tags(&mut harness, "/music/track.ogg", "Starlight", "The Lanes");
+        assert_eq!(facts(&harness), ("Four".to_owned(), "a".to_owned()));
+        harness.get_by_label("Import").click();
+        harness.run();
+        assert_eq!(
+            facts(&harness),
+            ("Starlight".to_owned(), "The Lanes".to_owned())
+        );
+    }
+
+    #[test]
+    fn tags_for_audio_the_song_no_longer_plays_are_ignored() {
+        let mut harness = editable_four_taps();
+        drop_file(&mut harness, "/music/track.ogg");
+        read_tags(&mut harness, "/music/other.ogg", "Starlight", "The Lanes");
+        assert!(harness.query_by_label_contains(OFFER).is_none());
+        assert_eq!(facts(&harness), ("Four".to_owned(), "a".to_owned()));
+    }
+
+    #[test]
+    fn the_offset_moves_where_the_grid_starts_in_the_audio() {
+        let mut harness = editable_demo();
+        harness
+            .get_by_role_and_label(Role::TextInput, "Offset")
+            .focus();
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness
+            .get_by_role_and_label(Role::TextInput, "Offset")
+            .type_text("1.5");
+        harness.run();
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+        let song = harness.state().song.as_ref().unwrap();
+        let offset = song.document().document().timing.offset_seconds;
+        assert_eq!(
+            serde_json::to_value(offset).unwrap(),
+            serde_json::json!(1.5)
+        );
+    }
+
+    #[test]
+    fn an_offset_that_is_not_a_time_says_so() {
+        let mut harness = editable_demo();
+        harness
+            .get_by_role_and_label(Role::TextInput, "Offset")
+            .focus();
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness
+            .get_by_role_and_label(Role::TextInput, "Offset")
+            .type_text("soon");
+        harness.run();
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+        assert!(
+            harness
+                .query_by_label_contains("soon is not an offset")
+                .is_some()
+        );
     }
 
     fn no_audio(harness: &Harness<'_, Window>) -> bool {
