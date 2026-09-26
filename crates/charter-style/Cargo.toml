@@ -1,0 +1,12 @@
+[package]
+name = "charter-style"
+version = "0.0.0"
+edition = "2024"
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+egui.workspace = true
+egui-phosphor.workspace = true

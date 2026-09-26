@@ -83,7 +83,7 @@ pub fn menu_bar(
                 song_open,
                 actions,
                 [
-                    ("Sync window", "Ctrl+T", Action::ToggleSync),
+                    ("Timing window", "Ctrl+T", Action::ToggleSync),
                     ("Raise the tempo by 1 BPM", "F8", Action::NudgeBpm(1.0)),
                     ("Lower the tempo by 1 BPM", "F7", Action::NudgeBpm(-1.0)),
                     ("Add a timing point here", "", Action::AddBpm),
@@ -268,7 +268,7 @@ const KEYS: [(&str, &[(&str, &str)]); 6] = [
     (
         "Timing",
         &[
-            ("Ctrl+T", "Show or hide the sync window"),
+            ("Ctrl+T", "Show or hide the timing window"),
             ("Ctrl+B", "Add or remove a bookmark at the cursor"),
             ("F7, F8", "Lower or raise the tempo at the cursor by 1 BPM"),
             (

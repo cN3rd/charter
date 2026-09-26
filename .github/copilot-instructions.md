@@ -91,7 +91,9 @@ expected `E1` for it. Do not silence that by adding frontmatter.
 | `crates/charter-audio` | DSP: a song's audio decoded through `symphonia-wrap` into stereo frames; no device |
 | `crates/charter-core` | the chart format: data model, JSON I/O, validation, tick to time; `RulesetPlugin`, the surface a ruleset plugin implements |
 | `crates/charter-editor` | editing a song without drawing it: open chart, cursor, snaps, note edits the ruleset plugin checks, selection, undo, unsaved changes, the demo song |
-| `crates/charter-ui` | the editor window in egui: notefield, panels, keys, settings, style; asks its host for files and dialogs; the static mock as an example |
+| `crates/charter-style` | the shared look: colour tokens, Inter and Phosphor fonts, and the widgets drawn in them |
+| `crates/charter-timing` | the timing window in egui: the audio one measure a row, anchors pinning beats to the audio; hands its edits back as commands |
+| `crates/charter-ui` | the editor window in egui: notefield, panels, keys, settings; hosts the timing window; asks its host for files and dialogs; the static mock as an example |
 | `crates/charter-app` | binary front end, thin: registers the built-in ruleset plugins, answers the window's file and dialog requests with `std::fs` and rfd, plays the song's audio through kira, keeps settings in eframe's storage; its file I/O goes through a `Disk` trait so it is tested in memory |
 | `plugins/stepmania`, `plugins/ttr`, `plugins/osu-mania` | ruleset plugins: typed game models over `charter-core`, each with a `Plugin` the editor checks songs and edits through |
 | `third-party/symphonia-wrap` | build-time facade over `symphonia`, read its README first |

@@ -13,7 +13,7 @@ use charter_editor::{NoteAt, Refusal, Selecting, Song, Step, Toggled, demo};
 use crate::new_song::{self, NO_AUDIO};
 use crate::notefield::{self, Zoom};
 use crate::settings::{self, Settings};
-use crate::{import, keys, panels, recovery, style, sync, timing_panel};
+use crate::{import, keys, panels, recovery, style, timing_panel};
 
 /// The extensions of the audio files a song can play.
 const AUDIO: [&str; 4] = ["ogg", "mp3", "wav", "flac"];
@@ -295,18 +295,8 @@ pub(crate) enum Action {
     RemoveMarker(usize),
     /// Puts the cursor where the open chart's last note ends.
     JumpEnd,
-    /// Makes the beat on `tick` fall `seconds` into the audio, anchoring it there.
-    Sync {
-        tick: Tick,
-        seconds: f64,
-    },
-    /// Removes the anchor on the tick.
-    Unsync(Tick),
-    /// Moves the anchor on `from` to the beat `to`, keeping its moment in the audio.
-    MoveAnchor {
-        from: Tick,
-        to: Tick,
-    },
+    /// An edit the timing window asks for.
+    Timing(charter_timing::Edit),
     ToggleSync,
     /// Moves every timing event at `from` to `to`, as one timing point.
     MoveTiming {
@@ -358,8 +348,8 @@ pub struct Window {
     settings: Settings,
     /// Whether the settings window is showing.
     settings_open: bool,
-    /// The sync window.
-    sync: sync::Sync,
+    /// The timing window.
+    sync: charter_timing::TimingWindow,
     /// The import timing window.
     import: import::Import,
     /// How tall a second of the open song is on screen.
@@ -571,7 +561,7 @@ impl Window {
             return;
         }
         if let Some(song) = &mut self.song {
-            let tick = notefield::latest_tick_by(song.timing(), seconds);
+            let tick = song.timing().latest_tick_by(seconds);
             song.jump_to(tick);
             if let Some(why) = grow(song, &self.holding, &self.pressed, seconds) {
                 self.failure = Some(why);
@@ -1224,9 +1214,7 @@ impl Window {
             | Action::AddBpm
             | Action::NudgeOffset(_)
             | Action::ImportTiming(_)
-            | Action::Sync { .. }
-            | Action::Unsync(_)
-            | Action::MoveAnchor { .. }
+            | Action::Timing(_)
             | Action::MoveTiming { .. } => self.failure = retime(song, &action),
             Action::JumpTo(tick) => song.jump_to(tick),
             Action::JumpEnd => song.jump_to(song.end()),
@@ -1472,7 +1460,7 @@ impl Window {
             &mut actions,
         );
         if self.sync.open {
-            // The sync window shows the audio whether or not the notefield's waveform is on.
+            // The timing window shows the audio whether or not the notefield's waveform is on.
             let file = self.audio_file();
             let peaks = self
                 .waveform
@@ -1480,14 +1468,19 @@ impl Window {
                 .filter(|(of, _)| Some(of.as_path()) == file.as_deref())
                 .map(|(_, peaks)| peaks.as_ref());
             let song = self.song.as_ref();
-            sync::show(
-                ui.ctx(),
-                song,
-                peaks,
-                &mut self.sync,
-                self.playing,
-                &mut actions,
-            );
+            let mut commands = Vec::new();
+            charter_timing::show(ui.ctx(), song, peaks, &mut self.sync, &mut commands);
+            for command in commands {
+                match command {
+                    charter_timing::Command::Edit(edit) => actions.push(Action::Timing(edit)),
+                    charter_timing::Command::PlayFrom(tick) => {
+                        actions.push(Action::JumpTo(tick));
+                        if !self.playing {
+                            actions.push(Action::TogglePlay);
+                        }
+                    }
+                }
+            }
         }
         if dismissed {
             self.failure = None;
@@ -1625,7 +1618,7 @@ fn clicks(
         .note_length(std::num::NonZeroU16::new(4).unwrap_or(std::num::NonZeroU16::MIN));
     if let (true, Some(beat)) = (settings.metronome, beat) {
         let kit = settings.metronome_sound;
-        let first = notefield::latest_tick_by(timing, from);
+        let first = timing.latest_tick_by(from);
         'measures: for measure in timing.measures_from(first) {
             let end = measure.start.checked_add(measure.length);
             let beats = std::iter::successors(Some(measure.start), |tick| tick.checked_add(beat));
@@ -1677,9 +1670,7 @@ fn retime(song: &mut Song, action: &Action) -> Option<String> {
                 Err(_) => return Some(format!("{moved} s is not an offset")),
             }
         }
-        Action::Sync { tick, seconds } => song.sync(*tick, *seconds),
-        Action::Unsync(tick) => song.unsync(*tick),
-        Action::MoveAnchor { from, to } => song.move_anchor(*from, *to),
+        Action::Timing(edit) => edit.apply(song),
         Action::MoveTiming { from, to } => song.move_timing_at(*from, *to),
         _ => Ok(()),
     };
@@ -3865,7 +3856,7 @@ mod tests {
         harness
     }
 
-    /// Where `tick` lies across its measure's row in the sync window.
+    /// Where `tick` lies across its measure's row in the timing window.
     fn in_row(harness: &Harness<'_, Window>, tick: i32) -> egui::Pos2 {
         let song = harness.state().song.as_ref().unwrap();
         let measure = song.timing().measures_from(Tick::new(tick)).next().unwrap();

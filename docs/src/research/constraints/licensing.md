@@ -24,7 +24,7 @@ review.
 charter itself is dual-licensed under MIT or Apache-2.0, at the user's choice, as is usual for Rust
 crates: `LICENSE-MIT` and `LICENSE-APACHE` at the repository root, `MIT OR Apache-2.0`, which every
 crate inherits through `license.workspace = true`. What it bundles keeps its own terms: Inter under the OFL
-(`crates/charter-ui/assets/fonts`) and the metronome sounds under CC0
+(`crates/charter-style/assets/fonts`) and the metronome sounds under CC0
 (`crates/charter-audio/assets/clicks`). A dependency whose licence would bind the app beyond these
 terms, as the copyleft entries above would, stays out of the shipped path.
 

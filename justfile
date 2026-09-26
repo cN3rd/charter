@@ -146,7 +146,7 @@ _licenses os:
     fi
     folder="dist/$(just _name "$platform")"
     cp LICENSE-MIT LICENSE-APACHE "$folder/"
-    cp crates/charter-ui/assets/fonts/Inter-LICENSE.txt "$folder/licenses/Inter-OFL.txt"
+    cp crates/charter-style/assets/fonts/Inter-LICENSE.txt "$folder/licenses/Inter-OFL.txt"
     clicks=crates/charter-audio/assets/clicks
     cp "$clicks/LICENSE-AUDIO" "$folder/licenses/metronome-sounds-LICENSE.txt"
     cp "$clicks/CC0-1.0.txt" "$folder/licenses/metronome-sounds-CC0-1.0.txt"

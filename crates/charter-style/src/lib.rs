@@ -1,5 +1,6 @@
-//! The editor's look: a dark theme of layered neutrals with one accent, Inter for text and
-//! Phosphor for icons, and the colours that mark what things are on the notefield.
+//! charter's look, shared by every window it draws: a dark theme of layered neutrals with one
+//! accent, Inter for text and Phosphor for icons, the colours that mark what things are on the
+//! notefield and the timing window, and the widgets drawn in that look.
 
 use std::sync::Arc;
 
@@ -91,11 +92,13 @@ fn bound(ui: &Ui, family: FontFamily) -> FontFamily {
 }
 
 /// The family for titles in `ui`.
+#[must_use]
 pub fn titles(ui: &Ui) -> FontFamily {
     bound(ui, semibold())
 }
 
 /// `symbol`, one of [`icon`], drawn as the icon it is.
+#[must_use]
 pub fn glyph(ui: &Ui, symbol: &str) -> RichText {
     RichText::new(symbol).family(bound(ui, icons()))
 }
@@ -376,6 +379,7 @@ pub fn stage() -> egui::Frame {
 }
 
 /// A section title in small capitals.
+#[must_use]
 pub fn title(ui: &Ui, text: &str) -> RichText {
     RichText::new(text.to_uppercase())
         .family(titles(ui))

@@ -130,7 +130,7 @@ fn body(
     });
     if editable {
         let sync = style::icon_button(ui, icon::WAVEFORM, "Sync to the audio", false)
-            .on_hover_text("Open the sync window (Ctrl+T) to line beats up with the waveform");
+            .on_hover_text("Open the timing window (Ctrl+T) to line beats up with the waveform");
         if sync.clicked() {
             actions.push(Action::ShowSync);
         }

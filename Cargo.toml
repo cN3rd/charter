@@ -3,6 +3,8 @@ members = [
     "crates/charter-audio",
     "crates/charter-core",
     "crates/charter-editor",
+    "crates/charter-style",
+    "crates/charter-timing",
     "crates/charter-ui",
     "crates/charter-app",
     "plugins/stepmania",
@@ -19,6 +21,8 @@ license = "MIT OR Apache-2.0"
 charter-audio = { path = "crates/charter-audio" }
 charter-core = { path = "crates/charter-core" }
 charter-editor = { path = "crates/charter-editor" }
+charter-style = { path = "crates/charter-style" }
+charter-timing = { path = "crates/charter-timing" }
 charter-ui = { path = "crates/charter-ui" }
 charter-stepmania = { path = "plugins/stepmania" }
 charter-ttr = { path = "plugins/ttr" }

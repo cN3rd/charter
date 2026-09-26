@@ -89,28 +89,9 @@ impl View {
     }
 }
 
-/// The last tick an object on which is hit at or before `seconds`. Tick to time never decreases,
-/// so a binary search over every tick finds it without inverting the timing map.
-pub fn latest_tick_by(timing: Valid<'_, Timing>, seconds: f64) -> Tick {
-    let (mut early, mut late) = (i64::from(i32::MIN), i64::from(i32::MAX));
-    let tick = |at: i64| Tick::new(i32::try_from(at).unwrap_or(i32::MAX));
-    if timing.time_at(tick(late)).seconds() <= seconds {
-        return tick(late);
-    }
-    while late - early > 1 {
-        let middle = early + (late - early) / 2;
-        if timing.time_at(tick(middle)).seconds() <= seconds {
-            early = middle;
-        } else {
-            late = middle;
-        }
-    }
-    tick(early)
-}
-
 /// The line of a grid `step` ticks apart from tick 0 that is drawn nearest to `seconds`.
 pub fn nearest_line(timing: Valid<'_, Timing>, seconds: f64, step: Ticks) -> Tick {
-    let latest = latest_tick_by(timing, seconds);
+    let latest = timing.latest_tick_by(seconds);
     let below = latest
         .next_on(step)
         .and_then(|next| next.previous_on(step))
@@ -126,7 +107,7 @@ pub fn nearest_line(timing: Valid<'_, Timing>, seconds: f64, step: Ticks) -> Tic
 
 /// The first tick an object on which is hit at or after `seconds`.
 pub fn earliest_tick_from(timing: Valid<'_, Timing>, seconds: f64) -> Tick {
-    let latest = latest_tick_by(timing, seconds);
+    let latest = timing.latest_tick_by(seconds);
     if timing.time_at(latest).seconds() >= seconds {
         return latest;
     }
@@ -337,7 +318,7 @@ impl Field {
         let (top, bottom) = (y.min(pos.y), y.max(pos.y));
         let ticks = (
             earliest_tick_from(timing, self.view.seconds_at(top)),
-            latest_tick_by(timing, self.view.seconds_at(bottom)),
+            timing.latest_tick_by(self.view.seconds_at(bottom)),
         );
         Some((ticks, lanes))
     }
@@ -441,8 +422,8 @@ pub fn show(
     let (columns, rows, view) = (&field.columns, field.rows, field.view);
     // ponytail: every visible item still resolves its time from tick 0, which is slow once a
     // timing map holds thousands of events; walk the map once per frame when that shows.
-    let first = latest_tick_by(timing, view.seconds_at(rows.min - MARGIN));
-    let last = latest_tick_by(timing, view.seconds_at(rows.max + MARGIN));
+    let first = timing.latest_tick_by(view.seconds_at(rows.min - MARGIN));
+    let last = timing.latest_tick_by(view.seconds_at(rows.max + MARGIN));
     let own_timing = chart.timing.is_some();
     header(
         &painter,
@@ -851,7 +832,7 @@ fn grid(
     let timing = song.timing();
     let resolution = song.document().document().ticks_per_beat;
     let ruler = painter.clipped(Rect::from_x_y_ranges(columns.ruler, rows));
-    let first = latest_tick_by(timing, view.seconds_at(rows.min));
+    let first = timing.latest_tick_by(view.seconds_at(rows.min));
     for measure in timing.measures_from(first) {
         let y = view.y(timing.time_at(measure.start));
         if y > rows.max {
@@ -1343,9 +1324,9 @@ mod tests {
     fn the_latest_tick_by_a_time_waits_out_a_stop() {
         let song = song();
         let timing = song.timing();
-        assert_eq!(latest_tick_by(timing, 0.5), Tick::new(1200));
+        assert_eq!(timing.latest_tick_by(0.5), Tick::new(1200));
         let stop = Tick::new(30720);
         let paused = timing.time_at(stop).seconds() + 0.25;
-        assert_eq!(latest_tick_by(timing, paused), stop);
+        assert_eq!(timing.latest_tick_by(paused), stop);
     }
 }

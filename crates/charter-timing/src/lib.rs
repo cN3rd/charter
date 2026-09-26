@@ -1,16 +1,51 @@
-//! The sync window, after Tempora: the song's audio one measure a row, laid out by beat rather
-//! than by time, so hits that fall on the grid line up down the rows and hits that do not stand
-//! out. Syncing is dragging a hit onto the grid line it belongs on. Every BPM change is an
-//! anchor there, and moving one keeps its neighbours where they are in the audio.
+//! The timing window: the song's audio one measure a row, laid out by beat rather than by time,
+//! so hits that fall on the grid line up down the rows and hits that do not stand out. Every
+//! BPM change is an anchor there, pinning a beat to a moment of the audio, and moving one keeps
+//! its neighbours where they are in the audio.
+//!
+//! The window reads a song and draws it; what the user asks of it comes back as [`Command`]s,
+//! which its host carries out, since the host owns the song, its history and its playback.
 
 use charter_audio::Peaks;
 use charter_core::{Measure, Tick, Ticks, Timing, TimingKind, Valid};
-use charter_editor::Song;
+use charter_editor::{Refusal, Song};
+use charter_style as style;
 use egui::{Align2, Color32, FontId, Rect, Sense, Stroke, pos2, vec2};
 
-use crate::notefield::latest_tick_by;
-use crate::style;
-use crate::window::Action;
+/// What the timing window asks its host to do.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Command {
+    /// Make an edit to the song's timing, as one step.
+    Edit(Edit),
+    /// Put the cursor on the tick and play from there, unless the song is playing already.
+    PlayFrom(Tick),
+}
+
+/// An edit the timing window makes to a song's timing.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Edit {
+    /// Makes the beat on `tick` fall `seconds` into the audio, anchoring it there.
+    Sync { tick: Tick, seconds: f64 },
+    /// Removes the anchor on the tick.
+    Unsync(Tick),
+    /// Moves the anchor on `from` to the beat `to`, keeping its moment in the audio.
+    MoveAnchor { from: Tick, to: Tick },
+}
+
+impl Edit {
+    /// Makes the edit to `song`, as one step.
+    ///
+    /// # Errors
+    ///
+    /// Whatever the song refuses the edit for, such as an anchor passing its neighbour.
+    pub fn apply(&self, song: &mut Song) -> Result<(), Refusal> {
+        match *self {
+            Self::Sync { tick, seconds } => song.sync(tick, seconds),
+            Self::Unsync(tick) => song.unsync(tick),
+            Self::MoveAnchor { from, to } => song.move_anchor(from, to),
+        }
+    }
+}
 
 /// How tall a measure's row is.
 const ROW: f32 = 64.0;
@@ -26,14 +61,14 @@ const QUARTER: std::num::NonZeroU16 = std::num::NonZeroU16::new(4).unwrap();
 /// Measures shown past the song's last object, room to sync an outro.
 const TAIL: usize = 4;
 
-/// Whether the sync window shows, and what is being dragged in it.
+/// Whether the timing window shows, and what is being dragged in it.
 #[derive(Debug, Default)]
-pub struct Sync {
+pub struct TimingWindow {
     pub open: bool,
     grabbed: Option<Grab>,
 }
 
-/// What a drag in the sync window holds, the way Tempora's gestures have it.
+/// What a drag in the timing window holds, the way Tempora's gestures have it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Grab {
     /// A moment of the audio, picked up this many seconds in, to drop on a grid line.
@@ -79,18 +114,17 @@ impl Row {
     }
 }
 
-/// Draws the sync window for `song`, over the audio in `peaks` when it has loaded, and answers
-/// its input with `actions`.
-pub(crate) fn show(
+/// Draws the timing window for `song`, over the audio in `peaks` when it has loaded, and answers
+/// its input with `commands`.
+pub fn show(
     ctx: &egui::Context,
     song: Option<&Song>,
     peaks: Option<&Peaks>,
-    sync: &mut Sync,
-    playing: bool,
-    actions: &mut Vec<Action>,
+    sync: &mut TimingWindow,
+    commands: &mut Vec<Command>,
 ) {
     let mut open = sync.open;
-    egui::Window::new("Sync")
+    egui::Window::new("Timing")
         .open(&mut open)
         .default_size([880.0, 560.0])
         .pivot(Align2::CENTER_CENTER)
@@ -104,7 +138,7 @@ pub(crate) fn show(
             };
             header(ui, song, peaks);
             ui.separator();
-            rows(ui, song, peaks, sync, playing, actions);
+            rows(ui, song, peaks, sync, commands);
         });
     sync.open = open;
     if !sync.open {
@@ -135,7 +169,7 @@ fn header(ui: &mut egui::Ui, song: &Song, peaks: Option<&Peaks>) {
 /// The measures with audio or objects in them, one a row.
 fn measures(song: &Song) -> Vec<Measure> {
     let timing = song.timing();
-    let first = latest_tick_by(timing, 0.0).min(Tick::new(0));
+    let first = timing.latest_tick_by(0.0).min(Tick::new(0));
     let last = song.end().max(song.cursor());
     let mut shown: Vec<Measure> = timing
         .measures_from(first)
@@ -149,9 +183,8 @@ fn rows(
     ui: &mut egui::Ui,
     song: &Song,
     peaks: Option<&Peaks>,
-    sync: &mut Sync,
-    playing: bool,
-    actions: &mut Vec<Action>,
+    sync: &mut TimingWindow,
+    commands: &mut Vec<Command>,
 ) {
     let timing = song.timing();
     let step = song
@@ -186,7 +219,7 @@ fn rows(
                     measure: *measure,
                     rect,
                 };
-                let id = ui.id().with(("sync row", measure.number));
+                let id = ui.id().with(("timing row", measure.number));
                 let response = ui.interact(rect, id, Sense::click_and_drag());
                 let label = format!("Measure {}", measure.number);
                 response.widget_info(|| {
@@ -202,7 +235,7 @@ fn rows(
                 );
                 draw_row(&painter, &row, song, peaks, (step, beat));
                 if editable {
-                    answer(&response, &row, timing, step, sync, playing, actions);
+                    answer(&response, &row, timing, step, sync, commands);
                     if response.drag_stopped() {
                         released = ui.input(|input| input.pointer.latest_pos());
                     }
@@ -217,14 +250,14 @@ fn rows(
             sync.grabbed = None;
             if let Some(row) = laid.iter().find(|row| row.rect.y_range().contains(pos.y)) {
                 let to = row.snapped(pos.x, step);
-                actions.push(match grabbed {
-                    Grab::Hit(seconds) => Action::Sync { tick: to, seconds },
-                    Grab::Anchor(from) => Action::MoveAnchor { from, to },
-                    Grab::AnchorInAudio(tick) => Action::Sync {
+                commands.push(Command::Edit(match grabbed {
+                    Grab::Hit(seconds) => Edit::Sync { tick: to, seconds },
+                    Grab::Anchor(from) => Edit::MoveAnchor { from, to },
+                    Grab::AnchorInAudio(tick) => Edit::Sync {
                         tick,
                         seconds: now(row.tick_at(pos.x)),
                     },
-                });
+                }));
             }
         } else if let Some(pos) = hovered
             && let Some(row) = laid.iter().find(|row| row.rect.contains(pos))
@@ -259,9 +292,8 @@ fn answer(
     row: &Row,
     timing: Valid<'_, Timing>,
     step: Option<Ticks>,
-    sync: &mut Sync,
-    playing: bool,
-    actions: &mut Vec<Action>,
+    sync: &mut TimingWindow,
+    commands: &mut Vec<Command>,
 ) {
     let pointer = response.interact_pointer_pos().or(response.hover_pos());
     let anchor = pointer.and_then(|pos| anchor_near(row, timing, pos.x));
@@ -279,24 +311,21 @@ fn answer(
     }
     if response.double_clicked() {
         if let Some(tick) = anchor {
-            actions.push(Action::Unsync(tick));
+            commands.push(Command::Edit(Edit::Unsync(tick)));
         }
     } else if response.clicked()
         && anchor.is_none()
         && let (Some(pos), Some(step)) = (pointer, step)
     {
-        actions.push(Action::Sync {
+        commands.push(Command::Edit(Edit::Sync {
             tick: row.snapped(pos.x, step),
             seconds: now(row.tick_at(pos.x)),
-        });
+        }));
     }
     if response.secondary_clicked()
         && let (Some(pos), Some(step)) = (pointer, step)
     {
-        actions.push(Action::JumpTo(row.snapped(pos.x, step)));
-        if !playing {
-            actions.push(Action::TogglePlay);
-        }
+        commands.push(Command::PlayFrom(row.snapped(pos.x, step)));
     }
     if response.hovered()
         && let Some(pos) = pointer
@@ -309,10 +338,10 @@ fn answer(
         });
         if let (Some((tick, _)), Some((notches, coarse))) = (nearest, notches) {
             let by = if coarse { COARSE_NUDGE } else { NUDGE };
-            actions.push(Action::Sync {
+            commands.push(Command::Edit(Edit::Sync {
                 tick,
                 seconds: now(tick) + by * f64::from(notches),
-            });
+            }));
         }
     }
 }

@@ -40,6 +40,6 @@ separate view inside an editor that also charts.
 
 ## Current choice
 
-charter takes the third option: a sync window beside the notefield, one measure a row, with the
+charter takes the third option: a timing window beside the notefield, one measure a row, with the
 anchor behaviour of [sync anchors](sync-anchors.md) worked over ordinary `bpm` events. See the
 [user interface](../../ui.md) chapter.

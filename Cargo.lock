@@ -698,6 +698,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "charter-style"
+version = "0.0.0"
+dependencies = [
+ "egui",
+ "egui-phosphor",
+]
+
+[[package]]
+name = "charter-timing"
+version = "0.0.0"
+dependencies = [
+ "charter-audio",
+ "charter-core",
+ "charter-editor",
+ "charter-style",
+ "egui",
+]
+
+[[package]]
 name = "charter-ttr"
 version = "0.0.0"
 dependencies = [
@@ -714,10 +733,11 @@ dependencies = [
  "charter-core",
  "charter-editor",
  "charter-stepmania",
+ "charter-style",
+ "charter-timing",
  "charter-ttr",
  "eframe",
  "egui",
- "egui-phosphor",
  "egui_kittest",
  "serde",
  "serde_json",

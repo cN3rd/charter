@@ -17,7 +17,7 @@ keys and Ctrl with the mouse place taps, holds and mines; the mouse selects and 
 selection; undo and redo return to where each edit was made. The song panel's Timing section is laid out as osu!'s timing panel is.
 The song's offset comes first, on its own: where beat 0 falls in the audio, in milliseconds,
 stepped by 1 ms with its buttons or Alt+Left and Alt+Right, 10 ms with Shift, beside a button that
-opens the sync window. Below it every timing point is listed, a tick's tempo, meter, stops and
+opens the timing window. Below it every timing point is listed, a tick's tempo, meter, stops and
 game events together as one point, with the point in effect at the cursor highlighted; clicking a
 point moves the cursor to it. Under the list are that point's BPM, with − and + buttons, and its
 meter, such as 3/4 or 7/8, each showing what is in effect there and setting it on the point, and a
@@ -48,7 +48,7 @@ copies that file beside the song. Saving a song somewhere new makes it a project
 becomes a folder holding the song's JSON file under the same name and a copy of its audio, where
 anything worked out from the audio goes. The waveform's peaks are the first such file,
 `cache/<audio>.peaks`: the finest of the min and max levels every view reads, so the notefield,
-the sync window and any view to come draw from the same data at any zoom. The file names the
+the timing window and any view to come draw from the same data at any zoom. The file names the
 audio by a fingerprint of its bytes, so a replaced audio file gets its peaks worked out afresh,
 and a damaged or outdated file is ignored; deleting the folder only costs the time to work them
 out again. With the peaks kept, the waveform shows as soon as a song opens, before its audio has
@@ -67,7 +67,7 @@ keyboard. With no song open the centre offers Open song…, New song and the dem
 pro audio and creative tools: a transport toolbar under the menus with a large position readout and
 grouped tempo, snap, speed and zoom controls, collapsible sections in the side panels, the notefield
 in a dark well, one blue accent for selection and primary actions, Inter for text and Phosphor for
-icons, bundled under `crates/charter-ui/assets/fonts` with Inter's OFL licence, and the system's
+icons, bundled under `crates/charter-style/assets/fonts` with Inter's OFL licence, and the system's
 Japanese, Chinese and Korean fonts after them, whatever the locale, so titles in any of those
 scripts draw; the app finds them with the `system-fonts` crate and reads each file once; messages float over
 the canvas rather than moving it. The settings window has a sidebar of pages, Editing, Display,
@@ -241,7 +241,7 @@ and the notes over a waveform that stays put.
   Shift-dragging does it by changing the BPM leading up to that line. The modifiers are Tempora's,
   and the effect is ArrowVortex's visual sync, which moves a row to a target time through the
   offset or a BPM. Fine and coarse nudges take Tempora's 2 ms and 10 ms.
-- The sync window (Timing > Sync window, Ctrl+T) is Tempora's measure-per-row view as an optional
+- The timing window (Timing > Timing window, Ctrl+T) is Tempora's measure-per-row view as an optional
   lens over the same song, per the [sync workstation](research/topics/sync-workstation.md)
   topic. Each row is one measure of audio laid out by beat, so hits on the grid line up down the
   rows. Every BPM change is an anchor pinning its beat to the audio, as in
@@ -297,7 +297,7 @@ and the notes over a waveform that stays put.
 
 - The waveform behind the notes instead of beside them
 - C-mod as the default, or a default per ruleset
-- Tempora's plain drag of an anchor's musical position, and its multi-select, in the sync window
+- Tempora's plain drag of an anchor's musical position, and its multi-select, in the timing window
 - Test play, which osu! and Quaver have and this draft leaves out
 - Two charts side by side, which the column layout would allow
 - Plugin timing keys too long for the gutter, such as `osu_mania.scroll_speed`

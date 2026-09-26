@@ -11,8 +11,8 @@ mod notefield;
 mod panels;
 mod recovery;
 mod settings;
-mod style;
-mod sync;
+// Every window shares one look; the name keeps `crate::style` paths as they were.
+use charter_style as style;
 mod timing_panel;
 mod window;
 

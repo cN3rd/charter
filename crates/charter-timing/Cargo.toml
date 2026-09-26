@@ -1,0 +1,15 @@
+[package]
+name = "charter-timing"
+version = "0.0.0"
+edition = "2024"
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+charter-audio.workspace = true
+charter-core.workspace = true
+charter-editor.workspace = true
+charter-style.workspace = true
+egui.workspace = true

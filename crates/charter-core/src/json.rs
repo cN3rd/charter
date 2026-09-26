@@ -177,6 +177,28 @@ impl Valid<'_, Timing> {
             .tempo_for(self.document.ticks_per_beat, from, to, seconds)
     }
 
+    /// The last tick an object on which is hit at or before `seconds`, the inverse of
+    /// [`Valid::time_at`] where tick to time rises and the earliest tick of a stretch it does
+    /// not. Tick to time never decreases, so a binary search over every tick finds it without
+    /// inverting the timing map.
+    #[must_use]
+    pub fn latest_tick_by(&self, seconds: f64) -> Tick {
+        let (mut early, mut late) = (i64::from(i32::MIN), i64::from(i32::MAX));
+        let tick = |at: i64| Tick::new(i32::try_from(at).unwrap_or(i32::MAX));
+        if self.time_at(tick(late)).seconds() <= seconds {
+            return tick(late);
+        }
+        while late - early > 1 {
+            let middle = early + (late - early) / 2;
+            if self.time_at(tick(middle)).seconds() <= seconds {
+                early = middle;
+            } else {
+                late = middle;
+            }
+        }
+        tick(early)
+    }
+
     /// The measures of the grid from the one holding `from` onward. Common time rules from tick
     /// 0 until the first time signature, and each time signature restarts the grid at its tick.
     ///
