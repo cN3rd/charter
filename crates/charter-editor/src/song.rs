@@ -393,6 +393,46 @@ impl Song {
         self.remark(new)
     }
 
+    /// Names the song `title` by `artist`, as one step. Does nothing when it already is.
+    ///
+    /// # Errors
+    ///
+    /// Refuses on a read-only song.
+    pub fn set_song_facts(&mut self, title: &str, artist: &str) -> Result<(), Refusal> {
+        let old = &self.document.document().metadata;
+        if old.title == title && old.artist == artist {
+            return Ok(());
+        }
+        let new = Metadata {
+            title: title.to_owned(),
+            artist: artist.to_owned(),
+            ..old.clone()
+        };
+        let edit = Edit(vec![Op::Metadata {
+            old: Box::new(old.clone()),
+            new: Box::new(new),
+        }]);
+        self.document = self.edited(self.chart, &edit)?;
+        self.record(edit);
+        Ok(())
+    }
+
+    /// Puts tick 0 of the timing tempo edits go to `offset` seconds into the audio, as one step,
+    /// so a song that starts with silence starts its grid where the music does.
+    ///
+    /// # Errors
+    ///
+    /// Refuses on a read-only song.
+    pub fn set_offset(&mut self, offset: charter_core::Origin) -> Result<(), Refusal> {
+        let (own, timing) = self.edited_timing();
+        if timing.offset_seconds == offset {
+            return Ok(());
+        }
+        let mut new = timing.clone();
+        new.offset_seconds = offset;
+        self.retime(own, new)
+    }
+
     /// Gives the timing tempo edits go to the events of `new`, as one step.
     fn retime(&mut self, own: bool, new: charter_core::Timing) -> Result<(), Refusal> {
         let (_, old) = self.edited_timing();
@@ -1776,6 +1816,58 @@ mod tests {
             song.move_timing(0, Tick::new(480)),
             Err(Refusal::ReadOnly)
         ));
+    }
+
+    fn facts(song: &Song) -> (String, String) {
+        let metadata = &song.document().document().metadata;
+        (metadata.title.clone(), metadata.artist.clone())
+    }
+
+    #[test]
+    fn the_title_and_artist_change_as_one_step() {
+        let mut song = Song::new(document(json!([])), EDITABLE);
+        song.set_song_facts("Starlight", "The Lanes").unwrap();
+        assert_eq!(
+            facts(&song),
+            ("Starlight".to_owned(), "The Lanes".to_owned())
+        );
+        song.undo().unwrap();
+        assert_eq!(facts(&song), ("t".to_owned(), "a".to_owned()));
+        assert!(!song.can_undo());
+    }
+
+    #[test]
+    fn setting_the_title_and_artist_the_song_has_changes_nothing() {
+        let mut song = Song::new(document(json!([])), EDITABLE);
+        song.set_song_facts("t", "a").unwrap();
+        assert!(!song.can_undo());
+    }
+
+    fn offset(song: &Song) -> Value {
+        serde_json::to_value(song.document().document().timing.offset_seconds).unwrap()
+    }
+
+    #[test]
+    fn the_offset_moves_tick_zero_in_the_audio_as_one_step() {
+        let mut song = timed(&json!([bpm_event(0, 120.0)]), None);
+        song.set_offset(charter_core::Origin::try_from(1.25).unwrap())
+            .unwrap();
+        assert_eq!(offset(&song), json!(1.25));
+        song.undo().unwrap();
+        assert_eq!(offset(&song), json!(0.0));
+    }
+
+    #[test]
+    fn a_chart_with_its_own_timing_takes_the_offset_itself() {
+        let own = json!([bpm_event(0, 100.0)]);
+        let mut song = timed(&json!([bpm_event(0, 120.0)]), Some(&own));
+        song.open_chart(1);
+        song.set_offset(charter_core::Origin::try_from(-0.5).unwrap())
+            .unwrap();
+        assert_eq!(offset(&song), json!(0.0));
+        let chart = &song.document().document().charts[1];
+        let own = serde_json::to_value(chart.timing.as_ref().unwrap().offset_seconds).unwrap();
+        assert_eq!(own, json!(-0.5));
     }
 
     #[test]
