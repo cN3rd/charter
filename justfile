@@ -145,7 +145,7 @@ _licenses os:
         target="{{ linux }}"; platform=linux-x86_64
     fi
     folder="dist/$(just _name "$platform")"
-    cp LICENSE "$folder/LICENSE"
+    cp LICENSE-MIT LICENSE-APACHE "$folder/"
     cp crates/charter-ui/assets/fonts/Inter-LICENSE.txt "$folder/licenses/Inter-OFL.txt"
     clicks=crates/charter-audio/assets/clicks
     cp "$clicks/LICENSE-AUDIO" "$folder/licenses/metronome-sounds-LICENSE.txt"

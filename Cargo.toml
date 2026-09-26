@@ -13,7 +13,7 @@ members = [
 resolver = "3"
 
 [workspace.package]
-license = "MIT"
+license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 charter-audio = { path = "crates/charter-audio" }

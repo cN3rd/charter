@@ -21,10 +21,11 @@ review.
 | Tempora source | CC BY-NC-ND 4.0 | Cannot be copied or derived from at all |
 | Etterna | MIT per repository metadata | Licensing of every dependency it pulls was not established |
 
-charter itself is MIT, in `LICENSE` at the repository root, which every crate inherits through
-`license.workspace = true`. What it bundles keeps its own terms: Inter under the OFL
+charter itself is dual-licensed under MIT or Apache-2.0, at the user's choice, as is usual for Rust
+crates: `LICENSE-MIT` and `LICENSE-APACHE` at the repository root, `MIT OR Apache-2.0`, which every
+crate inherits through `license.workspace = true`. What it bundles keeps its own terms: Inter under the OFL
 (`crates/charter-ui/assets/fonts`) and the metronome sounds under CC0
-(`crates/charter-audio/assets/clicks`). A dependency whose licence would bind the app beyond MIT's
+(`crates/charter-audio/assets/clicks`). A dependency whose licence would bind the app beyond these
 terms, as the copyleft entries above would, stays out of the shipped path.
 
 Two consequences worth stating plainly:
