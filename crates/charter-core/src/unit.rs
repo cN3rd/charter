@@ -337,6 +337,13 @@ impl fmt::Display for LaneIndex {
     }
 }
 
+/// An editor counts ticks by number where it lays out or moves many of them at once.
+impl From<Tick> for i64 {
+    fn from(tick: Tick) -> Self {
+        i64::from(tick.0)
+    }
+}
+
 /// A format converter counts ticks by number, turning another program's times into them.
 impl From<TicksPerBeat> for u16 {
     fn from(resolution: TicksPerBeat) -> Self {

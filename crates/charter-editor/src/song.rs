@@ -56,9 +56,15 @@ pub enum Refusal {
     /// The song's game cannot represent the edit.
     #[error(transparent)]
     Game(Box<dyn std::error::Error + Send + Sync>),
-    /// A beat cannot reach the time asked without passing a neighbouring BPM change.
-    #[error("that beat cannot move past the BPM change beside it")]
-    Unreachable,
+    /// An anchor would reach or pass the one on this tick, in beats or in the audio.
+    #[error("that would cross the anchor beside it")]
+    Crosses(Tick),
+    /// The edit would leave the song without a BPM change.
+    #[error("a song keeps at least one BPM change")]
+    OnlyTempo,
+    /// The edit would put something between two ticks, or out of their range.
+    #[error("that does not come out on whole ticks")]
+    NotWhole,
     /// The song's first BPM change starts its tempo, so it cannot go.
     #[error("the first BPM change starts the song's tempo")]
     FirstTempo,
@@ -471,6 +477,44 @@ impl Song {
         let mut new = timing.clone();
         new.offset_seconds = offset;
         self.retime(own, new)
+    }
+
+    /// Gives the timing tempo edits go to `new`, as part of the step before when that step
+    /// changed only the same timing and nothing was undone since, and as a step of its own
+    /// otherwise, so a run of nudges undoes at once.
+    pub(crate) fn retime_merged(
+        &mut self,
+        own: bool,
+        new: charter_core::Timing,
+    ) -> Result<(), Refusal> {
+        let (_, old) = self.edited_timing();
+        let edit = Edit(vec![Op::Timing {
+            own,
+            old: Box::new(old.clone()),
+            new: Box::new(new.clone()),
+        }]);
+        let document = self.edited(self.chart, &edit)?;
+        let joins = self.done == self.history.len()
+            && self.saved != Some(self.done)
+            && self.history.last_mut().is_some_and(|last| {
+                last.chart == self.chart
+                    && matches!(last.edit.0.as_slice(), [Op::Timing { own: was, .. }] if *was == own)
+            });
+        if !joins {
+            self.document = document;
+            self.record(edit);
+            return Ok(());
+        }
+        if let Some(Change {
+            edit: Edit(ops), ..
+        }) = self.history.last_mut()
+            && let [Op::Timing { new: kept, .. }] = ops.as_mut_slice()
+        {
+            **kept = new;
+        }
+        self.document = document;
+        self.revision += 1;
+        Ok(())
     }
 
     /// Puts `timing`, such as one imported from another program, in place of the timing tempo
