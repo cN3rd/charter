@@ -1019,6 +1019,8 @@ mod tests {
                 artist,
                 audio: ResourcePath::new("song.ogg").unwrap(),
                 preview,
+                artwork: None,
+                genre: None,
                 ext,
             })
             .boxed()

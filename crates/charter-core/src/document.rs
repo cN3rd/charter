@@ -96,6 +96,13 @@ pub struct Metadata {
     pub audio: ResourcePath,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preview: Option<Preview>,
+    /// The song's picture, such as StepMania's jacket, osu!'s background or Tap Tap Revenge's
+    /// artwork.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artwork: Option<ResourcePath>,
+    /// The kind of music, as a song list sorts it, such as `Dance`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub genre: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub ext: Extensions,
 }
@@ -472,6 +479,16 @@ mod tests {
             let value = with(|v| v["metadata"]["preview"] = preview);
             assert_eq!(round_trip(&value), value);
         }
+    }
+
+    #[test]
+    fn artwork_and_genre_survive_a_round_trip() {
+        let value = with(|v| {
+            v["metadata"]["artwork"] = json!("artwork.png");
+            v["metadata"]["genre"] = json!("Dance");
+        });
+        assert_eq!(round_trip(&value), value);
+        assert!(parse(&with(|v| v["metadata"]["artwork"] = json!("../art.png"))).is_err());
     }
 
     #[test]

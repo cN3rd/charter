@@ -1299,6 +1299,8 @@ mod tests {
                 artist: "a".to_owned(),
                 audio: ResourcePath::new("audio.ogg").unwrap(),
                 preview: None,
+                artwork: None,
+                genre: None,
                 ext: Extensions::new(),
             },
             layout,

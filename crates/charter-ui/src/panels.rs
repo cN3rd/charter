@@ -3,7 +3,7 @@
 
 use std::num::NonZeroU16;
 
-use charter_core::{MarkerKind, Metadata, ResolvedTime, Tick};
+use charter_core::{MarkerKind, Metadata, ResolvedTime, ResourcePath, Tick};
 use egui::{self, Align, Layout, RichText, Ui};
 use serde_json::Value;
 
@@ -346,6 +346,8 @@ pub fn song_panel(
 pub struct SongDrafts {
     title: Option<String>,
     artist: Option<String>,
+    genre: Option<String>,
+    artwork: Option<String>,
     preview: Option<String>,
     length: Option<String>,
 }
@@ -399,6 +401,13 @@ fn song_rows(
             typed.clone_into(&mut new.artist);
         },
     );
+    text_row(
+        ui,
+        "Genre",
+        metadata.genre.as_deref().unwrap_or_default(),
+        &mut drafts.genre,
+        |new, typed| new.genre = (!typed.is_empty()).then(|| typed.to_owned()),
+    );
     ui.weak("Audio");
     ui.horizontal(|ui| {
         ui.label(metadata.audio.as_str());
@@ -414,6 +423,33 @@ fn song_rows(
             actions.push(Action::ChooseAudio);
         }
     });
+    ui.end_row();
+    let caption = ui
+        .weak("Artwork")
+        .on_hover_text("The song's picture, a file beside the song, such as artwork.png");
+    let artwork = metadata.artwork.as_ref().map(ToString::to_string);
+    let artwork = artwork.as_deref().unwrap_or_default();
+    if editable {
+        let read = |typed: &str| {
+            if typed.is_empty() {
+                return Ok(changed(&|new| new.artwork = None));
+            }
+            let path = ResourcePath::new(typed)
+                .map_err(|_| format!("{typed} is not a file beside the song"))?;
+            Ok(changed(&|new| new.artwork = Some(path.clone())))
+        };
+        let offered = entry_sized(
+            ui,
+            (caption.id, WIDE),
+            artwork,
+            &mut drafts.artwork,
+            read,
+            actions,
+        );
+        refused = refused.take().or(offered);
+    } else {
+        ui.label(if artwork.is_empty() { "none" } else { artwork });
+    }
     ui.end_row();
     let offered = preview_rows(ui, (metadata, editable), drafts, actions);
     refused = refused.take().or(offered);

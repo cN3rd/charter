@@ -170,6 +170,8 @@ mod tests {
                 artist: "a".to_owned(),
                 audio: ResourcePath::new("audio.ogg").unwrap(),
                 preview: None,
+                artwork: None,
+                genre: None,
                 ext: crate::Extensions::new(),
             },
             layout: 0,

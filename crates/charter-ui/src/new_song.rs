@@ -162,6 +162,8 @@ impl Draft {
                     .and_then(|name| ResourcePath::new(name).ok())
                     .or_else(|| ResourcePath::new(NO_AUDIO).ok())?,
                 preview: None,
+                artwork: None,
+                genre: None,
                 ext: Extensions::new(),
             },
             layout: self.layout,
@@ -176,7 +178,7 @@ pub enum Answer {
     /// Make `song` with `plugin`.
     Create {
         plugin: &'static dyn RulesetPlugin,
-        song: NewSong,
+        song: Box<NewSong>,
     },
     /// Ask the host to let the user choose the audio.
     ChooseAudio,
@@ -256,7 +258,10 @@ pub fn show(
                 .clicked()
                 && let Some(song) = song
             {
-                answer = Some(Answer::Create { plugin: game, song });
+                answer = Some(Answer::Create {
+                    plugin: game,
+                    song: Box::new(song),
+                });
             }
             if ui.button("Cancel").clicked() {
                 answer = Some(Answer::Cancel);

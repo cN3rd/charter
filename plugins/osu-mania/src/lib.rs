@@ -1143,6 +1143,8 @@ mod tests {
                 artist: "a".to_owned(),
                 audio: charter_core::ResourcePath::new("audio.ogg").unwrap(),
                 preview: None,
+                artwork: None,
+                genre: None,
                 ext: Extensions::new(),
             },
             layout,

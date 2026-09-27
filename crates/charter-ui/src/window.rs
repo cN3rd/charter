@@ -2502,6 +2502,30 @@ mod tests {
     }
 
     #[test]
+    fn the_song_panel_sets_the_genre_and_artwork_and_clears_them() {
+        let mut harness = editable_demo();
+        retype(&mut harness, "Genre", "Dance");
+        retype(&mut harness, "Artwork", "art/artwork.png");
+        assert_eq!(metadata(&harness).genre.as_deref(), Some("Dance"));
+        assert_eq!(
+            metadata(&harness).artwork.map(|path| path.to_string()),
+            Some("art/artwork.png".to_owned())
+        );
+        retype(&mut harness, "Artwork", "../outside.png");
+        assert!(
+            harness
+                .query_by_label_contains("is not a file beside the song")
+                .is_some()
+        );
+        retype(&mut harness, "Genre", "");
+        retype(&mut harness, "Artwork", "");
+        assert_eq!(
+            (metadata(&harness).genre, metadata(&harness).artwork),
+            (None, None)
+        );
+    }
+
+    #[test]
     fn a_preview_that_is_not_a_time_says_so() {
         let mut harness = editable_demo();
         retype(&mut harness, "Preview", "soon");
@@ -3264,6 +3288,9 @@ mod tests {
     #[test]
     fn the_timing_points_list_shows_every_point_and_jumps_to_one_clicked() {
         let mut harness = editable_demo();
+        // Tall enough that the whole song panel, the list with it, is on screen.
+        harness.set_size(egui::vec2(1000.0, 1100.0));
+        harness.run();
         let rows = harness
             .query_all_by_label_contains("Timing point at")
             .count();

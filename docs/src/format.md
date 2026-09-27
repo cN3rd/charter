@@ -373,6 +373,8 @@ Metadata {
     artist:  String,
     audio:   ResourcePath,
     preview: Option<Preview>,
+    artwork: Option<ResourcePath>,
+    genre:   Option<String>,
     ext:     Extensions,
 }
 
@@ -388,8 +390,11 @@ nearly every surveyed format is not format-specific. `length_seconds` is optiona
 formats give only a start point. Both fields are audio time, like anchor `seconds`, so a chart's
 own timing does not move the preview.
 
-Banners, backgrounds, credits and genre tags stay in `ext`. An open-ended metadata block is where
-formats accumulate twenty optional strings nobody reads.
+`artwork` and `genre` earn theirs the same way: a song's picture is StepMania's `#JACKET`,
+osu!'s background, Arcaea's jacket and Tap Tap Revenge's artwork, and a genre is StepMania's
+`#GENRE` and Tap Tap Revenge's `kTTRGenre`. The artwork is a resource path, so it is held to the
+same rules as the audio. Banners, backgrounds beyond the one picture, and credits stay in `ext`.
+An open-ended metadata block is where formats accumulate twenty optional strings nobody reads.
 
 ---
 
