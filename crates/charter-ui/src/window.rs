@@ -280,6 +280,8 @@ pub(crate) enum Action {
     SetVolumes(charter_audio::Volumes),
     /// Gives the timing point on the tick this tempo.
     SetBpmAt(Tick, charter_core::Bpm),
+    /// Moves the tempo point on the tick to this many seconds into the audio.
+    SyncAt(Tick, f64),
     /// Gives the timing point on the tick this meter.
     SetMeterAt(Tick, charter_core::TimeSignature),
     /// Removes the timing point on the tick.
@@ -1353,6 +1355,7 @@ impl Window {
                 song.select_between(ticks.0..=ticks.1, lanes.0..=lanes.1, how);
             }
             Action::SetBpmAt(..)
+            | Action::SyncAt(..)
             | Action::SetMeterAt(..)
             | Action::RemoveTimingAt(_)
             | Action::SetOffset(_)
@@ -1890,6 +1893,7 @@ fn fresh_timing() -> charter_core::Timing {
 fn retime(song: &mut Song, action: &Action) -> Option<String> {
     let done = match action {
         Action::SetBpmAt(tick, bpm) => song.set_bpm_at(*tick, *bpm),
+        Action::SyncAt(tick, seconds) => song.sync(*tick, *seconds),
         Action::SetMeterAt(tick, meter) => song.set_meter_at(*tick, *meter),
         Action::RemoveTimingAt(tick) => song.remove_timing_at(*tick),
         Action::SetOffset(offset) => song.set_offset(*offset),
@@ -3197,10 +3201,53 @@ mod tests {
             .query_all_by_label_contains("Timing point at")
             .count();
         assert_eq!(rows, 5);
-        harness.get_by_label("Timing point at 16:0:0").click();
+        harness.get_by_label("Timing point at 0:26.100").click();
         harness.run();
         assert!(cursor_shows(&harness, "16:0:0"));
         assert_eq!(bpm_field(&harness).value().as_deref(), Some("180"));
+    }
+
+    #[test]
+    fn a_time_typed_for_a_point_moves_it_in_the_audio() {
+        let mut harness = editable_demo();
+        harness.get_by_label("Timing point at 0:26.100").click();
+        harness.run();
+        let time = harness.get_by_role_and_label(Role::TextInput, "Time");
+        assert_eq!(time.value().as_deref(), Some("0:26.100"));
+        time.focus();
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness
+            .get_by_role_and_label(Role::TextInput, "Time")
+            .type_text("0:26.25");
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+        assert_eq!(anchor_seconds(&harness), [0.0, 26.25]);
+        harness.get_by_label("Timing point at 0:26.250").click();
+        harness.run();
+    }
+
+    #[test]
+    fn the_starting_bpm_sets_the_first_points_tempo_from_anywhere() {
+        let mut harness = editable_demo();
+        harness.get_by_label("Timing point at 0:26.100").click();
+        harness.run();
+        let start = harness.get_by_role_and_label(Role::TextInput, "Starting BPM");
+        assert_eq!(start.value().as_deref(), Some("150"));
+        start.focus();
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness
+            .get_by_role_and_label(Role::TextInput, "Starting BPM")
+            .type_text("160");
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+        let song = harness.state().song.as_ref().unwrap();
+        assert_eq!(
+            song.timing().bpm_at(Tick::new(0)).map(f64::from),
+            Some(160.0)
+        );
+        assert_eq!(anchor_seconds(&harness), [0.0, 26.1]);
     }
 
     fn meter_field<'a>(harness: &'a Harness<'_, Window>) -> egui_kittest::Node<'a> {

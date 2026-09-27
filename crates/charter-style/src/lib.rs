@@ -474,7 +474,7 @@ pub fn heading(ui: &mut Ui, text: &str) {
 }
 
 /// Wide enough for every label in the side panels, so their values line up.
-const LABEL_W: f32 = 72.0;
+const LABEL_W: f32 = 84.0;
 
 /// Labels and values, or `empty` when there are none.
 pub fn fields(ui: &mut Ui, id: &str, rows: &[(&str, String)], empty: &str) {

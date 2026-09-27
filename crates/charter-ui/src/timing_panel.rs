@@ -1,6 +1,7 @@
-//! The song panel's timing section, laid out as osu!'s timing panel is: the song's offset on its
-//! own, every timing point in a list, and below it the fields of the point in effect at the
-//! cursor, which the list highlights. Clicking a point in the list moves the cursor to it.
+//! The song panel's timing section, laid out as osu!'s timing panel is: where the song starts and
+//! at what tempo, every timing point in a list by its moment in the audio, and below it the
+//! fields of the point in effect at the cursor, which the list highlights. Clicking a point in
+//! the list moves the cursor to it.
 
 use charter_core::{Bpm, Origin, Tick, TimeSignature, Timing, TimingKind, Valid};
 use charter_editor::Song;
@@ -16,6 +17,8 @@ pub struct Drafts {
     bpm: Option<String>,
     meter: Option<String>,
     offset: Option<String>,
+    start_bpm: Option<String>,
+    time: Option<String>,
 }
 
 /// A tick of the timing holding events, with what they set.
@@ -133,6 +136,7 @@ fn body(
     let editable = song.read_only().is_none();
     let timing = song.timing();
     let mut refused = None;
+    let first = timing.anchors.first().map(|anchor| anchor.tick);
     table(ui, "offset", |ui| {
         let caption = ui.weak("Offset").on_hover_text(OFFSET_ABOUT);
         let seconds = timing.time_at(Tick::new(0)).seconds();
@@ -143,6 +147,20 @@ fn body(
             &mut drafts.offset,
             actions,
         );
+        if let Some(first) = first {
+            let caption = ui
+                .weak("Starting BPM")
+                .on_hover_text("The tempo from the first timing point on, until the next.");
+            let offered = bpm_row(
+                ui,
+                (editable, caption.id, "starting BPM"),
+                (first, tempo_at(timing, first)),
+                &mut drafts.start_bpm,
+                actions,
+            );
+            refused = refused.take().or(offered);
+            ui.end_row();
+        }
     });
     if editable {
         let sync = style::icon_button(ui, icon::WAVEFORM, "Sync to the audio", false)
@@ -205,7 +223,7 @@ fn list(
                     ui.spacing_mut().item_spacing.y = 0.0;
                     ui.spacing_mut().button_padding.y = 1.0;
                     for point in points.get(rows).unwrap_or_default() {
-                        let at = timing.grid_position(point.tick).to_string();
+                        let at = clock(timing.time_at(point.tick).seconds());
                         let tempo = point
                             .bpm
                             .map_or_else(String::new, |bpm| format!("{bpm} BPM"));
@@ -250,48 +268,49 @@ fn point_fields(
     let bpm = tempo_at(timing, tick);
     let meter_now = meter_at(&timing, tick);
     let mut refused = None;
+    let first = timing.anchors.first().map(|anchor| anchor.tick);
+    let anchored = timing.anchors.iter().any(|anchor| anchor.tick == tick);
     table(ui, "timing point", |ui| {
-        ui.weak("At");
-        ui.label(timing.grid_position(tick).to_string());
+        let caption = ui
+            .weak("Time")
+            .on_hover_text("Where the point is in the audio. A tempo point moves there.");
+        let seconds = timing.time_at(tick).seconds();
+        if editable && anchored {
+            let start = timing.time_at(Tick::new(0)).seconds();
+            let to = |typed: &str| {
+                let at = moment(typed)
+                    .ok_or_else(|| format!("{typed} is not a time, such as 0:26.100"))?;
+                if Some(tick) == first {
+                    // The first point starts the song, so moving it moves the whole grid.
+                    let offset = ((start + at - seconds) * 1e6).round() / 1e6;
+                    Origin::try_from(offset)
+                        .map(Action::SetOffset)
+                        .map_err(|_| format!("{typed} is not a time the song can start at"))
+                } else {
+                    Ok(Action::SyncAt(tick, at))
+                }
+            };
+            refused = entry(
+                ui,
+                caption.id,
+                &clock(seconds),
+                &mut drafts.time,
+                to,
+                actions,
+            );
+        } else {
+            ui.label(clock(seconds));
+        }
         ui.end_row();
         let caption = ui.weak("BPM");
-        match (editable, bpm) {
-            (true, Some(bpm)) => {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 2.0;
-                    let step = |by: f64| {
-                        Bpm::try_from(f64::from(bpm) + by)
-                            .ok()
-                            .map(|bpm| Action::SetBpmAt(tick, bpm))
-                    };
-                    if stepper(ui, "−", "Lower the BPM by 1", "F7 at the cursor") {
-                        actions.extend(step(-1.0));
-                    }
-                    let tempo = |typed: &str| {
-                        typed
-                            .parse::<f64>()
-                            .ok()
-                            .and_then(|bpm| Bpm::try_from(bpm).ok())
-                            .map(|bpm| Action::SetBpmAt(tick, bpm))
-                            .ok_or_else(|| format!("{typed} is not a tempo"))
-                    };
-                    refused = entry(
-                        ui,
-                        caption.id,
-                        &bpm.to_string(),
-                        &mut drafts.bpm,
-                        tempo,
-                        actions,
-                    );
-                    if stepper(ui, "+", "Raise the BPM by 1", "F8 at the cursor") {
-                        actions.extend(step(1.0));
-                    }
-                });
-            }
-            (_, bpm) => {
-                ui.label(bpm.map_or_else(|| "none".to_owned(), |bpm| bpm.to_string()));
-            }
-        }
+        let offered = bpm_row(
+            ui,
+            (editable, caption.id, "BPM"),
+            (tick, bpm),
+            &mut drafts.bpm,
+            actions,
+        );
+        refused = refused.take().or(offered);
         ui.end_row();
         let caption = ui.weak("Meter").on_hover_text("Beats a measure over the note that gets one, such as 3/4 or 7/8. Measures start over at the point.");
         if editable {
@@ -314,7 +333,6 @@ fn point_fields(
         }
         ui.end_row();
     });
-    let first = timing.anchors.first().map(|anchor| anchor.tick);
     if editable && Some(tick) != first {
         let remove = style::icon_button(ui, icon::TRASH, "Remove this timing point", false)
             .on_hover_text("The tempo and meter before it carry on");
@@ -323,6 +341,87 @@ fn point_fields(
         }
     }
     refused
+}
+
+/// The BPM on `tick`, `bpm`, with steppers when `editable`, each setting the tempo there.
+fn bpm_row(
+    ui: &mut Ui,
+    (editable, caption, what): (bool, egui::Id, &str),
+    (tick, bpm): (Tick, Option<Bpm>),
+    draft: &mut Option<String>,
+    actions: &mut Vec<Action>,
+) -> Option<String> {
+    let Some(bpm) = bpm.filter(|_| editable) else {
+        ui.label(bpm.map_or_else(|| "none".to_owned(), |bpm| bpm.to_string()));
+        return None;
+    };
+    let mut refused = None;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 2.0;
+        let step = |by: f64| {
+            Bpm::try_from(f64::from(bpm) + by)
+                .ok()
+                .map(|bpm| Action::SetBpmAt(tick, bpm))
+        };
+        if stepper(
+            ui,
+            "−",
+            &format!("Lower the {what} by 1"),
+            "F7 at the cursor",
+        ) {
+            actions.extend(step(-1.0));
+        }
+        let tempo = |typed: &str| {
+            typed
+                .parse::<f64>()
+                .ok()
+                .and_then(|bpm| Bpm::try_from(bpm).ok())
+                .map(|bpm| Action::SetBpmAt(tick, bpm))
+                .ok_or_else(|| format!("{typed} is not a tempo"))
+        };
+        refused = entry(ui, caption, &bpm.to_string(), draft, tempo, actions);
+        if stepper(
+            ui,
+            "+",
+            &format!("Raise the {what} by 1"),
+            "F8 at the cursor",
+        ) {
+            actions.extend(step(1.0));
+        }
+    });
+    refused
+}
+
+/// `seconds` as minutes and seconds to the millisecond, such as `1:23.500`.
+fn clock(seconds: f64) -> String {
+    let sign = if seconds < -0.0005 { "-" } else { "" };
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // a song's length
+    let millis = (seconds.abs() * 1000.0).round() as u64;
+    format!(
+        "{sign}{}:{:02}.{:03}",
+        millis / 60_000,
+        millis / 1000 % 60,
+        millis % 1000
+    )
+}
+
+/// A moment typed as seconds, such as `26.1`, or minutes and seconds, such as `0:26.100`.
+fn moment(typed: &str) -> Option<f64> {
+    let typed = typed.trim();
+    let (sign, unsigned) = typed
+        .strip_prefix('-')
+        .map_or((1.0, typed), |rest| (-1.0, rest));
+    let seconds = match unsigned.split_once(':') {
+        Some((minutes, seconds)) => {
+            let seconds: f64 = seconds.parse().ok()?;
+            if !(0.0..60.0).contains(&seconds) {
+                return None;
+            }
+            f64::from(minutes.parse::<u32>().ok()?) * 60.0 + seconds
+        }
+        None => unsigned.parse().ok()?,
+    };
+    seconds.is_finite().then_some(sign * seconds)
 }
 
 /// What the offset is, for its tooltips.
@@ -407,6 +506,20 @@ fn milliseconds_of(seconds: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_moment_shows_as_minutes_and_seconds_and_reads_back_either_way() {
+        assert_eq!(clock(26.1), "0:26.100");
+        assert_eq!(clock(83.0005), "1:23.001");
+        assert_eq!(clock(-0.014), "-0:00.014");
+        assert_eq!(moment("0:26.25"), Some(26.25));
+        assert_eq!(moment("1:23.5"), Some(83.5));
+        assert_eq!(moment(" 12.5 "), Some(12.5));
+        assert_eq!(moment("-0:00.014"), Some(-0.014));
+        for bad in ["", "a", "1:", "1:60", "1:-2", "nan"] {
+            assert_eq!(moment(bad), None, "{bad}");
+        }
+    }
 
     #[test]
     fn a_meter_reads_as_beats_over_a_note() {

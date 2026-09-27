@@ -15,14 +15,18 @@ Arcaea. `cargo run -p charter-app` is the editor so far. It draws charts in the 
 glyphs, since no ruleset plugin draws yet, and starts and edits songs of the built-in rulesets. Lane
 keys and Ctrl with the mouse place taps, holds and mines; the mouse selects and Delete removes the
 selection; undo and redo return to where each edit was made. The song panel's Timing section is laid out as osu!'s timing panel is.
-The song's offset comes first, on its own: where beat 0 falls in the audio, in milliseconds,
-stepped by 1 ms with its buttons or Alt+Left and Alt+Right, 10 ms with Shift, beside a button that
-opens the timing window. Below it every timing point is listed, a tick's tempo, meter, stops and
-game events together as one point, with the point in effect at the cursor highlighted; clicking a
-point moves the cursor to it. Under the list are that point's BPM, with − and + buttons, and its
-meter, such as 3/4 or 7/8, each showing what is in effect there and setting it on the point, and a
-button that removes the point, except the one that starts the tempo. "Add a timing point here"
-starts one at the cursor at the tempo it has there, and says why it cannot when the cursor is on
+The song's offset comes first: where beat 0 falls in the audio, in milliseconds, stepped by 1 ms
+with its buttons or Alt+Left and Alt+Right, 10 ms with Shift. Under it the starting BPM, the first
+timing point's tempo, can be set from anywhere in the song, beside a button that opens the timing
+window. Below them every timing point is listed by its moment in the audio, such as `0:26.100`,
+a tick's tempo, meter, stops and game events together as one point, with the point in effect at
+the cursor highlighted; clicking a point moves the cursor to it. Under the list are that point's
+time, BPM and meter. A time typed for a tempo point moves it to that moment of the audio, and for
+the first point moves the whole grid, as the offset does; a meter or stop point shows its time,
+which follows its beat. The BPM, with − and + buttons, and the meter, such as 3/4 or 7/8, each show
+what is in effect there and set it on the point, and a button removes the point, except the one
+that starts the tempo. "Add a timing point here" starts one at the cursor at the tempo it has
+there, and says why it cannot when the cursor is on
 one already. F7 and F8 still nudge the tempo in effect at the cursor. Every timing point stays at
 its moment of the audio: a BPM set on one changes how many beats fit before the next point, and
 the next point with everything after it, notes, events and markers, moves along the grid to keep
