@@ -68,6 +68,12 @@ pub enum Refusal {
     /// The song's first BPM change starts its tempo, so it cannot go.
     #[error("the first BPM change starts the song's tempo")]
     FirstTempo,
+    /// A note would start where another already starts on a lane it covers.
+    #[error("another note is already there")]
+    Occupied,
+    /// A note would move past the first or last lane, or out of the range of ticks.
+    #[error("that would move a note off the chart")]
+    OffTheChart,
 }
 
 /// The snaps in ArrowVortex's menu, coarsest first.
@@ -927,6 +933,70 @@ impl Song {
         Ok(())
     }
 
+    /// Moves every selected note `ticks` later, earlier when negative, and `lanes` to the right,
+    /// left when negative, with its children and path, as one step that keeps them selected.
+    ///
+    /// # Errors
+    ///
+    /// Refuses on a read-only song, when a note would leave the lanes or the ticks, when one
+    /// would start where a note that is not moving starts on a lane it covers, and when the move
+    /// breaks a rule of the format or of the song's game. The notes stay as they were.
+    pub fn move_selection(&mut self, ticks: i32, lanes: i32) -> Result<(), Refusal> {
+        let Some(chart) = self.chart() else {
+            return Ok(());
+        };
+        if (ticks, lanes) == (0, 0) || self.selection.is_empty() {
+            return Ok(());
+        }
+        // Removing from the back keeps the index of every note still to remove.
+        let mut ops = Vec::new();
+        let mut moved = Vec::new();
+        for (index, object) in chart.objects.iter().enumerate().rev() {
+            if self.is_selected(object) {
+                ops.push(Op::Remove {
+                    index,
+                    object: object.clone(),
+                });
+                moved.push(shifted(object, ticks, lanes).ok_or(Refusal::OffTheChart)?);
+            }
+        }
+        let mut objects: Vec<Object> = chart
+            .objects
+            .iter()
+            .filter(|object| !self.is_selected(object))
+            .cloned()
+            .collect();
+        moved.reverse();
+        let mut selection = BTreeSet::new();
+        for object in moved {
+            let from = objects.partition_point(|other| other.tick < object.tick);
+            let index = objects.partition_point(|other| other.tick <= object.tick);
+            let span = object.position.lanes();
+            let taken = objects
+                .get(from..index)
+                .unwrap_or_default()
+                .iter()
+                .any(|other| {
+                    other
+                        .position
+                        .lanes()
+                        .zip(span)
+                        .is_some_and(|(other, span)| other.overlaps(span))
+                });
+            if taken {
+                return Err(Refusal::Occupied);
+            }
+            selection.extend(note_at(&object));
+            objects.insert(index, object.clone());
+            ops.push(Op::Insert { index, object });
+        }
+        let edit = Edit(ops);
+        self.document = self.edited(self.chart, &edit)?;
+        self.selection = selection;
+        self.record(edit);
+        Ok(())
+    }
+
     fn meet(&mut self, notes: Vec<NoteAt>, how: Selecting) {
         match how {
             Selecting::Replace => self.selection = notes.into_iter().collect(),
@@ -1049,6 +1119,49 @@ fn note_at(object: &Object) -> Option<NoteAt> {
         }),
         Position::Plane { .. } => None,
     }
+}
+
+/// `object` moved `ticks` later and `lanes` across, with its children and path, unless that
+/// leaves the ticks or the lanes.
+fn shifted(object: &Object, ticks: i32, lanes: i32) -> Option<Object> {
+    let tick = |tick: Tick| {
+        i32::try_from(i64::from(tick) + i64::from(ticks))
+            .ok()
+            .map(Tick::new)
+    };
+    let position = |position: Position| match position {
+        Position::Lane { index, width } => {
+            let index = u16::try_from(i32::from(u16::from(index)) + lanes).ok()?;
+            Some(Position::Lane {
+                index: LaneIndex::new(index),
+                width,
+            })
+        }
+        Position::Plane { .. } => Some(position),
+    };
+    let mut moved = object.clone();
+    moved.tick = tick(object.tick)?;
+    moved.position = position(object.position)?;
+    for child in &mut moved.children {
+        child.tick = tick(child.tick)?;
+        child.position = position(child.position)?;
+    }
+    if let Shape::Path { points } = &object.shape {
+        let points = points
+            .as_slice()
+            .iter()
+            .map(|point| {
+                let mut point = point.clone();
+                point.tick = tick(point.tick)?;
+                point.position = position(point.position)?;
+                Some(point)
+            })
+            .collect::<Option<Vec<_>>>()?;
+        moved.shape = Shape::Path {
+            points: charter_core::Points::new(points).ok()?,
+        };
+    }
+    Some(moved)
 }
 
 /// An instant note of `kind` on `lane` at `tick`.
@@ -1681,6 +1794,89 @@ pub(crate) mod tests {
         let mut song = four_taps();
         song.delete_selection().unwrap();
         assert_eq!(objects(&song).len(), 4);
+        assert!(!song.can_undo());
+    }
+
+    #[test]
+    fn moving_the_selection_is_one_step_that_keeps_it_selected() {
+        let mut song = four_taps();
+        song.select([note_at(0, 0), note_at(480, 2)], Selecting::Replace);
+        song.move_selection(120, 1).unwrap();
+        assert_eq!(
+            objects(&song),
+            [
+                object(120, 1, "tap"),
+                object(240, 1, "tap"),
+                object(600, 3, "tap"),
+                object(720, 3, "tap"),
+            ]
+        );
+        assert_eq!(selection(&song), [note_at(120, 1), note_at(600, 3)]);
+        song.undo().unwrap();
+        assert_eq!(objects(&song), objects(&four_taps()));
+        assert!(!song.can_undo());
+    }
+
+    #[test]
+    fn a_moved_hold_keeps_its_length() {
+        let hold = json!({ "tick": 0, "position": { "lane": { "index": 0, "width": 1 } },
+                           "kind": "hold", "shape": { "sustain": { "duration": 480 } } });
+        let mut song = Song::new(document(json!([hold, object(960, 3, "tap")])), EDITABLE);
+        song.select([note_at(0, 0)], Selecting::Replace);
+        song.move_selection(1920, 2).unwrap();
+        let moved = json!({ "tick": 1920, "position": { "lane": { "index": 2 } },
+                            "kind": "hold", "shape": { "sustain": { "duration": 480 } } });
+        assert_eq!(objects(&song), [object(960, 3, "tap"), moved]);
+    }
+
+    #[test]
+    fn a_moved_note_takes_its_children_along() {
+        let hold = |tick: i32, lane: u16| {
+            json!({ "tick": tick, "position": { "lane": { "index": lane } }, "kind": "hold",
+                    "shape": { "sustain": { "duration": 480 } },
+                    "children": [object(tick + 240, lane, "tap")] })
+        };
+        let mut song = Song::new(document(json!([hold(0, 0)])), EDITABLE);
+        song.select([note_at(0, 0)], Selecting::Replace);
+        song.move_selection(960, 1).unwrap();
+        assert_eq!(objects(&song), [hold(960, 1)]);
+    }
+
+    #[test]
+    fn a_move_onto_a_note_that_stays_is_refused() {
+        let mut song = four_taps();
+        song.select([note_at(0, 0)], Selecting::Replace);
+        let refused = song.move_selection(240, 1).unwrap_err();
+        assert!(matches!(refused, Refusal::Occupied), "{refused:?}");
+        assert_eq!(objects(&song), objects(&four_taps()));
+        assert_eq!(selection(&song), [note_at(0, 0)]);
+    }
+
+    #[test]
+    fn a_move_off_either_side_of_the_lanes_is_refused() {
+        let mut song = four_taps();
+        song.select([note_at(240, 1)], Selecting::Replace);
+        assert!(song.move_selection(0, -2).is_err());
+        assert!(song.move_selection(0, 3).is_err());
+        assert_eq!(objects(&song), objects(&four_taps()));
+        assert!(!song.can_undo());
+    }
+
+    #[test]
+    fn selected_notes_can_trade_places_with_each_other() {
+        let mut song = four_taps();
+        song.select_all();
+        song.move_selection(240, 0).unwrap();
+        assert_eq!(selection(&song).len(), 4);
+        assert_eq!(selection(&song)[0], note_at(240, 0));
+    }
+
+    #[test]
+    fn a_move_by_nothing_or_of_nothing_changes_nothing() {
+        let mut song = four_taps();
+        song.move_selection(240, 1).unwrap();
+        song.select([note_at(0, 0)], Selecting::Replace);
+        song.move_selection(0, 0).unwrap();
         assert!(!song.can_undo());
     }
 

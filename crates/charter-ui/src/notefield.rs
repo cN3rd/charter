@@ -4,8 +4,8 @@
 use std::num::NonZeroU16;
 
 use charter_core::{
-    Kind, LaneCount, LaneIndex, MarkerKind, Measure, Object, Position, ResolvedTime, Shape, Tick,
-    Ticks, TicksPerBeat, Timing, TimingKind, Valid,
+    Chart, Kind, LaneCount, LaneIndex, MarkerKind, Measure, Object, Position, ResolvedTime, Shape,
+    Tick, Ticks, TicksPerBeat, Timing, TimingKind, Valid,
 };
 use egui::{
     self, Align2, FontId, Pos2, Rangef, Rect, Sense, Stroke, StrokeKind, Ui, Visuals, pos2, vec2,
@@ -219,6 +219,64 @@ pub enum Gesture {
     MoveMarker { index: usize },
     /// The cursor's handle, dragged from `y` on screen while the cursor was at `seconds`.
     Scrub { seconds: f64, y: f32 },
+    /// The selected notes, grabbed on the snap line `tick` over `lane`. They can move `room.0`
+    /// lanes left, a negative count, to `room.1` lanes right and stay on the lanes.
+    MoveNotes {
+        tick: Tick,
+        lane: LaneIndex,
+        room: (i32, i32),
+    },
+}
+
+impl Gesture {
+    /// How far the selection grabbed in a [`Gesture::MoveNotes`] has been dragged to `pos`, in
+    /// ticks along the snap and lanes across: the snap line nearest `pos` from the one it was
+    /// grabbed on, and the lane under `pos`, kept within the lanes, from the one it was grabbed
+    /// over.
+    fn moved_by(self, field: &Field, to: Tick, pos: Pos2) -> Option<(i32, i32)> {
+        let Self::MoveNotes { tick, lane, room } = self else {
+            return None;
+        };
+        let ticks = i32::try_from(i64::from(to) - i64::from(tick)).ok()?;
+        let inside = field.columns.lanes;
+        let over = field.lane_at(pos.x.clamp(inside.min, inside.max - 0.5))?;
+        let lanes = i32::from(u16::from(over)) - i32::from(u16::from(lane));
+        Some((ticks, lanes.clamp(room.0, room.1.max(room.0))))
+    }
+}
+
+/// The notes a drag from `note` moves, the selection when `note` is in it and otherwise `note`
+/// alone, and how many lanes they have room to move left, a negative count, and right.
+fn room(chart: Valid<'_, Chart>, song: &Song, note: NoteAt, lanes: u16) -> (bool, (i32, i32)) {
+    let grabbed = |object: &Object| {
+        object.tick == note.tick
+            && matches!(object.position, Position::Lane { index, .. } if index == note.lane)
+    };
+    let selected = chart
+        .objects
+        .iter()
+        .any(|object| grabbed(object) && song.is_selected(object));
+    let spans = chart
+        .objects
+        .iter()
+        .filter(|object| {
+            if selected {
+                song.is_selected(object)
+            } else {
+                grabbed(object)
+            }
+        })
+        .filter_map(|object| match object.position {
+            Position::Lane { index, width } => Some((index, width)),
+            Position::Plane { .. } => None,
+        });
+    let (mut first, mut last) = (i32::MAX, i32::MIN);
+    for (index, width) in spans {
+        let from = i32::from(u16::from(index));
+        first = first.min(from);
+        last = last.max(from + i32::from(u16::from(width)) - 1);
+    }
+    (selected, (-first, i32::from(lanes) - 1 - last))
 }
 
 /// The handle under `pos`, if one is: the cursor's on the ruler, a timing point (every event at one
@@ -474,7 +532,32 @@ pub fn show(
     {
         drop_guide(&clipped, columns, song, view, latest.y);
     }
-    let hovered = ui.input(|input| input.pointer.hover_pos().map(|at| flip.back(at)));
+    let line = |pos: Pos2| snap_line(song, view, pos);
+    if let Some(moving @ Gesture::MoveNotes { .. }) = *gesture
+        && let Some(latest) = latest
+        && let Some(by) = line(latest).and_then(|to| moving.moved_by(&field, to, latest))
+    {
+        for object in chart
+            .objects
+            .iter()
+            .filter(|object| song.is_selected(object))
+        {
+            ghost(&clipped, (columns, timing, view), object, by, (first, last));
+        }
+    }
+    let (hovered, modifiers) = ui.input(|input| {
+        let hovered = input.pointer.hover_pos().map(|at| flip.back(at));
+        (hovered, input.modifiers)
+    });
+    if matches!(*gesture, Some(Gesture::MoveNotes { .. })) {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    } else if gesture.is_none()
+        && response.hovered()
+        && hovered
+            .is_some_and(|at| grab(song, &field, at, (first, last), modifiers, &line).is_some())
+    {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+    }
     if gesture.is_some()
         || hovered.is_some_and(|at| response.hovered() && handle_at(song, &field, at).is_some())
     {
@@ -486,7 +569,7 @@ pub fn show(
         };
         if !matches!(
             *gesture,
-            Some(Gesture::Marquee { .. } | Gesture::Hold { .. })
+            Some(Gesture::Marquee { .. } | Gesture::Hold { .. } | Gesture::MoveNotes { .. })
         ) {
             ui.ctx().set_cursor_icon(icon);
         }
@@ -561,29 +644,7 @@ fn pointer(
         && !escaped
         && let Some(origin) = origin
     {
-        *gesture = if let Some(handle) = handle_at(song, field, origin) {
-            Some(handle)
-        } else if modifiers.command {
-            spot(origin).map(|(lane, from)| {
-                // A note already there is stretched as it is, rather than toggled away.
-                if !song.starts_at(from, lane) {
-                    let note = Note::Tap;
-                    actions.push(Action::Place {
-                        tick: from,
-                        lane,
-                        note,
-                    });
-                }
-                Gesture::Hold { lane, from }
-            })
-        } else {
-            let seconds = field.view.seconds_at(origin.y);
-            Some(Gesture::Marquee {
-                how,
-                x: origin.x,
-                seconds,
-            })
-        };
+        *gesture = started(song, field, (origin, modifiers), visible, &mut actions);
     }
     if response.dragged()
         && let (Some(Gesture::Scrub { seconds, y }), Some(pos)) = (*gesture, latest)
@@ -605,6 +666,74 @@ fn pointer(
     actions
 }
 
+/// The gesture a drag from `origin` starts, and what it asks for at once: a handle's move, the
+/// selection's move from a note, a hold drawn with Ctrl, or else a box.
+fn started(
+    song: &Song,
+    field: &Field,
+    (origin, modifiers): (Pos2, egui::Modifiers),
+    visible: (Tick, Tick),
+    actions: &mut Vec<Action>,
+) -> Option<Gesture> {
+    let snapped = |pos: Pos2| snap_line(song, field.view, pos);
+    if let Some(handle) = handle_at(song, field, origin) {
+        Some(handle)
+    } else if let Some((unselected, moving)) =
+        grab(song, field, origin, visible, modifiers, &snapped)
+    {
+        if let Some(note) = unselected {
+            actions.push(Action::Select(Some(note), Selecting::Replace));
+        }
+        Some(moving)
+    } else if modifiers.command {
+        if song.read_only().is_some() || !field.rows.contains(origin.y) {
+            return None;
+        }
+        let (lane, from) = (field.lane_at(origin.x)?, snapped(origin)?);
+        // A note already there is stretched as it is, rather than toggled away.
+        if !song.starts_at(from, lane) {
+            let note = Note::Tap;
+            actions.push(Action::Place {
+                tick: from,
+                lane,
+                note,
+            });
+        }
+        Some(Gesture::Hold { lane, from })
+    } else {
+        Some(Gesture::Marquee {
+            how: selecting(modifiers),
+            x: origin.x,
+            seconds: field.view.seconds_at(origin.y),
+        })
+    }
+}
+
+/// The gesture a plain drag from `origin` over a note starts in an editable song: moving the
+/// selection when the note is in it, and otherwise the note alone, returned to be selected
+/// first.
+fn grab(
+    song: &Song,
+    field: &Field,
+    origin: Pos2,
+    visible: (Tick, Tick),
+    modifiers: egui::Modifiers,
+    line: &dyn Fn(Pos2) -> Option<Tick>,
+) -> Option<(Option<NoteAt>, Gesture)> {
+    if song.read_only().is_some() || !modifiers.is_none() || !field.rows.contains(origin.y) {
+        return None;
+    }
+    let chart = song.chart()?;
+    let note = hit(&chart.objects, field, chart.timing(), origin, visible)?;
+    let (selected, room) = room(chart, song, note, field.lanes);
+    let gesture = Gesture::MoveNotes {
+        tick: line(origin)?,
+        lane: field.lane_at(origin.x)?,
+        room,
+    };
+    Some(((!selected).then_some(note), gesture))
+}
+
 /// What a drag asks for when it lets go at `latest`: the hold drawn to there, the handle
 /// dropped on the line there, or the notes the box covers selected.
 fn let_go(
@@ -614,14 +743,18 @@ fn let_go(
     timing: Valid<'_, Timing>,
     line: &dyn Fn(Pos2) -> Option<Tick>,
 ) -> Option<Action> {
-    let pos = latest?;
-    match gesture? {
+    let (pos, gesture) = (latest?, gesture?);
+    match gesture {
         Gesture::Hold { lane, from } => line(pos).map(|to| Action::Stretch { lane, from, to }),
         Gesture::MoveTiming { from } => line(pos).map(|to| Action::MoveTiming { from, to }),
         Gesture::MoveMarker { index } => line(pos).map(|to| Action::MoveMarker { index, to }),
         Gesture::Marquee { how, x, seconds } => field
             .boxed(timing, (x, seconds), pos)
             .map(|(ticks, lanes)| Action::SelectBetween { ticks, lanes, how }),
+        Gesture::MoveNotes { .. } => {
+            let (ticks, lanes) = gesture.moved_by(field, line(pos)?, pos)?;
+            Some(Action::MoveSelection { ticks, lanes })
+        }
         Gesture::Scrub { .. } => None,
     }
 }
@@ -1009,6 +1142,64 @@ fn draw_object(
             painter.circle_filled(centre, 3.0, style::TEXT);
         }
     }
+}
+
+/// The snap line nearest `pos` on screen.
+fn snap_line(song: &Song, view: View, pos: Pos2) -> Option<Tick> {
+    let step = song
+        .document()
+        .document()
+        .ticks_per_beat
+        .note_length(song.snap())?;
+    Some(nearest_line(song.timing(), view.seconds_at(pos.y), step))
+}
+
+/// Where a dragged note will land, `by` ticks later and lanes across: its head outlined, and
+/// its tail when it lasts, when that shows between the ticks `first` and `last`.
+fn ghost(
+    painter: &Canvas,
+    (columns, timing, view): (&Columns, Valid<'_, Timing>, View),
+    object: &Object,
+    (ticks, lanes): (i32, i32),
+    (first, last): (Tick, Tick),
+) {
+    let Position::Lane { index, width } = object.position else {
+        return;
+    };
+    let Ok(index) = u16::try_from(i32::from(u16::from(index)) + lanes) else {
+        return;
+    };
+    let shift = |tick: Tick| {
+        i32::try_from(i64::from(tick) + i64::from(ticks))
+            .ok()
+            .map(Tick::new)
+    };
+    let end = object.shape.end(object.tick).and_then(shift);
+    let (Some(start), Some(end)) = (shift(object.tick), end) else {
+        return;
+    };
+    if start > last || end < first {
+        return;
+    }
+    let across = columns
+        .span(LaneIndex::new(index), width)
+        .shrink((columns.lane_w * 0.12).max(2.0));
+    let (head, tail) = (view.y(timing.time_at(start)), view.y(timing.time_at(end)));
+    if end > start {
+        let body = Rect::from_two_pos(
+            pos2(across.min + across.span() * 0.25, head),
+            pos2(across.max - across.span() * 0.25, tail),
+        );
+        painter.rect_filled(body, 2.0, style::SELECTED.gamma_multiply(0.35));
+    }
+    let rect = Rect::from_x_y_ranges(across, head - 5.0..=head + 5.0);
+    painter.rect_filled(rect, 3.0, style::SELECTED.gamma_multiply(0.35));
+    painter.rect_stroke(
+        rect,
+        3.0,
+        Stroke::new(1.5, style::SELECTED),
+        StrokeKind::Inside,
+    );
 }
 
 /// Where a dragged handle will land, the snap line nearest `y`: a line across the time axis in

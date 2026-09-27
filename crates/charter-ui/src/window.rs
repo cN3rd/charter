@@ -242,6 +242,12 @@ pub(crate) enum Action {
     },
     /// Meets the selection with a note, or with none: nothing was under the pointer.
     Select(Option<NoteAt>, Selecting),
+    /// Moves the selected notes this many ticks later and lanes right, earlier and left when
+    /// negative.
+    MoveSelection {
+        ticks: i32,
+        lanes: i32,
+    },
     /// Meets the selection with the notes starting within `ticks` on a lane within `lanes`.
     SelectBetween {
         ticks: (Tick, Tick),
@@ -1376,6 +1382,9 @@ impl Window {
             Action::RemoveMarker(index) => self.failure = refused(song.remove_marker(index).err()),
             Action::SelectAll => song.select_all(),
             Action::DeleteSelection => self.failure = refused(song.delete_selection().err()),
+            Action::MoveSelection { ticks, lanes } => {
+                self.failure = refused(song.move_selection(ticks, lanes).err());
+            }
         }
     }
 
@@ -2591,6 +2600,34 @@ mod tests {
         let song = harness.state().song.as_ref().unwrap();
         let ticks: Vec<_> = song.selection().map(|note| note.tick).collect();
         assert_eq!(ticks, [Tick::new(240), Tick::new(480)]);
+    }
+
+    #[test]
+    fn dragging_a_note_moves_it_along_the_snap_and_across_lanes_in_one_step() {
+        let mut harness = editable_four_taps();
+        let (from, to) = (spot(&harness, 0, 0, 0.0), spot(&harness, 1, 480, 3.0));
+        drag(&mut harness, from, to, egui::Modifiers::NONE);
+        assert_eq!(note_at(&harness, 0, 0), None);
+        assert_eq!(note_at(&harness, 480, 1), Some(tap()));
+        assert_eq!(note_count(&harness), 4);
+        assert!(harness.query_by_label("1 note selected").is_some());
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.run();
+        assert_eq!(note_at(&harness, 0, 0), Some(tap()));
+        assert_eq!(note_at(&harness, 480, 1), None);
+    }
+
+    #[test]
+    fn dragging_a_selected_note_moves_the_selection_and_keeps_it_on_the_lanes() {
+        let mut harness = editable_four_taps();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.run();
+        let (from, to) = (spot(&harness, 1, 240, 0.0), spot(&harness, 2, 480, 0.0));
+        drag(&mut harness, from, to, egui::Modifiers::NONE);
+        for (tick, lane) in [(240, 0), (480, 1), (720, 2), (960, 3)] {
+            assert_eq!(note_at(&harness, tick, lane), Some(tap()), "{tick} {lane}");
+        }
+        assert!(harness.query_by_label("4 notes selected").is_some());
     }
 
     #[test]

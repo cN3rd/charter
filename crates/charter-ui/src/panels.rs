@@ -247,6 +247,7 @@ const KEYS: [(&str, &[(&str, &str)]); 6] = [
         "Selection",
         &[
             ("Click, Drag", "Select notes"),
+            ("Drag a note", "Move it, or the selection it is in"),
             ("Shift+Click, Shift+Drag", "Add to the selection"),
             ("Alt+Click, Alt+Drag", "Take from the selection"),
             ("Ctrl+A, Escape", "Select every note, or none"),
