@@ -170,7 +170,8 @@ dark playfield, often in a dim room, and notes read best as bright shapes on dar
 - There is no toolbar or tool palette. Entry is modeless, as in ArrowVortex: lane keys place notes
   at the cursor, and the mouse selects, with Shift adding to a marquee and Alt subtracting. Ctrl
   turns the mouse to placing: a click toggles a tap on the nearest snap line, Ctrl+Shift a mine,
-  and a drag along a lane draws a hold. A plain drag from a note moves it, or the selection it is
+  and a drag along a lane draws a hold, showing its body to the snap line under the pointer before
+  release. A plain drag from a note moves it, or the selection it is
   in, by whole snaps and across lanes, kept on the lanes, with an outline where the notes will
   land; letting go moves them as one step, and a move onto a note that stays is refused.
 - Undo takes back one edit at a time and returns to the chart and the cursor it was made at, as

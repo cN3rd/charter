@@ -513,6 +513,7 @@ pub fn show(
         gesture,
     ));
     let latest = ui.input(|input| input.pointer.latest_pos().map(|at| flip.back(at)));
+    let line = |pos: Pos2| snap_line(song, view, pos);
     if let Some(Gesture::Marquee { x, seconds, .. }) = *gesture
         && let Some(latest) = latest
     {
@@ -525,6 +526,18 @@ pub fn show(
             StrokeKind::Inside,
         );
     }
+    if let Some(Gesture::Hold { lane, from }) = *gesture
+        && let Some(to) = latest.and_then(&line)
+        && let Some(rect) = hold_preview_rect(columns, timing, view, lane, from, to)
+    {
+        clipped.rect_filled(rect, 2.0, style::HOLD.gamma_multiply(0.7));
+        clipped.rect_stroke(
+            rect,
+            2.0,
+            Stroke::new(1.0, style::SELECTED),
+            StrokeKind::Outside,
+        );
+    }
     if let Some(Gesture::MoveTiming { .. } | Gesture::MoveMarker { .. }) = *gesture
         && let Some(latest) = latest
     {
@@ -532,7 +545,6 @@ pub fn show(
             matches!(*gesture, Some(Gesture::MoveTiming { from }) if anchored(song.timing(), from));
         drop_guide(&clipped, columns, (song, free), view, latest.y);
     }
-    let line = |pos: Pos2| snap_line(song, view, pos);
     if let Some(moving @ Gesture::MoveNotes { .. }) = *gesture
         && let Some(latest) = latest
         && let Some(by) = line(latest).and_then(|to| moving.moved_by(&field, to, latest))
@@ -1230,6 +1242,33 @@ fn draw_object(
     }
 }
 
+/// The body a hold would have if released on `to`, without covering its existing head.
+fn hold_preview_rect(
+    columns: &Columns,
+    timing: Valid<'_, Timing>,
+    view: View,
+    lane: LaneIndex,
+    from: Tick,
+    to: Tick,
+) -> Option<Rect> {
+    if from == to {
+        return None;
+    }
+    let across = columns
+        .span(lane, LaneCount::ONE)
+        .shrink((columns.lane_w * 0.12).max(2.0));
+    Some(Rect::from_two_pos(
+        pos2(
+            across.min + across.span() * 0.25,
+            view.y(timing.time_at(from)),
+        ),
+        pos2(
+            across.max - across.span() * 0.25,
+            view.y(timing.time_at(to)),
+        ),
+    ))
+}
+
 /// The snap line nearest `pos` on screen.
 fn snap_line(song: &Song, view: View, pos: Pos2) -> Option<Tick> {
     let step = song
@@ -1546,6 +1585,47 @@ mod tests {
         let view = View::new(100.0, timing.time_at(Tick::new(960)), Zoom::START);
         let y = view.y(timing.time_at(Tick::new(1920)));
         assert!((view.seconds_at(y) - 0.8).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_hold_preview_spans_the_beats_it_will_cover_in_either_direction() {
+        let song = song();
+        let timing = song.timing();
+        let view = View::new(100.0, timing.time_at(Tick::new(0)), Zoom::START);
+        let columns = Columns::laid_out(Rangef::new(0.0, 600.0), 4, false);
+        let later = hold_preview_rect(
+            &columns,
+            timing,
+            view,
+            LaneIndex::new(0),
+            Tick::new(0),
+            Tick::new(960),
+        )
+        .unwrap();
+        assert!((later.top() - 100.0).abs() < 0.01);
+        assert!((later.bottom() - 196.0).abs() < 0.01);
+        assert!(later.left() >= columns.lanes.min);
+        let earlier = hold_preview_rect(
+            &columns,
+            timing,
+            view,
+            LaneIndex::new(0),
+            Tick::new(960),
+            Tick::new(0),
+        )
+        .unwrap();
+        assert_eq!(later, earlier);
+        assert!(
+            hold_preview_rect(
+                &columns,
+                timing,
+                view,
+                LaneIndex::new(0),
+                Tick::new(0),
+                Tick::new(0),
+            )
+            .is_none()
+        );
     }
 
     #[test]
