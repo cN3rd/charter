@@ -10,6 +10,7 @@ mod json;
 mod number;
 mod path;
 mod plugin;
+mod sections;
 mod timing;
 mod unit;
 mod validate;
@@ -29,6 +30,7 @@ pub use plugin::{
     Difficulties, DifficultyPreset, ImportedTiming, Layout, NewChart, NewSong, RulesetPlugin,
     SettingScope, TextSetting,
 };
+pub use sections::{Section, SectionError, Sectioned, sectioned};
 
 /// Property tests run from a fixed seed and keep no regression files, so they repeat exactly
 /// and touch no files.

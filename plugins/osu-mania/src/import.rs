@@ -9,8 +9,8 @@
 use std::num::NonZeroU16;
 
 use charter_core::{
-    Anchor, Bpm, Decimal, Extensions, ImportedTiming, Key, Name, Namespace, Origin, Tick,
-    TimeSignature, Timing, TimingEvent, TimingKind, ValidDocument,
+    Decimal, Extensions, ImportedTiming, Key, Name, Namespace, Section, SectionError, Tick, Timing,
+    TimingEvent, TimingKind, ValidDocument, sectioned,
 };
 
 use crate::{ID, SCROLL_SPEED};
@@ -52,71 +52,42 @@ pub(crate) fn import(text: &str, into: &ValidDocument) -> Result<ImportedTiming,
     let ticks_per_beat = f64::from(u16::from(into.document().ticks_per_beat));
     let mut reds: Vec<Point> = points.iter().copied().filter(|p| p.uninherited).collect();
     reds.sort_by(|a, b| a.time.total_cmp(&b.time));
-    let first = *reds.first().ok_or(ImportError::NoTempo)?;
+    let sections: Vec<Section> = reds
+        .iter()
+        .map(|red| Section {
+            seconds: red.time / 1000.0,
+            beat_seconds: red.beat_length / 1000.0,
+            meter: red.meter,
+        })
+        .collect();
+    let made = sectioned(&sections, into.document().ticks_per_beat).map_err(|why| match why {
+        SectionError::Empty => ImportError::NoTempo,
+        SectionError::OutOfRange(what) => ImportError::OutOfRange(what),
+    })?;
     let mut left_out = Vec::new();
-    let mut placed: Vec<(Placed, NonZeroU16)> = Vec::new();
-    let mut merged = 0;
-    for red in reds {
-        let Some((last, _)) = placed.last() else {
-            let start = Placed {
-                tick: 0,
-                at: red.time,
-                beat_length: red.beat_length,
-            };
-            placed.push((start, red.meter));
-            continue;
-        };
-        let tick = last
-            .tick
-            .checked_add(ticks(red.time - last.at, last.beat_length, ticks_per_beat))
-            .ok_or_else(|| ImportError::OutOfRange("timing point tick is out of range".into()))?;
-        #[allow(clippy::cast_precision_loss)] // a song's worth of ticks, far below 2^52
-        let at = red.time;
-        let point = Placed {
-            tick,
-            at,
-            beat_length: red.beat_length,
-        };
-        // Two red lines on one tick: the later one is the one osu! plays.
-        if tick == last.tick {
-            merged += 1;
-            placed.pop();
-        }
-        placed.push((point, red.meter));
-    }
-    if merged > 0 {
+    if made.merged > 0 {
         left_out.push(format!(
-            "{merged} uninherited points on the tick of a later one"
+            "{} uninherited points on the tick of a later one",
+            made.merged
         ));
     }
-    let mut events = Vec::new();
-    let mut anchors = Vec::new();
-    let mut tempo = bpm(first.beat_length)?;
-    let four = NonZeroU16::new(4).unwrap_or(NonZeroU16::MIN);
-    let (mut measure_from, mut meter) = (0, four);
-    for &(red, beats) in &placed {
-        tempo = bpm(red.beat_length)?;
-        anchors.push(Anchor {
-            tick: Tick::new(i32::try_from(red.tick).map_err(|_| {
-                ImportError::OutOfRange(format!("{} ticks is out of range", red.tick))
-            })?),
-            seconds: micro(red.at / 1000.0)
-                .and_then(|seconds| Origin::try_from(seconds).ok())
-                .ok_or_else(|| ImportError::OutOfRange(format!("{} ms is not a time", red.at)))?,
-        });
-        // osu! starts a measure at every red line; charter's grid restarts at a time signature.
-        #[allow(clippy::cast_possible_truncation)] // a resolution, whole and small
-        let measure = i64::from(meter.get()) * ticks_per_beat as i64;
-        let mid_measure = (red.tick - measure_from).rem_euclid(measure.max(1)) != 0;
-        if beats != meter || mid_measure {
-            let signature = TimeSignature {
-                numerator: beats,
-                denominator: four,
+    let placed: Vec<(Placed, NonZeroU16)> = made
+        .kept
+        .iter()
+        .map(|&(tick, section)| {
+            let red = Placed {
+                tick,
+                at: section.seconds * 1000.0,
+                beat_length: section.beat_seconds * 1000.0,
             };
-            events.push(event(red.tick, TimingKind::TimeSignature(signature))?);
-            (measure_from, meter) = (red.tick, beats);
-        }
-    }
+            (red, section.meter)
+        })
+        .collect();
+    let Timing {
+        anchors,
+        tempo,
+        mut events,
+    } = made.timing;
     let mut greens: Vec<Point> = points.iter().copied().filter(|p| !p.uninherited).collect();
     greens.sort_by(|a, b| a.time.total_cmp(&b.time));
     if into.document().ruleset.id.as_str() == ID {
@@ -301,13 +272,6 @@ fn ticks(milliseconds: f64, beat_length: f64, ticks_per_beat: f64) -> i64 {
     #[allow(clippy::cast_possible_truncation)] // a song's worth of ticks
     let ticks = (milliseconds / beat_length * ticks_per_beat).round() as i64;
     ticks
-}
-
-/// The tempo of a beat `beat_length` milliseconds long, to six places.
-fn bpm(beat_length: f64) -> Result<Bpm, ImportError> {
-    micro(60_000.0 / beat_length)
-        .and_then(|bpm| Bpm::try_from(bpm).ok())
-        .ok_or_else(|| ImportError::OutOfRange(format!("a beat of {beat_length} ms is no tempo")))
 }
 
 fn event(tick: i64, kind: TimingKind) -> Result<TimingEvent, ImportError> {
