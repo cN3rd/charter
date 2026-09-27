@@ -5676,6 +5676,31 @@ mod tests {
     }
 
     #[test]
+    fn the_new_song_dialog_keeps_its_top_and_its_fields_one_edge() {
+        let mut harness = new_song_dialog();
+        let top = |harness: &Harness<'_, Window>| {
+            harness.get_by_label_contains("Pick the game").rect().top()
+        };
+        let left = |harness: &Harness<'_, Window>, label: &str| {
+            harness
+                .get_by_role_and_label(Role::TextInput, label)
+                .rect()
+                .left()
+        };
+        let before = top(&harness);
+        let edge = left(&harness, "Title");
+        assert!((left(&harness, "Chart 1") - edge).abs() < 0.5);
+        harness.get_by_label("Tap Tap Revenge").click();
+        harness.run();
+        harness.run();
+        assert!((top(&harness) - before).abs() < 0.5);
+        let extreme = left(&harness, "Extreme chart name");
+        assert!((extreme - edge).abs() < 0.5, "{extreme} {edge}");
+        let preset = harness.get_by_role_and_label(Role::ComboBox, "Preset");
+        assert!((preset.rect().left() - edge).abs() < 0.5);
+    }
+
+    #[test]
     fn a_new_song_needs_a_chart() {
         let mut harness = new_song_dialog();
         harness.get_by_label("Remove Easy").click();

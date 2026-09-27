@@ -203,8 +203,13 @@ pub fn show(
 ) -> Option<Answer> {
     let games = games(plugins);
     let mut answer = None;
-    let modal = egui::Modal::new(egui::Id::new("new song")).show(ui.ctx(), |ui| {
+    let id = egui::Id::new("new song");
+    // Pinned from the top, so the dialog stays put as a game's fields change its height.
+    let top = ((ui.ctx().content_rect().height() - TALLEST) / 2.0).max(24.0);
+    let area = egui::Modal::default_area(id).anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, top));
+    let modal = egui::Modal::new(id).area(area).show(ui.ctx(), |ui| {
         ui.set_width(WIDTH);
+        ui.spacing_mut().item_spacing.y = 8.0;
         ui.label(
             RichText::new("New song")
                 .family(style::titles(ui))
@@ -224,40 +229,25 @@ pub fn show(
         if let Some(difficulties) = &difficulties {
             draft.level_with(difficulties);
         }
-        ui.add_space(12.0);
+        ui.add_space(14.0);
         fields(ui, game, draft);
-        ui.add_space(12.0);
-        if audio_row(ui, draft) {
+        if audio_row(ui, draft, no_drops) {
             answer = Some(Answer::ChooseAudio);
         }
-        ui.add_space(12.0);
+        ui.add_space(14.0);
         match &difficulties {
             Some(difficulties) => levels(ui, draft, difficulties),
             None => charts(ui, draft),
         }
         if let Some(error) = &draft.error {
-            ui.colored_label(style::WARN, error);
-        }
-        ui.add_space(14.0);
-        ui.separator();
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            ui.label(style::glyph(ui, style::icon::MUSIC_NOTES).color(style::WEAK_TEXT));
-            ui.add(
-                egui::Label::new(
-                    RichText::new(if no_drops {
-                        "Choose an audio file; its tags fill in the title and artist. Dragging \
-                         files in doesn't work under Wayland yet."
-                    } else {
-                        "Drop an audio file here, or choose one; its tags fill in the title and \
-                         artist."
-                    })
-                    .small()
-                    .color(style::WEAK_TEXT),
-                )
-                .wrap(),
+            row(
+                ui,
+                |_| {},
+                |ui, ()| note(ui, RichText::new(error).color(style::WARN)),
             );
-        });
+        }
+        ui.add_space(10.0);
+        ui.separator();
         ui.add_space(10.0);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let song = draft.song();
@@ -279,47 +269,75 @@ pub fn show(
 /// The layout every chart shares, with a sketch of its lanes, and the title and artist.
 fn fields(ui: &mut Ui, game: &dyn RulesetPlugin, draft: &mut Draft) {
     let layouts = game.layouts();
-    egui::Grid::new("new song fields")
-        .num_columns(2)
-        .min_col_width(CAPTION_W)
-        .spacing([12.0, 8.0])
-        .show(ui, |ui| {
-            let caption = ui.weak(game.layout_kind());
-            ui.horizontal(|ui| {
-                let chosen = layouts.get(draft.layout).map(|layout| layout.name.as_str());
-                egui::ComboBox::from_id_salt("layout")
-                    .selected_text(chosen.unwrap_or_default())
-                    .width(170.0)
-                    .show_ui(ui, |ui| {
-                        for (index, layout) in layouts.iter().enumerate() {
-                            ui.selectable_value(&mut draft.layout, index, &layout.name);
-                        }
-                    })
-                    .response
-                    .labelled_by(caption.id);
-                if let Some(layout) = layouts.get(draft.layout) {
-                    let counted = layout.name.contains("lane");
-                    lanes(ui, layout.lanes.into(), !counted);
-                }
-            });
-            ui.end_row();
-            for (label, text, blank) in [
-                ("Title", &mut draft.title, "Untitled"),
-                ("Artist", &mut draft.artist, "Unknown artist"),
-            ] {
-                let caption = ui.weak(label);
+    row(
+        ui,
+        |ui| ui.weak(game.layout_kind()).id,
+        |ui, caption| {
+            let chosen = layouts.get(draft.layout).map(|layout| layout.name.as_str());
+            egui::ComboBox::from_id_salt("layout")
+                .selected_text(chosen.unwrap_or_default())
+                .width(170.0)
+                .show_ui(ui, |ui| {
+                    for (index, layout) in layouts.iter().enumerate() {
+                        ui.selectable_value(&mut draft.layout, index, &layout.name);
+                    }
+                })
+                .response
+                .labelled_by(caption);
+            if let Some(layout) = layouts.get(draft.layout) {
+                let counted = layout.name.contains("lane");
+                lanes(ui, layout.lanes.into(), !counted);
+            }
+        },
+    );
+    for (label, text, blank) in [
+        ("Title", &mut draft.title, "Untitled"),
+        ("Artist", &mut draft.artist, "Unknown artist"),
+    ] {
+        row(
+            ui,
+            |ui| ui.weak(label).id,
+            |ui, caption| {
                 let field = egui::TextEdit::singleline(text)
                     .hint_text(blank)
-                    .desired_width(WIDTH - CAPTION_W - 12.0);
-                ui.add(field).labelled_by(caption.id);
-                ui.end_row();
-            }
-        });
+                    .desired_width(FIELD_W);
+                ui.add(field).labelled_by(caption);
+            },
+        );
+    }
 }
 
-/// How wide the dialog and its captions are.
+/// One row of the dialog: what `caption` draws in the caption column, then what `body` draws
+/// from the edge every field starts at, handed what `caption` returned.
+fn row<C, R>(
+    ui: &mut Ui,
+    caption: impl FnOnce(&mut Ui) -> C,
+    body: impl FnOnce(&mut Ui, C) -> R,
+) -> R {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = GAP;
+        let size = egui::vec2(CAPTION_W, ui.spacing().interact_size.y);
+        let layout = egui::Layout::left_to_right(egui::Align::Center);
+        let made = ui
+            .allocate_ui_with_layout(size, layout, |ui| {
+                ui.set_min_width(CAPTION_W);
+                caption(ui)
+            })
+            .inner;
+        body(ui, made)
+    })
+    .inner
+}
+
+/// How wide the dialog and its captions are, and the gap between a caption and its field.
 const WIDTH: f32 = 500.0;
-const CAPTION_W: f32 = 64.0;
+const CAPTION_W: f32 = 88.0;
+const GAP: f32 = 12.0;
+/// How wide a field reaching the dialog's right edge is.
+const FIELD_W: f32 = WIDTH - CAPTION_W - GAP;
+/// About how tall the dialog grows, for the game with the most rows; its top stays where this
+/// height would be centred.
+const TALLEST: f32 = 600.0;
 
 /// The games, side by side as one segmented control, the one chosen in the accent.
 fn choose_game(ui: &mut Ui, games: &[&'static dyn RulesetPlugin], draft: &mut Draft) {
@@ -358,39 +376,50 @@ fn choose_game(ui: &mut Ui, games: &[&'static dyn RulesetPlugin], draft: &mut Dr
         });
 }
 
-/// The audio the song plays, and a way to choose it or take it away. Says whether the user asked
-/// to choose it.
-fn audio_row(ui: &mut Ui, draft: &mut Draft) -> bool {
+/// The audio the song plays, a way to choose it or take it away, and how dropping one fills in
+/// the title and artist. Says whether the user asked to choose it.
+fn audio_row(ui: &mut Ui, draft: &mut Draft, no_drops: bool) -> bool {
     let mut choose = false;
-    ui.horizontal(|ui| {
-        ui.add_sized(
-            egui::vec2(CAPTION_W, 20.0),
-            egui::Label::new(RichText::new("Audio").color(style::WEAK_TEXT)),
-        );
-        let named = draft
-            .audio
-            .as_ref()
-            .and_then(|file| file.file_name())
-            .map(|name| name.to_string_lossy().into_owned());
-        match named {
-            Some(name) => {
-                ui.label(style::glyph(ui, style::icon::MUSIC_NOTES).color(style::ACCENT));
-                ui.label(name);
-                if style::quiet_icon(ui, style::icon::X, "Remove the audio", "Remove the audio")
-                    .clicked()
-                {
-                    draft.audio = None;
+    row(
+        ui,
+        |ui| ui.weak("Audio"),
+        |ui, _| {
+            let named = draft
+                .audio
+                .as_ref()
+                .and_then(|file| file.file_name())
+                .map(|name| name.to_string_lossy().into_owned());
+            match named {
+                Some(name) => {
+                    ui.label(style::glyph(ui, style::icon::MUSIC_NOTES).color(style::ACCENT));
+                    ui.label(name);
+                    if style::quiet_icon(ui, style::icon::X, "Remove the audio", "Remove the audio")
+                        .clicked()
+                    {
+                        draft.audio = None;
+                    }
+                }
+                None => {
+                    ui.weak("None yet");
                 }
             }
-            None => {
-                ui.weak("None yet");
-            }
-        }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            choose =
-                style::icon_button(ui, style::icon::FOLDER_OPEN, "Choose audio…", false).clicked();
-        });
-    });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                choose = style::icon_button(ui, style::icon::FOLDER_OPEN, "Choose audio…", false)
+                    .clicked();
+            });
+        },
+    );
+    let hint = if no_drops {
+        "Choose an audio file; its tags fill in the title and artist. Dragging files in doesn't \
+         work under Wayland yet."
+    } else {
+        "Drop an audio file here, or choose one; its tags fill in the title and artist."
+    };
+    row(
+        ui,
+        |_| {},
+        |ui, ()| note(ui, RichText::new(hint).small().color(style::WEAK_TEXT)),
+    );
     choose
 }
 
@@ -414,92 +443,120 @@ fn lanes(ui: &mut Ui, count: u16, say: bool) {
 
 /// The charts to start, each a name that can change or go, and a way to add another.
 fn charts(ui: &mut Ui, draft: &mut Draft) {
-    ui.label(style::title(ui, "Charts"));
-    ui.weak("Each gets every lane of the layout.");
-    ui.add_space(6.0);
+    heading(ui, "Each gets every lane of the layout.");
     let mut removed = None;
     for (index, name) in draft.charts.iter_mut().enumerate() {
-        ui.horizontal(|ui| {
-            let caption = ui.label(
-                RichText::new(format!("Chart {}", index + 1))
-                    .small()
-                    .color(style::WEAK_TEXT),
-            );
-            let field = egui::TextEdit::singleline(name).desired_width(WIDTH - CAPTION_W - 44.0);
-            ui.add(field).labelled_by(caption.id);
-            let remove = style::quiet_icon(
-                ui,
-                style::icon::X,
-                &format!("Remove {name}"),
-                "Remove this chart",
-            );
-            if remove.clicked() {
-                removed = Some(index);
-            }
-        });
+        row(
+            ui,
+            |ui| ui.weak(format!("Chart {}", index + 1)).id,
+            |ui, caption| {
+                // The remove button is a glyph within the button padding at each side.
+                let icon = 14.0 + 2.0 * ui.spacing().button_padding.x;
+                let field = egui::TextEdit::singleline(name)
+                    .desired_width(ui.available_width() - icon - GAP);
+                ui.add(field).labelled_by(caption);
+                let remove = style::quiet_icon(
+                    ui,
+                    style::icon::X,
+                    &format!("Remove {name}"),
+                    "Remove this chart",
+                );
+                if remove.clicked() {
+                    removed = Some(index);
+                }
+            },
+        );
     }
     if let Some(index) = removed {
         draft.charts.remove(index);
     }
-    if style::icon_button(ui, style::icon::PLUS, "Add a chart", false).clicked() {
-        draft
-            .charts
-            .push(format!("Chart {}", draft.charts.len() + 1));
-    }
+    row(
+        ui,
+        |_| {},
+        |ui, ()| {
+            if style::icon_button(ui, style::icon::PLUS, "Add a chart", false).clicked() {
+                draft
+                    .charts
+                    .push(format!("Chart {}", draft.charts.len() + 1));
+            }
+        },
+    );
+}
+
+/// `text` from the field edge, wrapped short of the dialog's right edge. A wrapping label laid
+/// out along a row would start its lines back at the row's left, so it gets a column of its own.
+fn note(ui: &mut Ui, text: RichText) {
+    ui.vertical(|ui| {
+        ui.set_max_width(FIELD_W);
+        ui.add(egui::Label::new(text).wrap());
+    });
+}
+
+/// The charts section's title, and what its rows make.
+fn heading(ui: &mut Ui, about: &str) {
+    ui.label(style::title(ui, "Charts"));
+    ui.add_space(-4.0);
+    ui.weak(about);
+    ui.add_space(2.0);
 }
 
 /// The game's standard levels, each checked for a chart and named, and presets that check and
 /// name them as a game or its community does.
 fn levels(ui: &mut Ui, draft: &mut Draft, difficulties: &Difficulties) {
-    ui.label(style::title(ui, "Charts"));
-    ui.weak("One for each level checked, called what its game calls it.");
-    ui.add_space(6.0);
-    ui.horizontal(|ui| {
-        let caption = ui.add_sized(
-            egui::vec2(CAPTION_W, 20.0),
-            egui::Label::new(RichText::new("Preset").color(style::WEAK_TEXT)),
-        );
-        let chosen = draft.preset(difficulties);
-        let shown = chosen
-            .and_then(|index| difficulties.presets.get(index))
-            .map_or("Your own", |preset| preset.name.as_str());
-        let mut picked = None;
-        egui::ComboBox::from_id_salt("difficulty preset")
-            .selected_text(shown)
-            .width(210.0)
-            .show_ui(ui, |ui| {
-                for (index, preset) in difficulties.presets.iter().enumerate() {
-                    if ui
-                        .selectable_label(chosen == Some(index), &preset.name)
-                        .clicked()
-                    {
-                        picked = Some(index);
+    heading(
+        ui,
+        "One for each level checked, called what its game calls it.",
+    );
+    let chosen = draft.preset(difficulties);
+    let mut picked = None;
+    row(
+        ui,
+        |ui| ui.weak("Preset").id,
+        |ui, caption| {
+            let shown = chosen
+                .and_then(|index| difficulties.presets.get(index))
+                .map_or("Your own", |preset| preset.name.as_str());
+            egui::ComboBox::from_id_salt("difficulty preset")
+                .selected_text(shown)
+                .width(210.0)
+                .show_ui(ui, |ui| {
+                    for (index, preset) in difficulties.presets.iter().enumerate() {
+                        if ui
+                            .selectable_label(chosen == Some(index), &preset.name)
+                            .clicked()
+                        {
+                            picked = Some(index);
+                        }
                     }
-                }
-            })
-            .response
-            .labelled_by(caption.id);
-        if let Some(index) = picked {
-            draft.choose(difficulties, index);
-        }
-    });
-    for pick in &mut draft.picks {
-        ui.horizontal(|ui| {
-            ui.add_sized(
-                egui::vec2(CAPTION_W, 20.0),
-                egui::Checkbox::new(&mut pick.on, pick.level.as_str()),
-            );
-            let field = egui::TextEdit::singleline(&mut pick.name)
-                .hint_text(pick.level.as_str())
-                .desired_width(WIDTH - CAPTION_W - 12.0);
-            ui.add_enabled(pick.on, field).widget_info(|| {
-                egui::WidgetInfo::labeled(
-                    egui::WidgetType::TextEdit,
-                    pick.on,
-                    format!("{} chart name", pick.level),
-                )
-            });
-        });
+                })
+                .response
+                .labelled_by(caption);
+        },
+    );
+    if let Some(index) = picked {
+        draft.choose(difficulties, index);
+    }
+    for Pick { on, name, level } in &mut draft.picks {
+        let level = level.as_str();
+        row(
+            ui,
+            |ui| {
+                style::check(ui, on, level);
+                *on
+            },
+            |ui, on| {
+                let field = egui::TextEdit::singleline(name)
+                    .hint_text(level)
+                    .desired_width(FIELD_W);
+                ui.add_enabled(on, field).widget_info(|| {
+                    egui::WidgetInfo::labeled(
+                        egui::WidgetType::TextEdit,
+                        on,
+                        format!("{level} chart name"),
+                    )
+                });
+            },
+        );
     }
 }
 

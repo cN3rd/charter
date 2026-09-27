@@ -351,6 +351,73 @@ pub fn switch(ui: &mut Ui, on: &mut bool, name: &str) -> egui::Response {
     response
 }
 
+/// A checkbox before `text`, both one target: a sunken square with an edge when off, filled in
+/// the accent with a white tick when on.
+pub fn check(ui: &mut Ui, on: &mut bool, text: &str) -> egui::Response {
+    let square_w = 14.0;
+    let galley = egui::WidgetText::from(text).into_galley(
+        ui,
+        Some(egui::TextWrapMode::Extend),
+        f32::INFINITY,
+        egui::TextStyle::Body,
+    );
+    let gap = 7.0;
+    let size = vec2(
+        square_w + gap + galley.size().x,
+        ui.spacing().interact_size.y.max(galley.size().y),
+    );
+    let (rect, mut response) = ui.allocate_exact_size(size, egui::Sense::click());
+    if response.clicked() {
+        *on = !*on;
+        response.mark_changed();
+    }
+    let (state, name, enabled) = (*on, text.to_owned(), ui.is_enabled());
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, enabled, state, &name)
+    });
+    if ui.is_rect_visible(rect) {
+        let square = egui::Rect::from_min_size(
+            egui::pos2(rect.left(), rect.center().y - square_w / 2.0),
+            vec2(square_w, square_w),
+        );
+        let hovered = response.hovered() && enabled;
+        let painter = ui.painter();
+        if *on {
+            let fill = if hovered {
+                ACCENT_FILL.gamma_multiply(1.15)
+            } else {
+                ACCENT_FILL
+            };
+            painter.rect_filled(square, 3.0, fill);
+            let at = |x: f32, y: f32| square.min + vec2(x, y) * square_w;
+            painter.line(
+                vec![at(0.24, 0.52), at(0.43, 0.7), at(0.76, 0.32)],
+                Stroke::new(1.8, Color32::WHITE),
+            );
+        } else {
+            let edge = Color32::from_gray(if hovered { 140 } else { 96 });
+            painter.rect_filled(square, 3.0, FIELD);
+            painter.rect_stroke(
+                square,
+                3.0,
+                Stroke::new(1.0, edge),
+                egui::StrokeKind::Inside,
+            );
+        }
+        if response.has_focus() {
+            let ring = Stroke::new(2.0, ACCENT);
+            painter.rect_stroke(square.expand(2.0), 5.0, ring, egui::StrokeKind::Outside);
+        }
+        let color = if enabled { TEXT } else { WEAK_TEXT };
+        let text_at = egui::pos2(
+            square.right() + gap,
+            rect.center().y - galley.size().y / 2.0,
+        );
+        painter.galley(text_at, galley, color);
+    }
+    response
+}
+
 /// A group of toolbar controls on a sunken strip, like a section of a hardware panel.
 pub fn chip<R>(ui: &mut Ui, body: impl FnOnce(&mut Ui) -> R) -> R {
     egui::Frame::new()

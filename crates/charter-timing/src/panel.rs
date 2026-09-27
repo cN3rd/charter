@@ -65,8 +65,8 @@ pub(crate) fn toolbar(ui: &mut Ui, window: &mut TimingWindow) {
         rows.response.labelled_by(caption.id);
         ui.separator();
         ui.weak("Snap");
-        ui.checkbox(&mut window.snap_grid, "Grid");
-        ui.checkbox(&mut window.snap_onset, "Onset");
+        style::check(ui, &mut window.snap_grid, "Grid");
+        style::check(ui, &mut window.snap_onset, "Onset");
         ui.separator();
         let caption = ui.weak("Onsets");
         let sensitivity = egui::Slider::new(&mut window.sensitivity, 0.0..=1.0)
@@ -74,9 +74,9 @@ pub(crate) fn toolbar(ui: &mut Ui, window: &mut TimingWindow) {
             .text("least strength");
         ui.add(sensitivity).labelled_by(caption.id);
         ui.separator();
-        ui.checkbox(&mut window.audition, "Audition")
+        style::check(ui, &mut window.audition, "Audition")
             .on_hover_text("Play from a beat before each anchor added, with the metronome");
-        ui.checkbox(&mut window.follow, "Follow")
+        style::check(ui, &mut window.follow, "Follow")
             .on_hover_text("Keep the playhead on the second row while playing (O)");
     });
 }
