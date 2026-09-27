@@ -547,16 +547,14 @@ fn sounds(ui: &mut egui::Ui, settings: &mut Settings) -> Option<Asked> {
             .response
             .labelled_by(caption);
     });
-    let about = "How much later than it plays a sound is heard, which the cursor takes off, and \
-        how much later than that a tap comes, which notes placed while playing take off.";
-    row(ui, "Latency", about, |ui, _| {
+    let about = format!(
+        "Audio {:+.0} ms, input {:+.0} ms. Align the flash to the click, then tap along.",
+        settings.audio_latency_ms, settings.input_latency_ms
+    );
+    row(ui, "Latency", &about, |ui, _| {
         if ui.button("Calibrate…").clicked() {
             preview = Some(Asked::Calibrate);
         }
-        ui.label(format!(
-            "audio {:+.0} ms, input {:+.0} ms",
-            settings.audio_latency_ms, settings.input_latency_ms
-        ));
     });
     let name = "Metronome follows the grid";
     let about =
