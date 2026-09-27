@@ -139,10 +139,15 @@ impl Song {
         if kept.len() == before.len() {
             return Ok(());
         }
-        if kept.is_empty() {
+        let Some(last) = kept.last() else {
             return Err(Refusal::OnlyTempo);
-        }
-        self.repin(&kept, self.tail(), false)
+        };
+        let tail = if before.last().is_some_and(|old| old.tick != last.tick) {
+            Bpm::nearest(self.timing().tempo_at(last.tick)).ok_or(Refusal::NotWhole)?
+        } else {
+            self.tail()
+        };
+        self.repin(&kept, tail, false)
     }
 
     /// Removes the anchor on `tick`; see [`Song::unsync_anchors`].
@@ -503,6 +508,21 @@ mod tests {
         song.unsync(at(1920)).unwrap();
         let merged = json!([bpm_event(0, 120.0), bpm_event(3840, 120.0)]);
         assert_eq!(song_events(&song), merged);
+    }
+
+    #[test]
+    fn removing_the_last_anchor_keeps_the_preceding_tempo() {
+        let mut song = timed(
+            &json!([
+                bpm_event(0, 120.0),
+                bpm_event(1920, 150.0),
+                bpm_event(3840, 200.0)
+            ]),
+            None,
+        );
+        song.unsync(at(3840)).unwrap();
+        assert_eq!(song.tail_bpm(), Some(Bpm::try_from(150.0).unwrap()));
+        assert!((song.timing().time_at(at(2400)).seconds() - 1.2).abs() < 1e-6);
     }
 
     #[test]
