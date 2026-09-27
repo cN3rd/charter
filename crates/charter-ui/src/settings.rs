@@ -282,7 +282,23 @@ pub fn show(ctx: &egui::Context, settings: &mut Settings, open: &mut bool) -> Op
         return None;
     }
     let mut preview = None;
-    let page_height = (ctx.content_rect().height() - 150.0).max(120.0);
+    let space = ctx.content_rect().size();
+    let compact = space.x < 650.0;
+    let width = if compact {
+        (space.x - 24.0).max(260.0)
+    } else {
+        620.0
+    };
+    let height = if compact {
+        (space.y - 24.0).max(180.0)
+    } else {
+        360.0
+    };
+    let page_height = if compact {
+        (height - 125.0).max(60.0)
+    } else {
+        (space.y - 150.0).max(120.0)
+    };
     // Its own header, the title over the sidebar and a close button over the page, rather than
     // egui's title bar, which would sit flush against the edges the window draws to.
     egui::Window::new("Settings")
@@ -292,17 +308,30 @@ pub fn show(ctx: &egui::Context, settings: &mut Settings, open: &mut bool) -> Op
         .pivot(egui::Align2::CENTER_CENTER)
         .default_pos(ctx.content_rect().center())
         .frame(egui::Frame::window(&ctx.global_style()).inner_margin(egui::Margin::same(0)))
-        .fixed_size([620.0, 360.0])
+        .fixed_size([width, height])
         .show(ctx, |ui| {
-            ui.horizontal_top(|ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
-                sidebar(ui, &mut page);
+            let mut contents = |ui: &mut egui::Ui,
+                                page: &mut Page,
+                                preview: &mut Option<Asked>,
+                                open: &mut bool| {
                 egui::Frame::new()
-                    .inner_margin(egui::Margin::symmetric(24, 18))
+                    .inner_margin(egui::Margin::symmetric(if compact { 16 } else { 24 }, 18))
                     .show(ui, |ui| {
                         ui.vertical(|ui| {
                             ui.spacing_mut().item_spacing = egui::vec2(8.0, 4.0);
-                            ui.set_width(PAGE_W);
+                            ui.set_width(if compact { width - 32.0 } else { PAGE_W });
+                            if compact {
+                                let caption = ui.weak("Page");
+                                egui::ComboBox::from_id_salt("settings page")
+                                    .selected_text(page.words().0)
+                                    .show_ui(ui, |ui| {
+                                        for choice in Page::ALL {
+                                            ui.selectable_value(page, choice, choice.words().0);
+                                        }
+                                    })
+                                    .response
+                                    .labelled_by(caption.id);
+                            }
                             let (_, _, title, about) = page.words();
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new(title).family(titles(ui)).size(16.0));
@@ -325,12 +354,21 @@ pub fn show(ctx: &egui::Context, settings: &mut Settings, open: &mut bool) -> Op
                                 .show(ui, |ui| match page {
                                     Page::Editing => editing(ui, settings),
                                     Page::Display => display(ui, settings),
-                                    Page::Sounds => preview = sounds(ui, settings),
+                                    Page::Sounds => *preview = sounds(ui, settings),
                                     Page::Autosave => autosave(ui, settings),
                                 });
                         });
                     });
-            });
+            };
+            if compact {
+                contents(ui, &mut page, &mut preview, open);
+            } else {
+                ui.horizontal_top(|ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
+                    sidebar(ui, &mut page);
+                    contents(ui, &mut page, &mut preview, open);
+                });
+            }
         });
     ctx.data_mut(|data| data.insert_temp(page_id, page));
     preview
@@ -386,9 +424,10 @@ fn sidebar(ui: &mut egui::Ui, page: &mut Page) {
 /// the name.
 fn row(ui: &mut egui::Ui, name: &str, about: &str, control: impl FnOnce(&mut egui::Ui, egui::Id)) {
     ui.horizontal(|ui| {
+        let caption_width = (ui.available_width() - CONTROL_W).max(80.0);
         let caption = ui
             .vertical(|ui| {
-                ui.set_width(PAGE_W - CONTROL_W);
+                ui.set_width(caption_width);
                 let caption = ui.label(name).id;
                 ui.label(RichText::new(about).small().color(WEAK_TEXT));
                 caption
@@ -658,6 +697,31 @@ fn percent(factor: f32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+
+    #[test]
+    fn settings_pages_and_controls_fit_a_narrow_window() {
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(400.0, 300.0))
+            .build_ui_state(
+                |ui, (settings, open): &mut (Settings, bool)| {
+                    show(ui.ctx(), settings, open);
+                },
+                (Settings::default(), true),
+            );
+        harness.run();
+        harness.get_by_label("Page").click();
+        harness.run();
+        let display = harness.get_by_label("Display");
+        assert!(display.rect().left() >= 0.0, "{:?}", display.rect());
+        assert!(display.rect().right() <= 400.0, "{:?}", display.rect());
+        display.click();
+        harness.run();
+        let size = harness.get_by_label("Interface size");
+        assert!(size.rect().left() >= 0.0, "{:?}", size.rect());
+        assert!(size.rect().right() <= 400.0, "{:?}", size.rect());
+    }
 
     #[test]
     fn settings_open_on_sixteenths_at_the_usual_zoom_moving_on_after_notes() {

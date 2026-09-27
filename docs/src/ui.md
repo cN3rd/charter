@@ -99,7 +99,8 @@ Sounds and Autosave, each setting with a line on what it does and on and off cho
 long pages scroll inside the window so their controls remain reachable on shorter screens;
 the transport drops secondary tempo, snap, speed, grid and zoom controls as the window narrows,
 leaving playback, position, sound and settings reachable; the menus, keys and settings pages
-still offer the hidden controls.
+still offer the hidden controls. In a narrow window, Settings puts its page choice above the
+controls rather than beside them, so the controls remain within the window.
 While settings, shortcuts or import timing is open, lane keys do not edit the song behind it.
 The new-song dialog picks the game from a segmented control, sketches the layout's lanes, and takes
 the song's audio dropped on it or chosen. Its form scrolls as charts are added, keeping Create and
