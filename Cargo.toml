@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/charter-audio",
+    "crates/charter-beatthis-burn",
     "crates/charter-core",
     "crates/charter-editor",
     "crates/charter-style",
@@ -20,6 +21,7 @@ rust-version = "1.95"
 
 [workspace.dependencies]
 charter-audio = { path = "crates/charter-audio" }
+charter-beatthis-burn = { path = "crates/charter-beatthis-burn" }
 charter-core = { path = "crates/charter-core" }
 charter-editor = { path = "crates/charter-editor" }
 charter-style = { path = "crates/charter-style" }
@@ -35,6 +37,15 @@ serde_json = { version = "1.0.151", features = ["float_roundtrip"] }
 thiserror = "2.0.20"
 symphonia-wrap = { path = "third-party/symphonia-wrap" }
 rustfft = "6.4.1"
+# ponytail: CPU inference only; the flex backend runs everywhere charter does, and a GPU backend
+# is a feature away if the beat tracker proves too slow.
+burn = { version = "0.21.0", default-features = false, features = ["std", "flex"] }
+burn-store = { version = "0.21.0", default-features = false, features = ["std", "pytorch", "safetensors"] }
+# ponytail: named only for its default features, SIMD and threads, which burn's own defaults would
+# otherwise be the only way to turn on.
+burn-flex = "0.21.0"
+rubato = "5.0.0"
+audioadapter-buffers = "5.1.0"
 egui = "0.36.2"
 eframe = "0.36.2"
 rfd = "0.17.2"
@@ -125,4 +136,77 @@ opt-level = 3
 opt-level = 3
 
 [profile.dev.package."symphonia-wrap"]
+opt-level = 3
+
+# The beat tracker runs a 20M-parameter network on the CPU; unoptimized, one song takes minutes.
+# Burn's kernels are generic, so they compile in the crate that names the backend: the tracker's own
+# crate needs optimizing too. Its API is not generic, so nothing past it instantiates them.
+
+[profile.dev.package."charter-beatthis-burn"]
+opt-level = 3
+
+[profile.dev.package."burn-backend"]
+opt-level = 3
+
+[profile.dev.package."burn-core"]
+opt-level = 3
+
+[profile.dev.package."burn-flex"]
+opt-level = 3
+
+[profile.dev.package."burn-nn"]
+opt-level = 3
+
+[profile.dev.package."burn-std"]
+opt-level = 3
+
+[profile.dev.package."burn-tensor"]
+opt-level = 3
+
+[profile.dev.package."burn-store"]
+opt-level = 3
+
+[profile.dev.package."gemm"]
+opt-level = 3
+
+[profile.dev.package."gemm-common"]
+opt-level = 3
+
+[profile.dev.package."gemm-f32"]
+opt-level = 3
+
+[profile.dev.package."pulp"]
+opt-level = 3
+
+[profile.dev.package."dyn-stack"]
+opt-level = 3
+
+[profile.dev.package."aligned-vec"]
+opt-level = 3
+
+[profile.dev.package."rayon"]
+opt-level = 3
+
+[profile.dev.package."rayon-core"]
+opt-level = 3
+
+[profile.dev.package."bytemuck"]
+opt-level = 3
+
+[profile.dev.package."num-traits"]
+opt-level = 3
+
+[profile.dev.package."macerator"]
+opt-level = 3
+
+[profile.dev.package."half"]
+opt-level = 3
+
+[profile.dev.package."rubato"]
+opt-level = 3
+
+[profile.dev.package."realfft"]
+opt-level = 3
+
+[profile.dev.package."rustfft"]
 opt-level = 3

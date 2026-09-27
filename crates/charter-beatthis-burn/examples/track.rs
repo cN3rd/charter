@@ -1,0 +1,53 @@
+//! Tracks the beats of one audio file with the released weights, for checking the network
+//! against the reference by hand:
+//!
+//!     cargo run -p charter-beatthis-burn --release --example track -- final0.ckpt song.ogg [logits.f32]
+//!
+//! With a third path it writes each frame's beat logit there, little-endian, then the downbeat
+//! logits.
+
+use std::path::Path;
+use std::time::Instant;
+
+use charter_beatthis_burn::Tracker;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<String> = std::env::args().collect();
+    let (Some(weights), Some(audio)) = (args.get(1), args.get(2)) else {
+        return Err("usage: track <final0.ckpt> <audio> [logits.f32]".into());
+    };
+    let extension = Path::new(audio).extension().and_then(|ext| ext.to_str());
+    let track = charter_audio::Track::decode(std::fs::read(audio)?, extension)?;
+    let mono: Vec<f32> = track.frames().iter().map(|[l, r]| (l + r) / 2.0).collect();
+    let started = Instant::now();
+    let tracker = Tracker::from_checkpoint(Path::new(weights))?;
+    println!("loaded in {:.2?}", started.elapsed());
+    let started = Instant::now();
+    let found = tracker.track(&mono, track.rate().get())?;
+    println!(
+        "tracked {:.1} s of audio in {:.2?}",
+        track.seconds(),
+        started.elapsed()
+    );
+    let first = |times: &[f64], count| times.iter().take(count).copied().collect::<Vec<_>>();
+    println!(
+        "{} beats, first {:?}",
+        found.beats.len(),
+        first(&found.beats, 8)
+    );
+    println!(
+        "{} downbeats, first {:?}",
+        found.downbeats.len(),
+        first(&found.downbeats, 4)
+    );
+    if let Some(out) = args.get(3) {
+        let bytes: Vec<u8> = found
+            .beat_logits
+            .iter()
+            .chain(&found.downbeat_logits)
+            .flat_map(|logit| logit.to_le_bytes())
+            .collect();
+        std::fs::write(out, bytes)?;
+    }
+    Ok(())
+}
