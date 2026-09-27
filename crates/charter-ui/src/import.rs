@@ -55,14 +55,33 @@ pub(crate) fn show(
     let formats = formats(plugins);
     let mut open = import.open;
     let mut done = false;
+    let space = ctx.content_rect().size();
+    let compact = space.x < 600.0 || space.y < 500.0;
+    let width = 560.0_f32.min((space.x - 24.0).max(260.0));
+    let height = 460.0_f32.min((space.y - 24.0).max(180.0));
     egui::Window::new("Import timing")
         .open(&mut open)
         .collapsible(false)
         .pivot(egui::Align2::CENTER_CENTER)
         .default_pos(ctx.content_rect().center())
-        .default_size([560.0, 460.0])
+        .default_size([width, height])
         .show(ctx, |ui| {
-            done = body(ui, song, &formats, import, actions);
+            if compact {
+                egui::ScrollArea::vertical()
+                    .max_height(height - 42.0)
+                    .show(ui, |ui| {
+                        done = body(
+                            ui,
+                            song,
+                            &formats,
+                            import,
+                            actions,
+                            (height - 220.0).max(60.0),
+                        );
+                    });
+            } else {
+                done = body(ui, song, &formats, import, actions, 200.0);
+            }
         });
     import.open = open && !done;
 }
@@ -74,6 +93,7 @@ fn body(
     formats: &[(&str, &'static dyn RulesetPlugin)],
     import: &mut Import,
     actions: &mut Vec<Action>,
+    text_height: f32,
 ) -> bool {
     import.format = import.format.min(formats.len().saturating_sub(1));
     let Some(&(name, plugin)) = formats.get(import.format) else {
@@ -102,7 +122,7 @@ fn body(
     ui.weak("Paste the section that holds the timing, or a whole file.");
     ui.add_space(4.0);
     egui::ScrollArea::vertical()
-        .max_height(200.0)
+        .max_height(text_height)
         .show(ui, |ui| {
             ui.add(
                 egui::TextEdit::multiline(&mut import.text)
@@ -225,6 +245,56 @@ fn trimmed(value: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+
+    #[derive(Debug)]
+    struct Importer;
+
+    impl RulesetPlugin for Importer {
+        fn id(&self) -> &'static str {
+            "importer"
+        }
+
+        fn check(
+            &self,
+            _: &charter_core::ValidDocument,
+        ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            Ok(())
+        }
+
+        fn timing_format(&self) -> Option<&str> {
+            Some("test timing")
+        }
+    }
+
+    #[test]
+    fn import_can_be_cancelled_in_a_narrow_window() {
+        let plugins: &[&dyn RulesetPlugin] = &[&Importer];
+        let song = Song::open(&charter_editor::demo::song().to_json().unwrap(), plugins).unwrap();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(400.0, 300.0))
+            .build_ui_state(
+                move |ui, (import, actions): &mut (Import, Vec<Action>)| {
+                    show(ui.ctx(), Some(&song), plugins, import, actions);
+                },
+                (
+                    Import {
+                        open: true,
+                        ..Import::default()
+                    },
+                    Vec::new(),
+                ),
+            );
+        harness.run();
+        let cancel = harness.get_by_label("Cancel");
+        assert!(cancel.rect().left() >= 0.0, "{:?}", cancel.rect());
+        assert!(cancel.rect().right() <= 400.0, "{:?}", cancel.rect());
+        assert!(cancel.rect().bottom() <= 300.0, "{:?}", cancel.rect());
+        cancel.click();
+        harness.run();
+        assert!(!harness.state().0.open);
+    }
 
     #[test]
     fn milliseconds_show_without_trailing_zeros() {

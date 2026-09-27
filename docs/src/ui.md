@@ -346,7 +346,8 @@ and the notes over a waveform that stays put.
   inside a measure, since osu! starts a measure at each; the first sets the offset. Green lines
   become `osu_mania.scroll_speed` in an osu!mania song, reset to 1 at each red line as osu! does,
   and are left out of any other game's, which the window says, as it does for volumes, hit sounds
-  and kiai.
+  and kiai. On a small window, the import form scrolls so its Cancel and Replace actions can still
+  be reached.
 - The ruler numbers measures from the time-signature grid and labels markers. Measure 0 is the
   one holding tick 0, and measures before it count down from -1. Sections and bookmarks draw as
   lines across every column, since the core knows them without the ruleset.
