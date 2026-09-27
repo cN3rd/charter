@@ -26,6 +26,24 @@ impl Song {
             .or_else(|| ticks.first().copied())
     }
 
+    /// Moves the tempo point on `tick` to `seconds` into the audio, keeping its beat, as one
+    /// step. The first point starts the song's grid, so it takes every point along, as the
+    /// offset does; any other moves alone and the tempos on either side follow.
+    ///
+    /// # Errors
+    ///
+    /// Refuses on a read-only song, and when the point would reach or pass a neighbour's moment.
+    pub fn move_point_to(&mut self, tick: Tick, seconds: f64) -> Result<(), Refusal> {
+        if self.timing().anchors.first().map(|anchor| anchor.tick) != Some(tick) {
+            return self.sync(tick, seconds);
+        }
+        let later = seconds - self.timing().time_at(tick).seconds();
+        let start = self.timing().time_at(Tick::new(0)).seconds() + later;
+        let offset = charter_core::Origin::try_from((start * 1e6).round() / 1e6)
+            .map_err(|_| Refusal::NotWhole)?;
+        self.set_offset(offset)
+    }
+
     /// Gives the timing point on `tick` the tempo `bpm`, adding a BPM change to it if it has
     /// none, as one step. Does nothing when it already has that tempo.
     ///
@@ -234,6 +252,23 @@ mod tests {
         song.set_bpm_at(Tick::new(960), tempo(120.0)).unwrap();
         assert_eq!(song_events(&song), events);
         assert!(!song.can_undo());
+    }
+
+    fn moments(song: &Song) -> Vec<f64> {
+        song.anchors().iter().map(|pin| pin.seconds).collect()
+    }
+
+    #[test]
+    fn a_tempo_point_moves_alone_but_the_first_moves_the_whole_grid() {
+        let mut song = timed(&json!([bpm_event(0, 120.0), bpm_event(1920, 120.0)]), None);
+        song.move_point_to(Tick::new(1920), 1.25).unwrap();
+        assert_eq!(moments(&song), [0.0, 1.25]);
+        song.move_point_to(Tick::new(0), 0.5).unwrap();
+        assert_eq!(moments(&song), [0.5, 1.75]);
+        song.undo().unwrap();
+        song.undo().unwrap();
+        assert_eq!(moments(&song), [0.0, 1.0]);
+        assert!(song.move_point_to(Tick::new(1920), -1.0).is_err());
     }
 
     #[test]

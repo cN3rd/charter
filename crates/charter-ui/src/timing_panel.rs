@@ -8,7 +8,7 @@ use charter_editor::Song;
 use egui::{RichText, Ui};
 
 use crate::Action;
-use crate::panels::entry;
+use crate::panels::{clock, entry};
 use crate::style::{self, icon, table};
 
 /// What is being typed into the section's fields, while one has the keyboard.
@@ -276,19 +276,10 @@ fn point_fields(
             .on_hover_text("Where the point is in the audio. A tempo point moves there.");
         let seconds = timing.time_at(tick).seconds();
         if editable && anchored {
-            let start = timing.time_at(Tick::new(0)).seconds();
             let to = |typed: &str| {
-                let at = moment(typed)
-                    .ok_or_else(|| format!("{typed} is not a time, such as 0:26.100"))?;
-                if Some(tick) == first {
-                    // The first point starts the song, so moving it moves the whole grid.
-                    let offset = ((start + at - seconds) * 1e6).round() / 1e6;
-                    Origin::try_from(offset)
-                        .map(Action::SetOffset)
-                        .map_err(|_| format!("{typed} is not a time the song can start at"))
-                } else {
-                    Ok(Action::SyncAt(tick, at))
-                }
+                moment(typed)
+                    .map(|at| Action::MovePointTo(tick, at))
+                    .ok_or_else(|| format!("{typed} is not a time, such as 00:26.100"))
             };
             refused = entry(
                 ui,
@@ -392,20 +383,7 @@ fn bpm_row(
     refused
 }
 
-/// `seconds` as minutes and seconds to the millisecond, such as `1:23.500`.
-fn clock(seconds: f64) -> String {
-    let sign = if seconds < -0.0005 { "-" } else { "" };
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // a song's length
-    let millis = (seconds.abs() * 1000.0).round() as u64;
-    format!(
-        "{sign}{}:{:02}.{:03}",
-        millis / 60_000,
-        millis / 1000 % 60,
-        millis % 1000
-    )
-}
-
-/// A moment typed as seconds, such as `26.1`, or minutes and seconds, such as `0:26.100`.
+/// A moment typed as seconds, such as `26.1`, or minutes and seconds, such as `00:26.100`.
 fn moment(typed: &str) -> Option<f64> {
     let typed = typed.trim();
     let (sign, unsigned) = typed
@@ -508,10 +486,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_moment_shows_as_minutes_and_seconds_and_reads_back_either_way() {
-        assert_eq!(clock(26.1), "0:26.100");
-        assert_eq!(clock(83.0005), "1:23.001");
-        assert_eq!(clock(-0.014), "-0:00.014");
+    fn a_moment_reads_as_seconds_or_minutes_and_seconds() {
         assert_eq!(moment("0:26.25"), Some(26.25));
         assert_eq!(moment("1:23.5"), Some(83.5));
         assert_eq!(moment(" 12.5 "), Some(12.5));

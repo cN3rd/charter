@@ -3,7 +3,7 @@
 
 use std::num::NonZeroU16;
 
-use charter_core::{MarkerKind, ResolvedTime, Tick};
+use charter_core::{MarkerKind, Tick};
 use egui::{self, Align, Layout, RichText, Ui};
 use serde_json::Value;
 
@@ -679,7 +679,7 @@ fn readout(ui: &mut Ui, song: &Song) {
                         format!("Cursor at {at}"),
                     )
                 });
-                let time = clock(timing.time_at(song.cursor()));
+                let time = clock(timing.time_at(song.cursor()).seconds());
                 ui.label(
                     RichText::new(time)
                         .monospace()
@@ -726,8 +726,7 @@ pub fn status_bar(ui: &mut Ui, song: Option<&Song>, (audio, playing): (&str, boo
 }
 
 /// An audio time as minutes, seconds and milliseconds, such as `01:23.456`.
-fn clock(time: ResolvedTime) -> String {
-    let seconds = time.seconds();
+pub(crate) fn clock(seconds: f64) -> String {
     let sign = if seconds < 0.0 { "-" } else { "" };
     let millis = (seconds.abs() * 1000.0).round();
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // whole, positive, small

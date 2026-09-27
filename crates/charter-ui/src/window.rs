@@ -280,8 +280,9 @@ pub(crate) enum Action {
     SetVolumes(charter_audio::Volumes),
     /// Gives the timing point on the tick this tempo.
     SetBpmAt(Tick, charter_core::Bpm),
-    /// Moves the tempo point on the tick to this many seconds into the audio.
-    SyncAt(Tick, f64),
+    /// Moves the tempo point on the tick to this many seconds into the audio, the first one
+    /// taking the whole grid along.
+    MovePointTo(Tick, f64),
     /// Gives the timing point on the tick this meter.
     SetMeterAt(Tick, charter_core::TimeSignature),
     /// Removes the timing point on the tick.
@@ -1355,7 +1356,7 @@ impl Window {
                 song.select_between(ticks.0..=ticks.1, lanes.0..=lanes.1, how);
             }
             Action::SetBpmAt(..)
-            | Action::SyncAt(..)
+            | Action::MovePointTo(..)
             | Action::SetMeterAt(..)
             | Action::RemoveTimingAt(_)
             | Action::SetOffset(_)
@@ -1893,7 +1894,7 @@ fn fresh_timing() -> charter_core::Timing {
 fn retime(song: &mut Song, action: &Action) -> Option<String> {
     let done = match action {
         Action::SetBpmAt(tick, bpm) => song.set_bpm_at(*tick, *bpm),
-        Action::SyncAt(tick, seconds) => song.sync(*tick, *seconds),
+        Action::MovePointTo(tick, seconds) => song.move_point_to(*tick, *seconds),
         Action::SetMeterAt(tick, meter) => song.set_meter_at(*tick, *meter),
         Action::RemoveTimingAt(tick) => song.remove_timing_at(*tick),
         Action::SetOffset(offset) => song.set_offset(*offset),
@@ -3201,7 +3202,7 @@ mod tests {
             .query_all_by_label_contains("Timing point at")
             .count();
         assert_eq!(rows, 5);
-        harness.get_by_label("Timing point at 0:26.100").click();
+        harness.get_by_label("Timing point at 00:26.100").click();
         harness.run();
         assert!(cursor_shows(&harness, "16:0:0"));
         assert_eq!(bpm_field(&harness).value().as_deref(), Some("180"));
@@ -3210,10 +3211,10 @@ mod tests {
     #[test]
     fn a_time_typed_for_a_point_moves_it_in_the_audio() {
         let mut harness = editable_demo();
-        harness.get_by_label("Timing point at 0:26.100").click();
+        harness.get_by_label("Timing point at 00:26.100").click();
         harness.run();
         let time = harness.get_by_role_and_label(Role::TextInput, "Time");
-        assert_eq!(time.value().as_deref(), Some("0:26.100"));
+        assert_eq!(time.value().as_deref(), Some("00:26.100"));
         time.focus();
         harness.run();
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
@@ -3223,14 +3224,14 @@ mod tests {
         harness.key_press(egui::Key::Enter);
         harness.run();
         assert_eq!(anchor_seconds(&harness), [0.0, 26.25]);
-        harness.get_by_label("Timing point at 0:26.250").click();
+        harness.get_by_label("Timing point at 00:26.250").click();
         harness.run();
     }
 
     #[test]
     fn the_starting_bpm_sets_the_first_points_tempo_from_anywhere() {
         let mut harness = editable_demo();
-        harness.get_by_label("Timing point at 0:26.100").click();
+        harness.get_by_label("Timing point at 00:26.100").click();
         harness.run();
         let start = harness.get_by_role_and_label(Role::TextInput, "Starting BPM");
         assert_eq!(start.value().as_deref(), Some("150"));
@@ -4969,16 +4970,25 @@ mod tests {
         );
     }
 
+    fn moments(harness: &Harness<'_, Window>) -> Vec<f64> {
+        let song = harness.state().song.as_ref().unwrap();
+        song.anchors().iter().map(|pin| pin.seconds).collect()
+    }
+
     #[test]
-    fn dragging_a_bpm_change_in_the_timing_column_moves_it() {
+    fn dragging_a_tempo_point_moves_it_to_the_moment_under_the_pointer() {
         let mut harness = timed_song();
+        let before = moments(&harness);
+        let heard = seconds_at(&harness, 1920);
         let x = field(&harness).columns.timing_x();
         let (from, to) = (on_line(&harness, x, 960), on_line(&harness, x, 1920));
         drag(&mut harness, from, to, egui::Modifiers::NONE);
-        assert_eq!(event_ticks(&harness), [Tick::new(0), Tick::new(1920)]);
+        assert_eq!(event_ticks(&harness), [Tick::new(0), Tick::new(960)]);
+        let after = moments(&harness);
+        assert!((after[1] - heard).abs() < 0.01, "{after:?} {heard}");
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
         harness.run();
-        assert_eq!(event_ticks(&harness), [Tick::new(0), Tick::new(960)]);
+        assert_eq!(moments(&harness), before);
     }
 
     #[test]
@@ -5005,17 +5015,23 @@ mod tests {
         drag(&mut harness, from, to, egui::Modifiers::NONE);
         assert_eq!(
             event_ticks(&harness),
-            [Tick::new(0), Tick::new(1920), Tick::new(1920)]
+            [Tick::new(0), Tick::new(960), Tick::new(960)]
         );
     }
 
     #[test]
-    fn the_first_bpm_change_stays_put() {
+    fn dragging_the_first_tempo_point_moves_the_whole_grid() {
         let mut harness = timed_song();
+        let before = moments(&harness);
         let x = field(&harness).columns.timing_x();
         let (from, to) = (on_line(&harness, x, 0), on_line(&harness, x, 480));
+        let later = seconds_at(&harness, 480) - seconds_at(&harness, 0);
         drag(&mut harness, from, to, egui::Modifiers::NONE);
         assert_eq!(event_ticks(&harness), [Tick::new(0), Tick::new(960)]);
+        let after = moments(&harness);
+        for (was, is) in before.iter().zip(&after) {
+            assert!((is - was - later).abs() < 0.01, "{before:?} {after:?}");
+        }
     }
 
     #[test]

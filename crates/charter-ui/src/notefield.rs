@@ -303,15 +303,11 @@ fn handle_at(song: &Song, field: &Field, pos: Pos2) -> Option<Gesture> {
             .map(|(index, _)| index)
     };
     if columns.timing.contains(pos.x) {
-        // The timing point holding the song's first BPM change stays put, so the song keeps a
-        // tempo to start from.
-        let first_bpm = timing.anchors.first().map(|anchor| anchor.tick);
         let points: Vec<Tick> = timing
             .events
             .chunk_by(|a, b| a.tick == b.tick)
             .filter_map(|point| point.first().map(|event| event.tick))
             .chain(timing.anchors.iter().map(|anchor| anchor.tick))
-            .filter(|tick| Some(*tick) != first_bpm)
             .collect();
         return nearest(&mut points.iter().copied().enumerate())
             .and_then(|index| points.get(index).copied())
@@ -530,7 +526,9 @@ pub fn show(
     if let Some(Gesture::MoveTiming { .. } | Gesture::MoveMarker { .. }) = *gesture
         && let Some(latest) = latest
     {
-        drop_guide(&clipped, columns, song, view, latest.y);
+        let free =
+            matches!(*gesture, Some(Gesture::MoveTiming { from }) if anchored(song.timing(), from));
+        drop_guide(&clipped, columns, (song, free), view, latest.y);
     }
     let line = |pos: Pos2| snap_line(song, view, pos);
     if let Some(moving @ Gesture::MoveNotes { .. }) = *gesture
@@ -734,6 +732,11 @@ fn grab(
     Some(((!selected).then_some(note), gesture))
 }
 
+/// Whether the timing point on `tick` is a tempo point, an anchor of the audio.
+fn anchored(timing: Valid<'_, Timing>, tick: Tick) -> bool {
+    timing.anchors.iter().any(|anchor| anchor.tick == tick)
+}
+
 /// What a drag asks for when it lets go at `latest`: the hold drawn to there, the handle
 /// dropped on the line there, or the notes the box covers selected.
 fn let_go(
@@ -746,6 +749,11 @@ fn let_go(
     let (pos, gesture) = (latest?, gesture?);
     match gesture {
         Gesture::Hold { lane, from } => line(pos).map(|to| Action::Stretch { lane, from, to }),
+        // A tempo point is a moment of the audio, so it goes where it is dropped; a point of
+        // meters and stops alone is a beat, so it goes to the line there.
+        Gesture::MoveTiming { from } if anchored(timing, from) => {
+            Some(Action::MovePointTo(from, field.view.seconds_at(pos.y)))
+        }
         Gesture::MoveTiming { from } => line(pos).map(|to| Action::MoveTiming { from, to }),
         Gesture::MoveMarker { index } => line(pos).map(|to| Action::MoveMarker { index, to }),
         Gesture::Marquee { how, x, seconds } => field
@@ -1204,23 +1212,36 @@ fn ghost(
 
 /// Where a dragged handle will land, the snap line nearest `y`: a line across the time axis in
 /// the accent, with its position in the ruler.
-fn drop_guide(painter: &Canvas, columns: &Columns, song: &Song, view: View, y: f32) {
+fn drop_guide(
+    painter: &Canvas,
+    columns: &Columns,
+    (song, free): (&Song, bool),
+    view: View,
+    y: f32,
+) {
     let timing = song.timing();
-    let step = song
-        .document()
-        .document()
-        .ticks_per_beat
-        .note_length(song.snap());
-    let Some(step) = step else {
-        return;
+    let (at, label) = if free {
+        (y, crate::panels::clock(view.seconds_at(y)))
+    } else {
+        let Some(step) = song
+            .document()
+            .document()
+            .ticks_per_beat
+            .note_length(song.snap())
+        else {
+            return;
+        };
+        let tick = nearest_line(timing, view.seconds_at(y), step);
+        (
+            view.y(timing.time_at(tick)),
+            timing.grid_position(tick).to_string(),
+        )
     };
-    let tick = nearest_line(timing, view.seconds_at(y), step);
-    let at = view.y(timing.time_at(tick));
     painter.hline(columns.timeline(), at, Stroke::new(1.5, style::ACCENT));
     painter.text(
         pos2(columns.ruler.min + 6.0, at - 3.0),
         Align2::LEFT_BOTTOM,
-        timing.grid_position(tick).to_string(),
+        label,
         FontId::monospace(11.0),
         style::ACCENT,
     );

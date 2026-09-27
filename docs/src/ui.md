@@ -97,9 +97,11 @@ toolbar's Grid choice, also on the Display page, draws lines between the beats d
 12th, 16th, 24th, 32nd or 48th note: sixteen places to a measure of 4/4 on the 16th grid, each
 beat's line brighter. The metronome keeps to the beats. In
 the notefield, the timing events at one tick form a single timing point, as osu! has them: one
-line, its values stacked beneath it (`150 BPM`, then `3/4`), and one handle. Timing points drag
-along the timing column and markers along the ruler to another snap line, each as one step, with a
-guide where they will land; the point holding the song's first BPM change stays put. The cursor's handle on the ruler drags to scrub, and seeks while playing.
+line, its values stacked beneath it (`150 BPM`, then `3/4`), and one handle. A tempo point drags
+along the timing column to the moment it is dropped on, keeping its beat, and the first one takes
+the whole grid along as the offset does; a point of meters or stops alone, and a marker along the
+ruler, drag to another snap line. Each is one step, with a guide where it will land, labelled with
+the time or the beat. The cursor's handle on the ruler drags to scrub, and seeks while playing.
 
 ## Main window
 
