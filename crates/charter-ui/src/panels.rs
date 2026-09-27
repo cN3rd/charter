@@ -223,34 +223,56 @@ fn menu_items<const N: usize>(
 
 /// The keyboard shortcuts, grouped, while `open` is set, showing those that match `filter`.
 pub fn shortcuts(ctx: &egui::Context, open: &mut bool, filter: &mut String) {
-    egui::Window::new("Keyboard shortcuts")
+    let space = ctx.content_rect().size();
+    let compact = space.x < 760.0;
+    let width = (space.x - 24.0).max(260.0);
+    let height = (space.y - 24.0).max(180.0);
+    let window = egui::Window::new("Keyboard shortcuts")
         .open(open)
         .collapsible(false)
         .resizable(false)
         .pivot(egui::Align2::CENTER_CENTER)
-        .default_pos(ctx.content_rect().center())
-        .show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                let caption = ui.weak("Filter");
-                ui.add(egui::TextEdit::singleline(filter).hint_text("a key or what it does"))
-                    .labelled_by(caption.id);
-            });
-            let wanted = filter.trim().to_lowercase();
-            let shown = |entry: &&(&str, &str)| {
-                wanted.is_empty()
-                    || entry.0.to_lowercase().contains(&wanted)
-                    || entry.1.to_lowercase().contains(&wanted)
-            };
-            style::solid_scroll_bars(ui);
-            egui::ScrollArea::vertical()
-                .max_height(480.0)
-                .show(ui, |ui| {
-                    for (group, keys) in KEYS {
-                        let keys: Vec<_> = keys.iter().filter(shown).collect();
-                        if keys.is_empty() {
-                            continue;
+        .default_pos(ctx.content_rect().center());
+    let window = if compact {
+        window.fixed_size([width, height])
+    } else {
+        window
+    };
+    window.show(ctx, |ui| {
+        ui.horizontal(|ui| {
+            let caption = ui.weak("Filter");
+            let field = egui::TextEdit::singleline(filter)
+                .hint_text("a key or what it does")
+                .desired_width(if compact { width - 100.0 } else { 280.0 });
+            ui.add(field).labelled_by(caption.id);
+        });
+        let wanted = filter.trim().to_lowercase();
+        let shown = |entry: &&(&str, &str)| {
+            wanted.is_empty()
+                || entry.0.to_lowercase().contains(&wanted)
+                || entry.1.to_lowercase().contains(&wanted)
+        };
+        style::solid_scroll_bars(ui);
+        egui::ScrollArea::vertical()
+            .max_height(if compact { height - 88.0 } else { 480.0 })
+            .auto_shrink([!compact, !compact])
+            .show(ui, |ui| {
+                if compact {
+                    ui.set_width(width - 32.0);
+                }
+                for (group, keys) in KEYS {
+                    let keys: Vec<_> = keys.iter().filter(shown).collect();
+                    if keys.is_empty() {
+                        continue;
+                    }
+                    heading(ui, group);
+                    if compact {
+                        for (keys, does) in keys {
+                            ui.monospace(*keys);
+                            ui.label(*does);
+                            ui.add_space(8.0);
                         }
-                        heading(ui, group);
+                    } else {
                         table(ui, group, |ui| {
                             for (keys, does) in keys {
                                 ui.monospace(*keys);
@@ -259,8 +281,9 @@ pub fn shortcuts(ctx: &egui::Context, open: &mut bool, filter: &mut String) {
                             }
                         });
                     }
-                });
-        });
+                }
+            });
+    });
 }
 
 /// The keys and gestures the editor answers to, grouped, and what each does.
@@ -1366,6 +1389,22 @@ mod tests {
     use egui_kittest::kittest::Queryable;
 
     use super::*;
+
+    #[test]
+    fn shortcuts_filter_stays_visible_in_a_narrow_window() {
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(400.0, 300.0))
+            .build_ui_state(
+                |ui, (open, filter): &mut (bool, String)| {
+                    shortcuts(ui.ctx(), open, filter);
+                },
+                (true, String::new()),
+            );
+        harness.run();
+        let filter = harness.get_by_label("Filter").rect();
+        assert!(filter.left() >= 0.0, "{filter:?}");
+        assert!(filter.right() <= 400.0, "{filter:?}");
+    }
 
     fn note(n: u16) -> NonZeroU16 {
         NonZeroU16::new(n).unwrap()
