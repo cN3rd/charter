@@ -219,35 +219,43 @@ pub fn show(
         );
         ui.weak("Pick the game and how its charts are laid out. Charts start empty.");
         ui.add_space(14.0);
-        let Some(&game) = games.get(draft.game) else {
+        if games.get(draft.game).is_none() {
             ui.label("No ruleset plugin can start songs.");
             if ui.button("Cancel").clicked() {
                 answer = Some(Answer::Cancel);
             }
             return;
-        };
-        choose_game(ui, &games, draft);
-        let difficulties = game.difficulties();
-        if let Some(difficulties) = &difficulties {
-            draft.level_with(difficulties);
         }
-        ui.add_space(14.0);
-        fields(ui, game, draft);
-        if audio_row(ui, draft, no_drops) {
-            answer = Some(Answer::ChooseAudio);
-        }
-        ui.add_space(14.0);
-        match &difficulties {
-            Some(difficulties) => levels(ui, draft, difficulties),
-            None => charts(ui, draft),
-        }
-        if let Some(error) = &draft.error {
-            row(
-                ui,
-                |_| {},
-                |ui, ()| note(ui, RichText::new(error).color(style::WARN)),
-            );
-        }
+        let available = (ui.ctx().content_rect().bottom() - ui.min_rect().top() - 160.0).max(120.0);
+        egui::ScrollArea::vertical()
+            .max_height(available)
+            .show(ui, |ui| {
+                choose_game(ui, &games, draft);
+                let Some(&game) = games.get(draft.game) else {
+                    return;
+                };
+                let difficulties = game.difficulties();
+                if let Some(difficulties) = &difficulties {
+                    draft.level_with(difficulties);
+                }
+                ui.add_space(14.0);
+                fields(ui, game, draft);
+                if audio_row(ui, draft, no_drops) {
+                    answer = Some(Answer::ChooseAudio);
+                }
+                ui.add_space(14.0);
+                match &difficulties {
+                    Some(difficulties) => levels(ui, draft, difficulties),
+                    None => charts(ui, draft),
+                }
+                if let Some(error) = &draft.error {
+                    row(
+                        ui,
+                        |_| {},
+                        |ui, ()| note(ui, RichText::new(error).color(style::WARN)),
+                    );
+                }
+            });
         ui.add_space(10.0);
         ui.separator();
         ui.add_space(10.0);
@@ -256,7 +264,7 @@ pub fn show(
             if ui
                 .add_enabled(song.is_some(), style::primary("Create"))
                 .clicked()
-                && let Some(song) = song
+                && let (Some(song), Some(&game)) = (song, games.get(draft.game))
             {
                 answer = Some(Answer::Create {
                     plugin: game,
@@ -568,6 +576,31 @@ fn levels(ui: &mut Ui, draft: &mut Draft, difficulties: &Difficulties) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+
+    #[test]
+    fn a_song_with_many_charts_can_still_be_created_on_a_short_screen() {
+        let draft = Draft {
+            charts: (1..=9).map(|i| format!("Chart {i}")).collect(),
+            ..Draft::default()
+        };
+        let plugins: &[&dyn RulesetPlugin] = &[&charter_stepmania::Plugin];
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(800.0, 600.0))
+            .build_ui_state(
+                move |ui, draft: &mut Draft| {
+                    show(ui, plugins, draft, false);
+                },
+                draft,
+            );
+        harness.run();
+        let create = harness.get_by_label("Create");
+        assert!(create.rect().bottom() < 600.0, "{:?}", create.rect());
+        create.click();
+        harness.run();
+        assert_eq!(harness.state().charts.len(), 9);
+    }
 
     #[test]
     fn a_blank_title_and_artist_make_an_untitled_song_by_an_unknown_artist() {
