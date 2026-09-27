@@ -55,10 +55,10 @@ docs-serve:
 # Check the book is an OKF bundle (SUMMARY.md's one E1 is expected) and its preprocessor works
 docs-check:
     python3 docs/okf-frontmatter.py selftest
-    .github/skills/okf-open-knowledge-format/scripts/validate.sh docs/src || true
+    python3 docs/okf-frontmatter.py check docs/src
 
 # Everything a change should pass before it is committed
-ci: fmt-check clippy test docs
+ci: fmt-check clippy test docs docs-check
 
 # Run the editor, passing any arguments on (a song to open)
 run *args:
