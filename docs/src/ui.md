@@ -124,6 +124,8 @@ along the timing column to the moment it is dropped on, keeping its beat, and th
 the whole grid along as the offset does; a point of meters or stops alone, and a marker along the
 ruler, drag to another snap line. Each is one step, with a guide where it will land, labelled with
 the time or the beat. The cursor's handle on the ruler drags to scrub, and seeks while playing.
+The song panel keeps its marker rows compact when markers are added, leaving room for every lane
+of an eight-lane chart at 800 pixels wide; a long marker name shows in full when hovered.
 
 ## Main window
 

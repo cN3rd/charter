@@ -738,7 +738,11 @@ fn markers_body(ui: &mut Ui, song: &Song, draft: &mut Option<String>, actions: &
                 .take()
                 .unwrap_or_else(|| song.section().unwrap_or_default().to_owned());
             let field = ui
-                .add(egui::TextEdit::singleline(&mut text).hint_text("none"))
+                .add(
+                    egui::TextEdit::singleline(&mut text)
+                        .hint_text("none")
+                        .desired_width(WIDE),
+                )
                 .labelled_by(caption.id);
             let entered =
                 field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
@@ -756,39 +760,49 @@ fn markers_body(ui: &mut Ui, song: &Song, draft: &mut Option<String>, actions: &
         return;
     }
     let timing = song.timing();
-    table(ui, "markers", |ui| {
-        for (index, marker) in document.markers.iter().enumerate() {
-            let at = timing.grid_position(marker.tick).to_string();
-            ui.label(RichText::new(at).monospace().color(style::WEAK_TEXT));
-            let kind = match &marker.kind {
-                MarkerKind::Section => "section".to_owned(),
-                MarkerKind::Bookmark => "bookmark".to_owned(),
-                MarkerKind::Other(key) => key.to_string(),
-            };
-            ui.weak(kind);
-            let text = if marker.text.is_empty() {
-                "(unnamed)"
-            } else {
-                marker.text.as_str()
-            };
-            let here = marker.tick == song.cursor();
-            if ui.selectable_label(here, text).clicked() {
-                actions.push(Action::JumpTo(marker.tick));
-            }
-            if editable {
-                let remove = style::quiet_icon(
-                    ui,
-                    style::icon::TRASH,
-                    &format!("Remove marker {text}"),
-                    "Remove this marker; Ctrl+Z brings it back",
-                );
-                if remove.clicked() {
-                    actions.push(Action::RemoveMarker(index));
+    egui::Grid::new("markers")
+        .num_columns(4)
+        .min_col_width(0.0)
+        .spacing([8.0, 6.0])
+        .show(ui, |ui| {
+            for (index, marker) in document.markers.iter().enumerate() {
+                let at = timing.grid_position(marker.tick).to_string();
+                ui.label(RichText::new(at).monospace().color(style::WEAK_TEXT));
+                let kind = match &marker.kind {
+                    MarkerKind::Section => "section".to_owned(),
+                    MarkerKind::Bookmark => "bookmark".to_owned(),
+                    MarkerKind::Other(key) => key.to_string(),
+                };
+                ui.weak(kind);
+                let text = if marker.text.is_empty() {
+                    "(unnamed)"
+                } else {
+                    marker.text.as_str()
+                };
+                let here = marker.tick == song.cursor();
+                let label =
+                    egui::Button::selectable(here, text).wrap_mode(egui::TextWrapMode::Truncate);
+                if ui
+                    .add_sized([120.0, 20.0], label)
+                    .on_hover_text(text)
+                    .clicked()
+                {
+                    actions.push(Action::JumpTo(marker.tick));
                 }
+                if editable {
+                    let remove = style::quiet_icon(
+                        ui,
+                        style::icon::TRASH,
+                        &format!("Remove marker {text}"),
+                        "Remove this marker; Ctrl+Z brings it back",
+                    );
+                    if remove.clicked() {
+                        actions.push(Action::RemoveMarker(index));
+                    }
+                }
+                ui.end_row();
             }
-            ui.end_row();
-        }
-    });
+        });
 }
 
 /// A setting's value as text: strings bare, anything else as JSON.
@@ -1385,6 +1399,7 @@ pub fn read_only(ui: &mut Ui, why: &str) {
 
 #[cfg(test)]
 mod tests {
+    use charter_core::RulesetPlugin;
     use egui_kittest::Harness;
     use egui_kittest::kittest::Queryable;
 
@@ -1432,5 +1447,37 @@ mod tests {
         harness.run();
         assert!(harness.query_by_label("None yet").is_some());
         assert!(harness.query_by_label(crate::new_song::NO_AUDIO).is_none());
+    }
+
+    #[test]
+    fn adding_a_marker_keeps_the_notefield_wide_enough_for_eight_lanes_at_800() {
+        const PLUGINS: &[&dyn RulesetPlugin] = &[&charter_stepmania::Plugin];
+        let game = &charter_stepmania::Plugin;
+        let layout = game
+            .layouts()
+            .iter()
+            .position(|layout| layout.name == "dance-double")
+            .unwrap();
+        let song = game
+            .new_song(&charter_core::NewSong {
+                metadata: charter_editor::demo::song().document().metadata.clone(),
+                layout,
+                charts: vec![charter_core::NewChart::named("Hard")],
+            })
+            .unwrap();
+        let mut app = crate::Window::new(PLUGINS);
+        app.open(
+            std::path::Path::new("double.json"),
+            &song.to_json().unwrap(),
+        );
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(800.0, 600.0))
+            .build_ui_state(|ui, app: &mut crate::Window| app.ui(ui), app);
+        harness.run();
+        let before = harness.get_by_label("Notefield").rect().width();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::B);
+        harness.run();
+        let after = harness.get_by_label("Notefield").rect().width();
+        assert!(after >= 360.0, "before {before}, after {after}");
     }
 }
