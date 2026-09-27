@@ -89,6 +89,7 @@ expected `E1` for it. Do not silence that by adding frontmatter.
 | Path | Role |
 |---|---|
 | `crates/charter-audio` | DSP: a song's audio decoded through `symphonia-wrap` into stereo frames; no device |
+| `crates/charter-autotiming` | DSP: a tempo map from a song's beats and onsets, as sections of constant tempo; the back end of automatic timing, fed by any tracker |
 | `crates/charter-beatthis-burn` | DSP: beats and downbeats from audio by the Beat This! network in burn on the CPU, loading the released `final0.ckpt`; parity fixtures from `fixtures/make.py` |
 | `crates/charter-core` | the chart format: data model, JSON I/O, validation, tick to time; `RulesetPlugin`, the surface a ruleset plugin implements |
 | `crates/charter-editor` | editing a song without drawing it: open chart, cursor, snaps, note edits the ruleset plugin checks, selection, undo, unsaved changes, the demo song |

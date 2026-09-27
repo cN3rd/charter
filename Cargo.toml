@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/charter-audio",
+    "crates/charter-autotiming",
     "crates/charter-beatthis-burn",
     "crates/charter-core",
     "crates/charter-editor",
@@ -21,6 +22,7 @@ rust-version = "1.95"
 
 [workspace.dependencies]
 charter-audio = { path = "crates/charter-audio" }
+charter-autotiming = { path = "crates/charter-autotiming" }
 charter-beatthis-burn = { path = "crates/charter-beatthis-burn" }
 charter-core = { path = "crates/charter-core" }
 charter-editor = { path = "crates/charter-editor" }

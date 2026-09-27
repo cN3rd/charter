@@ -1486,6 +1486,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "charter-autotiming"
+version = "0.0.0"
+dependencies = [
+ "charter-audio",
+ "charter-beatthis-burn",
+ "charter-core",
+]
+
+[[package]]
 name = "charter-beatthis-burn"
 version = "0.0.0"
 dependencies = [

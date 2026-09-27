@@ -1,0 +1,16 @@
+[package]
+name = "charter-autotiming"
+version = "0.0.0"
+edition = "2024"
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+charter-audio.workspace = true
+charter-core.workspace = true
+
+[dev-dependencies]
+charter-beatthis-burn.workspace = true
