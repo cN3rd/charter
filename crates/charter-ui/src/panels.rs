@@ -268,8 +268,15 @@ const KEYS: [(&str, &[(&str, &str)]); 6] = [
     (
         "Note entry",
         &[
-            ("1 to 9, 0", "Place or remove a tap on lanes 1 to 10"),
-            ("Hold 1 to 0, move", "Draw a hold"),
+            (
+                "1 to 9, 0",
+                "Place/remove taps; while playing, record on the nearest snap \
+                 (input latency adjusted)",
+            ),
+            (
+                "Hold 1 to 0, move",
+                "Draw a hold; while playing, hold past 200 ms to grow it",
+            ),
             ("Shift+1 to 0", "Place or remove a mine"),
             ("Ctrl+Click", "Place or remove a tap"),
             ("Ctrl+Shift+Click", "Place or remove a mine"),
