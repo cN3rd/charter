@@ -339,6 +339,8 @@ pub(crate) enum Action {
     ToggleMetronome,
     /// Turns the tick on each note on or off.
     ToggleTicks,
+    /// Draws the notefield's grid down to this note value.
+    SetGrid(std::num::NonZeroU16),
 }
 
 /// The editor window's state.
@@ -1208,6 +1210,7 @@ impl Window {
             Action::ToggleSongPanel => self.settings.song_panel = !self.settings.song_panel,
             Action::ToggleMetronome => self.settings.metronome = !self.settings.metronome,
             Action::ToggleTicks => self.settings.tick_sound = self.settings.tick_sound.toggled(),
+            Action::SetGrid(grid) => self.settings.grid = grid,
             Action::TogglePlay => self.toggle_play(),
             Action::Audition(from) => self.audition(from),
             Action::AskResetTiming => self.resetting = true,
@@ -1322,6 +1325,7 @@ impl Window {
             | Action::ToggleSongPanel
             | Action::ToggleMetronome
             | Action::ToggleTicks
+            | Action::SetGrid(_)
             | Action::TogglePlay
             | Action::Audition(_)
             | Action::AskResetTiming
@@ -1522,7 +1526,13 @@ impl Window {
             self.settings.tick_sound != settings::Sound::Off,
             self.settings.volumes,
         );
-        let view = (self.zoom, self.rate, self.playing, self.settings.song_panel);
+        let view = (
+            self.zoom,
+            self.rate,
+            self.playing,
+            self.settings.song_panel,
+            self.settings.grid,
+        );
         egui::Panel::top("transport")
             .frame(style::toolbar())
             .show(ui, |ui| {
@@ -1582,7 +1592,7 @@ impl Window {
                                 self.waveform.as_ref(),
                                 self.audio_file().as_deref(),
                             ),
-                            sixteenths: self.settings.sixteenths,
+                            grid: self.settings.grid,
                         };
                         let (scrolled, gesture) = (&mut self.scrolled, &mut self.gesture);
                         style::stage().show(ui, |ui| {
@@ -3895,6 +3905,20 @@ mod tests {
             harness.state().song.as_ref().unwrap().cursor(),
             Tick::new(1200)
         );
+    }
+
+    #[test]
+    fn the_toolbar_draws_grid_lines_between_the_beats() {
+        let mut harness = editable_demo();
+        harness
+            .get_by_role_and_label(Role::ComboBox, "Grid lines")
+            .click();
+        harness.run();
+        harness.get_by_label("16th notes").click();
+        harness.run();
+        assert_eq!(harness.state().settings().grid.get(), 16);
+        let grid = harness.get_by_role_and_label(Role::ComboBox, "Grid lines");
+        assert_eq!(grid.value().as_deref(), Some("16th notes"));
     }
 
     #[test]

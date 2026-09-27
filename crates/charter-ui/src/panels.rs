@@ -489,7 +489,7 @@ pub(crate) fn entry(
 pub fn transport_bar(
     ui: &mut Ui,
     song: Option<&Song>,
-    (zoom, rate, playing, panel): (Zoom, Rate, bool, bool),
+    (zoom, rate, playing, panel, grid): (Zoom, Rate, bool, bool, NonZeroU16),
     (metronome, ticks, volumes): (bool, bool, charter_audio::Volumes),
     actions: &mut Vec<Action>,
 ) {
@@ -544,6 +544,17 @@ pub fn transport_bar(
                     .clicked()
                 {
                     actions.push(Action::FinerSnap);
+                }
+                let mut chosen = grid;
+                let caption = ui.weak("Grid");
+                crate::settings::grid_choice(ui, &mut chosen, "toolbar grid lines")
+                    .on_hover_text("Lines between the beats down to this note")
+                    .labelled_by(caption.id)
+                    .widget_info(|| {
+                        egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, "Grid lines")
+                    });
+                if chosen != grid {
+                    actions.push(Action::SetGrid(chosen));
                 }
             });
             style::chip(ui, |ui| {

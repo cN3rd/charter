@@ -8,6 +8,7 @@ use charter_audio::{Gain, Kit, Volumes};
 use charter_editor::SNAPS;
 
 use crate::flip::Direction;
+use crate::notefield::GRIDS;
 use crate::panels::ordinal;
 use crate::style::{ACCENT_FILL, PANEL, TEXT, WEAK_TEXT, glyph, icon, quiet_icon, switch, titles};
 use egui::RichText;
@@ -85,8 +86,10 @@ pub struct Settings {
     pub song_panel: bool,
     /// Whether the notefield draws the audio's waveform beside the lanes.
     pub waveform: bool,
-    /// Whether the grid draws a line on every sixteenth, not only on every beat.
-    pub sixteenths: bool,
+    /// The note value of the notefield grid's finest lines, one of [`GRIDS`]: 4 draws the beats
+    /// alone. Older versions kept a sixteenths switch here.
+    #[serde(alias = "sixteenths", deserialize_with = "grid_or_switch")]
+    pub grid: NonZeroU16,
     /// Whether the metronome clicks on every line of the timing window's grid, not only on the
     /// beats.
     pub metronome_grid: bool,
@@ -113,7 +116,7 @@ impl Default for Settings {
             autosave_seconds: 30,
             song_panel: true,
             waveform: true,
-            sixteenths: false,
+            grid: BEATS,
             metronome_grid: false,
             rate_b: 0.6,
             latency_ms: 0.0,
@@ -128,6 +131,41 @@ pub enum Asked {
     Preview(Kit),
     /// Open the latency calibration.
     Calibrate,
+}
+
+/// The grid of beats alone.
+const BEATS: NonZeroU16 = NonZeroU16::new(4).unwrap();
+
+/// The grid, read from a note value or, as older versions kept it, a sixteenths switch. A value
+/// the notefield does not offer draws the beats alone.
+fn grid_or_switch<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<NonZeroU16, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Kept {
+        Grid(u16),
+        Sixteenths(bool),
+    }
+    let grid = match Kept::deserialize(deserializer)? {
+        Kept::Grid(grid) => grid,
+        Kept::Sixteenths(true) => 16,
+        Kept::Sixteenths(false) => 4,
+    };
+    Ok(GRIDS
+        .contains(&grid)
+        .then(|| NonZeroU16::new(grid))
+        .flatten()
+        .unwrap_or(BEATS))
+}
+
+/// A grid's name in the settings and the toolbar.
+pub(crate) fn grid_name(grid: NonZeroU16) -> String {
+    if grid == BEATS {
+        "Beats".to_owned()
+    } else {
+        format!("{} notes", ordinal(grid))
+    }
 }
 
 /// Whether the metronome is on, read from a switch or, as older versions kept it, a sound.
@@ -429,13 +467,13 @@ fn display(ui: &mut egui::Ui, settings: &mut Settings) {
             switch(ui, &mut settings.waveform, name);
         },
     );
-    let name = "Sixteenth lines";
     row(
         ui,
-        name,
-        "A grid line on every sixteenth, each beat's brighter. The metronome keeps to the beats.",
-        |ui, _| {
-            switch(ui, &mut settings.sixteenths, name);
+        "Grid lines",
+        "Lines between the beats down to this note, each beat's brighter. The metronome keeps to \
+        the beats.",
+        |ui, caption| {
+            grid_choice(ui, &mut settings.grid, "grid lines").labelled_by(caption);
         },
     );
 }
@@ -565,6 +603,18 @@ fn autosave(ui: &mut egui::Ui, settings: &mut Settings) {
     );
 }
 
+/// A drop-down of the grids the notefield draws.
+pub(crate) fn grid_choice(ui: &mut egui::Ui, grid: &mut NonZeroU16, id: &str) -> egui::Response {
+    egui::ComboBox::from_id_salt(id)
+        .selected_text(grid_name(*grid))
+        .show_ui(ui, |ui| {
+            for choice in GRIDS.into_iter().filter_map(NonZeroU16::new) {
+                ui.selectable_value(grid, choice, grid_name(choice));
+            }
+        })
+        .response
+}
+
 fn percent(factor: f32) -> String {
     format!("{:.0}%", factor * 100.0)
 }
@@ -636,6 +686,21 @@ mod tests {
     }
 
     #[test]
+    fn a_sixteenths_switch_stored_by_an_older_version_comes_back_as_the_grid() {
+        let on: Settings = serde_json::from_str(r#"{ "sixteenths": true }"#).unwrap();
+        assert_eq!(on.grid.get(), 16);
+        let off: Settings = serde_json::from_str(r#"{ "sixteenths": false }"#).unwrap();
+        assert_eq!(off.grid.get(), 4);
+    }
+
+    #[test]
+    fn the_grid_opens_on_beats_and_keeps_to_the_grids_it_offers() {
+        assert_eq!(Settings::default().grid.get(), 4);
+        let odd: Settings = serde_json::from_str(r#"{ "grid": 7 }"#).unwrap();
+        assert_eq!(odd.grid.get(), 4);
+    }
+
+    #[test]
     fn stored_settings_come_back_and_missing_ones_take_their_defaults() {
         let settings = Settings {
             auto_jump: false,
@@ -654,7 +719,7 @@ mod tests {
             autosave_seconds: 90,
             song_panel: false,
             waveform: false,
-            sixteenths: true,
+            grid: NonZeroU16::new(24).unwrap(),
             metronome_grid: true,
             rate_b: 0.5,
             latency_ms: 12.0,

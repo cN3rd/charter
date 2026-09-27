@@ -81,8 +81,9 @@ their defaults, in the dialog or on a new song; where the user has written their
 whether to import them. The song panel folds away with Ctrl+\\, and the tempo section sets the
 offset, where tick 0 sits in the audio, for songs that open with silence. Once the audio has loaded,
 its waveform draws in a strip between the timing column and the lanes, lined up with the notes. The
-Display page's Sixteenth lines setting draws a grid line on every sixteenth, sixteen to a measure
-of 4/4, with each beat's line brighter; the metronome keeps to the beats. In
+toolbar's Grid choice, also on the Display page, draws lines between the beats down to an 8th,
+12th, 16th, 24th, 32nd or 48th note: sixteen places to a measure of 4/4 on the 16th grid, each
+beat's line brighter. The metronome keeps to the beats. In
 the notefield, the timing events at one tick form a single timing point, as osu! has them: one
 line, its values stacked beneath it (`150 BPM`, then `3/4`), and one handle. Timing points drag
 along the timing column and markers along the ruler to another snap line, each as one step, with a
