@@ -89,6 +89,8 @@ pub struct Settings {
     pub song_panel: bool,
     /// Whether the notefield draws the audio's waveform beside the lanes.
     pub waveform: bool,
+    /// Whether that strip shows how loud each pitch is instead of the waveform.
+    pub frequencies: bool,
     /// The note value of the notefield grid's finest lines, one of [`GRIDS`]: 4 draws the beats
     /// alone. Older versions kept a sixteenths switch here.
     #[serde(alias = "sixteenths", deserialize_with = "grid_or_switch")]
@@ -120,6 +122,7 @@ impl Default for Settings {
             autosave_seconds: 30,
             song_panel: true,
             waveform: true,
+            frequencies: false,
             grid: BEATS,
             metronome_grid: false,
             rate_b: 0.6,
@@ -480,6 +483,15 @@ fn display(ui: &mut egui::Ui, settings: &mut Settings) {
             switch(ui, &mut settings.waveform, name);
         },
     );
+    let name = "Frequencies";
+    row(
+        ui,
+        name,
+        "The strip shows how loud each pitch is, low to high, instead of the waveform.",
+        |ui, _| {
+            switch(ui, &mut settings.frequencies, name);
+        },
+    );
     row(
         ui,
         "Grid lines",
@@ -734,6 +746,7 @@ mod tests {
             autosave_seconds: 90,
             song_panel: false,
             waveform: false,
+            frequencies: true,
             grid: NonZeroU16::new(24).unwrap(),
             metronome_grid: true,
             rate_b: 0.5,

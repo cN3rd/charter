@@ -13,7 +13,7 @@ use egui::{
 
 use charter_editor::{NoteAt, Selecting, Song, Step};
 
-use charter_audio::Peaks;
+use charter_audio::{Peaks, Spectrum};
 
 use crate::flip::{Canvas, Direction, Flip};
 use crate::style;
@@ -396,7 +396,7 @@ pub fn show(
     Shown {
         zoom,
         direction,
-        peaks,
+        strip,
         grid: finest,
     }: Shown<'_>,
     scrolled: &mut f32,
@@ -411,7 +411,7 @@ pub fn show(
     let across = ui.available_rect_before_wrap().x_range();
     let indent = match direction {
         Direction::Up | Direction::Down => {
-            Columns::laid_out(across, lanes, peaks.is_some()).ruler.min
+            Columns::laid_out(across, lanes, strip.is_some()).ruler.min
         }
         Direction::Left | Direction::Right => across.min,
     };
@@ -468,7 +468,7 @@ pub fn show(
         lanes,
         timing.time_at(song.cursor()),
         zoom,
-        peaks.is_some(),
+        strip.is_some(),
     );
     let (columns, rows, view) = (&field.columns, field.rows, field.view);
     // ponytail: every visible item still resolves its time from tick 0, which is slow once a
@@ -486,8 +486,10 @@ pub fn show(
     );
     let clipped = painter.clipped(Rect::from_x_y_ranges(area.x_range(), rows));
     backdrop(&clipped, columns, lanes, rows);
-    if let Some(peaks) = peaks {
-        waveform(&clipped, columns, view, rows, peaks);
+    match strip {
+        Some(Strip::Waveform(peaks)) => waveform(&clipped, columns, view, rows, peaks),
+        Some(Strip::Frequencies(spectrum)) => frequencies(&clipped, columns, view, rows, spectrum),
+        None => {}
     }
     grid(&clipped, columns, (song, finest), view, rows);
     markers(&clipped, columns, song, view, rows, (first, last));
@@ -882,9 +884,85 @@ fn backdrop(painter: &Canvas, columns: &Columns, lanes: u16, rows: Rangef) {
 pub struct Shown<'a> {
     pub zoom: Zoom,
     pub direction: Direction,
-    pub peaks: Option<&'a Peaks>,
+    /// What the strip beside the lanes shows of the song's audio, if anything.
+    pub strip: Option<Strip<'a>>,
     /// The note value of the grid's finest lines: 4 draws beats alone, 16 sixteenths.
     pub grid: NonZeroU16,
+}
+
+/// What the audio strip beside the lanes draws.
+#[derive(Clone, Copy, Debug)]
+pub enum Strip<'a> {
+    Waveform(&'a Peaks),
+    /// How loud each band of pitch is over time, low on the strip's left and high on its right.
+    Frequencies(&'a Spectrum),
+}
+
+/// Each row of `rows`, a point apart, with the loudest each band of `spectrum` is over the time it
+/// covers.
+fn frequency_rows(
+    spectrum: &Spectrum,
+    view: View,
+    rows: Rangef,
+) -> Vec<(f32, [u8; Spectrum::BANDS])> {
+    let mut drawn = Vec::new();
+    let mut y = rows.min.floor();
+    while y < rows.max {
+        let (from, to) = (view.seconds_at(y), view.seconds_at(y + 1.0));
+        if let Some(levels) = spectrum.between(from.min(to), from.max(to)) {
+            drawn.push((y, levels));
+        }
+        y += 1.0;
+    }
+    drawn
+}
+
+/// The song's frequencies in the strip, a row a point: each band a cell across it, lowest on the
+/// left, brighter the louder, runs of one brightness drawn as one.
+fn frequencies(painter: &Canvas, columns: &Columns, view: View, rows: Rangef, spectrum: &Spectrum) {
+    let strip = columns.wave.shrink(2.0);
+    #[allow(clippy::cast_precision_loss)] // a few dozen bands
+    let cell = strip.span() / Spectrum::BANDS as f32;
+    for (y, levels) in frequency_rows(spectrum, view, rows) {
+        let mut band = 0;
+        while band < Spectrum::BANDS {
+            // Sixteen shades, so neighbouring bands of about one loudness make one rect.
+            let shade = levels.get(band).copied().unwrap_or(0) / 16;
+            let run = levels
+                .get(band..)
+                .unwrap_or_default()
+                .iter()
+                .take_while(|level| **level / 16 == shade)
+                .count()
+                .max(1);
+            if shade > 1 {
+                #[allow(clippy::cast_precision_loss)]
+                let (left, width) = (strip.min + band as f32 * cell, run as f32 * cell);
+                let rect = Rect::from_x_y_ranges(left..=left + width, y..=y + 1.0);
+                painter.rect_filled(rect, 0.0, heat(shade));
+            }
+            band += run;
+        }
+    }
+}
+
+/// The colour of a band `shade` sixteenths loud: the waveform's blue, rising to the near-white
+/// of a selection at the loudest.
+fn heat(shade: u8) -> egui::Color32 {
+    let t = f32::from(shade) / 15.0;
+    let (low, high) = (style::WAVE.gamma_multiply(0.35), style::SELECTED);
+    egui::Color32::from_rgb(
+        mix(low.r(), high.r(), t),
+        mix(low.g(), high.g(), t),
+        mix(low.b(), high.b(), t),
+    )
+}
+
+fn mix(low: u8, high: u8, t: f32) -> u8 {
+    let value = f32::from(low) + (f32::from(high) - f32::from(low)) * t.clamp(0.0, 1.0);
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // a channel
+    let value = value.round() as u8;
+    value
 }
 
 /// The audio under each row of `rows`, a point apart: the row, and the lowest and highest
@@ -1501,6 +1579,32 @@ mod tests {
         let without = Columns::laid_out(across, 4, false);
         assert!(without.wave.span() < f32::EPSILON);
         assert!((without.lanes.min - without.timing.max).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn each_row_of_the_frequencies_shows_the_bands_its_time_sounds_in() {
+        let frames: Vec<[f32; 2]> = (0..44_100)
+            .map(|n| {
+                #[allow(clippy::cast_possible_truncation)]
+                let sample =
+                    (0.5 * (std::f64::consts::TAU * 440.0 * f64::from(n) / 44_100.0).sin()) as f32;
+                [sample; 2]
+            })
+            .collect();
+        let spectrum = Spectrum::of(&Track::from_frames(44_100, frames));
+        let loudest = |levels: &[u8; Spectrum::BANDS]| {
+            levels
+                .iter()
+                .enumerate()
+                .max_by_key(|(_, level)| **level)
+                .map(|(band, _)| band)
+        };
+        let tone = loudest(&spectrum.between(0.5, 0.5).unwrap());
+        let view = View::new(0.0, song().timing().time_at(Tick::new(0)), Zoom::START);
+        let rows = frequency_rows(&spectrum, view, Rangef::new(view.y_of(0.2), view.y_of(0.8)));
+        assert!(!rows.is_empty());
+        assert!(rows.iter().all(|(_, levels)| loudest(levels) == tone));
+        assert_ne!(heat(15), heat(2));
     }
 
     #[test]

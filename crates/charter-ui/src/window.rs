@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use charter_audio::Peaks;
+use charter_audio::{Peaks, Spectrum};
 
 use charter_core::{Kind, LaneIndex, RulesetPlugin, Tick};
 use egui::Ui;
@@ -478,6 +478,8 @@ pub struct Window {
     help_filter: String,
     /// The waveform of an audio file, once the host has summarized it.
     waveform: Option<(PathBuf, Arc<Peaks>)>,
+    /// The frequencies of an audio file, once the host has analysed them.
+    spectrum: Option<(PathBuf, Arc<Spectrum>)>,
     /// The onsets of an audio file the host found, and which file.
     onsets: Option<(PathBuf, Arc<[charter_audio::Onset]>)>,
     /// The audio file the host last reported on, and how it went.
@@ -959,6 +961,12 @@ impl Window {
         self.waveform = Some((file.to_path_buf(), peaks));
     }
 
+    /// Takes the frequencies of `file`, to draw them in place of its waveform when the settings
+    /// ask.
+    pub fn spectrum_ready(&mut self, file: &Path, spectrum: Arc<Spectrum>) {
+        self.spectrum = Some((file.to_path_buf(), spectrum));
+    }
+
     /// Takes the onsets the host found in the audio `file`, which the timing window snaps to
     /// and measures the grid against.
     pub fn onsets_ready(&mut self, file: &Path, onsets: Arc<[charter_audio::Onset]>) {
@@ -973,12 +981,16 @@ impl Window {
         (Some(of.as_path()) == file.as_deref()).then_some(onsets.as_ref())
     }
 
-    /// Whether the notefield shows a waveform: the settings want one, and the host has
-    /// summarized the audio the song plays.
+    /// What the notefield's audio strip shows: nothing unless the settings want it and the host
+    /// has summarized the audio the song plays.
     #[must_use]
-    pub fn shows_waveform(&self) -> bool {
-        let file = self.audio_file();
-        shown_peaks(&self.settings, self.waveform.as_ref(), file.as_deref()).is_some()
+    pub fn strip(&self) -> Option<notefield::Strip<'_>> {
+        shown_strip(
+            &self.settings,
+            self.waveform.as_ref(),
+            self.spectrum.as_ref(),
+            self.audio_file().as_deref(),
+        )
     }
 
     /// Whether the window takes the audio to be playing.
@@ -1696,9 +1708,10 @@ impl Window {
                         let shown = notefield::Shown {
                             zoom: self.zoom,
                             direction: self.settings.direction,
-                            peaks: shown_peaks(
+                            strip: shown_strip(
                                 &self.settings,
                                 self.waveform.as_ref(),
+                                self.spectrum.as_ref(),
                                 self.audio_file().as_deref(),
                             ),
                             grid: self.settings.grid,
@@ -1970,15 +1983,23 @@ fn clicks(
     clicks
 }
 
-/// The peaks to draw, when `settings` want a waveform and `waveform` is of `file`, the audio the
-/// song plays.
-fn shown_peaks<'a>(
+/// What the audio strip draws of `file`, the audio the song plays, when `settings` want the
+/// strip: its frequencies if they ask for those and they are ready, else its waveform.
+fn shown_strip<'a>(
     settings: &Settings,
     waveform: Option<&'a (PathBuf, Arc<Peaks>)>,
+    spectrum: Option<&'a (PathBuf, Arc<Spectrum>)>,
     file: Option<&Path>,
-) -> Option<&'a Peaks> {
-    let (of, peaks) = waveform?;
-    (settings.waveform && Some(of.as_path()) == file).then_some(peaks.as_ref())
+) -> Option<notefield::Strip<'a>> {
+    let of_file = |of: &PathBuf| settings.waveform && Some(of.as_path()) == file;
+    let frequencies = spectrum
+        .filter(|(of, _)| settings.frequencies && of_file(of))
+        .map(|(_, spectrum)| notefield::Strip::Frequencies(spectrum));
+    frequencies.or_else(|| {
+        waveform
+            .filter(|(of, _)| of_file(of))
+            .map(|(_, peaks)| notefield::Strip::Waveform(peaks))
+    })
 }
 
 /// The timing a reset leaves: 120 BPM in 4/4 from 0 ms, as a new song starts with.
@@ -2723,7 +2744,7 @@ mod tests {
             lanes,
             timing.time_at(song.cursor()),
             app.zoom,
-            app.shows_waveform(),
+            app.strip().is_some(),
         );
         let x = field
             .columns
@@ -3247,7 +3268,7 @@ mod tests {
             lanes,
             timing.time_at(song.cursor()),
             app.zoom,
-            app.shows_waveform(),
+            app.strip().is_some(),
         );
         let x = field
             .columns
@@ -4695,7 +4716,7 @@ mod tests {
             lanes,
             chart.timing().time_at(song.cursor()),
             app.zoom,
-            app.shows_waveform(),
+            app.strip().is_some(),
         )
     }
 
@@ -5446,23 +5467,50 @@ mod tests {
     #[test]
     fn the_waveform_of_the_songs_audio_shows_and_that_of_other_audio_does_not() {
         let mut harness = four_taps_at("/songs/four.json");
-        assert!(!harness.state().shows_waveform());
+        assert!(harness.state().strip().is_none());
         harness
             .state_mut()
             .waveform_ready(Path::new("/songs/other.ogg"), peaks());
         harness.run();
-        assert!(!harness.state().shows_waveform());
+        assert!(harness.state().strip().is_none());
         harness
             .state_mut()
             .waveform_ready(Path::new("/songs/a.ogg"), peaks());
         harness.run();
-        assert!(harness.state().shows_waveform());
+        assert!(harness.state().strip().is_some());
         let lanes = field(&harness)
             .columns
             .span(LaneIndex::new(0), LaneCount::ONE);
         let tap = on_line(&harness, lanes.center(), 0);
         click(&mut harness, tap, egui::Modifiers::NONE);
         assert!(harness.query_by_label("1 note selected").is_some());
+    }
+
+    #[test]
+    fn the_strip_shows_the_frequencies_once_ready_when_the_settings_ask() {
+        let mut app = Window::new(PLUGINS).with_settings(Settings {
+            frequencies: true,
+            ..Settings::default()
+        });
+        app.open(Path::new("/songs/four.json"), &four_taps());
+        let mut harness = window(app);
+        harness
+            .state_mut()
+            .waveform_ready(Path::new("/songs/a.ogg"), peaks());
+        harness.run();
+        assert!(matches!(
+            harness.state().strip(),
+            Some(notefield::Strip::Waveform(_))
+        ));
+        let track = charter_audio::Track::from_frames(1000, vec![[0.25, -0.25]; 4000]);
+        harness
+            .state_mut()
+            .spectrum_ready(Path::new("/songs/a.ogg"), Arc::new(Spectrum::of(&track)));
+        harness.run();
+        assert!(matches!(
+            harness.state().strip(),
+            Some(notefield::Strip::Frequencies(_))
+        ));
     }
 
     #[test]
@@ -5477,7 +5525,7 @@ mod tests {
             .state_mut()
             .waveform_ready(Path::new("/songs/a.ogg"), peaks());
         harness.run();
-        assert!(!harness.state().shows_waveform());
+        assert!(harness.state().strip().is_none());
     }
 
     #[test]

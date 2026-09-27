@@ -97,7 +97,10 @@ the song's audio dropped on it or chosen. An audio file's tags fill in a title a
 their defaults, in the dialog or on a new song; where the user has written their own, charter asks
 whether to import them. The song panel folds away with Ctrl+\\, and the tempo section sets the
 offset, where tick 0 sits in the audio, for songs that open with silence. Once the audio has loaded,
-its waveform draws in a strip between the timing column and the lanes, lined up with the notes. The
+its waveform draws in a strip between the timing column and the lanes, lined up with the notes.
+With Frequencies on in the Display settings, the strip shows the audio's spectrum instead: 48
+bands from 30 Hz on its left to 16 kHz on its right, brighter the louder, so a kick and a hi-hat
+that sound together show apart. The
 toolbar's Grid choice, also on the Display page, draws lines between the beats down to an 8th,
 12th, 16th, 24th, 32nd or 48th note: sixteen places to a measure of 4/4 on the 16th grid, each
 beat's line brighter. The metronome keeps to the beats. In

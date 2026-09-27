@@ -4,17 +4,18 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError};
 
-use charter_audio::{Onset, Peaks, Track};
+use charter_audio::{Onset, Peaks, Spectrum, Track};
 use charter_ui::{Request, Window};
 use kira::sound::PlaybackState;
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle, StaticSoundSettings};
 use kira::{AudioManager, AudioManagerSettings, Decibels, DefaultBackend, Frame, Tween};
 
 /// What the loading thread sends: kept peaks as soon as they are read, then the audio, with its
-/// peaks unless they came first, then its onsets, which take longest.
+/// peaks unless they came first, then its frequencies, then its onsets, which take longest.
 enum Loaded {
     Peaks(Peaks),
     Audio(Result<(Arc<Track>, Option<Peaks>), String>),
+    Spectrum(Spectrum),
     Onsets(Arc<[Onset]>),
 }
 
@@ -106,12 +107,15 @@ impl Player {
             });
         }
         if let Some((path, receive)) = &self.loading {
-            // Everything that has arrived, in order: peaks, then the audio, then its onsets.
+            // Everything that has arrived, in order: peaks, the audio, its frequencies, its onsets.
             let mut done = false;
             loop {
                 match receive.try_recv() {
                     Ok(Loaded::Peaks(peaks)) => window.waveform_ready(path, Arc::new(peaks)),
                     Ok(Loaded::Onsets(onsets)) => window.onsets_ready(path, onsets),
+                    Ok(Loaded::Spectrum(spectrum)) => {
+                        window.spectrum_ready(path, Arc::new(spectrum));
+                    }
                     Ok(Loaded::Audio(Ok((track, peaks)))) => {
                         window.audio_ready(path, track.seconds());
                         if let Some(peaks) = peaks {
@@ -283,7 +287,7 @@ fn load(path: &Path) -> Result<Track, String> {
 
 /// Reads `file` with `load` and sends what the window needs of it through `send`, as the loading
 /// thread does: peaks kept at the first of `caches` as soon as they are read, then the audio with
-/// its peaks unless they came first, then its onsets, kept at the second.
+/// its peaks unless they came first, then its frequencies, then its onsets, kept at the second.
 fn summarize(
     load: fn(&Path) -> Result<Track, String>,
     file: &Path,
@@ -313,6 +317,9 @@ fn summarize(
     let Some(track) = track else {
         return;
     };
+    // ponytail: worked out on every load, a few tenths of a second a song; keep it in the cache
+    // beside the peaks if that shows.
+    let _ = send.send(Loaded::Spectrum(Spectrum::of(&track)));
     let kept = onset_cache
         .as_deref()
         .zip(source)
@@ -581,10 +588,10 @@ mod tests {
     fn audio_that_loads_gives_the_window_its_waveform() {
         let mut player = player(silent);
         let mut window = song_window();
-        assert!(!window.shows_waveform());
+        assert!(window.strip().is_none());
         player.update(&mut window);
         player.update(&mut window);
-        assert!(window.shows_waveform());
+        assert!(window.strip().is_some());
     }
 
     #[test]

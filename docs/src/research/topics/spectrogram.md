@@ -1,8 +1,8 @@
 ---
-type: Open Decision
+type: Decision
 title: Spectrogram
 description: Whether frequency-domain display is core or later, and how it is produced.
-tags: [topic, stack, rendering, audio, open]
+tags: [topic, stack, rendering, audio]
 status: draft
 ---
 
@@ -20,7 +20,15 @@ Available crates: `rustfft` for FFT primitives, `realfft` for real-to-complex wr
 roughly 2x faster for real audio, and `sonogram` `0.7.3` for ready-made STFT spectrograms to PNG,
 grayscale or buffers. All MIT/Apache-2.0.
 
-## Open decision
+## Decided
+
+The notefield's audio strip shows either the waveform or the spectrum, a Display setting
+chooses. `charter-audio`'s `Spectrum` builds the STFT on `rustfft`, already a dependency, with a
+2048-sample Hann window every 5 ms, summed into 48 bands spaced evenly in pitch from 30 Hz to
+16 kHz and scaled over 80 dB below the track's loudest. It replaces the waveform in the strip
+rather than sitting beside it, and filtered waveform views were not added.
+
+## Was open
 
 - Core feature or later
 - `sonogram` off the shelf, or STFT built directly on `realfft` for control over windowing and
