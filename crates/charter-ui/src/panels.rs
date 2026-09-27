@@ -19,7 +19,7 @@ use crate::window::Rate;
 pub fn menu_bar(
     ui: &mut Ui,
     song: Option<&Song>,
-    (playing, importable): (bool, bool),
+    (playing, importable, findable): (bool, bool, bool),
     actions: &mut Vec<Action>,
 ) {
     let song_open = song.is_some();
@@ -112,6 +112,14 @@ pub fn menu_bar(
             let import = egui::Button::new("Import timing…");
             if ui.add_enabled(song_open && importable, import).clicked() {
                 actions.push(Action::ShowImport);
+            }
+            let find = egui::Button::new("Find timing from the audio…");
+            if ui
+                .add_enabled(song_open && findable, find)
+                .on_hover_text("Beat This! finds the beats; charter fits tempo sections to them")
+                .clicked()
+            {
+                actions.push(Action::FindTiming);
             }
             let reset = egui::Button::new("Reset timing…");
             if ui.add_enabled(song_open, reset).clicked() {
@@ -1190,6 +1198,33 @@ pub fn ask_to_restore(ui: &Ui, name: &str) -> Option<bool> {
                 answer = Some(true);
             }
             if ui.button("Discard").clicked() {
+                answer = Some(false);
+            }
+        });
+    });
+    answer
+}
+
+/// Whether to download the beat tracker's weights, which the user answers: true for Download.
+pub fn ask_to_download_weights(ui: &Ui) -> Option<bool> {
+    let mut answer = None;
+    egui::Modal::new(egui::Id::new("download weights")).show(ui.ctx(), |ui| {
+        ui.set_max_width(420.0);
+        let question = "Download the beat tracker?";
+        ui.label(RichText::new(question).family(style::titles(ui)).size(15.0));
+        ui.add_space(4.0);
+        ui.label(
+            "Finding the timing uses Beat This!, a beat tracker from the Institute of \
+             Computational Perception at JKU Linz, released under the MIT licence. Its weights \
+             are 81 MB, downloaded once from the authors' server, cloud.cp.jku.at, into \
+             charter's data folder. Nothing about the song is sent.",
+        );
+        ui.add_space(14.0);
+        ui.horizontal(|ui| {
+            if ui.add(style::primary("Download")).clicked() {
+                answer = Some(true);
+            }
+            if ui.button("Cancel").clicked() {
                 answer = Some(false);
             }
         });

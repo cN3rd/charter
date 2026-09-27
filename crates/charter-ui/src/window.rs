@@ -84,6 +84,29 @@ pub enum Request {
     ReadTags {
         file: PathBuf,
     },
+    /// Find the timing of the audio in `file` at `ticks_per_beat` and pass it to
+    /// [`Window::timing_found`], or call [`Window::weights_needed`] when the beat tracker's
+    /// weights are not there yet.
+    FindTiming {
+        file: PathBuf,
+        ticks_per_beat: charter_core::TicksPerBeat,
+    },
+    /// Download the beat tracker's weights, the user having agreed, telling
+    /// [`Window::weights_progress`] how far it has got, then find the timing asked for.
+    DownloadWeights,
+}
+
+/// Where finding the song's timing from its audio has got to.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+enum Finding {
+    #[default]
+    Idle,
+    /// Waiting on the user to agree to download the beat tracker's weights.
+    Asking,
+    /// Downloading the weights, this share of them so far.
+    Downloading(f32),
+    /// The host is finding it.
+    Running,
 }
 
 /// What tags read from an audio file would change, waiting on whether to take them.
@@ -356,6 +379,8 @@ pub(crate) enum Action {
     ToggleMetronome,
     /// Turns the tick on each note on or off.
     ToggleTicks,
+    /// Finds the song's timing from its audio.
+    FindTiming,
     /// Draws the notefield's grid down to this note value.
     SetGrid(std::num::NonZeroU16),
 }
@@ -398,6 +423,8 @@ pub struct Window {
     calibration: latency::Calibration,
     /// Whether the window asks whether to reset the timing.
     resetting: bool,
+    /// Where finding the timing from the audio has got to.
+    finding: Finding,
     /// The import timing window.
     import: import::Import,
     /// How tall a second of the open song is on screen.
@@ -629,13 +656,59 @@ impl Window {
     }
 
     /// What the status bar says of the audio.
-    fn audio_state(&self) -> &'static str {
+    fn audio_state(&self) -> String {
+        match self.finding {
+            Finding::Downloading(share) => {
+                return format!("Downloading the Beat This! weights, {:.0}%", share * 100.0);
+            }
+            Finding::Running => return "Finding the timing…".to_owned(),
+            Finding::Idle | Finding::Asking => {}
+        }
         match (self.audio_file(), self.loaded()) {
             (None, _) => "No audio",
             (Some(_), Some(Loaded::Ready(_))) => "Audio ready",
             (Some(_), Some(Loaded::Failed)) => "Audio failed",
             (Some(_), None) => "Audio loading",
         }
+        .to_owned()
+    }
+
+    /// Asks the host to find the song's timing in its audio.
+    fn find_timing(&mut self) {
+        let (Some(song), Some(file)) = (&self.song, self.audio_file()) else {
+            self.failure = Some("Finding the timing needs the song's audio".to_owned());
+            return;
+        };
+        let ticks_per_beat = song.document().document().ticks_per_beat;
+        self.requests.push(Request::FindTiming {
+            file,
+            ticks_per_beat,
+        });
+        self.finding = Finding::Running;
+    }
+
+    /// Takes that the beat tracker's weights are not downloaded yet, so the user is asked.
+    pub fn weights_needed(&mut self) {
+        self.finding = Finding::Asking;
+    }
+
+    /// Takes that `share` of the beat tracker's weights has downloaded.
+    pub fn weights_progress(&mut self, share: f32) {
+        self.finding = Finding::Downloading(share.clamp(0.0, 1.0));
+    }
+
+    /// Takes the timing found in the song's audio, which goes in place of the open chart's as
+    /// one step, or why none was found.
+    pub fn timing_found(&mut self, found: Result<charter_core::Timing, String>) {
+        self.finding = Finding::Idle;
+        let Some(song) = &mut self.song else {
+            return;
+        };
+        self.failure = Some(match found.map(|timing| song.replace_timing(timing)) {
+            Ok(Ok(())) => found_message(song),
+            Ok(Err(refusal)) => format!("The timing found was refused: {refusal}"),
+            Err(why) => format!("No timing found: {why}"),
+        });
     }
 
     /// How the audio the song wants stands, if the host has said.
@@ -1233,6 +1306,7 @@ impl Window {
             Action::TogglePlay => self.toggle_play(),
             Action::Audition(from) => self.audition(from),
             Action::AskResetTiming => self.resetting = true,
+            Action::FindTiming => self.find_timing(),
             Action::Loop { from, to } => self.toggle_loop(from, to),
             Action::ToggleRate => self.toggle_rate(),
             Action::MuteMetronome(muted) => {
@@ -1349,6 +1423,7 @@ impl Window {
             | Action::ToggleSongPanel
             | Action::ToggleMetronome
             | Action::ToggleTicks
+            | Action::FindTiming
             | Action::SetGrid(_)
             | Action::TogglePlay
             | Action::Audition(_)
@@ -1478,7 +1553,8 @@ impl Window {
             || self.restoring.is_some()
             || self.offer.is_some()
             || self.calibration.open
-            || self.resetting;
+            || self.resetting
+            || self.finding == Finding::Asking;
         let typing = ui.ctx().egui_wants_keyboard_input();
         // The timing window, once clicked, takes the keys it has a use for; undo and redo still
         // reach the song.
@@ -1549,7 +1625,8 @@ impl Window {
             .frame(style::chrome())
             .show(ui, |ui| {
                 let importable = import::offered(self.plugins);
-                panels::menu_bar(ui, song, (playing, importable), &mut actions);
+                let findable = self.audio_file().is_some() && self.finding == Finding::Idle;
+                panels::menu_bar(ui, song, (playing, importable, findable), &mut actions);
             });
         let sounds = (
             self.settings.metronome,
@@ -1571,7 +1648,7 @@ impl Window {
         egui::Panel::bottom("status")
             .frame(style::chrome())
             .show(ui, |ui| {
-                panels::status_bar(ui, self.song.as_ref(), (audio_state, self.playing));
+                panels::status_bar(ui, self.song.as_ref(), (&audio_state, self.playing));
             });
         if let Some(song) = self.song.as_ref().filter(|_| self.settings.song_panel) {
             let timing = &mut self.timing_drafts;
@@ -1645,6 +1722,16 @@ impl Window {
             latency::show(ui.ctx(), &mut self.calibration, time, &mut self.settings)
         {
             self.requests.push(request);
+        }
+        if self.finding == Finding::Asking
+            && let Some(download) = panels::ask_to_download_weights(ui)
+        {
+            if download {
+                self.requests.push(Request::DownloadWeights);
+                self.finding = Finding::Downloading(0.0);
+            } else {
+                self.finding = Finding::Idle;
+            }
         }
         if self.resetting
             && let Some(answer) = panels::ask_to_reset_timing(ui)
@@ -1902,6 +1989,23 @@ fn fresh_timing() -> charter_core::Timing {
         "events": []
     });
     serde_json::from_value(fresh).unwrap_or_else(|_| unreachable!("the fresh timing reads"))
+}
+
+/// What the timing found and put in place is: how many sections, at what tempo from when.
+fn found_message(song: &Song) -> String {
+    let timing = song.timing();
+    let Some(first) = timing.anchors.first() else {
+        return "Timing found".to_owned();
+    };
+    let bpm = timing
+        .bpm_at(first.tick)
+        .map_or_else(String::new, |bpm| format!("{bpm} BPM "));
+    let from = style::clock(charter_core::ResolvedTime::from(first.seconds).seconds());
+    let sections = match timing.anchors.len() {
+        1 => "one section".to_owned(),
+        count => format!("{count} sections"),
+    };
+    format!("Timing found: {bpm}from {from}, {sections}. Ctrl+Z undoes it.")
 }
 
 /// Makes the timing edit `action` asks for, and says why if it cannot.
@@ -4686,6 +4790,98 @@ mod tests {
         harness.run();
         harness.get_by_label("Reset timing…").click();
         harness.run();
+    }
+
+    fn find_from_the_menu(harness: &mut Harness<'_, Window>) {
+        harness.query_all_by_label("Timing").next().unwrap().click();
+        harness.run();
+        harness.get_by_label("Find timing from the audio…").click();
+        harness.run();
+    }
+
+    #[test]
+    fn finding_timing_asks_the_host_to_find_it_in_the_songs_audio() {
+        let mut harness = playable();
+        find_from_the_menu(&mut harness);
+        assert_eq!(
+            harness.state_mut().take_requests(),
+            [Request::FindTiming {
+                file: PathBuf::from("/songs/a.ogg"),
+                ticks_per_beat: charter_core::DEFAULT_TICKS_PER_BEAT,
+            }]
+        );
+        assert!(
+            harness
+                .query_by_label_contains("Finding the timing")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn the_weights_are_downloaded_only_once_the_user_says_so() {
+        let mut harness = playable();
+        find_from_the_menu(&mut harness);
+        harness.state_mut().take_requests();
+        harness.state_mut().weights_needed();
+        harness.run();
+        assert!(harness.query_by_label_contains("81 MB").is_some());
+        harness.get_by_label("Cancel").click();
+        harness.run();
+        assert_eq!(harness.state_mut().take_requests(), []);
+        assert!(
+            harness
+                .query_by_label_contains("Finding the timing")
+                .is_none()
+        );
+
+        find_from_the_menu(&mut harness);
+        harness.state_mut().take_requests();
+        harness.state_mut().weights_needed();
+        harness.run();
+        harness.get_by_label("Download").click();
+        harness.run();
+        assert_eq!(
+            harness.state_mut().take_requests(),
+            [Request::DownloadWeights]
+        );
+        harness.state_mut().weights_progress(0.42);
+        harness.run();
+        assert!(harness.query_by_label_contains("42%").is_some());
+    }
+
+    #[test]
+    fn timing_found_takes_the_songs_place_in_one_step_and_says_what_it_is() {
+        let mut harness = playable();
+        find_from_the_menu(&mut harness);
+        harness.state_mut().take_requests();
+        let before = anchor_seconds(&harness);
+        let found: charter_core::Timing = serde_json::from_value(serde_json::json!({
+            "anchors": [ { "tick": 0, "seconds": 3.616 } ],
+            "tempo": 132.0,
+            "events": []
+        }))
+        .unwrap();
+        harness.state_mut().timing_found(Ok(found));
+        harness.run();
+        assert_eq!(anchor_seconds(&harness), [3.616]);
+        assert!(
+            harness
+                .query_by_label_contains("Timing found: 132 BPM")
+                .is_some()
+        );
+        assert!(
+            harness
+                .query_by_label_contains("Finding the timing")
+                .is_none()
+        );
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.run();
+        assert_eq!(anchor_seconds(&harness), before);
+        harness
+            .state_mut()
+            .timing_found(Err("the tracker would not load".to_owned()));
+        harness.run();
+        assert!(harness.query_by_label_contains("would not load").is_some());
     }
 
     #[test]
