@@ -18,8 +18,8 @@ use charter_core::{
     Anchor, Bpm, Chart as CoreChart, DEFAULT_TICKS_PER_BEAT, Difficulties, DifficultyPreset,
     Document, Extensions, FORMAT_VERSION, InvalidValue, Key, Kind, LaneCount, LaneIndex, Layout,
     Location, Marker, MarkerKind, Metadata, Name, Namespace, NewSong, Object, Origin, Position,
-    Ruleset, RulesetPlugin, Settings, Shape, Stream, Tick, Ticks, TicksPerBeat, TimeSignature,
-    Timing, TimingEvent, TimingKind, ValidDocument,
+    Ruleset, RulesetPlugin, SettingScope, Settings, Shape, Stream, TextSetting, Tick, Ticks,
+    TicksPerBeat, TimeSignature, Timing, TimingEvent, TimingKind, ValidDocument,
 };
 
 /// The ruleset namespace.
@@ -35,6 +35,8 @@ pub struct Song {
     tempo: Tempo,
     markers: Vec<Marker>,
     charts: Vec<Chart>,
+    /// The theme every level plays in unless it names its own.
+    theme: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -71,6 +73,8 @@ pub struct Chart {
     pub name: String,
     /// The standard level the chart is, whatever it is called, when it is one.
     pub difficulty: Option<Difficulty>,
+    /// The theme this level plays in, over the song's.
+    pub theme: Option<String>,
     /// Replaces the song's tempo map when present.
     pub tempo: Option<Tempo>,
     pub notes: Vec<Note>,
@@ -116,6 +120,10 @@ impl Difficulty {
 
 /// The chart setting holding a chart's [`Difficulty`].
 const DIFFICULTY: &str = "difficulty";
+
+/// The song and chart setting naming the theme a level plays in: the song's for every level
+/// that names none, a chart's for that level alone.
+const THEME: &str = "theme";
 
 /// The sets of levels a new song can start with, and what each game calls their charts: custom
 /// charts come in standard Extreme alone or every level, Tap Tap Reloaded has no Easy, and Tap
@@ -205,6 +213,8 @@ pub enum Error {
     UnknownSetting { at: Location, key: String },
     #[error("{at}: the difficulty {found} is not easy, medium, hard or extreme")]
     Difficulty { at: Location, found: String },
+    #[error("{at}: a theme is a name, such as DeltaHeavyTheme, not {found}")]
+    Theme { at: Location, found: String },
     #[error("{at} has {} lanes; every chart of a song has the same 3, 4 or 5", .lanes.map_or_else(|| "no".to_owned(), |lanes| lanes.to_string()))]
     Lanes {
         at: Location,
@@ -261,6 +271,7 @@ impl Song {
             tempo,
             markers,
             charts,
+            theme: None,
         };
         song.build()?;
         Ok(song)
@@ -289,6 +300,22 @@ impl Song {
     #[must_use]
     pub fn charts(&self) -> &[Chart] {
         &self.charts
+    }
+
+    /// The theme every level plays in unless it names its own.
+    #[must_use]
+    pub fn theme(&self) -> Option<&str> {
+        self.theme.as_deref()
+    }
+
+    /// The song with every level playing in `theme` unless it names its own.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Theme`] for a theme without a name.
+    pub fn with_theme(mut self, theme: Option<String>) -> Result<Self, Error> {
+        self.theme = named(theme.map(Value::String).as_ref(), Location::Settings)?;
+        Ok(self)
     }
 
     /// Song-wide markers of the shared kinds.
@@ -321,7 +348,7 @@ impl Song {
                 id: Namespace::new(ID)?,
                 version: VERSION.to_owned(),
             },
-            settings: Settings::new(),
+            settings: themed(self.theme.as_deref()),
             plugins: BTreeMap::new(),
             metadata: self.metadata.clone(),
             samples: BTreeMap::new(),
@@ -420,11 +447,13 @@ impl Chart {
         Ok(CoreChart {
             name: self.name.clone(),
             lanes: Some(lanes.width()),
-            settings: self
-                .difficulty
-                .map(|level| (DIFFICULTY.to_owned(), Value::from(level.key())))
-                .into_iter()
-                .collect(),
+            settings: {
+                let mut settings = themed(self.theme.as_deref());
+                if let Some(level) = self.difficulty {
+                    settings.insert(DIFFICULTY.to_owned(), Value::from(level.key()));
+                }
+                settings
+            },
             timing: self.tempo.as_ref().map(Tempo::to_timing),
             objects: self
                 .notes
@@ -465,7 +494,11 @@ impl TryFrom<&ValidDocument> for Song {
         if doc.ruleset.id.as_str() != ID {
             return Err(Error::WrongRuleset(doc.ruleset.id.clone()));
         }
-        reject_keys(doc.settings.keys(), Location::Settings)?;
+        reject_keys(
+            doc.settings.keys().filter(|key| *key != THEME),
+            Location::Settings,
+        )?;
+        let theme = named(doc.settings.get(THEME), Location::Settings)?;
         reject_own_keys(&doc.metadata.ext, Location::MetadataExt)?;
         if !doc.samples.is_empty() {
             return Err(Error::Unsupported {
@@ -491,7 +524,7 @@ impl TryFrom<&ValidDocument> for Song {
             .cloned()
             .collect();
         let tempo = read_tempo(&doc.timing, Stream::Song)?;
-        Self::new(metadata, doc.ticks_per_beat, lanes, tempo, markers, charts)
+        Self::new(metadata, doc.ticks_per_beat, lanes, tempo, markers, charts)?.with_theme(theme)
     }
 }
 
@@ -547,6 +580,25 @@ impl RulesetPlugin for Plugin {
             .collect()
     }
 
+    fn text_settings(&self) -> Vec<TextSetting> {
+        let theme = |scope, about: &str| TextSetting {
+            key: THEME.to_owned(),
+            name: "Theme".to_owned(),
+            about: about.to_owned(),
+            scope,
+        };
+        vec![
+            theme(
+                SettingScope::Song,
+                "The theme every level plays in unless it names its own, such as DeltaHeavyTheme",
+            ),
+            theme(
+                SettingScope::Chart,
+                "The theme this level plays in, over the song's",
+            ),
+        ]
+    }
+
     fn difficulties(&self) -> Option<Difficulties> {
         let presets = PRESETS
             .iter()
@@ -589,6 +641,7 @@ impl RulesetPlugin for Plugin {
                 Ok::<_, &str>(Chart {
                     name: chart.name.clone(),
                     difficulty,
+                    theme: None,
                     tempo: None,
                     notes: Vec::new(),
                 })
@@ -623,7 +676,14 @@ const LANES: [Lanes; 3] = [Lanes::Three, Lanes::Four, Lanes::Five];
 
 fn read_chart(c: usize, chart: &CoreChart, lanes: Lanes) -> Result<Chart, Error> {
     let at = Location::ChartSettings(c);
-    reject_keys(chart.settings.keys().filter(|key| *key != DIFFICULTY), at)?;
+    reject_keys(
+        chart
+            .settings
+            .keys()
+            .filter(|key| *key != DIFFICULTY && *key != THEME),
+        at,
+    )?;
+    let theme = named(chart.settings.get(THEME), at)?;
     let difficulty =
         match chart.settings.get(DIFFICULTY) {
             None => None,
@@ -662,6 +722,7 @@ fn read_chart(c: usize, chart: &CoreChart, lanes: Lanes) -> Result<Chart, Error>
     Ok(Chart {
         name: chart.name.clone(),
         difficulty,
+        theme,
         tempo,
         notes,
     })
@@ -731,6 +792,26 @@ fn read_tempo(timing: &Timing, stream: Stream) -> Result<Tempo, Error> {
 }
 
 /// Fails on the first key, since this ruleset defines no settings.
+/// Settings holding `theme` as the theme, if there is one.
+fn themed(theme: Option<&str>) -> Settings {
+    theme
+        .map(|theme| (THEME.to_owned(), Value::from(theme)))
+        .into_iter()
+        .collect()
+}
+
+/// The theme a setting names, if it is there, refused unless it is a name.
+fn named(value: Option<&Value>, at: Location) -> Result<Option<String>, Error> {
+    match value {
+        None => Ok(None),
+        Some(Value::String(theme)) if !theme.trim().is_empty() => Ok(Some(theme.clone())),
+        Some(other) => Err(Error::Theme {
+            at,
+            found: other.to_string(),
+        }),
+    }
+}
+
 fn reject_keys<'a>(mut keys: impl Iterator<Item = &'a String>, at: Location) -> Result<(), Error> {
     match keys.next() {
         Some(key) => Err(Error::UnknownSetting {
@@ -791,6 +872,7 @@ mod tests {
             [Chart {
                 name: "Easy".into(),
                 difficulty: None,
+                theme: None,
                 tempo: None,
                 notes: vec![Note {
                     tick: Tick::new(0),
@@ -1193,6 +1275,7 @@ mod tests {
         let outside = Chart {
             name: "Hard".into(),
             difficulty: None,
+            theme: None,
             tempo: None,
             notes: vec![Note {
                 tick: Tick::new(0),
@@ -1345,6 +1428,34 @@ mod tests {
         let document = Plugin.new_song(&new_song(0, &["Mine"])).unwrap();
         let value: Value = serde_json::from_slice(&document.to_json().unwrap()).unwrap();
         assert_eq!(value["charts"][0].get("settings"), None);
+    }
+
+    #[test]
+    fn a_song_and_each_of_its_charts_can_name_a_theme() {
+        let mut value = document(json!([]));
+        value["settings"] = json!({ "theme": "DeltaHeavyTheme" });
+        value["charts"][0]["settings"] = json!({ "difficulty": "easy", "theme": "Neon" });
+        let song = read(&value).unwrap();
+        assert_eq!(song.theme(), Some("DeltaHeavyTheme"));
+        assert_eq!(song.charts()[0].theme.as_deref(), Some("Neon"));
+        value["ruleset"]["version"] = json!(VERSION);
+        value["charts"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("objects");
+        assert_eq!(written(&song), value);
+    }
+
+    #[test]
+    fn a_theme_that_is_not_a_name_is_refused() {
+        for bad in [json!(3), json!(""), json!(null)] {
+            let mut value = document(json!([]));
+            value["settings"] = json!({ "theme": bad });
+            assert!(matches!(read(&value), Err(Error::Theme { .. })), "{bad}");
+            let mut value = document(json!([]));
+            value["charts"][0]["settings"] = json!({ "theme": bad });
+            assert!(matches!(read(&value), Err(Error::Theme { .. })), "{bad}");
+        }
     }
 
     #[test]

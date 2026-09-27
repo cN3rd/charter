@@ -27,6 +27,7 @@ pub use number::Decimal;
 pub use path::ResourcePath;
 pub use plugin::{
     Difficulties, DifficultyPreset, ImportedTiming, Layout, NewChart, NewSong, RulesetPlugin,
+    SettingScope, TextSetting,
 };
 
 /// Property tests run from a fixed seed and keep no regression files, so they repeat exactly

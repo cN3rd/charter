@@ -47,6 +47,13 @@ standard Extreme alone or every level, and the renamings of two of its games: Ta
 calls Medium, Hard and Extreme `Metallica`, `Downloads` and `Customs` and has no Easy, and Tap
 Tap Hardcore calls the four `Extreme`, `Intense`, `Severe` and `Customs`.
 
+A plugin names the settings it reads as text with `text_settings`: each a key, a name, what it
+does, and whether it sits on the song or on each chart. The song panel shows a field for each, the
+song's under the song's facts and a chart's under the chart list, and clearing one takes its key
+away; every change goes through the plugin's check like any edit. Tap Tap Revenge has one of each,
+`theme`: the song's names the theme every level plays in, such as `DeltaHeavyTheme`, and a chart's
+names the theme of that level alone.
+
 A plugin can also read another program's timing: `timing_format` names the format, and
 `import_timing` turns text in it into a `Timing` for a given song, with a list of what it left
 out. Any song can take timing from any plugin's format, so a plugin keeps its own timing events,
@@ -56,7 +63,7 @@ such as osu!mania's scroll speeds, only for songs of its game. osu!mania reads o
 | Ruleset | Namespace | Kinds | Timing | Chart settings |
 |---|---|---|---|---|
 | StepMania | `sm` | `tap`, `hold`, `roll`, `mine`, `lift`, `fake`, `sm.auto_keysound` | Every core kind, `sm.tickcount`, `sm.combo`, `sm.speed`, `sm.scroll`, `sm.fake` | `style`, `difficulty`, `meter`, `description` |
-| Tap Tap Revenge | `ttr` | `tap`, `hold`, `ttr.shake`, `ttr.slice`, `ttr.mega_tap` | `bpm`, `time_signature` | `difficulty`, optional |
+| Tap Tap Revenge | `ttr` | `tap`, `hold`, `ttr.shake`, `ttr.slice`, `ttr.mega_tap` | `bpm`, `time_signature` | `difficulty` and `theme`, optional |
 | osu!mania | `osu_mania` | `tap`, `hold` | `bpm`, `time_signature` over 4, `osu_mania.scroll_speed` | `hp`, `od` |
 
 Each ruleset fixes lanes its own way:

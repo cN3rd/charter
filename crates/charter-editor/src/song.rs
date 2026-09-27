@@ -7,8 +7,8 @@ use std::ops::RangeInclusive;
 
 use charter_core::{
     Anchor, Bpm, Chart, Error, Extensions, Kind, LaneCount, LaneIndex, LaneSpan, Marker,
-    MarkerKind, Metadata, Object, Position, ResourcePath, RulesetPlugin, Shape, Tick, Ticks,
-    TicksPerBeat, Timing, TimingKind, Valid, ValidDocument,
+    MarkerKind, Metadata, Object, Position, ResourcePath, RulesetPlugin, SettingScope, Shape, Tick,
+    Ticks, TicksPerBeat, Timing, TimingKind, Valid, ValidDocument,
 };
 
 use crate::edit::{Edit, Op};
@@ -297,6 +297,54 @@ impl Song {
             audio,
             ..old.clone()
         })
+    }
+
+    /// The plugin that checks the song's edits, unless the song is read only.
+    #[must_use]
+    pub fn plugin(&self) -> Option<&'static dyn RulesetPlugin> {
+        match self.rules {
+            Rules::Checked(plugin) => Some(plugin),
+            Rules::ReadOnly(_) => None,
+        }
+    }
+
+    /// Sets the setting `key` of the song, or of the open chart, to the text `value`, or takes it
+    /// away without one, as one step. Does nothing when it is so already.
+    ///
+    /// # Errors
+    ///
+    /// Refuses on a read-only song, for a chart setting without a chart, and when the song's
+    /// game refuses the value.
+    pub fn set_setting(
+        &mut self,
+        scope: SettingScope,
+        key: &str,
+        value: Option<String>,
+    ) -> Result<(), Refusal> {
+        let document = self.document.document();
+        let (chart, old) = match scope {
+            SettingScope::Song => (None, &document.settings),
+            SettingScope::Chart => {
+                let chart = document.charts.get(self.chart).ok_or(Refusal::NoChart)?;
+                (Some(self.chart), &chart.settings)
+            }
+        };
+        let mut new = old.clone();
+        match value {
+            Some(value) => new.insert(key.to_owned(), serde_json::Value::String(value)),
+            None => new.remove(key),
+        };
+        if new == *old {
+            return Ok(());
+        }
+        let edit = Edit(vec![Op::Settings {
+            chart,
+            old: old.clone(),
+            new,
+        }]);
+        self.document = self.edited(self.chart, &edit)?;
+        self.record(edit);
+        Ok(())
     }
 
     /// Gives the song `metadata`, its title, artist, audio and preview, as one step. Does
@@ -2121,6 +2169,28 @@ pub(crate) mod tests {
         song.set_metadata(metadata).unwrap();
         song.undo().unwrap();
         assert_eq!(song.document().document().metadata.title, "t");
+        assert!(!song.can_undo());
+    }
+
+    #[test]
+    fn a_setting_of_the_song_or_the_open_chart_is_one_step() {
+        let mut song = Song::new(document(json!([])), EDITABLE);
+        song.set_setting(SettingScope::Song, "theme", Some("Delta".to_owned()))
+            .unwrap();
+        song.set_setting(SettingScope::Chart, "theme", Some("Neon".to_owned()))
+            .unwrap();
+        let document = song.document().document();
+        assert_eq!(document.settings["theme"], json!("Delta"));
+        assert_eq!(document.charts[0].settings["theme"], json!("Neon"));
+        song.set_setting(SettingScope::Chart, "theme", None)
+            .unwrap();
+        assert!(song.document().document().charts[0].settings.is_empty());
+        song.set_setting(SettingScope::Chart, "theme", None)
+            .unwrap();
+        for _ in 0..3 {
+            song.undo().unwrap();
+        }
+        assert!(song.document().document().settings.is_empty());
         assert!(!song.can_undo());
     }
 

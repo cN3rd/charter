@@ -18,7 +18,8 @@ selection; undo and redo return to where each edit was made. The song panel's So
 the song's title and artist in place, chooses its audio with the button beside the file's name,
 and sets its preview, where a song list starts playing it, as a time and a length in seconds;
 clearing the time takes the preview away. Each change is one step, and the ruleset shows as it
-is. The song panel's Timing section is laid out as osu!'s timing panel is.
+is. Settings the song's game reads as text follow as fields of their own, such as Tap Tap
+Revenge's theme, and the open chart's under the chart list. The song panel's Timing section is laid out as osu!'s timing panel is.
 The song's offset comes first: where beat 0 falls in the audio, in milliseconds, stepped by 1 ms
 with its buttons or Alt+Left and Alt+Right, 10 ms with Shift. Under it the starting BPM, the first
 timing point's tempo, can be set from anywhere in the song, beside a button that opens the timing

@@ -1,6 +1,6 @@
 //! Changes to a song, each holding what it takes to undo it.
 
-use charter_core::{Document, Marker, Metadata, Object, Timing};
+use charter_core::{Document, Marker, Metadata, Object, Settings, Timing};
 
 /// One change: to one object of the chart an edit is made to, or to the song as a whole.
 #[derive(Clone, Debug, PartialEq)]
@@ -25,6 +25,12 @@ pub(crate) enum Op {
     Markers {
         old: Vec<Marker>,
         new: Vec<Marker>,
+    },
+    /// The song's settings, or chart `chart`'s when there is one.
+    Settings {
+        chart: Option<usize>,
+        old: Settings,
+        new: Settings,
     },
     /// Every object of chart `chart`, whichever chart the edit is made to.
     Objects {
@@ -64,6 +70,11 @@ impl Op {
                 old: new.clone(),
                 new: old.clone(),
             },
+            Self::Settings { chart, old, new } => Self::Settings {
+                chart: *chart,
+                old: new.clone(),
+                new: old.clone(),
+            },
             Self::Objects { chart, old, new } => Self::Objects {
                 chart: *chart,
                 old: new.clone(),
@@ -96,6 +107,19 @@ impl Edit {
             match op {
                 Op::Metadata { new, .. } => document.metadata = (**new).clone(),
                 Op::Markers { new, .. } => document.markers.clone_from(new),
+                Op::Settings {
+                    chart: None, new, ..
+                } => document.settings.clone_from(new),
+                Op::Settings {
+                    chart: Some(chart),
+                    new,
+                    ..
+                } => {
+                    let Some(edited) = document.charts.get_mut(*chart) else {
+                        return false;
+                    };
+                    edited.settings.clone_from(new);
+                }
                 Op::Objects { chart, new, .. } => {
                     let Some(edited) = document.charts.get_mut(*chart) else {
                         return false;
@@ -129,6 +153,7 @@ impl Edit {
                         Op::Metadata { .. }
                         | Op::Markers { .. }
                         | Op::Objects { .. }
+                        | Op::Settings { .. }
                         | Op::Timing { .. } => {}
                     }
                 }

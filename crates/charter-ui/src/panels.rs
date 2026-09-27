@@ -3,7 +3,7 @@
 
 use std::num::NonZeroU16;
 
-use charter_core::{MarkerKind, Metadata, ResolvedTime, ResourcePath, Tick};
+use charter_core::{MarkerKind, Metadata, ResolvedTime, ResourcePath, SettingScope, Tick};
 use egui::{self, Align, Layout, RichText, Ui};
 use serde_json::Value;
 
@@ -336,6 +336,8 @@ pub fn song_panel(
                 );
                 ui.end_row();
             }
+            let offered = setting_rows(ui, song, SettingScope::Chart, drafts, actions);
+            refused = refused.take().or(offered);
         });
     });
     refused
@@ -348,6 +350,8 @@ pub struct SongDrafts {
     artist: Option<String>,
     genre: Option<String>,
     artwork: Option<String>,
+    /// The game's text settings, by whether they are the chart's, and key.
+    settings: std::collections::HashMap<(bool, String), Option<String>>,
     preview: Option<String>,
     length: Option<String>,
 }
@@ -459,6 +463,55 @@ fn song_rows(
         document.ruleset.id, document.ruleset.version
     ));
     ui.end_row();
+    let offered = setting_rows(ui, song, SettingScope::Song, drafts, actions);
+    refused.take().or(offered)
+}
+
+/// A field for each of the game's text settings in `scope`, the open chart's for a chart scope,
+/// each clearing its key when cleared. Says why something typed is not a value.
+fn setting_rows(
+    ui: &mut Ui,
+    song: &Song,
+    scope: SettingScope,
+    drafts: &mut SongDrafts,
+    actions: &mut Vec<Action>,
+) -> Option<String> {
+    let plugin = song.plugin()?;
+    let document = song.document().document();
+    let settings = match scope {
+        SettingScope::Song => &document.settings,
+        SettingScope::Chart => &document.charts.get(song.chart_index())?.settings,
+    };
+    let mut refused = None;
+    for setting in plugin
+        .text_settings()
+        .into_iter()
+        .filter(|setting| setting.scope == scope)
+    {
+        let name = match scope {
+            SettingScope::Song => setting.name.clone(),
+            SettingScope::Chart => format!("Chart {}", setting.name.to_lowercase()),
+        };
+        let caption = ui.weak(&name).on_hover_text(&setting.about);
+        let current = settings
+            .get(&setting.key)
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+        let draft = drafts
+            .settings
+            .entry((scope == SettingScope::Chart, setting.key.clone()))
+            .or_default();
+        let read = |typed: &str| {
+            Ok(Action::SetSetting {
+                scope,
+                key: setting.key.clone(),
+                value: (!typed.is_empty()).then(|| typed.to_owned()),
+            })
+        };
+        let offered = entry_sized(ui, (caption.id, WIDE), current, draft, read, actions);
+        refused = refused.take().or(offered);
+        ui.end_row();
+    }
     refused
 }
 

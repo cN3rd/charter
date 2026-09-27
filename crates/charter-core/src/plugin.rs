@@ -63,6 +63,26 @@ pub struct DifficultyPreset {
     pub charts: Vec<(usize, String)>,
 }
 
+/// Where a setting sits: on the song, or on each of its charts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SettingScope {
+    Song,
+    Chart,
+}
+
+/// A setting a plugin reads as text, which the editor shows as a field and writes as a string,
+/// taking the key away when the field is cleared.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TextSetting {
+    /// The key in the song's or a chart's `settings`, such as `theme`.
+    pub key: String,
+    /// What the editor calls it, such as `Theme`.
+    pub name: String,
+    /// What it does, for a tooltip.
+    pub about: String,
+    pub scope: SettingScope,
+}
+
 /// Timing read from another program's format, ready to take the place of a song's.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ImportedTiming {
@@ -108,6 +128,11 @@ pub trait RulesetPlugin: Debug {
     /// can then each be one of them.
     fn difficulties(&self) -> Option<Difficulties> {
         None
+    }
+
+    /// The settings, of the song or of each chart, that the editor shows as text fields.
+    fn text_settings(&self) -> Vec<TextSetting> {
+        Vec::new()
     }
 
     /// A song with no notes made from `song`, which this plugin accepts.

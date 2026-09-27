@@ -282,6 +282,12 @@ pub(crate) enum Action {
     SetBpmAt(Tick, charter_core::Bpm),
     /// Gives the song this title, artist, audio and preview.
     SetMetadata(Box<charter_core::Metadata>),
+    /// Sets a text setting of the song or the open chart, or takes it away without a value.
+    SetSetting {
+        scope: charter_core::SettingScope,
+        key: String,
+        value: Option<String>,
+    },
     /// Moves the tempo point on the tick to this many seconds into the audio, the first one
     /// taking the whole grid along.
     MovePointTo(Tick, f64),
@@ -1362,6 +1368,7 @@ impl Window {
             Action::SetBpmAt(..)
             | Action::MovePointTo(..)
             | Action::SetMetadata(_)
+            | Action::SetSetting { .. }
             | Action::SetMeterAt(..)
             | Action::RemoveTimingAt(_)
             | Action::SetOffset(_)
@@ -1903,6 +1910,7 @@ fn retime(song: &mut Song, action: &Action) -> Option<String> {
         Action::SetBpmAt(tick, bpm) => song.set_bpm_at(*tick, *bpm),
         Action::MovePointTo(tick, seconds) => song.move_point_to(*tick, *seconds),
         Action::SetMetadata(metadata) => song.set_metadata(metadata.as_ref().clone()),
+        Action::SetSetting { scope, key, value } => song.set_setting(*scope, key, value.clone()),
         Action::SetMeterAt(tick, meter) => song.set_meter_at(*tick, *meter),
         Action::RemoveTimingAt(tick) => song.remove_timing_at(*tick),
         Action::SetOffset(offset) => song.set_offset(*offset),
@@ -2523,6 +2531,37 @@ mod tests {
             (metadata(&harness).genre, metadata(&harness).artwork),
             (None, None)
         );
+    }
+
+    #[test]
+    fn a_games_settings_show_as_fields_for_the_song_and_its_open_chart() {
+        const TTR: &[&dyn RulesetPlugin] = &[&charter_ttr::Plugin];
+        let draft = charter_core::NewSong {
+            metadata: charter_editor::demo::song().document().metadata.clone(),
+            layout: 0,
+            charts: vec![charter_core::NewChart::named("Extreme")],
+        };
+        let song = charter_ttr::Plugin.new_song(&draft).unwrap();
+        let mut app = Window::new(TTR);
+        app.open(Path::new("/songs/ttr.json"), &song.to_json().unwrap());
+        let mut harness = window(app);
+        retype(&mut harness, "Theme", "DeltaHeavyTheme");
+        retype(&mut harness, "Chart theme", "Neon");
+        let song = harness.state().song.as_ref().unwrap();
+        let document = song.document().document();
+        assert_eq!(
+            document.settings["theme"],
+            serde_json::json!("DeltaHeavyTheme")
+        );
+        assert_eq!(
+            document.charts[0].settings["theme"],
+            serde_json::json!("Neon")
+        );
+        retype(&mut harness, "Theme", "");
+        let song = harness.state().song.as_ref().unwrap();
+        assert!(song.document().document().settings.is_empty());
+        let sm = editable_demo();
+        assert!(sm.query_by_label("Chart theme").is_none());
     }
 
     #[test]
