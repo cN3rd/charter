@@ -108,7 +108,8 @@ pub(crate) fn toolbar(
         ui.weak("Snap");
         style::check(ui, &mut window.snap_grid, "Grid");
         style::check(ui, &mut window.snap_onset, "Onset");
-        ui.separator();
+    });
+    ui.horizontal(|ui| {
         let caption = ui.weak("Onsets");
         let sensitivity = egui::Slider::new(&mut window.sensitivity, 0.0..=1.0)
             .fixed_decimals(2)
