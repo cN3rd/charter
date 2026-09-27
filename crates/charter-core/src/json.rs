@@ -383,7 +383,6 @@ impl V0Timing {
                     anchors.push(Anchor {
                         tick: event.tick,
                         seconds,
-                        ext: event.ext.clone(),
                     });
                 }
                 kind => events.push(TimingEvent {
@@ -980,7 +979,6 @@ mod tests {
                     anchors: vec![Anchor {
                         tick: Tick::new(0),
                         seconds,
-                        ext: Extensions::new(),
                     }],
                     tempo,
                     events,

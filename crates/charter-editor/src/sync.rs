@@ -3,7 +3,7 @@
 //! and only the tempo after the last one is set. Every edit here is a new set of pins, from
 //! which the tempo is rebuilt, so no edit can leave the pins out of order.
 
-use charter_core::{Anchor, Bpm, Extensions, Origin, Tick, Timing, ValidDocument};
+use charter_core::{Anchor, Bpm, Origin, Tick, Timing, ValidDocument};
 
 use crate::edit::{Edit, Op};
 use crate::song::{Refusal, Song};
@@ -18,12 +18,6 @@ pub struct Pin {
 /// How far apart two moments have to be to count as two: a microsecond, the finest time the
 /// format holds.
 const APART: f64 = 1e-6;
-
-#[derive(Clone, Copy)]
-enum ExtMatch {
-    Tick,
-    Order,
-}
 
 impl Song {
     /// The anchors of the timing tempo edits go to, in order, each where it falls now.
@@ -99,7 +93,7 @@ impl Song {
         }
         in_order(&pins, |pin| i64::from(pin.tick))?;
         pins.sort_by_key(|pin| pin.tick);
-        self.repin_with(&pins, self.tail(), false, ExtMatch::Order)
+        self.repin(&pins, self.tail(), false)
     }
 
     /// Moves the anchors on `ticks` `by` seconds later in the audio, keeping their beats, as one
@@ -241,7 +235,7 @@ impl Song {
         } else {
             tail
         };
-        let new = self.rebuilt(base, &pins, tail, ExtMatch::Order)?;
+        let new = self.rebuilt(base, &pins, tail)?;
         let (own, _) = self.edited_timing();
         self.retime(own, new)
     }
@@ -257,18 +251,8 @@ impl Song {
     /// both beats and moments, naming the first out of place, and with [`Refusal::OnlyTempo`]
     /// when there are none.
     pub fn repin(&mut self, pins: &[Pin], tail: Bpm, merge: bool) -> Result<(), Refusal> {
-        self.repin_with(pins, tail, merge, ExtMatch::Tick)
-    }
-
-    fn repin_with(
-        &mut self,
-        pins: &[Pin],
-        tail: Bpm,
-        merge: bool,
-        matching: ExtMatch,
-    ) -> Result<(), Refusal> {
         let (_, timing) = self.edited_timing();
-        let new = self.rebuilt(timing.clone(), pins, tail, matching)?;
+        let new = self.rebuilt(timing.clone(), pins, tail)?;
         let (own, old) = self.edited_timing();
         if *old == new {
             return Ok(());
@@ -281,36 +265,23 @@ impl Song {
     }
 
     /// `base` with its anchors rebuilt from `pins` and `tail`.
-    fn rebuilt(
-        &self,
-        base: Timing,
-        pins: &[Pin],
-        tail: Bpm,
-        matching: ExtMatch,
-    ) -> Result<Timing, Refusal> {
+    fn rebuilt(&self, base: Timing, pins: &[Pin], tail: Bpm) -> Result<Timing, Refusal> {
         if pins.is_empty() {
             return Err(Refusal::OnlyTempo);
         }
         in_order(pins, |pin| i64::from(pin.tick))?;
         in_order_in_time(pins)?;
         let mut new = base;
-        let anchors = pins
+        new.anchors = pins
             .iter()
-            .enumerate()
-            .map(|(index, pin)| {
-                let retained = match matching {
-                    ExtMatch::Tick => new.anchors.iter().find(|anchor| anchor.tick == pin.tick),
-                    ExtMatch::Order => new.anchors.get(index),
-                };
+            .map(|pin| {
                 Ok(Anchor {
                     tick: pin.tick,
                     seconds: Origin::try_from(micro(pin.seconds).ok_or(Refusal::NotWhole)?)
                         .map_err(|_| Refusal::NotWhole)?,
-                    ext: retained.map_or_else(Extensions::new, |anchor| anchor.ext.clone()),
                 })
             })
             .collect::<Result<Vec<_>, Refusal>>()?;
-        new.anchors = anchors;
         new.tempo = tail;
         self.checked(&new)?;
         Ok(new)
@@ -606,78 +577,6 @@ mod tests {
             .unwrap();
         let ticks: Vec<Tick> = song.anchors().iter().map(|pin| pin.tick).collect();
         assert_eq!(ticks, [at(0), at(2400), at(4320), at(5760)]);
-    }
-
-    #[test]
-    fn surviving_anchors_keep_their_extensions_through_sync_edits() {
-        let mut song = timed(&json!([bpm_event(0, 120.0), bpm_event(1920, 120.0)]), None);
-        let extension = json!({ "test.source": "imported tempo" });
-        let mut timing = (*song.timing()).clone();
-        timing.anchors[1].ext = serde_json::from_value(extension.clone()).unwrap();
-        song.replace_timing(timing).unwrap();
-
-        let kept = |song: &Song| serde_json::to_value(&song.timing().anchors[1].ext).unwrap();
-        song.move_anchor(at(1920), at(2400)).unwrap();
-        assert_eq!(kept(&song), extension);
-        song.sync(at(960), 0.4).unwrap();
-        assert_eq!(
-            serde_json::to_value(
-                &song
-                    .timing()
-                    .anchors
-                    .iter()
-                    .find(|anchor| anchor.tick == at(2400))
-                    .unwrap()
-                    .ext
-            )
-            .unwrap(),
-            extension
-        );
-        song.unsync(at(960)).unwrap();
-        song.set_tail_bpm(Bpm::try_from(150.0).unwrap(), false)
-            .unwrap();
-        assert_eq!(kept(&song), extension);
-    }
-
-    #[test]
-    fn repinning_keeps_extensions_on_unchanged_ticks_even_if_count_matches() {
-        let mut song = timed(
-            &json!([
-                bpm_event(0, 120.0),
-                bpm_event(1920, 120.0),
-                bpm_event(3840, 120.0)
-            ]),
-            None,
-        );
-        let extension = json!({ "test.source": "last anchor" });
-        let mut timing = (*song.timing()).clone();
-        timing.anchors[2].ext = serde_json::from_value(extension.clone()).unwrap();
-        song.replace_timing(timing).unwrap();
-        song.repin(
-            &[
-                Pin {
-                    tick: at(0),
-                    seconds: 0.0,
-                },
-                Pin {
-                    tick: at(3840),
-                    seconds: 2.0,
-                },
-                Pin {
-                    tick: at(5760),
-                    seconds: 3.0,
-                },
-            ],
-            Bpm::try_from(120.0).unwrap(),
-            false,
-        )
-        .unwrap();
-
-        assert_eq!(
-            serde_json::to_value(&song.timing().anchors[1].ext).unwrap(),
-            extension
-        );
-        assert!(song.timing().anchors[2].ext.is_empty());
     }
 
     #[test]

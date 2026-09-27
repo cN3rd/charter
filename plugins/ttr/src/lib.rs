@@ -602,7 +602,6 @@ impl RulesetPlugin for Plugin {
             anchors: vec![Anchor {
                 tick: Tick::new(0),
                 seconds: Origin::try_from(0.0)?,
-                ext: Extensions::new(),
             }],
             tempo: Bpm::try_from(120.0)?,
             changes: vec![at_zero(TempoKind::TimeSignature(TimeSignature::COMMON))],
@@ -701,19 +700,6 @@ fn read_note(object: &Object, lanes: Lanes) -> Option<NoteKind> {
 }
 
 fn read_tempo(timing: &Timing, stream: Stream) -> Result<Tempo, Error> {
-    let anchors = timing
-        .anchors
-        .iter()
-        .enumerate()
-        .map(|(index, anchor)| {
-            reject_own_keys(&anchor.ext, Location::Event { stream, index })?;
-            Ok(Anchor {
-                tick: anchor.tick,
-                seconds: anchor.seconds,
-                ext: Extensions::new(),
-            })
-        })
-        .collect::<Result<_, Error>>()?;
     let mut changes = Vec::with_capacity(timing.events.len());
     for (index, event) in timing.events.iter().enumerate() {
         let at = Location::Event { stream, index };
@@ -738,7 +724,7 @@ fn read_tempo(timing: &Timing, stream: Stream) -> Result<Tempo, Error> {
         });
     }
     Ok(Tempo {
-        anchors,
+        anchors: timing.anchors.clone(),
         tempo: timing.tempo,
         changes,
     })
@@ -1123,11 +1109,10 @@ mod tests {
     #[test]
     fn keys_in_the_ttr_namespace_or_settings_that_it_does_not_define_are_refused() {
         type Edit = fn(&mut Value);
-        let edits: [Edit; 7] = [
+        let edits: [Edit; 6] = [
             |v| v["charts"][0]["objects"][0]["ext"] = json!({ "ttr.color": 1 }),
             |v| v["metadata"]["ext"] = json!({ "ttr.banner": "b.png" }),
             |v| v["charts"][0]["ext"] = json!({ "ttr.rating": 3 }),
-            |v| v["timing"]["anchors"][0]["ext"] = json!({ "ttr.x": 1 }),
             |v| {
                 let other = event(0, json!({ "other": { "name": "ttr.scroll", "value": 2 } }));
                 v["timing"]["events"].as_array_mut().unwrap().push(other);
@@ -1169,27 +1154,6 @@ mod tests {
             written(&song),
             expected(written_objects(&plain["charts"][0]["objects"]))
         );
-    }
-
-    #[test]
-    fn foreign_anchor_extensions_are_skipped_on_both_timing_maps() {
-        let mut value = document(json!([]));
-        value["plugins"] = json!({ "swing": { "version": "1" } });
-        value["metadata"]["ext"] = json!({ "swing.feel": true });
-        value["timing"]["anchors"][0]["ext"] = json!({ "swing.song": 1 });
-        value["charts"][0]["timing"] = json!({
-            "anchors": [{ "tick": 0, "seconds": 0.0, "ext": { "swing.chart": 1 } }],
-            "tempo": 120.0,
-            "events": []
-        });
-        let song = read(&value).unwrap();
-        assert!(song.tempo().anchors[0].ext.is_empty());
-        assert!(
-            song.charts()[0].tempo.as_ref().unwrap().anchors[0]
-                .ext
-                .is_empty()
-        );
-        assert!(song.to_document().document().plugins.is_empty());
     }
 
     #[test]

@@ -362,7 +362,6 @@ impl Song {
                     tick: at,
                     seconds: charter_core::Origin::try_from((seconds * 1e6).round() / 1e6)
                         .map_err(|_| Refusal::NotWhole)?,
-                    ext: Extensions::new(),
                 },
             );
             index
@@ -562,7 +561,6 @@ impl Song {
                 (self.timing().time_at(at).seconds() * 1e6).round() / 1e6,
             )
             .map_err(|_| Refusal::NotWhole)?,
-            ext: Extensions::new(),
         };
         new.anchors.insert(index, change);
         self.retime(own, new)

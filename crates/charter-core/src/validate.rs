@@ -293,9 +293,6 @@ fn used_namespaces(doc: &Document) -> BTreeSet<&Namespace> {
     );
     let chart_timings = doc.charts.iter().filter_map(|chart| chart.timing.as_ref());
     for timing in std::iter::once(&doc.timing).chain(chart_timings) {
-        for anchor in &timing.anchors {
-            add_keys(&mut used, &anchor.ext);
-        }
         for event in &timing.events {
             add_keys(&mut used, &event.ext);
             if let TimingKind::Other { name, .. } = &event.kind {
@@ -499,7 +496,6 @@ mod tests {
                 tick: Tick::new(tick),
                 seconds: Origin::try_from(crate::number::from_millionths(i64::from(tick) * 1_000))
                     .unwrap(),
-                ext: Extensions::new(),
             })
             .collect();
         document.timing.events = (0..100_000)
@@ -739,29 +735,6 @@ mod tests {
             let mut declared = value;
             declared["plugins"] = json!({ "psk": { "version": "1" } });
             check(&declared).unwrap();
-        }
-    }
-
-    #[test]
-    fn anchor_extensions_require_and_use_their_plugin_namespace() {
-        let song = with(|v| v["timing"]["anchors"][0]["ext"] = json!({ "swing.sync": 1 }));
-        let chart = with(|v| {
-            v["charts"] = json!([{
-                "name": "Easy",
-                "timing": {
-                    "anchors": [{ "tick": 0, "seconds": 0.0, "ext": { "swing.sync": 1 } }],
-                    "tempo": 120.0,
-                    "events": []
-                }
-            }]);
-        });
-        for mut value in [song, chart] {
-            assert_eq!(
-                broken_rule(&value),
-                Rule::UndeclaredNamespace(Namespace::new("swing").unwrap())
-            );
-            value["plugins"] = json!({ "swing": { "version": "1" } });
-            check(&value).unwrap();
         }
     }
 

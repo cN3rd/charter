@@ -277,7 +277,6 @@ mod tests {
             anchors: vec![Anchor {
                 tick: Tick::new(0),
                 seconds: Origin::try_from(0.0).unwrap(),
-                ext: BTreeMap::new(),
             }],
             tempo: Bpm::try_from(120.0).unwrap(),
             events,

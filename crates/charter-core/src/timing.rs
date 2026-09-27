@@ -259,7 +259,6 @@ mod tests {
         Anchor {
             tick: Tick::new(tick),
             seconds: Origin::try_from(seconds).unwrap(),
-            ext: BTreeMap::new(),
         }
     }
 
@@ -574,11 +573,7 @@ mod tests {
             let Ok(at) = Origin::try_from((seconds * 1e6).round() / 1e6) else {
                 continue;
             };
-            timing.anchors.push(Anchor {
-                tick,
-                seconds: at,
-                ext: BTreeMap::new(),
-            });
+            timing.anchors.push(Anchor { tick, seconds: at });
             seconds = ResolvedTime::from(at).seconds();
         }
         timing

@@ -610,7 +610,6 @@ impl RulesetPlugin for Plugin {
             anchors: vec![Anchor {
                 tick: Tick::new(0),
                 seconds: Origin::try_from(0.0)?,
-                ext: Extensions::new(),
             }],
             tempo: Bpm::try_from(120.0)?,
             events: vec![at_zero(TimingKind::TimeSignature(TimeSignature::COMMON))],
@@ -702,19 +701,6 @@ fn read_note(object: &Object, at: Location) -> Result<Note, Error> {
 }
 
 fn read_timing(timing: &CoreTiming, stream: Stream) -> Result<Timing, Error> {
-    let anchors = timing
-        .anchors
-        .iter()
-        .enumerate()
-        .map(|(index, anchor)| {
-            reject_own_keys(&anchor.ext, Location::Event { stream, index })?;
-            Ok(Anchor {
-                tick: anchor.tick,
-                seconds: anchor.seconds,
-                ext: Extensions::new(),
-            })
-        })
-        .collect::<Result<_, Error>>()?;
     let mut events = Vec::with_capacity(timing.events.len());
     for (index, event) in timing.events.iter().enumerate() {
         let at = Location::Event { stream, index };
@@ -742,7 +728,7 @@ fn read_timing(timing: &CoreTiming, stream: Stream) -> Result<Timing, Error> {
         });
     }
     Ok(Timing {
-        anchors,
+        anchors: timing.anchors.clone(),
         tempo: timing.tempo,
         events,
     })
@@ -1146,11 +1132,10 @@ mod tests {
     #[test]
     fn keys_in_the_sm_namespace_or_song_settings_that_it_does_not_define_are_refused() {
         type Edit = fn(&mut Value);
-        let edits: [Edit; 5] = [
+        let edits: [Edit; 4] = [
             |v| v["charts"][0]["objects"][0]["ext"] = json!({ "sm.color": 1 }),
             |v| v["metadata"]["ext"] = json!({ "sm.banner": "b.png" }),
             |v| v["charts"][0]["ext"] = json!({ "sm.radar": [0.5] }),
-            |v| v["timing"]["anchors"][0]["ext"] = json!({ "sm.x": 1 }),
             |v| v["settings"] = json!({ "selectable": true }),
         ];
         for edit in edits {
@@ -1183,27 +1168,6 @@ mod tests {
             written(&song),
             expected(plain["charts"][0]["objects"].clone())
         );
-    }
-
-    #[test]
-    fn foreign_anchor_extensions_are_skipped_on_both_timing_maps() {
-        let mut value = document(json!([]));
-        value["plugins"] = json!({ "swing": { "version": "1" } });
-        value["metadata"]["ext"] = json!({ "swing.feel": true });
-        value["timing"]["anchors"][0]["ext"] = json!({ "swing.song": 1 });
-        value["charts"][0]["timing"] = json!({
-            "anchors": [{ "tick": 0, "seconds": 0.0, "ext": { "swing.chart": 1 } }],
-            "tempo": 120.0,
-            "events": []
-        });
-        let song = read(&value).unwrap();
-        assert!(song.timing().anchors[0].ext.is_empty());
-        assert!(
-            song.charts()[0].timing.as_ref().unwrap().anchors[0]
-                .ext
-                .is_empty()
-        );
-        assert!(song.to_document().document().plugins.is_empty());
     }
 
     #[test]
@@ -1246,7 +1210,7 @@ mod tests {
     #[test]
     fn errors_say_where_and_which_key() {
         let mut value = document(json!([]));
-        value["timing"]["anchors"][0]["ext"] = json!({ "sm.color": "red" });
+        value["timing"]["events"] = json!([{ "tick": 0, "kind": { "time_signature": [4, 4] }, "ext": { "sm.color": "red" } }]);
         let color: Key = "sm.color".parse().unwrap();
         assert!(matches!(
             read(&value),

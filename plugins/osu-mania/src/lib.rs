@@ -570,7 +570,6 @@ impl RulesetPlugin for Plugin {
             anchors: vec![Anchor {
                 tick: Tick::new(0),
                 seconds: Origin::try_from(0.0)?,
-                ext: Extensions::new(),
             }],
             tempo: Bpm::try_from(120.0)?,
             events: vec![at_zero(TimingKind::Meter(four))],
@@ -667,19 +666,6 @@ fn read_note(object: &Object, at: Location) -> Result<Note, Error> {
 }
 
 fn read_timing(timing: &CoreTiming, stream: Stream) -> Result<Timing, Error> {
-    let anchors = timing
-        .anchors
-        .iter()
-        .enumerate()
-        .map(|(index, anchor)| {
-            reject_own_keys(&anchor.ext, Location::Event { stream, index })?;
-            Ok(Anchor {
-                tick: anchor.tick,
-                seconds: anchor.seconds,
-                ext: Extensions::new(),
-            })
-        })
-        .collect::<Result<_, Error>>()?;
     let mut events = Vec::with_capacity(timing.events.len());
     for (index, event) in timing.events.iter().enumerate() {
         let at = Location::Event { stream, index };
@@ -716,7 +702,7 @@ fn read_timing(timing: &CoreTiming, stream: Stream) -> Result<Timing, Error> {
         });
     }
     Ok(Timing {
-        anchors,
+        anchors: timing.anchors.clone(),
         tempo: timing.tempo,
         events,
     })
@@ -995,11 +981,10 @@ mod tests {
     #[test]
     fn keys_in_the_osu_mania_namespace_or_song_settings_that_it_does_not_define_are_refused() {
         type Edit = fn(&mut Value);
-        let edits: [Edit; 6] = [
+        let edits: [Edit; 5] = [
             |v| v["charts"][0]["objects"][0]["ext"] = json!({ "osu_mania.hitsound": 2 }),
             |v| v["metadata"]["ext"] = json!({ "osu_mania.source": "x" }),
             |v| v["charts"][0]["ext"] = json!({ "osu_mania.tags": "x" }),
-            |v| v["timing"]["anchors"][0]["ext"] = json!({ "osu_mania.kiai": true }),
             |v| {
                 let kiai = json!({ "tick": 0, "kind": { "other": { "name": "osu_mania.kiai", "value": true } } });
                 v["timing"]["events"].as_array_mut().unwrap().push(kiai);
@@ -1038,27 +1023,6 @@ mod tests {
             written(&song),
             expected(plain["charts"][0]["objects"].clone())
         );
-    }
-
-    #[test]
-    fn foreign_anchor_extensions_are_skipped_on_both_timing_maps() {
-        let mut value = document(json!([]));
-        value["plugins"] = json!({ "swing": { "version": "1" } });
-        value["metadata"]["ext"] = json!({ "swing.feel": true });
-        value["timing"]["anchors"][0]["ext"] = json!({ "swing.song": 1 });
-        value["charts"][0]["timing"] = json!({
-            "anchors": [{ "tick": 0, "seconds": 0.0, "ext": { "swing.chart": 1 } }],
-            "tempo": 120.0,
-            "events": []
-        });
-        let song = read(&value).unwrap();
-        assert!(song.timing().anchors[0].ext.is_empty());
-        assert!(
-            song.charts()[0].timing.as_ref().unwrap().anchors[0]
-                .ext
-                .is_empty()
-        );
-        assert!(song.to_document().document().plugins.is_empty());
     }
 
     #[test]

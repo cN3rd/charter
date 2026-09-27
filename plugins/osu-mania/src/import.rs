@@ -103,7 +103,6 @@ pub(crate) fn import(text: &str, into: &ValidDocument) -> Result<ImportedTiming,
             seconds: micro(red.at / 1000.0)
                 .and_then(|seconds| Origin::try_from(seconds).ok())
                 .ok_or_else(|| ImportError::OutOfRange(format!("{} ms is not a time", red.at)))?,
-            ext: Extensions::new(),
         });
         // osu! starts a measure at every red line; charter's grid restarts at a time signature.
         #[allow(clippy::cast_possible_truncation)] // a resolution, whole and small

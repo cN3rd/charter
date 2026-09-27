@@ -240,7 +240,7 @@ Timing {
     events:         Vec<TimingEvent>,
 }
 
-Anchor { tick: Tick, seconds: Origin, ext: Extensions }
+Anchor { tick: Tick, seconds: Origin }
 TimingEvent { tick: Tick, kind: TimingKind, ext: Extensions }
 
 TimingKind =

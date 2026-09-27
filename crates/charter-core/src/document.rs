@@ -124,8 +124,6 @@ pub struct Timing {
 pub struct Anchor {
     pub tick: Tick,
     pub seconds: Origin,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub ext: Extensions,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
