@@ -23,6 +23,7 @@ pub fn menu_bar(
     actions: &mut Vec<Action>,
 ) {
     let song_open = song.is_some();
+    let editable = song.is_some_and(|song| song.read_only().is_none());
     egui::MenuBar::new().ui(ui, |ui| {
         ui.menu_button("File", |ui| {
             let items = [
@@ -39,7 +40,7 @@ pub fn menu_bar(
                     actions.push(action);
                 }
             }
-            if ui.add_enabled(song_open, choose).clicked() {
+            if ui.add_enabled(editable, choose).clicked() {
                 actions.push(Action::ChooseAudio);
             }
             ui.separator();
@@ -73,6 +74,13 @@ pub fn menu_bar(
                 [
                     ("Select all", "Ctrl+A", Action::SelectAll),
                     ("Select none", "Escape", Action::ClearSelection),
+                ],
+            );
+            menu_items(
+                ui,
+                editable,
+                actions,
+                [
                     ("Delete the selection", "Delete", Action::DeleteSelection),
                     (
                         "Lengthen by the snap",
@@ -94,6 +102,21 @@ pub fn menu_bar(
                 actions,
                 [
                     ("Timing window", "Ctrl+T", Action::ToggleSync),
+                    (
+                        "Previous section",
+                        "Alt+Up",
+                        Action::JumpSection(Step::Earlier),
+                    ),
+                    ("Next section", "Alt+Down", Action::JumpSection(Step::Later)),
+                    ("Jump to the start", "Home", Action::JumpTo(Tick::new(0))),
+                    ("Jump to the end", "End", Action::JumpEnd),
+                ],
+            );
+            menu_items(
+                ui,
+                editable,
+                actions,
+                [
                     ("Raise the tempo by 1 BPM", "F8", Action::NudgeBpm(1.0)),
                     ("Lower the tempo by 1 BPM", "F7", Action::NudgeBpm(-1.0)),
                     ("Add a timing point here", "", Action::AddBpm),
@@ -108,31 +131,23 @@ pub fn menu_bar(
                         Action::NudgeOffset(-0.001),
                     ),
                     ("Add or remove a bookmark", "Ctrl+B", Action::ToggleBookmark),
-                    (
-                        "Previous section",
-                        "Alt+Up",
-                        Action::JumpSection(Step::Earlier),
-                    ),
-                    ("Next section", "Alt+Down", Action::JumpSection(Step::Later)),
-                    ("Jump to the start", "Home", Action::JumpTo(Tick::new(0))),
-                    ("Jump to the end", "End", Action::JumpEnd),
                 ],
             );
             ui.separator();
             let import = egui::Button::new("Import timing…");
-            if ui.add_enabled(song_open && importable, import).clicked() {
+            if ui.add_enabled(editable && importable, import).clicked() {
                 actions.push(Action::ShowImport);
             }
             let find = egui::Button::new("Find timing from the audio…");
             if ui
-                .add_enabled(song_open && findable, find)
+                .add_enabled(editable && findable, find)
                 .on_hover_text("Beat This! finds the beats; charter fits tempo sections to them")
                 .clicked()
             {
                 actions.push(Action::FindTiming);
             }
             let reset = egui::Button::new("Reset timing…");
-            if ui.add_enabled(song_open, reset).clicked() {
+            if ui.add_enabled(editable, reset).clicked() {
                 actions.push(Action::AskResetTiming);
             }
         });
@@ -142,20 +157,17 @@ pub fn menu_bar(
                 actions.push(Action::ToggleSongPanel);
             }
             ui.separator();
-            let items = [
-                ("Zoom in", Action::ZoomBy(Zoom::STEP)),
-                ("Zoom out", Action::ZoomBy(Zoom::STEP.recip())),
-                ("Finer snap", Action::FinerSnap),
-                ("Coarser snap", Action::CoarserSnap),
-            ];
-            for (label, action) in items {
-                if ui
-                    .add_enabled(song_open, egui::Button::new(label))
-                    .clicked()
-                {
-                    actions.push(action);
-                }
-            }
+            menu_items(
+                ui,
+                song_open,
+                actions,
+                [
+                    ("Zoom in", "Ctrl+Plus", Action::ZoomBy(Zoom::STEP)),
+                    ("Zoom out", "Ctrl+Minus", Action::ZoomBy(Zoom::STEP.recip())),
+                    ("Finer snap", "Right", Action::FinerSnap),
+                    ("Coarser snap", "Left", Action::CoarserSnap),
+                ],
+            );
         });
         ui.menu_button("Playback", |ui| {
             let play = if playing { "Pause" } else { "Play" };
@@ -171,6 +183,8 @@ pub fn menu_bar(
                 [
                     ("Faster", "Shift+Right", Action::NudgeRate(0.1)),
                     ("Slower", "Shift+Left", Action::NudgeRate(-0.1)),
+                    ("Faster by 1%", "Ctrl+Shift+Right", Action::NudgeRate(0.01)),
+                    ("Slower by 1%", "Ctrl+Shift+Left", Action::NudgeRate(-0.01)),
                     ("Metronome on or off", "F3", Action::ToggleMetronome),
                     ("Note ticks on or off", "F4", Action::ToggleTicks),
                     ("Calibrate latency…", "", Action::Calibrate),

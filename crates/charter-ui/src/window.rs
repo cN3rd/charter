@@ -2252,6 +2252,36 @@ mod tests {
     }
 
     #[test]
+    fn read_only_songs_disable_menu_items_that_would_edit_them() {
+        let mut app = Window::new(PLUGINS);
+        app.open(Path::new("example.json"), example());
+        let mut harness = window(app);
+
+        harness.get_by_label("File").click();
+        harness.run();
+        assert!(
+            harness
+                .get_by_label("Choose audio…")
+                .accesskit_node()
+                .is_disabled()
+        );
+        harness.get_by_label("Timing").click();
+        harness.run();
+        assert!(
+            harness
+                .get_by_label_contains("Raise the tempo")
+                .accesskit_node()
+                .is_disabled()
+        );
+        assert!(
+            !harness
+                .get_by_label_contains("Timing window")
+                .accesskit_node()
+                .is_disabled()
+        );
+    }
+
+    #[test]
     fn a_lane_key_places_a_tap_at_the_cursor_and_moves_on_a_snap() {
         let mut harness = editable_demo();
         harness.key_press(egui::Key::Num1);
@@ -3971,6 +4001,18 @@ mod tests {
     }
 
     #[test]
+    fn playback_menu_exposes_the_fine_speed_shortcuts() {
+        let mut harness = playable();
+        harness.get_by_label("Playback").click();
+        harness.run();
+
+        harness.get_by_label_contains("Slower by 1%").click();
+        harness.run();
+
+        assert!(harness.query_by_label("Speed 99%").is_some());
+    }
+
+    #[test]
     fn the_playback_rate_stays_between_a_tenth_and_four_times() {
         let mut harness = playable();
         for _ in 0..40 {
@@ -5423,6 +5465,19 @@ mod tests {
             harness.state_mut().take_requests(),
             [Request::ChooseTimingFile]
         );
+    }
+
+    #[test]
+    fn the_import_window_can_be_cancelled_without_importing() {
+        let mut harness = importing();
+        harness.state_mut().timing_file_read("0.895,208.1");
+        harness.run();
+
+        harness.get_by_label("Cancel").click();
+        harness.run();
+
+        assert!(harness.query_by_label("Replace the timing").is_none());
+        assert_eq!(bpm_at_cursor(&harness), Some((0, "150".to_owned())));
     }
 
     fn moments(harness: &Harness<'_, Window>) -> Vec<f64> {

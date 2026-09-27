@@ -152,7 +152,7 @@ fn body(
     );
     ui.add_space(8.0);
     let editable = song.read_only().is_none();
-    let mut taken = false;
+    let mut close = false;
     ui.horizontal(|ui| {
         let enabled = editable && imported.is_some();
         let replace = ui.add_enabled_ui(enabled, |ui| {
@@ -160,10 +160,13 @@ fn body(
         });
         if let (true, Some(imported)) = (replace.inner.clicked(), imported) {
             actions.push(Action::ImportTiming(Box::new(imported.timing.clone())));
-            taken = true;
+            close = true;
+        }
+        if ui.button("Cancel").clicked() {
+            close = true;
         }
     });
-    taken
+    close
 }
 
 /// What `imported` holds, and what its format had that it leaves out.

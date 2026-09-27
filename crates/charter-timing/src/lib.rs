@@ -536,6 +536,7 @@ const KEYS: &[(&str, &str)] = &[
     ("L, Shift+L", "Loop the bar under the cursor, the selection"),
     ("R", "Switch to the alternate speed and back"),
     ("C, Shift+C held", "Metronome on or off; muted while held"),
+    ("?", "Show or hide these keys"),
     ("Del", "Remove the focused or selected anchors"),
     ("Ctrl+A", "Select every anchor"),
     (
