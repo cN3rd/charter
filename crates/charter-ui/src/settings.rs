@@ -282,6 +282,7 @@ pub fn show(ctx: &egui::Context, settings: &mut Settings, open: &mut bool) -> Op
         return None;
     }
     let mut preview = None;
+    let page_height = (ctx.content_rect().height() - 150.0).max(120.0);
     // Its own header, the title over the sidebar and a close button over the page, rather than
     // egui's title bar, which would sit flush against the edges the window draws to.
     egui::Window::new("Settings")
@@ -318,12 +319,15 @@ pub fn show(ctx: &egui::Context, settings: &mut Settings, open: &mut bool) -> Op
                             });
                             ui.weak(about);
                             ui.add_space(14.0);
-                            match page {
-                                Page::Editing => editing(ui, settings),
-                                Page::Display => display(ui, settings),
-                                Page::Sounds => preview = sounds(ui, settings),
-                                Page::Autosave => autosave(ui, settings),
-                            }
+                            crate::style::solid_scroll_bars(ui);
+                            egui::ScrollArea::vertical()
+                                .max_height(page_height)
+                                .show(ui, |ui| match page {
+                                    Page::Editing => editing(ui, settings),
+                                    Page::Display => display(ui, settings),
+                                    Page::Sounds => preview = sounds(ui, settings),
+                                    Page::Autosave => autosave(ui, settings),
+                                });
                         });
                     });
             });

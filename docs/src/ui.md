@@ -96,6 +96,7 @@ Japanese, Chinese and Korean fonts after them, whatever the locale, so titles in
 scripts draw; the app finds them with the `system-fonts` crate and reads each file once; messages float over
 the canvas rather than moving it. The settings window has a sidebar of pages, Editing, Display,
 Sounds and Autosave, each setting with a line on what it does and on and off choices as switches;
+long pages scroll inside the window so their controls remain reachable on shorter screens;
 the new-song dialog picks the game from a segmented control, sketches the layout's lanes, and takes
 the song's audio dropped on it or chosen. Until audio is chosen, the song panel shows "None yet"
 rather than a filename. An audio file's tags fill in a title and artist still at
