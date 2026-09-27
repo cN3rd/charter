@@ -1,6 +1,6 @@
 //! The song's audio, loaded off the window's thread and played through kira as the window asks.
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError};
 
@@ -332,10 +332,15 @@ fn summarize(
 /// among the user's own music.
 fn cache_file(project: Option<&Path>, audio: &Path, kind: &str) -> Option<PathBuf> {
     let project = project?;
-    if audio.parent() != Some(project) {
+    let relative = audio.strip_prefix(project).ok()?;
+    if relative.file_name().is_none()
+        || !relative
+            .components()
+            .all(|part| matches!(part, Component::Normal(_)))
+    {
         return None;
     }
-    let mut name = audio.file_name()?.to_owned();
+    let mut name = relative.as_os_str().to_owned();
     name.push(".");
     name.push(kind);
     Some(project.join("cache").join(name))
@@ -436,6 +441,23 @@ mod tests {
             None
         );
         assert_eq!(cache_file(None, Path::new("/s/Song/a.ogg"), "peaks"), None);
+    }
+
+    #[test]
+    fn nested_project_audio_has_its_own_cache_without_writing_outside_the_project() {
+        let project = Some(Path::new("/s/Song"));
+        assert_eq!(
+            cache_file(project, Path::new("/s/Song/assets/a.ogg"), "peaks"),
+            Some(PathBuf::from("/s/Song/cache/assets/a.ogg.peaks"))
+        );
+        assert_eq!(
+            cache_file(project, Path::new("/s/Song/alternate/a.ogg"), "peaks"),
+            Some(PathBuf::from("/s/Song/cache/alternate/a.ogg.peaks"))
+        );
+        assert_eq!(
+            cache_file(project, Path::new("/s/Song/../other/a.ogg"), "peaks"),
+            None
+        );
     }
 
     #[test]

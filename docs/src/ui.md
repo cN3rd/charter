@@ -49,7 +49,8 @@ becomes a folder holding the song's JSON file under the same name and a copy of 
 anything worked out from the audio goes. Audio in a relative subfolder keeps that subfolder;
 different audio already at the destination, or a failed copy, refuses the save without changing
 the open song or its JSON. The waveform's peaks are the first such file,
-`cache/<audio>.peaks`: the finest of the min and max levels every view reads, so the notefield,
+`cache/<audio>.peaks`, keeping any relative audio subfolder: the finest of the min and max levels
+every view reads, so the notefield,
 the timing window and any view to come draw from the same data at any zoom. The file names the
 audio by a fingerprint of its bytes, so a replaced audio file gets its peaks worked out afresh,
 and a damaged or outdated file is ignored; deleting the folder only costs the time to work them
