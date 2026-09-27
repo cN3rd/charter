@@ -255,7 +255,10 @@ impl TimingWindow {
         let reason = match why {
             Refusal::Crosses(tick) => {
                 self.pulse = Some((*tick, now));
-                format!("Would cross the anchor at {}", timing.grid_position(*tick))
+                format!(
+                    "Would cross the anchor at {}",
+                    style::clock(timing.time_at(*tick).seconds())
+                )
             }
             other => {
                 let first = other.to_string();
@@ -396,7 +399,7 @@ impl TimingWindow {
             self.pulse = Some((close.tick, frame.now));
             self.status = Some(format!(
                 "Too close to the anchor at {}",
-                frame.timing.grid_position(close.tick)
+                style::clock(frame.timing.time_at(close.tick).seconds())
             ));
             return;
         }
@@ -576,7 +579,8 @@ pub fn show(
             let cache = refreshed(window.cache.take(), song, inputs.onsets, window);
             settle(window, song);
             let frame = frame(song, inputs.onsets, (&cache, window.layout), now);
-            egui::Panel::top("timing toolbar").show(ui, |ui| panel::toolbar(ui, window));
+            egui::Panel::top("timing toolbar")
+                .show(ui, |ui| panel::toolbar(ui, window, &frame, commands));
             let mut hovering = false;
             egui::Panel::bottom("timing status").show(ui, |ui| {
                 panel::status(ui, window, &frame, (hovering, inputs.latency_ms));

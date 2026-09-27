@@ -17,14 +17,55 @@ pub struct Drafts {
     seconds: Option<String>,
     bar: Option<String>,
     bpm: Option<String>,
+    start_bpm: Option<String>,
     /// A field asked to take the keyboard, as a double-click on an anchor asks of its moment.
     pub(crate) focus_seconds: bool,
 }
 
+/// The tempo from the first anchor on, set from wherever the window is: the one tempo a map
+/// is most often given before it is fitted anchor by anchor.
+fn start_bpm(
+    ui: &mut Ui,
+    window: &mut TimingWindow,
+    frame: &Frame<'_>,
+    commands: &mut Vec<Command>,
+) {
+    let Some(first) = frame.pins.first() else {
+        return;
+    };
+    let caption = ui
+        .weak("Start BPM")
+        .on_hover_text("The tempo from the first anchor on, until the next");
+    let bpm = frame.timing.bpm_at(first.tick).unwrap_or(frame.tail);
+    let text = trimmed(f64::from(bpm), 3);
+    let Some(typed) = field(ui, caption.id, &text, &mut window.drafts.start_bpm, false) else {
+        return;
+    };
+    match typed
+        .parse::<f64>()
+        .ok()
+        .and_then(|bpm| Bpm::try_from(bpm).ok())
+    {
+        Some(bpm) if frame.pins.len() > 1 => commands.push(Command::Edit(Edit::SetBpmAt {
+            tick: first.tick,
+            bpm,
+        })),
+        Some(bpm) => commands.push(Command::Edit(Edit::TailBpm { bpm, merge: false })),
+        None => window.status = Some(format!("{typed} is not a tempo")),
+    }
+}
+
 /// The toolbar: the grid, how many bars a row holds, what snaps, and how strong an onset has
 /// to be to count.
-pub(crate) fn toolbar(ui: &mut Ui, window: &mut TimingWindow) {
+pub(crate) fn toolbar(
+    ui: &mut Ui,
+    window: &mut TimingWindow,
+    frame: &Frame<'_>,
+    commands: &mut Vec<Command>,
+) {
     ui.horizontal_wrapped(|ui| {
+        start_bpm(ui, window, frame, commands);
+        ui.separator();
         let caption = ui.weak("Grid");
         egui::ComboBox::from_id_salt("timing grid")
             .selected_text(format!("1/{}", window.grid.resolution))

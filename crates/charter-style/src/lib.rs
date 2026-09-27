@@ -351,6 +351,20 @@ pub fn switch(ui: &mut Ui, on: &mut bool, name: &str) -> egui::Response {
     response
 }
 
+/// A moment of the audio as minutes, seconds and milliseconds, such as `01:23.456`.
+#[must_use]
+pub fn clock(seconds: f64) -> String {
+    let sign = if seconds < 0.0 { "-" } else { "" };
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // whole, positive, small
+    let millis = (seconds.abs() * 1000.0).round() as u64;
+    format!(
+        "{sign}{:02}:{:02}.{:03}",
+        millis / 60_000,
+        millis / 1000 % 60,
+        millis % 1000
+    )
+}
+
 /// A checkbox before `text`, both one target: a sunken square with an edge when off, filled in
 /// the accent with a white tick when on.
 pub fn check(ui: &mut Ui, on: &mut bool, text: &str) -> egui::Response {

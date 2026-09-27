@@ -415,7 +415,7 @@ impl Issue {
     /// The issue in words.
     #[must_use]
     pub fn describe(&self, timing: Valid<'_, Timing>) -> String {
-        let at = |tick: Tick| timing.grid_position(tick).to_string();
+        let at = |tick: Tick| charter_style::clock(timing.time_at(tick).seconds());
         match *self {
             Self::Bar {
                 number, median_ms, ..
@@ -800,7 +800,7 @@ mod tests {
         assert!(matches!(issues[2], Issue::Metre { tick } if tick == Tick::new(7680)));
         assert_eq!(
             issues[2].describe(timing),
-            "The metre change at 2:0:0 has no anchor"
+            "The metre change at 00:03.712 has no anchor"
         );
     }
 

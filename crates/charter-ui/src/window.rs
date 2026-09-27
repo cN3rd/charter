@@ -4484,11 +4484,45 @@ mod tests {
         ticks
     }
 
+    /// The timing window open over `timed_song`, laid out a bar a row, as the gesture tests
+    /// measure their spots.
     fn syncing() -> Harness<'static, Window> {
         let mut harness = timed_song();
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
         harness.run();
+        harness.state_mut().sync.layout = charter_timing::rows::Layout::Bars;
+        harness.run();
         harness
+    }
+
+    #[test]
+    fn the_timing_window_opens_on_rows_of_seconds() {
+        let mut harness = timed_song();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
+        harness.run();
+        assert!(harness.query_by_label("Row at 0.0 s").is_some());
+        assert!(harness.query_by_label("Measure 0").is_none());
+    }
+
+    #[test]
+    fn the_timing_windows_start_bpm_sets_the_first_anchors_tempo() {
+        let mut harness = syncing();
+        let start = harness.get_by_role_and_label(Role::TextInput, "Start BPM");
+        let before = start.value();
+        start.focus();
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness
+            .get_by_role_and_label(Role::TextInput, "Start BPM")
+            .type_text("140");
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+        let song = harness.state().song.as_ref().unwrap();
+        assert_eq!(
+            song.timing().bpm_at(Tick::new(0)).map(f64::from),
+            Some(140.0)
+        );
+        assert_ne!(before.as_deref(), Some("140"));
     }
 
     /// Where `tick` lies across its bar's row in the timing window, a bar a row with a tenth of
@@ -4584,13 +4618,13 @@ mod tests {
     #[test]
     fn ctrl_t_opens_and_closes_the_timing_window() {
         let mut harness = timed_song();
-        assert!(harness.query_by_label("Measure 0").is_none());
+        assert!(harness.query_by_label("Row at 0.0 s").is_none());
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
         harness.run();
-        assert!(harness.query_by_label("Measure 0").is_some());
+        assert!(harness.query_by_label("Row at 0.0 s").is_some());
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
         harness.run();
-        assert!(harness.query_by_label("Measure 0").is_none());
+        assert!(harness.query_by_label("Row at 0.0 s").is_none());
     }
 
     #[test]
@@ -4788,6 +4822,8 @@ mod tests {
         // The demo runs to more bars than the window shows, so its rows scroll.
         let mut harness = editable_demo();
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
+        harness.run();
+        harness.state_mut().sync.layout = charter_timing::rows::Layout::Bars;
         harness.run();
         let heard = seconds_at(&harness, 3830);
         let at = in_row(&harness, 3830);
@@ -6117,7 +6153,7 @@ mod tests {
     fn the_tempo_section_opens_the_sync_window() {
         let mut harness = editable_demo();
         click_in_panel(&mut harness, "Sync to the audio");
-        assert!(harness.query_by_label("Measure 0").is_some());
+        assert!(harness.query_by_label("Row at 0.0 s").is_some());
     }
 
     fn no_audio(harness: &Harness<'_, Window>) -> bool {

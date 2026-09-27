@@ -93,10 +93,11 @@ impl SecondsPerRow {
 pub enum Layout {
     /// By bar position: the grid stays put and the audio stretches to it, so a correct map lines
     /// its beats up down the rows, and an edit slides the waveform under the grid.
-    #[default]
     Bars,
     /// By audio time: each row a fixed span of seconds, the waveform never moves, and an edit
-    /// moves the grid lines and anchors over it.
+    /// moves the grid lines and anchors over it. Timing points are moments of the audio, so the
+    /// window opens on this.
+    #[default]
     Time,
 }
 

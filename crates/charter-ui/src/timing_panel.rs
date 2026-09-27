@@ -8,7 +8,7 @@ use charter_editor::Song;
 use egui::{RichText, Ui};
 
 use crate::Action;
-use crate::panels::{clock, entry};
+use crate::panels::entry;
 use crate::style::{self, icon, table};
 
 /// What is being typed into the section's fields, while one has the keyboard.
@@ -223,7 +223,7 @@ fn list(
                     ui.spacing_mut().item_spacing.y = 0.0;
                     ui.spacing_mut().button_padding.y = 1.0;
                     for point in points.get(rows).unwrap_or_default() {
-                        let at = clock(timing.time_at(point.tick).seconds());
+                        let at = style::clock(timing.time_at(point.tick).seconds());
                         let tempo = point
                             .bpm
                             .map_or_else(String::new, |bpm| format!("{bpm} BPM"));
@@ -284,13 +284,13 @@ fn point_fields(
             refused = entry(
                 ui,
                 caption.id,
-                &clock(seconds),
+                &style::clock(seconds),
                 &mut drafts.time,
                 to,
                 actions,
             );
         } else {
-            ui.label(clock(seconds));
+            ui.label(style::clock(seconds));
         }
         ui.end_row();
         let caption = ui.weak("BPM");

@@ -1221,7 +1221,7 @@ fn drop_guide(
 ) {
     let timing = song.timing();
     let (at, label) = if free {
-        (y, crate::panels::clock(view.seconds_at(y)))
+        (y, style::clock(view.seconds_at(y)))
     } else {
         let Some(step) = song
             .document()

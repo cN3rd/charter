@@ -679,7 +679,7 @@ fn readout(ui: &mut Ui, song: &Song) {
                         format!("Cursor at {at}"),
                     )
                 });
-                let time = clock(timing.time_at(song.cursor()).seconds());
+                let time = style::clock(timing.time_at(song.cursor()).seconds());
                 ui.label(
                     RichText::new(time)
                         .monospace()
@@ -723,20 +723,6 @@ pub fn status_bar(ui: &mut Ui, song: Option<&Song>, (audio, playing): (&str, boo
             }
         });
     });
-}
-
-/// An audio time as minutes, seconds and milliseconds, such as `01:23.456`.
-pub(crate) fn clock(seconds: f64) -> String {
-    let sign = if seconds < 0.0 { "-" } else { "" };
-    let millis = (seconds.abs() * 1000.0).round();
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // whole, positive, small
-    let millis = millis as u64;
-    format!(
-        "{sign}{:02}:{:02}.{:03}",
-        millis / 60_000,
-        millis / 1000 % 60,
-        millis % 1000
-    )
 }
 
 /// A snap's name, such as `16th` or `32nd`.
