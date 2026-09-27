@@ -20,6 +20,12 @@ pub struct Import {
     read: Option<(String, usize, Result<ImportedTiming, String>)>,
 }
 
+impl Import {
+    pub(crate) fn invalidate(&mut self) {
+        self.read = None;
+    }
+}
+
 /// The plugins that read a timing format, with the format's name.
 fn formats<'a>(
     plugins: &'a [&'static dyn RulesetPlugin],

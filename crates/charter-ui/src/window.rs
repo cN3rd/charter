@@ -1162,6 +1162,7 @@ impl Window {
                 song.set_snap(self.settings.snap);
                 self.new_song = None;
                 self.song = Some(*song);
+                self.import.invalidate();
                 self.path = path;
                 self.zoom = Zoom::START.by(self.settings.zoom / 100.0);
                 self.failure = None;
@@ -4677,7 +4678,43 @@ mod tests {
         }
     }
 
+    /// Reads the same text differently depending on the destination game's ruleset.
+    #[derive(Debug)]
+    struct ContextImporter;
+
+    impl RulesetPlugin for ContextImporter {
+        fn id(&self) -> &'static str {
+            "context-importer"
+        }
+
+        fn check(&self, _: &ValidDocument) -> Result<(), Box<dyn Error + Send + Sync>> {
+            Ok(())
+        }
+
+        fn timing_format(&self) -> Option<&str> {
+            Some("context timing")
+        }
+
+        fn import_timing(
+            &self,
+            text: &str,
+            into: &ValidDocument,
+        ) -> Result<charter_core::ImportedTiming, Box<dyn Error + Send + Sync>> {
+            let bpm = if into.document().ruleset.id.as_str() == "ttr" {
+                "208.1"
+            } else {
+                "150"
+            };
+            Importer.import_timing(&format!("{text},{bpm}"), into)
+        }
+    }
+
     const IMPORTING: &[&dyn RulesetPlugin] = &[&AnySm, &Importer];
+    const CONTEXT_IMPORTING: &[&dyn RulesetPlugin] = &[
+        &charter_stepmania::Plugin,
+        &charter_ttr::Plugin,
+        &ContextImporter,
+    ];
 
     fn importing() -> Harness<'static, Window> {
         let mut app = Window::new(IMPORTING);
@@ -4689,6 +4726,50 @@ mod tests {
         harness.get_by_label("Import timing…").click();
         harness.run();
         harness
+    }
+
+    #[test]
+    fn reopening_import_after_opening_another_game_previews_for_that_song() {
+        let draft = charter_core::NewSong {
+            metadata: charter_editor::demo::song().document().metadata.clone(),
+            layout: 0,
+            charts: vec!["Easy".to_owned()],
+        };
+        let first = charter_stepmania::Plugin.new_song(&draft).unwrap();
+        let second = charter_ttr::Plugin.new_song(&draft).unwrap();
+        let mut app = Window::new(CONTEXT_IMPORTING);
+        app.open(
+            Path::new("/songs/stepmania.json"),
+            &first.to_json().unwrap(),
+        );
+        let mut harness = window(app);
+
+        harness.state_mut().timing_file_read("0.895");
+        harness.run();
+        assert!(
+            harness
+                .query_by_label_contains("150 BPM at the start")
+                .is_some()
+        );
+        harness.get_by_label("Close window").click();
+        harness.run();
+        harness
+            .state_mut()
+            .open(Path::new("/songs/ttr.json"), &second.to_json().unwrap());
+        harness.run();
+        harness.query_all_by_label("Timing").next().unwrap().click();
+        harness.run();
+        harness.get_by_label("Import timing…").click();
+        harness.run();
+
+        assert!(
+            harness
+                .query_by_label_contains("208.1 BPM at the start")
+                .is_some()
+        );
+        harness.get_by_label("Replace the timing").click();
+        harness.run();
+        assert_eq!(bpm_at_cursor(&harness), Some((0, "208.1".to_owned())));
     }
 
     #[test]
