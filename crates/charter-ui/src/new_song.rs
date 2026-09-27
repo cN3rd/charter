@@ -26,6 +26,8 @@ pub struct Draft {
     charts: Vec<String>,
     /// The audio file the song plays, once one is dropped on the dialog or chosen.
     pub audio: Option<PathBuf>,
+    /// Why the last Create attempt was refused.
+    pub(crate) error: Option<String>,
 }
 
 impl Default for Draft {
@@ -37,6 +39,7 @@ impl Default for Draft {
             artist: String::new(),
             charts: vec!["Easy".to_owned()],
             audio: None,
+            error: None,
         }
     }
 }
@@ -350,6 +353,9 @@ fn charts(ui: &mut Ui, draft: &mut Draft) {
         draft
             .charts
             .push(format!("Chart {}", draft.charts.len() + 1));
+    }
+    if let Some(error) = &draft.error {
+        ui.colored_label(style::WARN, error);
     }
 }
 

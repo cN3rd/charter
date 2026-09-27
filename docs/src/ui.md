@@ -316,7 +316,8 @@ and the notes over a waveform that stays put.
   ([suggestion UI](research/topics/suggestion-ui.md)).
 - With no song open, the centre offers new, open and recent songs.
 - Closing the window, opening another song or the demo over unsaved changes first asks whether to
-  save them. The title stars a song with unsaved changes.
+  save them. Starting a new song does too; Cancel keeps its filled-in draft. The title stars a
+  song with unsaved changes.
 - Unsaved changes are autosaved to one recovery file in charter's own data folder, never beside the
   song, half a minute after the first change since the last autosave; the settings window sets the
   wait, from 5 seconds to 10 minutes, or turns autosave off, which stops new autosaves and leaves

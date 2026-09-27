@@ -958,15 +958,10 @@ impl Window {
     }
 
     /// Starts the song the new-song dialog asks for.
-    fn create(
-        &mut self,
-        plugin: &dyn charter_core::RulesetPlugin,
-        song: &charter_core::NewSong,
-        audio: Option<PathBuf>,
-    ) {
-        self.new_song = None;
+    fn create(&mut self, plugin: &dyn charter_core::RulesetPlugin, song: &charter_core::NewSong) {
         match plugin.new_song(song) {
             Ok(document) => {
+                let audio = self.new_song.as_ref().and_then(|draft| draft.audio.clone());
                 let song = Box::new(Song::new(document, self.plugins));
                 self.after_asking(Discard::Open {
                     path: None,
@@ -975,7 +970,13 @@ impl Window {
                     audio,
                 });
             }
-            Err(error) => self.failure = Some(format!("Could not start the song: {error}")),
+            Err(error) => {
+                let why = format!("Could not start the song: {error}");
+                if let Some(draft) = &mut self.new_song {
+                    draft.error = Some(why.clone());
+                }
+                self.failure = Some(why);
+            }
         }
     }
 
@@ -1159,6 +1160,7 @@ impl Window {
                 }
                 self.saving = None;
                 song.set_snap(self.settings.snap);
+                self.new_song = None;
                 self.song = Some(*song);
                 self.path = path;
                 self.zoom = Zoom::START.by(self.settings.zoom / 100.0);
@@ -1396,8 +1398,7 @@ impl Window {
         if let Some(draft) = &mut self.new_song {
             match new_song::show(ui, self.plugins, draft, self.no_drops) {
                 Some(new_song::Answer::Create { plugin, song }) => {
-                    let audio = self.new_song.take().and_then(|draft| draft.audio);
-                    self.create(plugin, &song, audio);
+                    self.create(plugin, &song);
                 }
                 Some(new_song::Answer::ChooseAudio) => self.requests.push(Request::ChooseAudio),
                 Some(new_song::Answer::Cancel) => self.new_song = None,
@@ -5505,6 +5506,80 @@ mod tests {
         harness.run();
         assert!(dialog_open(&harness));
         assert!(harness.state().song.is_none());
+    }
+
+    #[test]
+    fn a_rejected_new_song_keeps_its_fields_and_shows_why() {
+        let mut harness = new_song_dialog();
+        let title = harness.get_by_role_and_label(Role::TextInput, "Title");
+        title.focus();
+        title.type_text("Mine");
+        harness.run();
+        harness.get_by_label("Add a chart").click();
+        harness.run();
+        let second = harness.get_by_role_and_label(Role::TextInput, "Chart 2");
+        second.focus();
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness
+            .get_by_role_and_label(Role::TextInput, "Chart 2")
+            .type_text("Easy");
+        harness.run();
+
+        harness.get_by_label("Create").click();
+        harness.run();
+        assert!(harness.state().song.is_none());
+        assert!(dialog_open(&harness));
+        assert_eq!(
+            harness
+                .get_by_role_and_label(Role::TextInput, "Title")
+                .value()
+                .as_deref(),
+            Some("Mine")
+        );
+        assert_eq!(
+            harness
+                .get_by_role_and_label(Role::TextInput, "Chart 2")
+                .value()
+                .as_deref(),
+            Some("Easy")
+        );
+        assert!(
+            harness
+                .query_all_by_label_contains("Could not start the song")
+                .next()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn cancelling_the_unsaved_song_prompt_keeps_the_new_song_draft() {
+        let mut app = Window::new(GAMES);
+        app.open(Path::new("/songs/four.json"), &four_taps());
+        app.song.as_mut().unwrap().mark_unsaved();
+        let mut harness = window(app);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::N);
+        harness.run();
+        let title = harness.get_by_role_and_label(Role::TextInput, "Title");
+        title.focus();
+        title.type_text("Mine");
+        harness.run();
+
+        harness.get_by_label("Create").click();
+        harness.run();
+        assert!(asks_to_save(&harness));
+        harness.state_mut().answer(panels::Answer::Cancel);
+        harness.run();
+
+        assert!(dialog_open(&harness));
+        assert_eq!(
+            harness
+                .get_by_role_and_label(Role::TextInput, "Title")
+                .value()
+                .as_deref(),
+            Some("Mine")
+        );
+        assert_eq!(harness.state().title(), "*four.json - charter");
     }
 
     #[test]
