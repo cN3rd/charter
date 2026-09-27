@@ -259,11 +259,9 @@ fn anchor(
                     .and_then(|bpm| Bpm::try_from(bpm).ok())
                 {
                     Some(bpm) => commands.push(Command::Edit(match next {
-                        // A tempo between anchors follows from them, so setting it moves the next.
-                        Some(next) => Edit::Sync {
-                            tick: next.tick,
-                            seconds: pin.seconds
-                                + beats(frame, pin.tick, next.tick) * 60.0 / f64::from(bpm),
+                        Some(_) => Edit::SetBpmAt {
+                            tick: pin.tick,
+                            bpm,
                         },
                         None => Edit::TailBpm { bpm, merge: false },
                     })),
@@ -439,13 +437,6 @@ fn derived(frame: &Frame<'_>, from: Pin) -> Bpm {
     Bpm::nearest(frame.timing.tempo_at(from.tick)).unwrap_or(frame.tail)
 }
 
-/// The beats from `from` to `to`.
-fn beats(frame: &Frame<'_>, from: Tick, to: Tick) -> f64 {
-    #[allow(clippy::cast_precision_loss)] // ticks of a song
-    let ticks = (i64::from(to) - i64::from(from)) as f64;
-    ticks / f64::from(u16::from(frame.timing.ticks_per_beat()))
-}
-
 /// `value` to `places`, without trailing zeros.
 fn trimmed(value: f64, places: usize) -> String {
     let text = format!("{value:.places$}");
@@ -455,4 +446,86 @@ fn trimmed(value: f64, places: usize) -> String {
 /// Something the issue list names, for the window to go to.
 pub(crate) fn issue_tick(issue: &Issue) -> Tick {
     issue.tick()
+}
+
+#[cfg(test)]
+mod tests {
+    use charter_core::{RulesetPlugin, ValidDocument};
+    use serde_json::json;
+
+    use super::*;
+
+    #[derive(Debug)]
+    struct AcceptsTiming;
+
+    impl RulesetPlugin for AcceptsTiming {
+        fn id(&self) -> &'static str {
+            "test"
+        }
+
+        fn check(&self, _: &ValidDocument) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn editing_segment_bpm_accounts_for_a_stop() {
+        let value = json!({
+            "format_version": 1,
+            "ruleset": { "id": "test", "version": "1" },
+            "metadata": { "title": "t", "artist": "a", "audio": "a.ogg" },
+            "timing": {
+                "anchors": [
+                    { "tick": 0, "seconds": 0.0 },
+                    { "tick": 3840, "seconds": 2.5 }
+                ],
+                "tempo": 120.0,
+                "events": [{ "tick": 1920, "kind": { "stop": 0.5 } }]
+            },
+            "charts": [{ "name": "Easy", "lanes": 4 }]
+        });
+        let document = ValidDocument::from_json(&serde_json::to_vec(&value).unwrap()).unwrap();
+        let mut song = crate::Song::new(document, &[&AcceptsTiming]);
+        let mut window = TimingWindow::default();
+        window.drafts.focus_seconds = true;
+        let cache = crate::refreshed(None, &song, &[], &window);
+        let frame = crate::frame(&song, &[], (&cache, crate::rows::Layout::Bars), 0.0);
+        let ctx = egui::Context::default();
+        let mut commands = Vec::new();
+        let show = |events, window: &mut TimingWindow, commands: &mut Vec<Command>| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(500.0, 500.0),
+                )),
+                events,
+                ..egui::RawInput::default()
+            };
+            let mut output = ctx.run_ui(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    anchor(ui, window, &frame, 0, commands);
+                });
+            });
+            output.textures_delta.clear();
+        };
+        let tab = || egui::Event::Key {
+            key: egui::Key::Tab,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        show(Vec::new(), &mut window, &mut commands);
+        show(vec![tab()], &mut window, &mut commands);
+        show(vec![tab()], &mut window, &mut commands);
+        window.drafts.bpm = Some("150".to_owned());
+        show(vec![tab()], &mut window, &mut commands);
+
+        assert_eq!(commands.len(), 1, "{commands:?}");
+        let crate::Command::Edit(edit) = commands.remove(0) else {
+            panic!("expected a tempo edit");
+        };
+        edit.apply(&mut song).unwrap();
+        assert!((song.timing().tempo_at(Tick::new(0)) - 150.0).abs() < 1e-4);
+    }
 }

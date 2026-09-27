@@ -53,6 +53,8 @@ pub enum Command {
 pub enum Edit {
     /// Makes the beat on `tick` fall `seconds` into the audio, anchoring it there.
     Sync { tick: Tick, seconds: f64 },
+    /// Sets the tempo starting at this anchor, accounting for stops, delays and warps.
+    SetBpmAt { tick: Tick, bpm: Bpm },
     /// Removes the anchors on the ticks.
     Unsync(Vec<Tick>),
     /// Moves each anchor on a first tick to the beat on its second, keeping their moments.
@@ -80,6 +82,7 @@ impl Edit {
     pub fn apply(&self, song: &mut Song) -> Result<(), Refusal> {
         match self {
             Self::Sync { tick, seconds } => song.sync(*tick, *seconds),
+            Self::SetBpmAt { tick, bpm } => song.set_bpm_at(*tick, *bpm),
             Self::Unsync(ticks) => song.unsync_anchors(ticks),
             Self::MoveAnchors(moves) => song.move_anchors(moves),
             Self::Nudge { ticks, by, merge } => song.nudge_anchors(ticks, *by, *merge),
