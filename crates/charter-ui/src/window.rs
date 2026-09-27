@@ -592,7 +592,7 @@ impl Window {
             return;
         }
         // What plays now is heard a moment later: the cursor shows what is heard.
-        let seconds = seconds - self.settings.latency_ms / 1000.0;
+        let seconds = seconds - self.settings.latency_ms * self.rate.factor() / 1000.0;
         if let Some(song) = &mut self.song {
             let tick = song.timing().latest_tick_by(seconds);
             song.jump_to(tick);
@@ -3857,6 +3857,27 @@ mod tests {
         harness.state_mut().playhead(0.75);
         harness.run();
         assert!(cursor_shows(&harness, "0:1:0"));
+    }
+
+    #[test]
+    fn the_cursor_scales_calibrated_latency_to_slowed_audio_time() {
+        let mut harness = playable_with(Settings {
+            latency_ms: 250.0,
+            ..Settings::default()
+        });
+        harness.state_mut().set_rate(Rate::of(0.5));
+        space(&mut harness);
+        let Request::Play { rate, .. } = request(&mut harness) else {
+            panic!("expected playback");
+        };
+        assert!((rate - 0.5).abs() < f64::EPSILON);
+
+        harness.state_mut().playhead(0.75);
+        harness.run();
+        assert_eq!(
+            harness.state().song.as_ref().unwrap().cursor(),
+            Tick::new(1200)
+        );
     }
 
     #[test]
