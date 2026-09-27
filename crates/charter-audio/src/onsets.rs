@@ -17,8 +17,7 @@ use crate::Track;
 const FRAME: usize = 512;
 /// Samples from one frame to the next.
 const HOP: usize = 128;
-/// The two as reals, for turning frames into samples.
-const FRAME_SAMPLES: f64 = 512.0;
+/// The hop as a real, for turning frames into samples.
 const HOP_SAMPLES: f64 = 128.0;
 /// How close two onsets may be, in seconds: closer, they are one hit.
 const APART: f64 = 0.030;
@@ -89,8 +88,8 @@ pub fn onsets(track: &Track) -> Vec<Onset> {
         }
         #[allow(clippy::cast_precision_loss)] // a frame of a track, far below 2^52
         let at = index as f64 + parabola(&flux, index);
-        // The flux of a frame rises as a hit reaches the middle of the window.
-        let sample = at * HOP_SAMPLES + FRAME_SAMPLES / 2.0 - HOP_SAMPLES / 2.0;
+        // The flux of a frame rises as a hit reaches the middle of the window, at its hop.
+        let sample = at * HOP_SAMPLES - HOP_SAMPLES / 2.0;
         peaks.push((sample, value - mean));
     }
     let strongest = peaks.iter().map(|(_, height)| *height).fold(0.0, f32::max);
@@ -126,12 +125,19 @@ fn flux(mono: &[f32]) -> Vec<f32> {
     let mut previous = vec![0.0f32; bins];
     let mut buffer = vec![Complex::new(0.0, 0.0); FRAME];
     let mut scratch = vec![Complex::new(0.0, 0.0); fft.get_inplace_scratch_len()];
-    let frames = mono.len().saturating_sub(FRAME) / HOP + 1;
+    // Each frame is centred on its hop, with silence before the track, so a hit on the first
+    // sample sits in the middle of a frame rather than at the edge of its window. None reaches
+    // past the end, where the cut to silence would read as a hit.
+    let frames = mono.len().saturating_sub(FRAME / 2) / HOP + 1;
     let mut values = Vec::with_capacity(frames);
     for frame in 0..frames {
-        let start = frame * HOP;
-        for (slot, (weight, at)) in buffer.iter_mut().zip(window.iter().zip(start..)) {
-            *slot = Complex::new(mono.get(at).copied().unwrap_or(0.0) * weight, 0.0);
+        let start = (frame * HOP).checked_sub(FRAME / 2);
+        let skip = start.map_or_else(|| FRAME / 2 - frame * HOP, |_| 0);
+        let from = start.unwrap_or(0);
+        buffer.fill(Complex::new(0.0, 0.0));
+        let samples = mono.get(from..).unwrap_or_default().iter();
+        for ((slot, weight), sample) in buffer.iter_mut().zip(&window).skip(skip).zip(samples) {
+            *slot = Complex::new(sample * weight, 0.0);
         }
         fft.process_with_scratch(&mut buffer, &mut scratch);
         let mut sum = 0.0;
@@ -140,8 +146,8 @@ fn flux(mono: &[f32]) -> Vec<f32> {
             sum += (magnitude - *old).max(0.0);
             *old = magnitude;
         }
-        // The first frame rises from nothing, which says nothing about the track.
-        values.push(if frame == 0 { 0.0 } else { sum });
+        // The first frame rises from silence, so a hit on the first sample counts like any other.
+        values.push(sum);
     }
     values
 }
@@ -212,7 +218,7 @@ fn steepest_rise(envelope: &[f32], around: f64, reach: f64) -> Option<f64> {
 
 /// What starts kept onsets, naming the layout and the detector: a change to either changes
 /// this, so onsets found another way are found again.
-const MAGIC: &[u8; 8] = b"CHONSET1";
+const MAGIC: &[u8; 8] = b"CHONSET2";
 
 /// `onsets` as bytes to keep, marked as those of the audio whose
 /// [fingerprint](crate::fingerprint) is `source`.
@@ -306,6 +312,13 @@ mod tests {
     }
 
     #[test]
+    fn a_hit_on_the_very_first_sample_is_found() {
+        let found = onsets(&clicks(&[(0.0, 0.8), (0.5, 0.8)], 1.0));
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert!(found[0].seconds < 0.001, "{found:?}");
+    }
+
+    #[test]
     fn a_quieter_hit_is_weaker_and_silence_has_none() {
         let found = onsets(&clicks(&[(0.5, 0.9), (1.0, 0.2)], 1.5));
         assert_eq!(found.len(), 2);
@@ -323,7 +336,8 @@ mod tests {
                 [sample; 2]
             })
             .collect();
-        assert!(onsets(&Track::from_frames(RATE, frames)).len() <= 1);
+        let found = onsets(&Track::from_frames(RATE, frames));
+        assert!(found.len() <= 1, "{found:?}");
     }
 
     #[test]
