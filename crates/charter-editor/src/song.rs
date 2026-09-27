@@ -324,10 +324,28 @@ impl Song {
         if held == bpm {
             return Ok(());
         }
+        self.set_bpm_change_at(at, bpm)
+    }
+
+    /// Sets `bpm` at `at`, inserting an anchor there if needed, in one checked edit.
+    pub(crate) fn set_bpm_change_at(&mut self, at: Tick, bpm: Bpm) -> Result<(), Refusal> {
         let (own, timing) = self.edited_timing();
         let mut new = timing.clone();
-        let Some(index) = new.anchors.iter().position(|anchor| anchor.tick == at) else {
-            return Ok(());
+        let index = if let Some(index) = new.anchors.iter().position(|anchor| anchor.tick == at) {
+            index
+        } else {
+            let index = new.anchors.partition_point(|anchor| anchor.tick < at);
+            let seconds = self.timing().time_at(at).seconds();
+            new.anchors.insert(
+                index,
+                charter_core::Anchor {
+                    tick: at,
+                    seconds: charter_core::Origin::try_from((seconds * 1e6).round() / 1e6)
+                        .map_err(|_| Refusal::NotWhole)?,
+                    ext: Extensions::new(),
+                },
+            );
+            index
         };
         if index + 1 == new.anchors.len() {
             new.tempo = bpm;

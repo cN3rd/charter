@@ -33,20 +33,10 @@ impl Song {
     ///
     /// Refuses on a read-only song, or when the game refuses the tempo.
     pub fn set_bpm_at(&mut self, tick: Tick, bpm: Bpm) -> Result<(), Refusal> {
-        let cursor = self.cursor();
-        self.jump_to(tick);
-        if !self
-            .edited_timing()
-            .1
-            .anchors
-            .iter()
-            .any(|anchor| anchor.tick == tick)
-        {
-            self.add_bpm_change()?;
+        if Bpm::nearest(self.timing().tempo_at(tick)) == Some(bpm) {
+            return Ok(());
         }
-        let result = self.set_bpm(bpm);
-        self.jump_to(cursor);
-        result
+        self.set_bpm_change_at(tick, bpm)
     }
 
     /// Gives the timing point on `tick` the meter `meter`, starting the measures there, adding a
@@ -176,9 +166,57 @@ mod tests {
         song.set_meter_at(Tick::new(480), meter(5, 4)).unwrap();
         assert_eq!(song_events(&song)[2], meter_event(480, 5, 4));
         song.set_meter_at(Tick::new(480), meter(5, 4)).unwrap();
-        for _ in 0..4 {
+        for _ in 0..3 {
             song.undo().unwrap();
         }
+        assert!(!song.can_undo());
+    }
+
+    #[test]
+    fn setting_a_point_bpm_undoes_the_new_anchor_and_tempo_together() {
+        let events = json!([bpm_event(0, 120.0), meter_event(480, 3, 4)]);
+        let mut song = timed(&events, None);
+        song.set_bpm_at(Tick::new(480), tempo(150.0)).unwrap();
+        song.undo().unwrap();
+        assert_eq!(song_events(&song), events);
+        assert!(!song.can_undo());
+    }
+
+    #[test]
+    fn a_refused_point_bpm_keeps_the_timing_history_and_cursor() {
+        let events = json!([
+            bpm_event(0, 120.0),
+            bpm_event(1920, 120.0),
+            bpm_event(3840, 120.0)
+        ]);
+        let mut song = timed(&events, None);
+        song.jump_to(Tick::new(240));
+        assert!(song.set_bpm_at(Tick::new(960), tempo(30.0)).is_err());
+        assert_eq!(song_events(&song), events);
+        assert_eq!(song.cursor(), Tick::new(240));
+        assert!(!song.can_undo());
+        assert!(!song.is_modified());
+    }
+
+    #[test]
+    fn a_read_only_point_bpm_refusal_does_not_move_the_cursor() {
+        let document = timed(&json!([bpm_event(0, 120.0)]), None)
+            .document()
+            .clone();
+        let mut song = Song::new(document, &[]);
+        assert!(matches!(
+            song.set_bpm_at(Tick::new(960), tempo(150.0)),
+            Err(Refusal::ReadOnly)
+        ));
+        assert_eq!(song.cursor(), Tick::new(0));
+    }
+
+    #[test]
+    fn setting_a_point_to_its_current_bpm_adds_no_anchor() {
+        let events = json!([bpm_event(0, 120.0)]);
+        let mut song = timed(&events, None);
+        song.set_bpm_at(Tick::new(960), tempo(120.0)).unwrap();
+        assert_eq!(song_events(&song), events);
         assert!(!song.can_undo());
     }
 
