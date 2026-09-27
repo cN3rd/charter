@@ -824,6 +824,7 @@ pub fn transport_bar(
     (metronome, ticks, volumes): (bool, bool, charter_audio::Volumes),
     actions: &mut Vec<Action>,
 ) {
+    let width = ui.available_width();
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
         let (name, tip) = if panel {
@@ -856,75 +857,92 @@ pub fn transport_bar(
         });
         if let Some(song) = song {
             readout(ui, song);
-            style::chip(ui, |ui| {
-                ui.label(style::glyph(ui, icon::METRONOME).color(style::WEAK_TEXT));
-                let tempo = song
-                    .bpm()
-                    .map_or_else(|| "no BPM".to_owned(), |(_, bpm)| format!("{bpm} BPM"));
-                ui.label(tempo);
-            });
-            style::chip(ui, |ui| {
-                ui.label(style::glyph(ui, icon::GRID_FOUR).color(style::WEAK_TEXT));
-                if style::quiet_icon(ui, icon::CARET_LEFT, "Coarser snap", "Coarser snap (Left)")
+            if width >= 800.0 {
+                style::chip(ui, |ui| {
+                    ui.label(style::glyph(ui, icon::METRONOME).color(style::WEAK_TEXT));
+                    let tempo = song
+                        .bpm()
+                        .map_or_else(|| "no BPM".to_owned(), |(_, bpm)| format!("{bpm} BPM"));
+                    ui.label(tempo);
+                });
+                style::chip(ui, |ui| {
+                    ui.label(style::glyph(ui, icon::GRID_FOUR).color(style::WEAK_TEXT));
+                    if style::quiet_icon(
+                        ui,
+                        icon::CARET_LEFT,
+                        "Coarser snap",
+                        "Coarser snap (Left)",
+                    )
                     .clicked()
-                {
-                    actions.push(Action::CoarserSnap);
-                }
-                ui.label(format!("Snap {}", ordinal(song.snap())));
-                if style::quiet_icon(ui, icon::CARET_RIGHT, "Finer snap", "Finer snap (Right)")
+                    {
+                        actions.push(Action::CoarserSnap);
+                    }
+                    ui.label(format!("Snap {}", ordinal(song.snap())));
+                    if style::quiet_icon(ui, icon::CARET_RIGHT, "Finer snap", "Finer snap (Right)")
+                        .clicked()
+                    {
+                        actions.push(Action::FinerSnap);
+                    }
+                    if width >= 1200.0 {
+                        let mut chosen = grid;
+                        let caption = ui.weak("Grid");
+                        crate::settings::grid_choice(ui, &mut chosen, "toolbar grid lines")
+                            .on_hover_text("Lines between the beats down to this note")
+                            .labelled_by(caption.id)
+                            .widget_info(|| {
+                                egui::WidgetInfo::labeled(
+                                    egui::WidgetType::ComboBox,
+                                    true,
+                                    "Grid lines",
+                                )
+                            });
+                        if chosen != grid {
+                            actions.push(Action::SetGrid(chosen));
+                        }
+                    }
+                });
+            }
+            if width >= 950.0 {
+                style::chip(ui, |ui| {
+                    ui.label(style::glyph(ui, icon::GAUGE).color(style::WEAK_TEXT));
+                    if style::quiet_icon(ui, icon::MINUS, "Slower", "Play slower (Shift+Left)")
+                        .clicked()
+                    {
+                        actions.push(Action::NudgeRate(-0.1));
+                    }
+                    ui.label(format!("Speed {:.0}%", rate.percent()));
+                    if style::quiet_icon(ui, icon::PLUS, "Faster", "Play faster (Shift+Right)")
+                        .clicked()
+                    {
+                        actions.push(Action::NudgeRate(0.1));
+                    }
+                });
+            }
+            if width >= 1200.0 {
+                style::chip(ui, |ui| {
+                    if style::quiet_icon(
+                        ui,
+                        icon::MAGNIFYING_GLASS_MINUS,
+                        "Zoom out",
+                        "Zoom out (Ctrl+Minus)",
+                    )
                     .clicked()
-                {
-                    actions.push(Action::FinerSnap);
-                }
-                let mut chosen = grid;
-                let caption = ui.weak("Grid");
-                crate::settings::grid_choice(ui, &mut chosen, "toolbar grid lines")
-                    .on_hover_text("Lines between the beats down to this note")
-                    .labelled_by(caption.id)
-                    .widget_info(|| {
-                        egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, "Grid lines")
-                    });
-                if chosen != grid {
-                    actions.push(Action::SetGrid(chosen));
-                }
-            });
-            style::chip(ui, |ui| {
-                ui.label(style::glyph(ui, icon::GAUGE).color(style::WEAK_TEXT));
-                if style::quiet_icon(ui, icon::MINUS, "Slower", "Play slower (Shift+Left)")
+                    {
+                        actions.push(Action::ZoomBy(Zoom::STEP.recip()));
+                    }
+                    ui.label(format!("Zoom {:.0}%", zoom.percent()));
+                    if style::quiet_icon(
+                        ui,
+                        icon::MAGNIFYING_GLASS_PLUS,
+                        "Zoom in",
+                        "Zoom in (Ctrl+Plus)",
+                    )
                     .clicked()
-                {
-                    actions.push(Action::NudgeRate(-0.1));
-                }
-                ui.label(format!("Speed {:.0}%", rate.percent()));
-                if style::quiet_icon(ui, icon::PLUS, "Faster", "Play faster (Shift+Right)")
-                    .clicked()
-                {
-                    actions.push(Action::NudgeRate(0.1));
-                }
-            });
-            style::chip(ui, |ui| {
-                if style::quiet_icon(
-                    ui,
-                    icon::MAGNIFYING_GLASS_MINUS,
-                    "Zoom out",
-                    "Zoom out (Ctrl+Minus)",
-                )
-                .clicked()
-                {
-                    actions.push(Action::ZoomBy(Zoom::STEP.recip()));
-                }
-                ui.label(format!("Zoom {:.0}%", zoom.percent()));
-                if style::quiet_icon(
-                    ui,
-                    icon::MAGNIFYING_GLASS_PLUS,
-                    "Zoom in",
-                    "Zoom in (Ctrl+Plus)",
-                )
-                .clicked()
-                {
-                    actions.push(Action::ZoomBy(Zoom::STEP));
-                }
-            });
+                    {
+                        actions.push(Action::ZoomBy(Zoom::STEP));
+                    }
+                });
+            }
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if style::tool(
