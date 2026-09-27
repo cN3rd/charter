@@ -353,25 +353,114 @@ impl Song {
             );
             index
         };
-        if index + 1 == new.anchors.len() {
+        let (Some(from), Some(next)) = (new.anchors.get(index), new.anchors.get(index + 1)) else {
             new.tempo = bpm;
-        } else {
-            let Some(anchor) = new.anchors.get(index) else {
-                return Ok(());
+            return self.retime(own, new);
+        };
+        // Every anchor keeps its seconds, so `bpm` sets how many ticks fit before the next one,
+        // and everything from there on moves by the difference to stay on its audio.
+        let resolution = self.timing().ticks_per_beat();
+        let per_beat = f64::from(u16::from(resolution));
+        let apart = charter_core::ResolvedTime::from(next.seconds).seconds()
+            - charter_core::ResolvedTime::from(from.seconds).seconds();
+        // Only the pauses and warps before the new end count, and the end depends on them, so
+        // it is found again until it settles; each pass can only drop events, so it soon does.
+        let mut to = i64::from(next.tick);
+        for _ in 0..8 {
+            #[allow(clippy::cast_possible_truncation)] // a tick of the song
+            let end = Tick::new(to.min(i64::from(next.tick)) as i32);
+            let span =
+                TimedSpan::between(self.timing(), from.tick, end).ok_or(Refusal::NotWhole)?;
+            let timed = span.timed_beats(resolution) * per_beat;
+            #[allow(clippy::cast_precision_loss)] // ticks of a song
+            let warped = (i64::from(end) - i64::from(from.tick)) as f64 - timed;
+            let beats = (apart - span.paused_seconds()) * f64::from(bpm) / 60.0;
+            #[allow(clippy::cast_possible_truncation)] // checked into a tick below
+            let settled = i64::from(from.tick) + (beats * per_beat + warped).round() as i64;
+            if settled == to {
+                break;
+            }
+            to = settled;
+        }
+        if to <= i64::from(from.tick) {
+            return Err(Refusal::Crosses(next.tick));
+        }
+        let old_next = next.tick;
+        let by = i32::try_from(to - i64::from(old_next)).map_err(|_| Refusal::NotWhole)?;
+        let shift = |tick: Tick| -> Result<Tick, Refusal> {
+            if tick < old_next {
+                return Ok(tick);
+            }
+            i32::try_from(i64::from(tick) + i64::from(by))
+                .map(Tick::new)
+                .map_err(|_| Refusal::NotWhole)
+        };
+        for anchor in new.anchors.iter_mut().skip(index + 1) {
+            anchor.tick = shift(anchor.tick)?;
+        }
+        for event in &mut new.events {
+            event.tick = shift(event.tick)?;
+        }
+        new.events.sort_by_key(|event| event.tick);
+        let mut ops = vec![Op::Timing {
+            own,
+            old: Box::new(timing.clone()),
+            new: Box::new(new),
+        }];
+        ops.extend(self.shifted_along(own, &shift)?);
+        let edit = Edit(ops);
+        self.document = self.edited(self.chart, &edit)?;
+        self.record(edit);
+        Ok(())
+    }
+
+    /// The edits that move by `shift` the objects of every chart the timing tempo edits go to
+    /// times, the open chart's own when `own` and otherwise every chart on the song's, and the
+    /// song's markers along with the song's timing.
+    fn shifted_along(
+        &self,
+        own: bool,
+        shift: &dyn Fn(Tick) -> Result<Tick, Refusal>,
+    ) -> Result<Vec<Op>, Refusal> {
+        let document = self.document.document();
+        let mut ops = Vec::new();
+        for (chart, edited) in document.charts.iter().enumerate() {
+            let follows = if own {
+                chart == self.chart
+            } else {
+                edited.timing.is_none()
             };
-            let Some(next) = new.anchors.get(index + 1) else {
-                return Ok(());
-            };
-            let next_tick = next.tick;
-            let span = elapsed_at_rate(&new, at, next_tick, bpm, self.timing().ticks_per_beat())
-                .ok_or(Refusal::NotWhole)?;
-            let seconds = charter_core::ResolvedTime::from(anchor.seconds).seconds() + span;
-            if let Some(next) = new.anchors.get_mut(index + 1) {
-                next.seconds = charter_core::Origin::try_from((seconds * 1e6).round() / 1e6)
-                    .map_err(|_| Refusal::NotWhole)?;
+            if !follows {
+                continue;
+            }
+            let mut objects = edited
+                .objects
+                .iter()
+                .map(|object| shifted_at(object, shift))
+                .collect::<Result<Vec<_>, _>>()?;
+            objects.sort_by_key(|object| object.tick);
+            if objects != edited.objects {
+                ops.push(Op::Objects {
+                    chart,
+                    old: edited.objects.clone(),
+                    new: objects,
+                });
             }
         }
-        self.retime(own, new)
+        if !own {
+            let mut markers = document.markers.clone();
+            for marker in &mut markers {
+                marker.tick = shift(marker.tick)?;
+            }
+            markers.sort_by_key(|marker| marker.tick);
+            if markers != document.markers {
+                ops.push(Op::Markers {
+                    old: document.markers.clone(),
+                    new: markers,
+                });
+            }
+        }
+        Ok(ops)
     }
 
     /// Starts a new BPM change at the cursor, at the tempo already in effect there, as one
@@ -1164,6 +1253,47 @@ fn shifted(object: &Object, ticks: i32, lanes: i32) -> Option<Object> {
     Some(moved)
 }
 
+/// `object` with every tick it holds, its children's and its path's, and its end, moved by
+/// `shift`. A hold whose end would no longer come after its start is refused.
+fn shifted_at(
+    object: &Object,
+    shift: &dyn Fn(Tick) -> Result<Tick, Refusal>,
+) -> Result<Object, Refusal> {
+    let mut moved = object.clone();
+    moved.tick = shift(object.tick)?;
+    for child in &mut moved.children {
+        child.tick = shift(child.tick)?;
+    }
+    match &mut moved.shape {
+        Shape::Instant => {}
+        Shape::Sustain { duration } => {
+            let end = shift(
+                object
+                    .tick
+                    .checked_add(*duration)
+                    .ok_or(Refusal::NotWhole)?,
+            )?;
+            *duration = moved
+                .tick
+                .ticks_until(end)
+                .ok_or(Refusal::Crosses(object.tick))?;
+        }
+        Shape::Path { points } => {
+            let moved_points = points
+                .as_slice()
+                .iter()
+                .map(|point| {
+                    let mut point = point.clone();
+                    point.tick = shift(point.tick)?;
+                    Ok(point)
+                })
+                .collect::<Result<Vec<_>, Refusal>>()?;
+            *points = charter_core::Points::new(moved_points).map_err(|_| Refusal::NotWhole)?;
+        }
+    }
+    Ok(moved)
+}
+
 /// An instant note of `kind` on `lane` at `tick`.
 fn note(tick: Tick, lane: LaneIndex, kind: Kind) -> Object {
     Object {
@@ -1217,16 +1347,6 @@ impl TimedSpan {
     pub fn at_bpm(self, bpm: Bpm, ticks_per_beat: TicksPerBeat) -> f64 {
         self.paused_seconds + self.timed_beats(ticks_per_beat) * 60.0 / f64::from(bpm)
     }
-}
-
-fn elapsed_at_rate(
-    timing: &Timing,
-    from: Tick,
-    to: Tick,
-    bpm: Bpm,
-    ticks_per_beat: TicksPerBeat,
-) -> Option<f64> {
-    span_parts(timing, from, to).map(|span| span.at_bpm(bpm, ticks_per_beat))
 }
 
 fn span_parts(timing: &Timing, from: Tick, to: Tick) -> Option<TimedSpan> {
@@ -1981,11 +2101,54 @@ pub(crate) mod tests {
         song.step(Step::Later);
         assert_eq!(song.cursor(), Tick::new(240));
         song.set_bpm(tempo(150.0)).unwrap();
-        let expected = json!([bpm_event(0, 150.0), meter.clone(), bpm_event(1920, 90.0)]);
+        // The 90 BPM point stays a second in, now two and a half beats at 150 BPM from the start.
+        let expected = json!([bpm_event(0, 150.0), meter.clone(), bpm_event(2400, 90.0)]);
         assert_eq!(song_events(&song), expected);
         assert_eq!(song.bpm(), Some((Tick::new(0), tempo(150.0))));
         song.undo().unwrap();
         assert_eq!(song.bpm(), Some((Tick::new(0), tempo(120.0))));
+    }
+
+    fn seconds(song: &Song, tick: i32) -> f64 {
+        song.timing().time_at(Tick::new(tick)).seconds()
+    }
+
+    #[test]
+    fn a_bpm_keeps_every_later_point_and_note_on_its_audio_in_every_chart_it_times() {
+        let mut song = timed(&json!([bpm_event(0, 120.0), bpm_event(1920, 90.0)]), None);
+        for (tick, lane_index) in [(960, 0), (2880, 1), (1440, 2)] {
+            song.toggle(Tick::new(tick), lane(lane_index), Kind::Tap)
+                .unwrap();
+        }
+        song.stretch(lane(2), Tick::new(1440), Tick::new(2400))
+            .unwrap();
+        song.open_chart(1);
+        song.toggle(Tick::new(2880), lane(3), Kind::Tap).unwrap();
+        song.open_chart(0);
+        let (point, after, hold_end) = (
+            seconds(&song, 1920),
+            seconds(&song, 2880),
+            seconds(&song, 2400),
+        );
+
+        song.set_bpm(tempo(150.0)).unwrap();
+
+        assert_eq!(song.bpm(), Some((Tick::new(0), tempo(150.0))));
+        assert!((seconds(&song, 2400) - point).abs() < 1e-9);
+        assert!((seconds(&song, 3360) - after).abs() < 1e-9);
+        assert!((seconds(&song, 2880) - hold_end).abs() < 1e-9);
+        assert!(song.starts_at(Tick::new(960), lane(0)));
+        assert!(song.starts_at(Tick::new(3360), lane(1)));
+        let hold = &song.chart().unwrap().objects[1];
+        assert_eq!(hold.tick, Tick::new(1440));
+        assert_eq!(hold.shape.end(hold.tick), Some(Tick::new(2880)));
+        song.open_chart(1);
+        assert!(song.starts_at(Tick::new(3360), lane(3)));
+        song.open_chart(0);
+        song.undo().unwrap();
+        assert!(song.starts_at(Tick::new(2880), lane(1)));
+        song.open_chart(1);
+        assert!(song.starts_at(Tick::new(2880), lane(3)));
     }
 
     #[test]

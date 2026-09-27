@@ -26,6 +26,12 @@ pub(crate) enum Op {
         old: Vec<Marker>,
         new: Vec<Marker>,
     },
+    /// Every object of chart `chart`, whichever chart the edit is made to.
+    Objects {
+        chart: usize,
+        old: Vec<Object>,
+        new: Vec<Object>,
+    },
     /// A change to the timing of the chart the edit is made to when `own`, or else the song's.
     Timing {
         own: bool,
@@ -58,6 +64,11 @@ impl Op {
                 old: new.clone(),
                 new: old.clone(),
             },
+            Self::Objects { chart, old, new } => Self::Objects {
+                chart: *chart,
+                old: new.clone(),
+                new: old.clone(),
+            },
             Self::Timing { own, old, new } => Self::Timing {
                 own: *own,
                 old: new.clone(),
@@ -85,6 +96,12 @@ impl Edit {
             match op {
                 Op::Metadata { new, .. } => document.metadata = (**new).clone(),
                 Op::Markers { new, .. } => document.markers.clone_from(new),
+                Op::Objects { chart, new, .. } => {
+                    let Some(edited) = document.charts.get_mut(*chart) else {
+                        return false;
+                    };
+                    edited.objects.clone_from(new);
+                }
                 Op::Timing {
                     own: false, new, ..
                 } => document.timing = (**new).clone(),
@@ -109,7 +126,10 @@ impl Edit {
                         Op::Replace { index, new, .. } => {
                             objects.splice(*index..=*index, [new.clone()]);
                         }
-                        Op::Metadata { .. } | Op::Markers { .. } | Op::Timing { .. } => {}
+                        Op::Metadata { .. }
+                        | Op::Markers { .. }
+                        | Op::Objects { .. }
+                        | Op::Timing { .. } => {}
                     }
                 }
             }

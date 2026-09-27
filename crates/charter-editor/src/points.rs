@@ -190,12 +190,27 @@ mod tests {
             bpm_event(3840, 120.0)
         ]);
         let mut song = timed(&events, None);
+        // A slower tempo fits fewer ticks before the point at 1920, which pulls the tap at 2160
+        // back onto the one at 1440.
+        for tick in [1440, 2160] {
+            song.toggle(
+                Tick::new(tick),
+                charter_core::LaneIndex::new(0),
+                charter_core::Kind::Tap,
+            )
+            .unwrap();
+        }
+        let history = song.can_undo();
         song.jump_to(Tick::new(240));
+        let modified = song.is_modified();
+        let edits = song.revision();
         assert!(song.set_bpm_at(Tick::new(960), tempo(30.0)).is_err());
         assert_eq!(song_events(&song), events);
         assert_eq!(song.cursor(), Tick::new(240));
-        assert!(!song.can_undo());
-        assert!(!song.is_modified());
+        assert_eq!(
+            (song.can_undo(), song.is_modified(), song.revision()),
+            (history, modified, edits)
+        );
     }
 
     #[test]

@@ -23,7 +23,11 @@ point moves the cursor to it. Under the list are that point's BPM, with − and 
 meter, such as 3/4 or 7/8, each showing what is in effect there and setting it on the point, and a
 button that removes the point, except the one that starts the tempo. "Add a timing point here"
 starts one at the cursor at the tempo it has there, and says why it cannot when the cursor is on
-one already. F7 and F8 still nudge the tempo in effect at the cursor. A value typed
+one already. F7 and F8 still nudge the tempo in effect at the cursor. Every timing point stays at
+its moment of the audio: a BPM set on one changes how many beats fit before the next point, and
+the next point with everything after it, notes, events and markers, moves along the grid to keep
+its moment, as EOF's anchors and osu!'s red lines do. The tempo shown is the shortest decimal that
+puts the next point on the same tick, which is the one typed. A value typed
 into a field applies on Enter or when the field is left; Escape leaves it as it was. Below it the song's markers are
 listed; clicking one jumps the cursor there, a name typed and entered names the section at the
 cursor or starts one, and any marker can be removed, each as one step. Songs open and save through
