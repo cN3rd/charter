@@ -66,7 +66,10 @@ pub(crate) fn import(text: &str, into: &ValidDocument) -> Result<ImportedTiming,
             placed.push((start, red.meter));
             continue;
         };
-        let tick = last.tick + ticks(red.time - last.at, last.beat_length, ticks_per_beat);
+        let tick = last
+            .tick
+            .checked_add(ticks(red.time - last.at, last.beat_length, ticks_per_beat))
+            .ok_or_else(|| ImportError::OutOfRange("timing point tick is out of range".into()))?;
         #[allow(clippy::cast_precision_loss)] // a song's worth of ticks, far below 2^52
         let at = red.time;
         let point = Placed {
@@ -160,10 +163,15 @@ fn scroll_speeds(
                     },
                     |(red, _)| *red,
                 );
-            let tick = red.tick + ticks(green.time - red.at, red.beat_length, ticks_per_beat);
-            (tick, -100.0 / green.beat_length)
+            let tick = red
+                .tick
+                .checked_add(ticks(green.time - red.at, red.beat_length, ticks_per_beat))
+                .ok_or_else(|| {
+                    ImportError::OutOfRange("timing point tick is out of range".into())
+                })?;
+            Ok((tick, -100.0 / green.beat_length))
         })
-        .collect();
+        .collect::<Result<_, ImportError>>()?;
     let mut resets = Vec::new();
     for (red, _) in placed {
         // The latest change before this red line, a reset at an earlier one included.
@@ -451,6 +459,24 @@ mod tests {
         let speeds = imported.timing.events.iter();
         let speeds = speeds.filter(|e| matches!(e.kind, TimingKind::Other { .. }));
         assert_eq!(speeds.count(), 2);
+    }
+
+    #[test]
+    fn finite_red_points_past_the_tick_range_return_an_error() {
+        let text = "0,500\n1e100,500\n2e100,500";
+        assert!(matches!(
+            import(text, &song(ID)),
+            Err(ImportError::OutOfRange(_))
+        ));
+    }
+
+    #[test]
+    fn finite_green_points_past_the_tick_range_return_an_error() {
+        let text = "0,500\n500,500\n1e100,-100";
+        assert!(matches!(
+            import(text, &song(ID)),
+            Err(ImportError::OutOfRange(_))
+        ));
     }
 
     #[test]
