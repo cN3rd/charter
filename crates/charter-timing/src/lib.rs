@@ -238,7 +238,7 @@ pub struct Inputs<'a> {
     pub peaks: Option<&'a Peaks>,
     pub onsets: &'a [Onset],
     pub playing: bool,
-    /// The calibrated output and input latency, in milliseconds, shown in the status line.
+    /// The calibrated audio latency, in milliseconds, shown in the status line.
     pub latency_ms: f64,
 }
 

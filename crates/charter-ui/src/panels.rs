@@ -173,6 +173,7 @@ pub fn menu_bar(
                     ("Slower", "Shift+Left", Action::NudgeRate(-0.1)),
                     ("Metronome on or off", "F3", Action::ToggleMetronome),
                     ("Note ticks on or off", "F4", Action::ToggleTicks),
+                    ("Calibrate latency…", "", Action::Calibrate),
                 ],
             );
             for factor in [0.5, 0.75, 1.0] {

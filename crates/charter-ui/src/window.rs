@@ -292,6 +292,8 @@ pub(crate) enum Action {
     SaveAs,
     /// Shows or hides the settings window.
     Settings,
+    /// Opens the latency calibration.
+    Calibrate,
     /// Shows the dialog that starts a song.
     NewSong,
     /// Plays the audio from the cursor, or pauses it.
@@ -644,14 +646,39 @@ impl Window {
             return;
         }
         // What plays now is heard a moment later: the cursor shows what is heard.
-        let seconds = seconds - self.settings.latency_ms * self.rate.factor() / 1000.0;
+        let seconds = seconds - self.settings.audio_latency_ms * self.rate.factor() / 1000.0;
+        let tapped = seconds - self.input_latency();
         if let Some(song) = &mut self.song {
             let tick = song.timing().latest_tick_by(seconds);
             song.jump_to(tick);
-            if let Some(why) = grow(song, &self.holding, &self.pressed, seconds) {
+            if let Some(why) = grow(song, &self.holding, &self.pressed, tapped) {
                 self.failure = Some(why);
             }
         }
+    }
+
+    /// The calibration's click track: the open song's first tempo and meter, or 120 BPM in 4/4
+    /// without one.
+    fn calibration_beat(&self) -> latency::Beat {
+        let Some(song) = &self.song else {
+            return latency::Beat::default();
+        };
+        let timing = song.timing();
+        let first = timing
+            .anchors
+            .first()
+            .map_or(Tick::new(0), |anchor| anchor.tick);
+        let per_measure = timing
+            .measures_from(first)
+            .next()
+            .map_or(4, |measure| measure.meter.numerator.get());
+        latency::Beat::of(timing.tempo_at(first), per_measure)
+    }
+
+    /// How much earlier in the audio than the cursor a lane key pressed now was meant, in seconds
+    /// of audio: the input latency, scaled to the playback rate.
+    fn input_latency(&self) -> f64 {
+        self.settings.input_latency_ms * self.rate.factor() / 1000.0
     }
 
     /// Takes that the audio played to its end.
@@ -1308,6 +1335,7 @@ impl Window {
             Action::Save => self.saving = Some(Saving::InPlace),
             Action::SaveAs => self.saving = Some(Saving::Elsewhere),
             Action::Settings => self.settings_open = !self.settings_open,
+            Action::Calibrate => self.calibration.open = true,
             Action::ToggleSync => self.sync.open = !self.sync.open,
             Action::ShowSync => self.sync.open = true,
             Action::ShowImport => self.import.open = true,
@@ -1341,6 +1369,7 @@ impl Window {
     #[allow(clippy::too_many_lines)] // one arm for every action
     fn apply(&mut self, action: Action) {
         self.apply_to_window(&action);
+        let input_latency = self.input_latency();
         let Some(song) = &mut self.song else {
             return;
         };
@@ -1367,7 +1396,7 @@ impl Window {
             Action::CoarserSnap => song.coarser_snap(),
             Action::ZoomBy(factor) => self.zoom = self.zoom.by(factor),
             Action::Toggle(lane, note) => {
-                let at = placing_at(song, self.playing);
+                let at = placing_at(song, self.playing.then_some(input_latency));
                 let toggled = song.toggle(at, lane, note.kind());
                 if let Ok(Toggled::Placed) = toggled {
                     self.placed = true;
@@ -1375,7 +1404,7 @@ impl Window {
                         self.holding.push((lane, at));
                         if self.playing {
                             let now = song.timing().time_at(song.cursor()).seconds();
-                            self.pressed.push((lane, now));
+                            self.pressed.push((lane, now - input_latency));
                         }
                     }
                 }
@@ -1384,7 +1413,7 @@ impl Window {
             Action::LaneUp(lane) => {
                 if self.playing {
                     // Where the key came up is where the hold ends.
-                    let now = song.timing().time_at(song.cursor()).seconds();
+                    let now = song.timing().time_at(song.cursor()).seconds() - input_latency;
                     let held: Vec<_> = self
                         .holding
                         .iter()
@@ -1429,6 +1458,7 @@ impl Window {
             | Action::Save
             | Action::SaveAs
             | Action::Settings
+            | Action::Calibrate
             | Action::ToggleSync
             | Action::ShowSync
             | Action::ShowImport
@@ -1733,7 +1763,7 @@ impl Window {
             self.calibration.open = true;
         }
         let kit = self.settings.metronome_sound;
-        let time = (self.frame_time, kit);
+        let time = (self.frame_time, kit, self.calibration_beat());
         if let Some(request) =
             latency::show(ui.ctx(), &mut self.calibration, time, &mut self.settings)
         {
@@ -1796,7 +1826,7 @@ impl Window {
                 peaks,
                 onsets,
                 playing: self.playing,
-                latency_ms: self.settings.latency_ms,
+                latency_ms: self.settings.audio_latency_ms,
             };
             let mut commands = Vec::new();
             charter_timing::show(ui.ctx(), inputs, &mut self.sync, &mut commands);
@@ -1873,18 +1903,18 @@ fn editable_lanes(song: &Song) -> u16 {
 
 /// Stretches each tap a held lane key placed into a hold to the cursor, and says why if the song
 /// refuses one.
-/// Where a lane key places a note: at the cursor, or while `playing`, where the cursor follows
-/// the audio between snap lines, on the snap line nearest it.
-fn placing_at(song: &Song, playing: bool) -> Tick {
+/// Where a lane key places a note: at the cursor, or while playing, on the snap line nearest
+/// where the cursor was `input_latency` seconds of audio ago, when the key was meant.
+fn placing_at(song: &Song, input_latency: Option<f64>) -> Tick {
     let step = song
         .document()
         .document()
         .ticks_per_beat
         .note_length(song.snap());
     match step {
-        Some(step) if playing => {
+        Some(step) if let Some(input_latency) = input_latency => {
             let timing = song.timing();
-            let now = timing.time_at(song.cursor()).seconds();
+            let now = timing.time_at(song.cursor()).seconds() - input_latency;
             notefield::nearest_line(timing, now, step)
         }
         _ => song.cursor(),
@@ -3835,6 +3865,22 @@ mod tests {
         assert_eq!(harness.state_mut().take_requests(), []);
     }
 
+    #[test]
+    fn a_lane_key_while_playing_places_the_input_latency_before_the_cursor() {
+        let mut harness = playable_with(Settings {
+            input_latency_ms: 250.0,
+            ..Settings::default()
+        });
+        space(&mut harness);
+        harness.state_mut().take_requests();
+        // Heard at 0.88 s, meant at 0.63 s: tick 1209, the nearest sixteenth 1200.
+        harness.state_mut().playhead(0.88);
+        harness.run();
+        harness.key_press(egui::Key::Num1);
+        harness.run();
+        assert_eq!(lanes_at(&harness, 1200), [0]);
+    }
+
     /// Moves the playhead of a playing song to `seconds`, as the host reports each frame.
     fn play_to(harness: &mut Harness<'_, Window>, seconds: f64) {
         harness.state_mut().playhead(seconds);
@@ -4247,7 +4293,7 @@ mod tests {
     }
 
     #[test]
-    fn calibrating_latency_plays_twenty_clicks_to_tap_along_to() {
+    fn calibrating_latency_plays_clicks_at_the_songs_first_tempo() {
         let mut harness = editable_demo();
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Comma);
         harness.run();
@@ -4257,19 +4303,25 @@ mod tests {
         harness.get_by_label("Calibrate…").click();
         harness.run();
         harness.get_by_label("Start").click();
-        harness.run();
+        // The flash keeps the window drawing while the clicks play.
+        harness.run_steps(2);
         let requests = harness.state_mut().take_requests();
         let Some(Request::Preview { clicks, .. }) = requests.last() else {
             panic!("expected clicks, got {requests:?}");
         };
-        assert_eq!(clicks.len(), 20);
+        assert_eq!(clicks.len(), 32);
+        let gap = clicks.get(1).unwrap().0 - clicks.first().unwrap().0;
+        assert!(
+            (gap - 0.4).abs() < 1e-9,
+            "150 BPM, the demo's first tempo: {gap}"
+        );
         assert!(harness.query_by_label_contains("of 16 taps").is_some());
     }
 
     #[test]
     fn the_cursor_shows_what_is_heard_by_the_calibrated_latency() {
         let mut harness = playable_with(Settings {
-            latency_ms: 250.0,
+            audio_latency_ms: 250.0,
             ..Settings::default()
         });
         space(&mut harness);
@@ -4282,7 +4334,7 @@ mod tests {
     #[test]
     fn the_cursor_scales_calibrated_latency_to_slowed_audio_time() {
         let mut harness = playable_with(Settings {
-            latency_ms: 250.0,
+            audio_latency_ms: 250.0,
             ..Settings::default()
         });
         harness.state_mut().set_rate(Rate::of(0.5));

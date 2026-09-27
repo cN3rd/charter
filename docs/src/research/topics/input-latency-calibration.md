@@ -1,8 +1,8 @@
 ---
-type: Open Decision
+type: Decision
 title: Input latency calibration
 description: The user-adjustable offset compensating for the gap between hearing audio and a keypress registering.
-tags: [topic, ux, audio, timing, open]
+tags: [topic, ux, audio, timing]
 status: draft
 ---
 
@@ -16,7 +16,15 @@ Quaver exposes an editor input offset with a range of **-200 to +200 ms**, appli
 The gap being compensated is real and physical: output buffering, display latency, keyboard scan
 rate and the user's own anticipation all contribute, and they vary per machine and per user.
 
-## Open decision
+## Decided
+
+Two global values, kept in the settings. The audio latency, set by ear against a flash, is how
+much later than it plays a sound is heard; the cursor takes it off the playhead. The input latency,
+measured by a guided tap-along, is how much later than that a tap comes; notes placed while playing
+take it off. Positive means late in both. The click track follows the song's first tempo and the
+metronome's sound. The audio latency ranges over +/-500 ms, wider than Quaver's.
+
+## Was open
 
 - Sign convention. "Positive means I tap late" and "positive means shift notes later" are opposite,
   and the wrong choice makes every support conversation confusing.

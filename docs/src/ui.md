@@ -304,12 +304,17 @@ and the notes over a waveform that stays put.
   heard at once. R switches to the alternate speed, 60% unless the Sounds page says otherwise,
   and back. C turns the metronome on and off, and it stays muted while Shift+C is held; it can
   follow the window's grid, with the clicks between beats at their own volume. Settings > Sounds
-  calibrates latency: a click plays twenty times, the median of how late sixteen taps come is kept,
-  and the cursor then shows what is heard rather than what plays; the status line shows it. The
+  calibrates latency, as does Playback > Calibrate latency: a click plays 32 times at the song's
+  first tempo, folded into 60 to 180 BPM, in the metronome's sound, its measures accented. The
+  audio latency is set by ear, moving it until a flash lands on each click heard, and the cursor
+  then shows what is heard rather than what plays; the status line shows it. The input latency is
+  measured, the median of how late sixteen taps along come past the audio latency, and a lane key
+  pressed while playing places its note that much earlier than the cursor, holds ending likewise.
+  Settings kept by older versions, with the two latencies as one, keep it as the input latency. The
   clicks are mixed into the music before it plays, so they cannot drift from it and need no
   correction of their own, and muting or changing them while playing plays on from where it was.
   Not yet built from the specification: scrub, pan split, count-in, pitch-preserving slow
-  playback, the magnifier, spectrogram, locks, the metre dialog, the command palette, the
+  playback, the magnifier, locks, the metre dialog, the command palette, the
   overview, beat-stack view, auto-seed, suggested anchors, tap tempo and band solo; selection
   changes are not undo steps.
   The waveform shows here whether or not the notefield's is on.

@@ -100,9 +100,14 @@ pub struct Settings {
     pub metronome_grid: bool,
     /// The alternate playback speed, as a factor, that R switches to in the timing window.
     pub rate_b: f64,
-    /// The output and input latency the calibration measured, in milliseconds: what plays is
-    /// heard this much later.
-    pub latency_ms: f64,
+    /// How much later than it plays a sound is heard, in milliseconds, as the calibration's flash
+    /// set it: the cursor takes it off the playhead to show what is heard.
+    pub audio_latency_ms: f64,
+    /// How much later than a sound is heard a tap along to it comes, in milliseconds: notes placed
+    /// while playing go this much earlier than the cursor. Older versions kept the two latencies
+    /// together here.
+    #[serde(alias = "latency_ms")]
+    pub input_latency_ms: f64,
 }
 
 impl Default for Settings {
@@ -126,7 +131,8 @@ impl Default for Settings {
             grid: BEATS,
             metronome_grid: false,
             rate_b: 0.6,
-            latency_ms: 0.0,
+            audio_latency_ms: 0.0,
+            input_latency_ms: 0.0,
         }
     }
 }
@@ -541,13 +547,16 @@ fn sounds(ui: &mut egui::Ui, settings: &mut Settings) -> Option<Asked> {
             .response
             .labelled_by(caption);
     });
-    let about = "How much later than it plays a sound is heard and answered. The playhead and \
-        taps take it off.";
+    let about = "How much later than it plays a sound is heard, which the cursor takes off, and \
+        how much later than that a tap comes, which notes placed while playing take off.";
     row(ui, "Latency", about, |ui, _| {
         if ui.button("Calibrate…").clicked() {
             preview = Some(Asked::Calibrate);
         }
-        ui.label(format!("{:+.0} ms", settings.latency_ms));
+        ui.label(format!(
+            "audio {:+.0} ms, input {:+.0} ms",
+            settings.audio_latency_ms, settings.input_latency_ms
+        ));
     });
     let name = "Metronome follows the grid";
     let about =
@@ -750,10 +759,14 @@ mod tests {
             grid: NonZeroU16::new(24).unwrap(),
             metronome_grid: true,
             rate_b: 0.5,
-            latency_ms: 12.0,
+            audio_latency_ms: 12.0,
+            input_latency_ms: 20.0,
         };
         let stored = serde_json::to_string(&settings).unwrap();
         assert_eq!(serde_json::from_str::<Settings>(&stored).unwrap(), settings);
+        let together: Settings = serde_json::from_str(r#"{ "latency_ms": 30.0 }"#).unwrap();
+        assert!((together.input_latency_ms - 30.0).abs() < f64::EPSILON);
+        assert!(together.audio_latency_ms.abs() < f64::EPSILON);
         let older: Settings = serde_json::from_str(r#"{ "auto_jump": false }"#).unwrap();
         assert_eq!(
             older,
