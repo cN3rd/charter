@@ -667,9 +667,19 @@ fn read_note(object: &Object, at: Location) -> Result<Note, Error> {
 }
 
 fn read_timing(timing: &CoreTiming, stream: Stream) -> Result<Timing, Error> {
-    for (index, anchor) in timing.anchors.iter().enumerate() {
-        reject_own_keys(&anchor.ext, Location::Event { stream, index })?;
-    }
+    let anchors = timing
+        .anchors
+        .iter()
+        .enumerate()
+        .map(|(index, anchor)| {
+            reject_own_keys(&anchor.ext, Location::Event { stream, index })?;
+            Ok(Anchor {
+                tick: anchor.tick,
+                seconds: anchor.seconds,
+                ext: Extensions::new(),
+            })
+        })
+        .collect::<Result<_, Error>>()?;
     let mut events = Vec::with_capacity(timing.events.len());
     for (index, event) in timing.events.iter().enumerate() {
         let at = Location::Event { stream, index };
@@ -706,7 +716,7 @@ fn read_timing(timing: &CoreTiming, stream: Stream) -> Result<Timing, Error> {
         });
     }
     Ok(Timing {
-        anchors: timing.anchors.clone(),
+        anchors,
         tempo: timing.tempo,
         events,
     })
@@ -1028,6 +1038,27 @@ mod tests {
             written(&song),
             expected(plain["charts"][0]["objects"].clone())
         );
+    }
+
+    #[test]
+    fn foreign_anchor_extensions_are_skipped_on_both_timing_maps() {
+        let mut value = document(json!([]));
+        value["plugins"] = json!({ "swing": { "version": "1" } });
+        value["metadata"]["ext"] = json!({ "swing.feel": true });
+        value["timing"]["anchors"][0]["ext"] = json!({ "swing.song": 1 });
+        value["charts"][0]["timing"] = json!({
+            "anchors": [{ "tick": 0, "seconds": 0.0, "ext": { "swing.chart": 1 } }],
+            "tempo": 120.0,
+            "events": []
+        });
+        let song = read(&value).unwrap();
+        assert!(song.timing().anchors[0].ext.is_empty());
+        assert!(
+            song.charts()[0].timing.as_ref().unwrap().anchors[0]
+                .ext
+                .is_empty()
+        );
+        assert!(song.to_document().document().plugins.is_empty());
     }
 
     #[test]
