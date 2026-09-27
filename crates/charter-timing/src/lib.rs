@@ -696,17 +696,33 @@ fn frame<'a>(
 }
 
 fn help(ui: &mut egui::Ui) {
-    egui::Frame::new()
-        .fill(style::RAISED)
-        .inner_margin(egui::Margin::same(8))
+    let narrow = ui.available_width() < 600.0;
+    let height = (ui.available_height() - ROW - 20.0).max(120.0);
+    style::solid_scroll_bars(ui);
+    egui::ScrollArea::vertical()
+        .id_salt("timing help")
+        .max_height(height)
         .show(ui, |ui| {
-            style::table(ui, "timing keys", |ui| {
-                for (keys, does) in KEYS {
-                    ui.monospace(*keys);
-                    ui.label(*does);
-                    ui.end_row();
-                }
-            });
+            egui::Frame::new()
+                .fill(style::RAISED)
+                .inner_margin(egui::Margin::same(8))
+                .show(ui, |ui| {
+                    if narrow {
+                        for (keys, does) in KEYS {
+                            ui.monospace(*keys);
+                            ui.label(*does);
+                            ui.add_space(6.0);
+                        }
+                    } else {
+                        style::table(ui, "timing keys", |ui| {
+                            for (keys, does) in KEYS {
+                                ui.monospace(*keys);
+                                ui.label(*does);
+                                ui.end_row();
+                            }
+                        });
+                    }
+                });
         });
 }
 
@@ -1571,6 +1587,30 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn timing_keys_fit_beside_the_inspector_and_leave_room_for_rows() {
+        let ctx = egui::Context::default();
+        let mut used = egui::Rect::NOTHING;
+        let mut below = 0.0;
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(420.0, 320.0),
+            )),
+            ..egui::RawInput::default()
+        };
+        let mut output = ctx.run_ui(input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                help(ui);
+                used = ui.min_rect();
+                below = ui.cursor().top();
+            });
+        });
+        output.textures_delta.clear();
+        assert!(used.width() <= 420.0, "help is too wide: {used:?}");
+        assert!(below <= 248.0, "help hides the rows: {below}");
+    }
 
     #[test]
     fn empty_chart_rows_reach_late_anchors_and_timing_events() {

@@ -306,7 +306,8 @@ and the notes over a waveform that stays put.
   distance to its onset, each editable, and its segment's fit error and coverage; F fits the
   focused anchor or the selection to the onsets by least squares, Shift+F to half BPMs, shown
   before Enter applies it. D and Shift+D double and halve the tempo. The window takes the keyboard
-  after a click in it and gives it back after a click elsewhere; ? lists its keys.
+  after a click in it and gives it back after a click elsewhere; ? lists its keys in a scrolling
+  sheet, stacked when narrow so the rows and inspector stay in view.
   The window opens on rows of audio time, each one to eight seconds and labelled by its start, so
   the waveform never moves and an edit moves the grid lines and anchors over it, since every timing
   point is a moment of the audio. V, or the toolbar's Layout, switches to rows of bars, which keep
