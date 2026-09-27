@@ -7,7 +7,7 @@ use std::ops::RangeInclusive;
 
 use charter_audio::Onset;
 use charter_core::{Bpm, Tick, Timing, TimingKind, Valid};
-use charter_editor::Pin;
+use charter_editor::{Pin, TimedSpan};
 
 use crate::grid::Grid;
 
@@ -198,31 +198,27 @@ pub fn fit(
     if first > last || last > last_pin {
         return None;
     }
-    let ticks_per_beat = f64::from(u16::from(timing.ticks_per_beat()));
-    let tick = |pin: &Pin| {
-        #[allow(clippy::cast_precision_loss)] // ticks of a song
-        let at = i64::from(pin.tick) as f64;
-        at
-    };
+    let ticks_per_beat = timing.ticks_per_beat();
     let with_tail = last == last_pin;
+    let mut points: Vec<(Tick, f64)> = pins.iter().map(|pin| (pin.tick, pin.seconds)).collect();
     // The tempo after the last anchor fits as the moment of a point past it, where its onsets
     // end, so it is a moment like the others.
-    let beyond = pins.get(last_pin).map(|pin| {
+    if with_tail {
+        let pin = pins.get(last_pin)?;
         let far = residuals
             .iter()
             .filter(|residual| residual.line > pin.tick)
-            .map(|residual| {
-                #[allow(clippy::cast_precision_loss)]
-                let at = i64::from(residual.line) as f64;
-                at
-            })
-            .fold(tick(pin) + 4.0 * ticks_per_beat, f64::max);
-        let seconds_per_tick = 60.0 / (f64::from(tail) * ticks_per_beat);
-        (far, pin.seconds + (far - tick(pin)) * seconds_per_tick)
-    })?;
-    // Every point by index: the anchors, then the one past the last.
-    let mut points: Vec<(f64, f64)> = pins.iter().map(|pin| (tick(pin), pin.seconds)).collect();
-    points.push(beyond);
+            .map(|residual| i64::from(residual.line))
+            .fold(
+                i64::from(pin.tick) + 4 * i64::from(u16::from(ticks_per_beat)),
+                i64::max,
+            )
+            .min(i64::from(i32::MAX));
+        let far = Tick::new(i32::try_from(far).ok()?);
+        let span = TimedSpan::between(timing, pin.tick, far)?;
+        points.push((far, pin.seconds + span.at_bpm(tail, ticks_per_beat)));
+    }
+    // Every point by index: the anchors, then one past the last when fitting the tail.
     let free: Vec<usize> = (first..=last)
         .chain(with_tail.then_some(points.len() - 1))
         .collect();
@@ -231,20 +227,22 @@ pub fn fit(
     let touched = first.saturating_sub(1)..=last;
     let mut rows: Vec<(Vec<(usize, f64)>, f64)> = Vec::new();
     for residual in residuals {
-        #[allow(clippy::cast_precision_loss)]
-        let line = i64::from(residual.line) as f64;
         let Some(segment) = (0..points.len() - 1).find(|&at| {
-            points[at].0 <= line && line < points.get(at + 1).map_or(f64::MAX, |p| p.0)
+            let end = points[at + 1].0;
+            points[at].0 <= residual.line
+                && (residual.line < end || (with_tail && at == last_pin && residual.line == end))
         }) else {
             continue;
         };
-        if !touched.contains(&segment) || (segment == last_pin && !with_tail && last != last_pin) {
+        if !touched.contains(&segment) {
             continue;
         }
         let (start, end) = (points[segment], points[segment + 1]);
-        let share = (line - start.0) / (end.0 - start.0);
+        let whole = TimedSpan::between(timing, start.0, end.0)?;
+        let part = TimedSpan::between(timing, start.0, residual.line)?;
+        let share = part.fraction_of(whole)?;
         let mut terms = Vec::new();
-        let mut known = residual.seconds;
+        let mut known = residual.seconds - part.paused_seconds() + share * whole.paused_seconds();
         for (point, weight) in [(segment, 1.0 - share), (segment + 1, share)] {
             match variable(point) {
                 Some(at) => terms.push((at, weight)),
@@ -262,7 +260,7 @@ pub fn fit(
     let before = rows_error(&rows, &current);
     let mut solved = least_squares(&rows, &current)?;
     if half_bpm {
-        solved = to_half_bpm(&points, &free, &solved, ticks_per_beat);
+        solved = to_half_bpm(timing, &points, &free, &solved)?;
     }
     let after = rows_error(&rows, &solved);
     let mut fitted = points;
@@ -273,10 +271,12 @@ pub fn fit(
     if !ordered {
         return None;
     }
-    let (end_tick, end_seconds) = fitted.pop()?;
-    let (last_tick, last_seconds) = *fitted.last()?;
-    let tempo = 60.0 * (end_tick - last_tick) / ((end_seconds - last_seconds) * ticks_per_beat);
     let tail = if with_tail {
+        let (end_tick, end_seconds) = fitted.pop()?;
+        let (last_tick, last_seconds) = *fitted.last()?;
+        let span = TimedSpan::between(timing, last_tick, end_tick)?;
+        let active_seconds = end_seconds - last_seconds - span.paused_seconds();
+        let tempo = 60.0 * span.timed_beats(ticks_per_beat) / active_seconds;
         Bpm::try_from((tempo * 1e6).round() / 1e6).ok()?
     } else {
         tail
@@ -358,25 +358,26 @@ fn least_squares(rows: &[(Vec<(usize, f64)>, f64)], current: &[f64]) -> Option<V
 /// BPM, the moments after the first following from the rounded tempos.
 #[allow(clippy::indexing_slicing)] // the indices run over the vectors' own lengths
 fn to_half_bpm(
-    points: &[(f64, f64)],
+    timing: Valid<'_, Timing>,
+    points: &[(Tick, f64)],
     free: &[usize],
     solved: &[f64],
-    ticks_per_beat: f64,
-) -> Vec<f64> {
+) -> Option<Vec<f64>> {
     let mut seconds = solved.to_vec();
     for at in 1..free.len() {
         let (before, point) = (free[at - 1], free[at]);
         if point != before + 1 {
             continue;
         }
-        let beats = (points[point].0 - points[before].0) / ticks_per_beat;
-        let tempo = 60.0 * beats / (seconds[at] - seconds[at - 1]);
+        let span = TimedSpan::between(timing, points[before].0, points[point].0)?;
+        let beats = span.timed_beats(timing.ticks_per_beat());
+        let tempo = 60.0 * beats / (seconds[at] - seconds[at - 1] - span.paused_seconds());
         let rounded = (tempo * 2.0).round() / 2.0;
         if rounded > 0.0 {
-            seconds[at] = seconds[at - 1] + 60.0 * beats / rounded;
+            seconds[at] = seconds[at - 1] + span.paused_seconds() + 60.0 * beats / rounded;
         }
     }
-    seconds
+    Some(seconds)
 }
 
 /// Somewhere the map most likely went wrong.
@@ -640,6 +641,127 @@ mod tests {
         );
         assert_eq!(fitted.pins[0], pins[0]);
         assert_eq!(fitted.pins[2], pins[2]);
+    }
+
+    fn anchored(seconds: f64, events: &serde_json::Value) -> ValidDocument {
+        let value = json!({
+            "format_version": 1,
+            "ruleset": { "id": "t", "version": "1" },
+            "metadata": { "title": "t", "artist": "a", "audio": "a.ogg" },
+            "timing": {
+                "anchors": [
+                    { "tick": 0, "seconds": 0.0 },
+                    { "tick": 3840, "seconds": seconds }
+                ],
+                "tempo": 120.0,
+                "events": events
+            }
+        });
+        ValidDocument::from_json(&serde_json::to_vec(&value).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn fitting_a_perfect_map_with_a_stop_leaves_its_anchors_in_place() {
+        let document = anchored(2.5, &json!([{ "tick": 1920, "kind": { "stop": 0.5 } }]));
+        let timing = document.timing();
+        let onsets = [onset(0.5), onset(1.0), onset(2.0)];
+        let found = residuals(timing, Grid::default(), &onsets, 0.0);
+        assert_eq!(found.len(), 3);
+        let fitted = fit(
+            timing,
+            (&pins_of(&document), Bpm::try_from(120.0).unwrap()),
+            0..=0,
+            &found,
+            false,
+        )
+        .unwrap();
+        assert!(fitted.before_ms.abs() < 1e-6, "{}", fitted.before_ms);
+        assert!(fitted.pins[0].seconds.abs() < 1e-6, "{:?}", fitted.pins);
+    }
+
+    #[test]
+    fn fitting_a_perfect_map_with_a_warp_leaves_its_anchors_in_place() {
+        let document = anchored(1.5, &json!([{ "tick": 1920, "kind": { "warp": 960 } }]));
+        let timing = document.timing();
+        let found = [
+            Residual {
+                seconds: 0.5,
+                strength: 1.0,
+                line: Tick::new(960),
+                ms: 0.0,
+            },
+            Residual {
+                seconds: 1.0,
+                strength: 1.0,
+                line: Tick::new(2880),
+                ms: 0.0,
+            },
+        ];
+        let fitted = fit(
+            timing,
+            (&pins_of(&document), Bpm::try_from(120.0).unwrap()),
+            0..=0,
+            &found,
+            false,
+        )
+        .unwrap();
+        assert!(fitted.before_ms.abs() < 1e-6, "{}", fitted.before_ms);
+        assert!(fitted.pins[0].seconds.abs() < 1e-6, "{:?}", fitted.pins);
+    }
+
+    #[test]
+    fn fitting_the_farthest_tail_onset_includes_it() {
+        let document = anchored(2.0, &json!([]));
+        let residual = Residual {
+            seconds: 5.85,
+            strength: 1.0,
+            line: Tick::new(10_000),
+            ms: 641.666_666,
+        };
+        let fitted = fit(
+            document.timing(),
+            (&pins_of(&document), Bpm::try_from(120.0).unwrap()),
+            1..=1,
+            &[residual],
+            false,
+        )
+        .expect("tail onset should be fitted");
+        assert!(fitted.before_ms > 600.0, "{}", fitted.before_ms);
+        assert!(fitted.after_ms < 1.0, "{}", fitted.after_ms);
+    }
+
+    #[test]
+    fn fitting_before_the_last_tick_does_not_need_a_tail_point_past_it() {
+        let value = json!({
+            "format_version": 1,
+            "ruleset": { "id": "t", "version": "1" },
+            "metadata": { "title": "t", "artist": "a", "audio": "a.ogg" },
+            "timing": {
+                "anchors": [
+                    { "tick": 0, "seconds": 0.0 },
+                    { "tick": i32::MAX, "seconds": 1_118_481.066_145 }
+                ],
+                "tempo": 120.0,
+                "events": []
+            }
+        });
+        let document = ValidDocument::from_json(&serde_json::to_vec(&value).unwrap()).unwrap();
+        let residual = Residual {
+            seconds: 0.5,
+            strength: 1.0,
+            line: Tick::new(960),
+            ms: 0.0,
+        };
+        assert!(
+            fit(
+                document.timing(),
+                (&pins_of(&document), Bpm::try_from(120.0).unwrap()),
+                0..=0,
+                &[residual],
+                false,
+            )
+            .is_some()
+        );
     }
 
     #[test]

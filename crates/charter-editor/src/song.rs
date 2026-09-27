@@ -7,8 +7,8 @@ use std::ops::RangeInclusive;
 
 use charter_core::{
     Bpm, Chart, Error, Extensions, Kind, LaneCount, LaneIndex, LaneSpan, Marker, MarkerKind,
-    Metadata, Object, Position, ResourcePath, RulesetPlugin, Shape, Tick, Ticks, Timing,
-    TimingKind, Valid, ValidDocument,
+    Metadata, Object, Position, ResourcePath, RulesetPlugin, Shape, Tick, Ticks, TicksPerBeat,
+    Timing, TimingKind, Valid, ValidDocument,
 };
 
 use crate::edit::{Edit, Op};
@@ -1049,13 +1049,59 @@ fn note(tick: Tick, lane: LaneIndex, kind: Kind) -> Object {
     }
 }
 
+/// Timed ticks and pauses in a stretch of timing, with warps left out of the timed ticks.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TimedSpan {
+    timed_ticks: f64,
+    paused_seconds: f64,
+}
+
+impl TimedSpan {
+    /// The span between two ticks of a validated timing.
+    #[must_use]
+    pub fn between(timing: Valid<'_, Timing>, from: Tick, to: Tick) -> Option<Self> {
+        span_parts(&timing, from, to)
+    }
+
+    /// What share of the timed ticks in `whole` this span holds.
+    #[must_use]
+    pub fn fraction_of(self, whole: Self) -> Option<f64> {
+        (whole.timed_ticks > 0.0).then_some(self.timed_ticks / whole.timed_ticks)
+    }
+
+    /// Seconds spent stopped or delayed in this span.
+    #[must_use]
+    pub fn paused_seconds(self) -> f64 {
+        self.paused_seconds
+    }
+
+    /// Beats whose tempo advances through this span.
+    #[must_use]
+    pub fn timed_beats(self, ticks_per_beat: TicksPerBeat) -> f64 {
+        self.timed_ticks / f64::from(u16::from(ticks_per_beat))
+    }
+
+    /// Seconds this span takes when its timed ticks run at `bpm`.
+    #[must_use]
+    pub fn at_bpm(self, bpm: Bpm, ticks_per_beat: TicksPerBeat) -> f64 {
+        self.paused_seconds + self.timed_beats(ticks_per_beat) * 60.0 / f64::from(bpm)
+    }
+}
+
 fn elapsed_at_rate(
     timing: &Timing,
     from: Tick,
     to: Tick,
     bpm: Bpm,
-    ticks_per_beat: charter_core::TicksPerBeat,
+    ticks_per_beat: TicksPerBeat,
 ) -> Option<f64> {
+    span_parts(timing, from, to).map(|span| span.at_bpm(bpm, ticks_per_beat))
+}
+
+fn span_parts(timing: &Timing, from: Tick, to: Tick) -> Option<TimedSpan> {
+    if to < from {
+        return None;
+    }
     let timed = |cursor: Tick, until: Tick, warp_end: Option<Tick>| {
         let start = warp_end.map_or(cursor, |end| end.max(cursor));
         start
@@ -1086,7 +1132,10 @@ fn elapsed_at_rate(
         }
     }
     timed_ticks += timed(cursor, to, warp_end);
-    Some(pauses + timed_ticks * 60.0 / (f64::from(bpm) * f64::from(u16::from(ticks_per_beat))))
+    Some(TimedSpan {
+        timed_ticks,
+        paused_seconds: pauses,
+    })
 }
 
 #[cfg(test)]
@@ -1699,6 +1748,15 @@ pub(crate) mod tests {
 
     fn tempo(bpm: f64) -> Bpm {
         Bpm::try_from(bpm).unwrap()
+    }
+
+    #[test]
+    fn a_timed_span_does_not_run_backwards() {
+        let song = timed(&json!([bpm_event(0, 120.0)]), None);
+        assert_eq!(
+            TimedSpan::between(song.timing(), Tick::new(960), Tick::new(0)),
+            None
+        );
     }
 
     #[test]
