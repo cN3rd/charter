@@ -15,6 +15,11 @@ sources:
 
 # Toolchain and packaging
 
+## Rust compiler
+
+The workspace requires Rust 1.95 or newer: egui and eframe 0.36.2 declare that minimum. Rust
+1.85 introduced edition 2024, but it cannot build these dependencies or the source's let chains.
+
 ## Rust shared libraries
 
 - Rust `dylib` artifacts have an **unstable ABI and are toolchain-locked**. Wrapper and binary must
