@@ -147,7 +147,7 @@ fn scroll_speeds(
     greens: &[Point],
     ticks_per_beat: f64,
 ) -> Result<Vec<TimingEvent>, ImportError> {
-    let mut changes: Vec<(i64, f64)> = greens
+    let mut changes: Vec<(i64, f64, f64)> = greens
         .iter()
         .map(|green| {
             let red = placed
@@ -169,7 +169,7 @@ fn scroll_speeds(
                 .ok_or_else(|| {
                     ImportError::OutOfRange("timing point tick is out of range".into())
                 })?;
-            Ok((tick, -100.0 / green.beat_length))
+            Ok((tick, green.time, -100.0 / green.beat_length))
         })
         .collect::<Result<_, ImportError>>()?;
     let mut resets = Vec::new();
@@ -178,21 +178,26 @@ fn scroll_speeds(
         let before = changes
             .iter()
             .chain(&resets)
-            .filter(|(tick, _)| *tick < red.tick)
-            .max_by_key(|(tick, _)| *tick)
-            .map_or(1.0, |(_, ratio)| *ratio);
-        let own = changes.iter().any(|(tick, _)| *tick == red.tick);
+            .filter(|(_, time, _)| *time < red.at)
+            .max_by(|left, right| left.1.total_cmp(&right.1))
+            .map_or(1.0, |(_, _, ratio)| *ratio);
+        #[allow(clippy::float_cmp)] // identical source timestamps mean the green belongs to the red
+        let own = changes.iter().any(|(_, time, _)| *time == red.at);
         #[allow(clippy::float_cmp)] // osu!'s own 1x, exactly
         if !own && before != 1.0 {
-            resets.push((red.tick, 1.0));
+            resets.push((red.tick, red.at, 1.0));
         }
     }
     changes.extend(resets);
-    changes.sort_by_key(|(tick, _)| *tick);
-    // The last change on a tick is the one that plays.
+    changes.sort_by(|left, right| {
+        left.0
+            .cmp(&right.0)
+            .then_with(|| left.1.total_cmp(&right.1))
+    });
+    // A red reset after an earlier green line wins when both round to the same tick.
     changes.dedup_by(|later, earlier| {
         if later.0 == earlier.0 {
-            earlier.1 = later.1;
+            earlier.2 = later.2;
             true
         } else {
             false
@@ -200,7 +205,7 @@ fn scroll_speeds(
     });
     changes
         .into_iter()
-        .map(|(tick, ratio)| {
+        .map(|(tick, _, ratio)| {
             let ratio = micro(ratio)
                 .and_then(|ratio| Decimal::try_from(ratio).ok())
                 .filter(|_| ratio > 0.0)
@@ -459,6 +464,22 @@ mod tests {
         let speeds = imported.timing.events.iter();
         let speeds = speeds.filter(|e| matches!(e.kind, TimingKind::Other { .. }));
         assert_eq!(speeds.count(), 2);
+    }
+
+    #[test]
+    fn a_red_line_resets_a_green_line_snapped_to_the_same_tick() {
+        let text = "0,2000,4,1,0,100,1,0\n999,-50,4,1,0,100,0,0\n1000,2000,4,1,0,100,1,0";
+        let imported = import(text, &song(ID)).unwrap();
+        let speeds: Vec<_> = imported
+            .timing
+            .events
+            .iter()
+            .filter_map(|event| match &event.kind {
+                TimingKind::Other { value, .. } => Some((event.tick, value.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(speeds, [(Tick::new(480), json!(1.0))]);
     }
 
     #[test]
