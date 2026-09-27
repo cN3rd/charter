@@ -33,8 +33,10 @@ which follows its beat. The BPM, with − and + buttons, and the meter, such as 
 what is in effect there and set it on the point, and a button removes the point, except the one
 that starts the tempo. "Add a timing point here" starts one at the cursor at the tempo it has
 there, and says why it cannot when the cursor is on
-one already. F7 and F8 still nudge the tempo in effect at the cursor. Every timing point stays at
-its moment of the audio: a BPM set on one changes how many beats fit before the next point, and
+one already. Point rows keep their values on one line; hovering shows the full row when a long
+game event is cut short. F7 and F8 still nudge the tempo in effect at the cursor. Every timing
+point stays at its moment of the audio: a BPM set on one changes how many beats fit before the next
+point, and
 the next point with everything after it, notes, events and markers, moves along the grid to keep
 its moment, as EOF's anchors and osu!'s red lines do. What the BPM times, up to the next point or
 to the end, stays where it sounds too while the grid changes under it, unless the Editing page's

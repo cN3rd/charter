@@ -230,14 +230,19 @@ fn list(
                         let meter = point
                             .meter
                             .map_or_else(String::new, |meter| meter.to_string());
-                        let text =
-                            format!("{at:<10}{tempo:<12}{meter:<6}{}", point.others.join(", "));
+                        let values = [tempo, meter, point.others.join(", ")]
+                            .into_iter()
+                            .filter(|value| !value.is_empty())
+                            .collect::<Vec<_>>()
+                            .join("  ");
+                        let text = format!("{at}  {values}");
                         let selected = current == Some(point.tick);
                         let row =
-                            egui::Button::selectable(selected, RichText::new(text).monospace())
+                            egui::Button::selectable(selected, RichText::new(&text).monospace())
+                                .wrap_mode(egui::TextWrapMode::Truncate)
                                 .min_size(egui::vec2(ui.available_width(), height));
                         let name = format!("Timing point at {at}");
-                        let response = ui.add(row);
+                        let response = ui.add(row).on_hover_text(text);
                         response.widget_info(|| {
                             egui::WidgetInfo::selected(
                                 egui::WidgetType::Button,
@@ -483,6 +488,9 @@ fn milliseconds_of(seconds: f64) -> String {
 
 #[cfg(test)]
 mod tests {
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+
     use super::*;
 
     #[test]
@@ -541,5 +549,26 @@ mod tests {
             Some("150".to_owned())
         );
         assert_eq!(meter_at(&timing, Tick::new(0)).to_string(), "4/4");
+    }
+
+    #[test]
+    fn a_stop_point_fits_on_one_row_in_the_song_panel() {
+        let document = charter_editor::demo::song();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(310.0, 250.0))
+            .build_ui_state(
+                |ui, document: &mut charter_core::ValidDocument| {
+                    style::apply(ui.ctx(), &[]);
+                    let timing = document.timing();
+                    list(ui, timing, &points(timing), None, &mut Vec::new());
+                },
+                document,
+            );
+        harness.run();
+        let stop = harness.get_by_label("Timing point at 00:12.800");
+        assert!(
+            stop.rect().height() < 25.0,
+            "stop row wrapped into its neighbour"
+        );
     }
 }
