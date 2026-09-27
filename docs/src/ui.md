@@ -99,8 +99,9 @@ Sounds and Autosave, each setting with a line on what it does and on and off cho
 long pages scroll inside the window so their controls remain reachable on shorter screens;
 the transport drops secondary tempo, snap, speed, grid and zoom controls as the window narrows,
 leaving playback, position, sound and settings reachable; the menus, keys and settings pages
-still offer the hidden controls;
-the new-song dialog picks the game from a segmented control, sketches the layout's lanes, and takes
+still offer the hidden controls.
+While settings, shortcuts or import timing is open, lane keys do not edit the song behind it.
+The new-song dialog picks the game from a segmented control, sketches the layout's lanes, and takes
 the song's audio dropped on it or chosen. Its form scrolls as charts are added, keeping Create and
 Cancel in reach on a short screen. Until audio is chosen, the song panel shows "None yet"
 rather than a filename. An audio file's tags fill in a title and artist still at

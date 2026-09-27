@@ -1594,7 +1594,12 @@ impl Window {
 
     /// What this frame's keys ask for. Lane keys edit only a song open for editing.
     fn keyboard(&mut self, ui: &Ui) -> Vec<Action> {
-        let lanes = self.song.as_ref().map_or(0, editable_lanes);
+        let browsing = self.settings_open || self.help_open || self.import.open;
+        let lanes = if browsing || self.calibration.open {
+            0
+        } else {
+            self.song.as_ref().map_or(0, editable_lanes)
+        };
         let lane_keys = &mut self.lane_keys;
         let asked = ui.input(|input| keys::key_actions(input, lanes, lane_keys));
         // A focused widget or a question takes the keyboard, but a lane key coming up still ends
@@ -1629,7 +1634,7 @@ impl Window {
         asked
             .into_iter()
             .filter(|action| {
-                let open = if typing {
+                let open = if typing || browsing {
                     global(action)
                 } else if timing {
                     global(action) || history(action)
@@ -3278,6 +3283,33 @@ mod tests {
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Comma);
         harness.run();
         assert!(harness.query_all_by_label("Settings").next().is_none());
+    }
+
+    #[test]
+    fn lane_keys_do_not_edit_the_song_behind_settings() {
+        let mut harness = editable_demo();
+        let before = harness
+            .state()
+            .song
+            .as_ref()
+            .unwrap()
+            .chart()
+            .unwrap()
+            .objects
+            .clone();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Comma);
+        harness.run();
+        harness.key_press(egui::Key::Num1);
+        harness.run();
+        let after = &harness
+            .state()
+            .song
+            .as_ref()
+            .unwrap()
+            .chart()
+            .unwrap()
+            .objects;
+        assert_eq!(after, &before);
     }
 
     #[test]
@@ -5687,6 +5719,8 @@ mod tests {
             .click();
         harness.run();
         assert!(!harness.state().settings().auto_jump);
+        harness.get_by_label("Close settings").click();
+        harness.run();
         harness.key_press(egui::Key::Num1);
         harness.run();
         assert_eq!(lanes_at(&harness, 0), [0, 3]);
