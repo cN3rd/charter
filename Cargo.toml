@@ -47,6 +47,8 @@ burn-store = { version = "0.21.0", default-features = false, features = ["std", 
 # otherwise be the only way to turn on.
 burn-flex = "0.21.0"
 rubato = "5.0.0"
+# ponytail: blocking, rustls; charter's one download, the beat tracker's weights, needs no runtime.
+ureq = "3.4.2"
 audioadapter-buffers = "5.1.0"
 egui = "0.36.2"
 eframe = "0.36.2"

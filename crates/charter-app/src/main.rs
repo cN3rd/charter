@@ -9,12 +9,14 @@
 use std::path::{Path, PathBuf};
 
 mod disk;
+mod finder;
 mod player;
 
 use charter_core::RulesetPlugin;
 use charter_ui::{Request, Saved, Settings, Window};
 
 use crate::disk::Disk;
+use crate::finder::Finder;
 use crate::player::Player;
 
 /// The ruleset plugins built into charter.
@@ -36,12 +38,14 @@ struct Host {
     /// Where the autosave is kept, when the user's data folder is known.
     recovery: Option<PathBuf>,
     player: Player,
+    /// Finds timing from the audio, and downloads the beat tracker it needs.
+    finder: Finder,
     disk: Box<dyn Disk>,
 }
 
 impl eframe::App for Host {
     fn ui(&mut self, ui: &mut eframe::egui::Ui, _frame: &mut eframe::Frame) {
-        if self.player.update(&mut self.window) {
+        if self.player.update(&mut self.window) | self.finder.update(&mut self.window) {
             ui.ctx().request_repaint();
         }
         self.window.ui(ui);
@@ -89,6 +93,15 @@ impl Host {
                             self.window.use_audio(&path);
                         }
                     }
+                    Request::FindTiming {
+                        file,
+                        ticks_per_beat,
+                    } => {
+                        let onsets = self.window.onsets().map(<[_]>::to_vec);
+                        self.finder
+                            .find(file, ticks_per_beat, onsets, &mut self.window);
+                    }
+                    Request::DownloadWeights => self.finder.download(&mut self.window),
                     Request::Play { .. }
                     | Request::Preview { .. }
                     | Request::Volume(_)
@@ -308,6 +321,9 @@ fn main() -> eframe::Result {
                 window,
                 recovery: eframe::storage_dir(APP).map(|folder| folder.join("recovery.json")),
                 player: Player::default(),
+                finder: Finder::new(
+                    eframe::storage_dir(APP).map(|folder| folder.join("beat_this-final0.ckpt")),
+                ),
                 disk: Box::new(disk::Real),
             };
             if let Some(path) = std::env::args_os().nth(1) {
@@ -335,6 +351,7 @@ mod tests {
             window: Window::new(&[]),
             recovery: Some(PathBuf::from("/data/recovery.json")),
             player: Player::default(),
+            finder: Finder::default(),
             disk: Box::new(disk),
         }
     }

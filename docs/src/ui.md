@@ -312,6 +312,9 @@ and the notes over a waveform that stays put.
 - Timing > Reset timing… asks first, then puts 120 BPM in 4/4 from 0 ms in place of the open
   chart's timing, as one step: every BPM change, meter, stop and game timing event goes, and the
   notes keep their beats.
+- Timing > Find timing from the audio… drafts the open chart's timing from its audio with a beat
+  tracker and puts it in place as one step, as [automatic timing](autotiming.md) describes; the
+  first time, it asks before downloading the tracker, and the status bar shows its progress.
 - Timing > Import timing… reads another program's timing, pasted or from a file, and shows what
   it holds before it replaces the open chart's tempo, meters and offset as one step. Each ruleset
   plugin may read a format through `RulesetPlugin::import_timing`; osu!mania reads osu!'s

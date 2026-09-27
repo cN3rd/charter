@@ -33,6 +33,14 @@ spectrogram, embedded in the tests. On real music the full network finds the ref
 with logits within 4 × 10⁻⁴. Each 30-second chunk runs on a thread of its own, so a four-minute
 song takes about 13 seconds.
 
+## In the editor
+
+Timing › Find timing from the audio… finds the open chart's timing and puts it in place as one
+step, saying what it found; Ctrl+Z takes it back. The first time, charter asks before it
+downloads the tracker's weights, 81 MB from the authors' server, into its data folder, where
+they stay; the song itself is never sent. The status bar shows the download and the search, which
+run off the window's thread; the host does both, and the window only asks and answers.
+
 ## How well it does
 
 Against two ranked osu! maps, scored as redline's benchmark does, the distance from each of the
@@ -52,4 +60,3 @@ which is why the refinement learns the lag before it looks for each beat's onset
 
 - A beatless or sparse intro can still come out as a stretch or two at a wrong tempo.
 - Stops, count-ins and the ×2, ÷2 and off-beat alternatives are not estimated yet.
-- The estimate is not yet offered in the editor.

@@ -10,6 +10,8 @@ workspace = true
 
 [dependencies]
 charter-audio.workspace = true
+charter-autotiming.workspace = true
+charter-beatthis-burn.workspace = true
 charter-core.workspace = true
 charter-osu-mania.workspace = true
 charter-stepmania.workspace = true
@@ -19,3 +21,4 @@ eframe = { workspace = true, features = ["persistence"] }
 kira.workspace = true
 rfd.workspace = true
 system-fonts.workspace = true
+ureq.workspace = true
