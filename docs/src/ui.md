@@ -105,7 +105,8 @@ stacks each key above its explanation when there is not room for two columns.
 While settings, shortcuts or import timing is open, lane keys do not edit the song behind it.
 The new-song dialog picks the game from a segmented control, sketches the layout's lanes, and takes
 the song's audio dropped on it or chosen. Its form scrolls as charts are added, keeping Create and
-Cancel in reach on a short screen. Until audio is chosen, the song panel shows "None yet"
+Cancel in reach on a short screen; on a narrow screen its fields and actions stay within the
+window. Until audio is chosen, the song panel shows "None yet"
 rather than a filename. An audio file's tags fill in a title and artist still at
 their defaults, in the dialog or on a new song; where the user has written their own, charter asks
 whether to import them. The song panel folds away with Ctrl+\\, and the tempo section sets the

@@ -210,7 +210,7 @@ pub fn show(
     let top = ((ui.ctx().content_rect().height() - TALLEST) / 2.0).max(24.0);
     let area = egui::Modal::default_area(id).anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, top));
     let modal = egui::Modal::new(id).area(area).show(ui.ctx(), |ui| {
-        ui.set_width(WIDTH);
+        ui.set_width(WIDTH.min((ui.ctx().content_rect().width() - 32.0).max(260.0)));
         ui.spacing_mut().item_spacing.y = 8.0;
         ui.label(
             RichText::new("New song")
@@ -313,7 +313,7 @@ fn fields(ui: &mut Ui, game: &dyn RulesetPlugin, draft: &mut Draft) {
             |ui, caption| {
                 let field = egui::TextEdit::singleline(text)
                     .hint_text(blank)
-                    .desired_width(FIELD_W);
+                    .desired_width(ui.available_width());
                 ui.add(field).labelled_by(caption);
             },
         );
@@ -346,14 +346,13 @@ fn row<C, R>(
 const WIDTH: f32 = 500.0;
 const CAPTION_W: f32 = 88.0;
 const GAP: f32 = 12.0;
-/// How wide a field reaching the dialog's right edge is.
-const FIELD_W: f32 = WIDTH - CAPTION_W - GAP;
 /// About how tall the dialog grows, for the game with the most rows; its top stays where this
 /// height would be centred.
 const TALLEST: f32 = 600.0;
 
 /// The games, side by side as one segmented control, the one chosen in the accent.
 fn choose_game(ui: &mut Ui, games: &[&'static dyn RulesetPlugin], draft: &mut Draft) {
+    let width = ui.available_width();
     egui::Frame::new()
         .fill(style::WELL)
         .corner_radius(8)
@@ -362,7 +361,7 @@ fn choose_game(ui: &mut Ui, games: &[&'static dyn RulesetPlugin], draft: &mut Dr
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 3.0;
                 #[allow(clippy::cast_precision_loss)] // a handful of games
-                let each = (WIDTH - 6.0 - 3.0 * (games.len() as f32 - 1.0)) / games.len() as f32;
+                let each = (width - 6.0 - 3.0 * (games.len() as f32 - 1.0)) / games.len() as f32;
                 for (index, game) in games.iter().enumerate() {
                     let chosen = draft.game == index;
                     let text = RichText::new(game.name());
@@ -500,7 +499,7 @@ fn charts(ui: &mut Ui, draft: &mut Draft) {
 /// out along a row would start its lines back at the row's left, so it gets a column of its own.
 fn note(ui: &mut Ui, text: RichText) {
     ui.vertical(|ui| {
-        ui.set_max_width(FIELD_W);
+        ui.set_max_width(ui.available_width());
         ui.add(egui::Label::new(text).wrap());
     });
 }
@@ -560,7 +559,7 @@ fn levels(ui: &mut Ui, draft: &mut Draft, difficulties: &Difficulties) {
             |ui, on| {
                 let field = egui::TextEdit::singleline(name)
                     .hint_text(level)
-                    .desired_width(FIELD_W);
+                    .desired_width(ui.available_width());
                 ui.add_enabled(on, field).widget_info(|| {
                     egui::WidgetInfo::labeled(
                         egui::WidgetType::TextEdit,
@@ -578,6 +577,27 @@ mod tests {
     use super::*;
     use egui_kittest::Harness;
     use egui_kittest::kittest::Queryable;
+
+    #[test]
+    fn a_new_song_can_be_created_in_a_narrow_window() {
+        let plugins: &[&dyn RulesetPlugin] = &[&charter_stepmania::Plugin];
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(400.0, 300.0))
+            .build_ui_state(
+                move |ui, draft: &mut Draft| {
+                    show(ui, plugins, draft, false);
+                },
+                Draft::default(),
+            );
+        harness.run();
+        let create = harness.get_by_label("Create");
+        assert!(create.rect().left() >= 0.0, "{:?}", create.rect());
+        assert!(create.rect().right() <= 400.0, "{:?}", create.rect());
+        assert!(create.rect().bottom() <= 300.0, "{:?}", create.rect());
+        create.click();
+        harness.run();
+        assert_eq!(harness.state().charts, ["Easy"]);
+    }
 
     #[test]
     fn a_song_with_many_charts_can_still_be_created_on_a_short_screen() {
