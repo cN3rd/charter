@@ -14,7 +14,11 @@ mock, with a made-up song in each of StepMania, Tap Tap Revenge, osu!mania, Proj
 Arcaea. `cargo run -p charter-app` is the editor so far. It draws charts in the shared vocabulary's
 glyphs, since no ruleset plugin draws yet, and starts and edits songs of the built-in rulesets. Lane
 keys and Ctrl with the mouse place taps, holds and mines; the mouse selects and Delete removes the
-selection; undo and redo return to where each edit was made. The song panel's Timing section is laid out as osu!'s timing panel is.
+selection; undo and redo return to where each edit was made. The song panel's Song section edits
+the song's title and artist in place, chooses its audio with the button beside the file's name,
+and sets its preview, where a song list starts playing it, as a time and a length in seconds;
+clearing the time takes the preview away. Each change is one step, and the ruleset shows as it
+is. The song panel's Timing section is laid out as osu!'s timing panel is.
 The song's offset comes first: where beat 0 falls in the audio, in milliseconds, stepped by 1 ms
 with its buttons or Alt+Left and Alt+Right, 10 ms with Shift. Under it the starting BPM, the first
 timing point's tempo, can be set from anywhere in the song, beside a button that opens the timing

@@ -384,7 +384,7 @@ fn bpm_row(
 }
 
 /// A moment typed as seconds, such as `26.1`, or minutes and seconds, such as `00:26.100`.
-fn moment(typed: &str) -> Option<f64> {
+pub(crate) fn moment(typed: &str) -> Option<f64> {
     let typed = typed.trim();
     let (sign, unsigned) = typed
         .strip_prefix('-')

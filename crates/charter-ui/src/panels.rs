@@ -3,7 +3,7 @@
 
 use std::num::NonZeroU16;
 
-use charter_core::{MarkerKind, Tick};
+use charter_core::{MarkerKind, Metadata, ResolvedTime, Tick};
 use egui::{self, Align, Layout, RichText, Ui};
 use serde_json::Value;
 
@@ -306,32 +306,18 @@ const KEYS: [(&str, &[(&str, &str)]); 6] = [
     ),
 ];
 
-pub fn song_panel(ui: &mut Ui, song: &Song, actions: &mut Vec<Action>) {
+pub fn song_panel(
+    ui: &mut Ui,
+    song: &Song,
+    drafts: &mut SongDrafts,
+    actions: &mut Vec<Action>,
+) -> Option<String> {
     let document = song.document().document();
-    let metadata = &document.metadata;
-    let preview = metadata.preview.map_or_else(
-        || "none".to_owned(),
-        |preview| match preview.length_seconds {
-            Some(length) => format!("{} s for {length} s", preview.start_seconds),
-            None => format!("{} s", preview.start_seconds),
-        },
-    );
+    let mut refused = None;
     style::section(ui, "Song", |ui| {
-        fields(
-            ui,
-            "song",
-            &[
-                ("Title", metadata.title.clone()),
-                ("Artist", metadata.artist.clone()),
-                ("Audio", metadata.audio.to_string()),
-                ("Preview", preview),
-                (
-                    "Ruleset",
-                    format!("{} {}", document.ruleset.id, document.ruleset.version),
-                ),
-            ],
-            "",
-        );
+        table(ui, "song", |ui| {
+            refused = song_rows(ui, song, drafts, actions);
+        });
     });
     style::section(ui, "Charts", |ui| {
         if document.charts.is_empty() {
@@ -352,6 +338,199 @@ pub fn song_panel(ui: &mut Ui, song: &Song, actions: &mut Vec<Action>) {
             }
         });
     });
+    refused
+}
+
+/// What is being typed into the song section's fields, while one has the keyboard.
+#[derive(Debug, Default)]
+pub struct SongDrafts {
+    title: Option<String>,
+    artist: Option<String>,
+    preview: Option<String>,
+    length: Option<String>,
+}
+
+/// How wide the song section's text fields are.
+const WIDE: f32 = 180.0;
+
+/// The song's title, artist, audio, preview and ruleset, each that can change a field of its
+/// own. Says why something typed is not a value.
+fn song_rows(
+    ui: &mut Ui,
+    song: &Song,
+    drafts: &mut SongDrafts,
+    actions: &mut Vec<Action>,
+) -> Option<String> {
+    let document = song.document().document();
+    let metadata = &document.metadata;
+    let editable = song.read_only().is_none();
+    let changed = |change: &dyn Fn(&mut Metadata)| changed(metadata, change);
+    let mut refused = None;
+    let mut text_row = |ui: &mut Ui,
+                        label: &str,
+                        current: &str,
+                        draft: &mut Option<String>,
+                        set: fn(&mut Metadata, &str)| {
+        let caption = ui.weak(label);
+        if editable {
+            let read = |typed: &str| Ok(changed(&|new| set(new, typed)));
+            let offered = entry_sized(ui, (caption.id, WIDE), current, draft, read, actions);
+            refused = refused.take().or(offered);
+        } else {
+            ui.label(current);
+        }
+        ui.end_row();
+    };
+    text_row(
+        ui,
+        "Title",
+        &metadata.title,
+        &mut drafts.title,
+        |new, typed| {
+            typed.clone_into(&mut new.title);
+        },
+    );
+    text_row(
+        ui,
+        "Artist",
+        &metadata.artist,
+        &mut drafts.artist,
+        |new, typed| {
+            typed.clone_into(&mut new.artist);
+        },
+    );
+    ui.weak("Audio");
+    ui.horizontal(|ui| {
+        ui.label(metadata.audio.as_str());
+        if editable
+            && style::quiet_icon(
+                ui,
+                icon::FOLDER_OPEN,
+                "Choose the song's audio",
+                "Choose another audio file",
+            )
+            .clicked()
+        {
+            actions.push(Action::ChooseAudio);
+        }
+    });
+    ui.end_row();
+    let offered = preview_rows(ui, (metadata, editable), drafts, actions);
+    refused = refused.take().or(offered);
+    ui.weak("Ruleset");
+    ui.label(format!(
+        "{} {}",
+        document.ruleset.id, document.ruleset.version
+    ));
+    ui.end_row();
+    refused
+}
+
+/// `metadata` changed by `change`, as the action that gives the song it.
+fn changed(metadata: &Metadata, change: &dyn Fn(&mut Metadata)) -> Action {
+    let mut new = metadata.clone();
+    change(&mut new);
+    Action::SetMetadata(Box::new(new))
+}
+
+/// Where a song list starts playing the song, and for how long once it has a start. Clearing the
+/// start takes the preview away. Says why something typed is not a value.
+fn preview_rows(
+    ui: &mut Ui,
+    (metadata, editable): (&Metadata, bool),
+    drafts: &mut SongDrafts,
+    actions: &mut Vec<Action>,
+) -> Option<String> {
+    let changed = |change: &dyn Fn(&mut Metadata)| changed(metadata, change);
+    let mut refused = None;
+    let caption = ui
+        .weak("Preview")
+        .on_hover_text("Where a song list starts playing the song. Clear it for none.");
+    let start = metadata.preview.map_or_else(String::new, |preview| {
+        style::clock(ResolvedTime::from(preview.start_seconds).seconds())
+    });
+    if editable {
+        let read = |typed: &str| {
+            if typed.is_empty() {
+                return Ok(changed(&|new| new.preview = None));
+            }
+            let start = crate::timing_panel::moment(typed)
+                .and_then(|at| charter_core::AudioTime::try_from((at * 1e6).round() / 1e6).ok())
+                .ok_or_else(|| format!("{typed} is not a time in the audio, such as 00:45.000"))?;
+            Ok(changed(&|new| {
+                let length_seconds = new.preview.and_then(|preview| preview.length_seconds);
+                new.preview = Some(charter_core::Preview {
+                    start_seconds: start,
+                    length_seconds,
+                });
+            }))
+        };
+        let offered = entry_sized(
+            ui,
+            (caption.id, 72.0),
+            &start,
+            &mut drafts.preview,
+            read,
+            actions,
+        );
+        refused = refused.take().or(offered);
+    } else {
+        ui.label(if start.is_empty() {
+            "none".to_owned()
+        } else {
+            start
+        });
+    }
+    ui.end_row();
+    if let Some(preview) = metadata.preview {
+        let caption = ui.weak("Preview length");
+        let length = preview
+            .length_seconds
+            .map_or_else(String::new, |length| length.to_string());
+        if editable {
+            ui.horizontal(|ui| {
+                let read = |typed: &str| {
+                    if typed.is_empty() {
+                        return Ok(changed(&|new| {
+                            new.preview = Some(charter_core::Preview {
+                                length_seconds: None,
+                                ..preview
+                            });
+                        }));
+                    }
+                    let length = typed
+                        .parse::<f64>()
+                        .ok()
+                        .and_then(|seconds| charter_core::Seconds::try_from(seconds).ok())
+                        .ok_or_else(|| format!("{typed} is not a length in seconds"))?;
+                    Ok(changed(&|new| {
+                        new.preview = Some(charter_core::Preview {
+                            length_seconds: Some(length),
+                            ..preview
+                        });
+                    }))
+                };
+                let offered = entry_sized(
+                    ui,
+                    (caption.id, 72.0),
+                    &length,
+                    &mut drafts.length,
+                    read,
+                    actions,
+                );
+                refused = refused.take().or(offered);
+                ui.weak("s");
+            });
+        } else {
+            ui.label(if length.is_empty() {
+                "to the end".to_owned()
+            } else {
+                format!("{length} s")
+            });
+        }
+        ui.end_row();
+    }
+    refused
 }
 
 /// What is read more than changed while charting: the open chart's settings and the song's
@@ -466,10 +645,27 @@ pub(crate) fn entry(
     read: impl FnOnce(&str) -> Result<Action, String>,
     actions: &mut Vec<Action>,
 ) -> Option<String> {
+    entry_sized(ui, (caption, 72.0), current, draft, read, actions)
+}
+
+/// [`entry`] `width` points wide.
+pub(crate) fn entry_sized(
+    ui: &mut Ui,
+    (caption, width): (egui::Id, f32),
+    current: &str,
+    draft: &mut Option<String>,
+    read: impl FnOnce(&str) -> Result<Action, String>,
+    actions: &mut Vec<Action>,
+) -> Option<String> {
     let mut text = draft.take().unwrap_or_else(|| current.to_owned());
-    let field = ui
-        .add(egui::TextEdit::singleline(&mut text).desired_width(72.0))
-        .labelled_by(caption);
+    let empty = current.is_empty();
+    let field = egui::TextEdit::singleline(&mut text).desired_width(width);
+    let field = if empty {
+        field.hint_text("none")
+    } else {
+        field
+    };
+    let field = ui.add(field).labelled_by(caption);
     // Leaving the field takes what was typed, as Enter does; only Escape drops it. A field left
     // as it was does nothing.
     let left = field.lost_focus()

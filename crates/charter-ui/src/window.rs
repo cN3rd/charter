@@ -280,6 +280,8 @@ pub(crate) enum Action {
     SetVolumes(charter_audio::Volumes),
     /// Gives the timing point on the tick this tempo.
     SetBpmAt(Tick, charter_core::Bpm),
+    /// Gives the song this title, artist, audio and preview.
+    SetMetadata(Box<charter_core::Metadata>),
     /// Moves the tempo point on the tick to this many seconds into the audio, the first one
     /// taking the whole grid along.
     MovePointTo(Tick, f64),
@@ -425,6 +427,8 @@ pub struct Window {
     offer: Option<Offer>,
     /// What is being typed into the timing section of the song panel.
     timing_drafts: timing_panel::Drafts,
+    /// What is being typed into the song panel's song fields.
+    song_drafts: panels::SongDrafts,
     /// A section name being typed, while its field has the keyboard.
     section_draft: Option<String>,
     /// Whether the keyboard shortcuts are showing.
@@ -1357,6 +1361,7 @@ impl Window {
             }
             Action::SetBpmAt(..)
             | Action::MovePointTo(..)
+            | Action::SetMetadata(_)
             | Action::SetMeterAt(..)
             | Action::RemoveTimingAt(_)
             | Action::SetOffset(_)
@@ -1563,6 +1568,7 @@ impl Window {
             });
         if let Some(song) = self.song.as_ref().filter(|_| self.settings.song_panel) {
             let timing = &mut self.timing_drafts;
+            let facts = &mut self.song_drafts;
             let section = &mut self.section_draft;
             let refused = egui::Panel::left("song")
                 .frame(style::panel())
@@ -1571,8 +1577,9 @@ impl Window {
                     style::solid_scroll_bars(ui);
                     egui::ScrollArea::vertical()
                         .show(ui, |ui| {
-                            panels::song_panel(ui, song, &mut actions);
+                            let named = panels::song_panel(ui, song, facts, &mut actions);
                             let refused = timing_panel::section(ui, song, timing, &mut actions);
+                            let refused = named.or(refused);
                             panels::markers(ui, song, section, &mut actions);
                             panels::details(ui, song);
                             refused
@@ -1895,6 +1902,7 @@ fn retime(song: &mut Song, action: &Action) -> Option<String> {
     let done = match action {
         Action::SetBpmAt(tick, bpm) => song.set_bpm_at(*tick, *bpm),
         Action::MovePointTo(tick, seconds) => song.move_point_to(*tick, *seconds),
+        Action::SetMetadata(metadata) => song.set_metadata(metadata.as_ref().clone()),
         Action::SetMeterAt(tick, meter) => song.set_meter_at(*tick, *meter),
         Action::RemoveTimingAt(tick) => song.remove_timing_at(*tick),
         Action::SetOffset(offset) => song.set_offset(*offset),
@@ -2445,6 +2453,64 @@ mod tests {
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
         harness.run();
         assert!(harness.query_by_label("4 notes selected").is_some());
+    }
+
+    /// Types `text` over the song panel's field `label`, then presses Enter.
+    fn retype(harness: &mut Harness<'_, Window>, label: &str, text: &str) {
+        harness
+            .get_by_role_and_label(Role::TextInput, label)
+            .focus();
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.key_press(egui::Key::Backspace);
+        harness
+            .get_by_role_and_label(Role::TextInput, label)
+            .type_text(text);
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+    }
+
+    fn metadata(harness: &Harness<'_, Window>) -> charter_core::Metadata {
+        let song = harness.state().song.as_ref().unwrap();
+        song.document().document().metadata.clone()
+    }
+
+    #[test]
+    fn the_song_panel_renames_the_song_and_sets_its_preview() {
+        let mut harness = editable_demo();
+        retype(&mut harness, "Title", "Mine");
+        retype(&mut harness, "Artist", "Me");
+        assert_eq!(
+            (metadata(&harness).title, metadata(&harness).artist),
+            ("Mine".to_owned(), "Me".to_owned())
+        );
+        retype(&mut harness, "Preview", "0:45.5");
+        retype(&mut harness, "Preview length", "15");
+        let preview = metadata(&harness).preview.unwrap();
+        assert_eq!(
+            serde_json::to_value(preview).unwrap(),
+            serde_json::json!({ "start_seconds": 45.5, "length_seconds": 15.0 })
+        );
+        retype(&mut harness, "Preview", "");
+        assert_eq!(metadata(&harness).preview, None);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.run();
+        assert!(metadata(&harness).preview.is_some());
+        harness.get_by_label("Choose the song's audio").click();
+        harness.run();
+        assert_eq!(request(&mut harness), Request::ChooseAudio);
+    }
+
+    #[test]
+    fn a_preview_that_is_not_a_time_says_so() {
+        let mut harness = editable_demo();
+        retype(&mut harness, "Preview", "soon");
+        assert!(
+            harness
+                .query_by_label_contains("soon is not a time")
+                .is_some()
+        );
+        assert_eq!(metadata(&harness).preview, None);
     }
 
     #[test]
