@@ -67,7 +67,7 @@ impl std::fmt::Debug for Player {
 
 impl Player {
     /// Loads the audio the window wants when it changes, tells the window how loading went, and
-    /// where playback has got to. Says whether audio is playing, so the host keeps drawing.
+    /// where playback has got to. Says whether playback or loading needs another frame.
     pub fn update(&mut self, window: &mut Window) -> bool {
         let wanted = window.audio_file();
         let have = self
@@ -141,13 +141,15 @@ impl Player {
                 self.loading = None;
             }
         }
+        // ponytail: repaint during loading; wake on channel sends if idle redraws matter.
+        let loading = self.loading.is_some();
         let Some(sound) = &self.playing else {
-            return false;
+            return loading;
         };
         if sound.state() == PlaybackState::Stopped {
             self.playing = None;
             window.playback_ended();
-            return false;
+            return loading;
         }
         window.playhead(sound.position());
         true
@@ -531,6 +533,16 @@ mod tests {
         player.update(&mut window);
         player.update(&mut window);
         assert!(window.shows_waveform());
+    }
+
+    #[test]
+    fn loading_audio_requests_another_frame_without_user_input() {
+        let mut player = player(silent);
+        let mut window = song_window();
+        let (send, receive) = std::sync::mpsc::channel();
+        player.loading = Some((PathBuf::from("/s/a.wav"), receive));
+        assert!(player.update(&mut window));
+        drop(send);
     }
 
     #[test]
