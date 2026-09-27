@@ -4809,7 +4809,7 @@ mod tests {
         let draft = charter_core::NewSong {
             metadata: charter_editor::demo::song().document().metadata.clone(),
             layout: 0,
-            charts: vec!["Easy".to_owned()],
+            charts: vec![charter_core::NewChart::named("Easy")],
         };
         let first = charter_stepmania::Plugin.new_song(&draft).unwrap();
         let second = charter_ttr::Plugin.new_song(&draft).unwrap();
@@ -5625,7 +5625,7 @@ mod tests {
     }
 
     #[test]
-    fn a_new_song_takes_its_game_layout_title_and_charts_from_the_dialog() {
+    fn a_new_tap_tap_revenge_song_takes_any_levels_named_as_its_game_names_them() {
         let mut harness = new_song_dialog();
         harness.get_by_label("Tap Tap Revenge").click();
         harness.run();
@@ -5639,17 +5639,39 @@ mod tests {
         title.focus();
         title.type_text("Mine");
         harness.run();
-        harness.get_by_label("Add a chart").click();
+        let preset = harness.get_by_role_and_label(Role::ComboBox, "Preset");
+        assert_eq!(preset.value().as_deref(), Some("Custom, Extreme only"));
+        preset.click();
         harness.run();
+        harness.get_by_label("Tap Tap Reloaded").click();
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::CheckBox, "Easy")
+            .click();
+        harness.run();
+        let preset = harness.get_by_role_and_label(Role::ComboBox, "Preset");
+        assert_eq!(preset.value().as_deref(), Some("Your own"));
         harness.get_by_label("Create").click();
         harness.run();
+        let named = |name: &str| (name.to_owned(), lanes(5));
         assert_eq!(
             charts(&harness),
             [
-                ("Easy".to_owned(), lanes(5)),
-                ("Chart 2".to_owned(), lanes(5))
+                named("Easy"),
+                named("Metallica"),
+                named("Downloads"),
+                named("Customs")
             ]
         );
+        let song = harness.state().song.as_ref().unwrap();
+        let levels: Vec<_> = song
+            .document()
+            .document()
+            .charts
+            .iter()
+            .map(|chart| chart.settings["difficulty"].clone())
+            .collect();
+        assert_eq!(levels, ["easy", "medium", "hard", "extreme"]);
         assert_eq!(harness.state().title(), "Mine.json - charter");
     }
 

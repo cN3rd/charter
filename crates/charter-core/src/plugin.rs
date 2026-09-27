@@ -16,12 +16,51 @@ pub struct Layout {
 }
 
 /// What a new song is made from: its metadata, one of its game's [layouts](RulesetPlugin::layouts)
-/// by index, and the names of its charts, in order.
+/// by index, and its charts, in order.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NewSong {
     pub metadata: Metadata,
     pub layout: usize,
-    pub charts: Vec<String>,
+    pub charts: Vec<NewChart>,
+}
+
+/// A chart of a new song: its name, and the game's standard
+/// [difficulty level](Difficulties::levels) it is, by index, when the game has levels.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NewChart {
+    pub name: String,
+    pub level: Option<usize>,
+}
+
+impl NewChart {
+    /// A chart called `name`, of no standard level.
+    #[must_use]
+    pub fn named(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            level: None,
+        }
+    }
+}
+
+/// The standard difficulty levels a game's charts come in, and sets of them a new song can start
+/// with, named as the game or its community knows them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Difficulties {
+    /// The standard levels, easiest first, such as `Easy`.
+    pub levels: Vec<String>,
+    /// The sets a new song can start with, the usual one first.
+    pub presets: Vec<DifficultyPreset>,
+}
+
+/// A set of standard levels, each with the name its chart gets, such as Tap Tap Reloaded's
+/// `Metallica` for the standard `Medium`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DifficultyPreset {
+    pub name: String,
+    /// The levels it has, by index into [`Difficulties::levels`], easiest first, and what their
+    /// charts are called.
+    pub charts: Vec<(usize, String)>,
 }
 
 /// Timing read from another program's format, ready to take the place of a song's.
@@ -63,6 +102,12 @@ pub trait RulesetPlugin: Debug {
     /// songs.
     fn layouts(&self) -> Vec<Layout> {
         Vec::new()
+    }
+
+    /// The standard difficulty levels of the game's charts, if it has them. A new song's charts
+    /// can then each be one of them.
+    fn difficulties(&self) -> Option<Difficulties> {
+        None
     }
 
     /// A song with no notes made from `song`, which this plugin accepts.
@@ -128,8 +173,9 @@ mod tests {
                 ext: crate::Extensions::new(),
             },
             layout: 0,
-            charts: vec!["Easy".to_owned()],
+            charts: vec![NewChart::named("Easy")],
         };
+        assert_eq!(Checks.difficulties(), None);
         let refused = Checks.new_song(&song).unwrap_err();
         assert_eq!(refused.to_string(), "checks cannot start songs");
         assert_eq!(Checks.name(), "checks");

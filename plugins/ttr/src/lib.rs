@@ -12,12 +12,14 @@
 
 use std::collections::BTreeMap;
 
+use serde_json::Value;
+
 use charter_core::{
-    Anchor, Bpm, Chart as CoreChart, DEFAULT_TICKS_PER_BEAT, Document, Extensions, FORMAT_VERSION,
-    InvalidValue, Key, Kind, LaneCount, LaneIndex, Layout, Location, Marker, MarkerKind, Metadata,
-    Name, Namespace, NewSong, Object, Origin, Position, Ruleset, RulesetPlugin, Settings, Shape,
-    Stream, Tick, Ticks, TicksPerBeat, TimeSignature, Timing, TimingEvent, TimingKind,
-    ValidDocument,
+    Anchor, Bpm, Chart as CoreChart, DEFAULT_TICKS_PER_BEAT, Difficulties, DifficultyPreset,
+    Document, Extensions, FORMAT_VERSION, InvalidValue, Key, Kind, LaneCount, LaneIndex, Layout,
+    Location, Marker, MarkerKind, Metadata, Name, Namespace, NewSong, Object, Origin, Position,
+    Ruleset, RulesetPlugin, Settings, Shape, Stream, Tick, Ticks, TicksPerBeat, TimeSignature,
+    Timing, TimingEvent, TimingKind, ValidDocument,
 };
 
 /// The ruleset namespace.
@@ -64,11 +66,89 @@ pub enum TempoKind {
 /// One difficulty.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Chart {
+    /// What the game calls the chart, which Tap Tap Reloaded and Tap Tap Hardcore name their own
+    /// way.
     pub name: String,
+    /// The standard level the chart is, whatever it is called, when it is one.
+    pub difficulty: Option<Difficulty>,
     /// Replaces the song's tempo map when present.
     pub tempo: Option<Tempo>,
     pub notes: Vec<Note>,
 }
+
+/// A chart's standard level, easiest first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Difficulty {
+    Easy,
+    Medium,
+    Hard,
+    Extreme,
+}
+
+impl Difficulty {
+    pub const ALL: [Self; 4] = [Self::Easy, Self::Medium, Self::Hard, Self::Extreme];
+
+    /// The level's standard name, as Tap Tap Revenge shows it.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Easy => "Easy",
+            Self::Medium => "Medium",
+            Self::Hard => "Hard",
+            Self::Extreme => "Extreme",
+        }
+    }
+
+    /// The level as the `difficulty` chart setting stores it.
+    const fn key(self) -> &'static str {
+        match self {
+            Self::Easy => "easy",
+            Self::Medium => "medium",
+            Self::Hard => "hard",
+            Self::Extreme => "extreme",
+        }
+    }
+
+    fn keyed(key: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|level| level.key() == key)
+    }
+}
+
+/// The chart setting holding a chart's [`Difficulty`].
+const DIFFICULTY: &str = "difficulty";
+
+/// The sets of levels a new song can start with, and what each game calls their charts: custom
+/// charts come in standard Extreme alone or every level, Tap Tap Reloaded has no Easy, and Tap
+/// Tap Hardcore renames all four.
+const PRESETS: [(&str, &[(Difficulty, &str)]); 4] = [
+    ("Custom, Extreme only", &[(Difficulty::Extreme, "Extreme")]),
+    (
+        "Custom, all levels",
+        &[
+            (Difficulty::Easy, "Easy"),
+            (Difficulty::Medium, "Medium"),
+            (Difficulty::Hard, "Hard"),
+            (Difficulty::Extreme, "Extreme"),
+        ],
+    ),
+    (
+        "Tap Tap Reloaded",
+        &[
+            (Difficulty::Medium, "Metallica"),
+            (Difficulty::Hard, "Downloads"),
+            (Difficulty::Extreme, "Customs"),
+        ],
+    ),
+    (
+        "Tap Tap Hardcore",
+        &[
+            (Difficulty::Easy, "Extreme"),
+            (Difficulty::Medium, "Intense"),
+            (Difficulty::Hard, "Severe"),
+            (Difficulty::Extreme, "Customs"),
+        ],
+    ),
+];
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Note {
@@ -123,6 +203,8 @@ pub enum Error {
     UnknownKey { at: Location, key: Key },
     #[error("{at}: \"{key}\" is not a tap tap revenge setting")]
     UnknownSetting { at: Location, key: String },
+    #[error("{at}: the difficulty {found} is not easy, medium, hard or extreme")]
+    Difficulty { at: Location, found: String },
     #[error("{at} has {} lanes; every chart of a song has the same 3, 4 or 5", .lanes.map_or_else(|| "no".to_owned(), |lanes| lanes.to_string()))]
     Lanes {
         at: Location,
@@ -338,7 +420,11 @@ impl Chart {
         Ok(CoreChart {
             name: self.name.clone(),
             lanes: Some(lanes.width()),
-            settings: Settings::new(),
+            settings: self
+                .difficulty
+                .map(|level| (DIFFICULTY.to_owned(), Value::from(level.key())))
+                .into_iter()
+                .collect(),
             timing: self.tempo.as_ref().map(Tempo::to_timing),
             objects: self
                 .notes
@@ -461,6 +547,26 @@ impl RulesetPlugin for Plugin {
             .collect()
     }
 
+    fn difficulties(&self) -> Option<Difficulties> {
+        let presets = PRESETS
+            .iter()
+            .map(|(name, charts)| DifficultyPreset {
+                name: (*name).to_owned(),
+                charts: charts
+                    .iter()
+                    .map(|&(level, chart)| (level as usize, chart.to_owned()))
+                    .collect(),
+            })
+            .collect();
+        Some(Difficulties {
+            levels: Difficulty::ALL
+                .iter()
+                .map(|level| level.name().to_owned())
+                .collect(),
+            presets,
+        })
+    }
+
     fn new_song(
         &self,
         song: &NewSong,
@@ -471,12 +577,23 @@ impl RulesetPlugin for Plugin {
         let charts = song
             .charts
             .iter()
-            .map(|name| Chart {
-                name: name.clone(),
-                tempo: None,
-                notes: Vec::new(),
+            .map(|chart| {
+                let difficulty = match chart.level {
+                    None => None,
+                    Some(level) => Some(
+                        *Difficulty::ALL
+                            .get(level)
+                            .ok_or("Tap Tap Revenge has no such difficulty")?,
+                    ),
+                };
+                Ok::<_, &str>(Chart {
+                    name: chart.name.clone(),
+                    difficulty,
+                    tempo: None,
+                    notes: Vec::new(),
+                })
             })
-            .collect();
+            .collect::<Result<_, _>>()?;
         let at_zero = |kind| TempoChange {
             tick: Tick::new(0),
             kind,
@@ -506,7 +623,18 @@ impl RulesetPlugin for Plugin {
 const LANES: [Lanes; 3] = [Lanes::Three, Lanes::Four, Lanes::Five];
 
 fn read_chart(c: usize, chart: &CoreChart, lanes: Lanes) -> Result<Chart, Error> {
-    reject_keys(chart.settings.keys(), Location::ChartSettings(c))?;
+    let at = Location::ChartSettings(c);
+    reject_keys(chart.settings.keys().filter(|key| *key != DIFFICULTY), at)?;
+    let difficulty =
+        match chart.settings.get(DIFFICULTY) {
+            None => None,
+            Some(value) => Some(value.as_str().and_then(Difficulty::keyed).ok_or_else(|| {
+                Error::Difficulty {
+                    at,
+                    found: value.to_string(),
+                }
+            })?),
+        };
     reject_own_keys(&chart.ext, Location::ChartExt(c))?;
     let notes = chart
         .objects
@@ -534,6 +662,7 @@ fn read_chart(c: usize, chart: &CoreChart, lanes: Lanes) -> Result<Chart, Error>
     };
     Ok(Chart {
         name: chart.name.clone(),
+        difficulty,
         tempo,
         notes,
     })
@@ -675,6 +804,7 @@ mod tests {
             song.charts(),
             [Chart {
                 name: "Easy".into(),
+                difficulty: None,
                 tempo: None,
                 notes: vec![Note {
                     tick: Tick::new(0),
@@ -1098,6 +1228,7 @@ mod tests {
         );
         let outside = Chart {
             name: "Hard".into(),
+            difficulty: None,
             tempo: None,
             notes: vec![Note {
                 tick: Tick::new(0),
@@ -1162,8 +1293,102 @@ mod tests {
                 ext: Extensions::new(),
             },
             layout,
-            charts: charts.iter().map(|&name| name.to_owned()).collect(),
+            charts: charts
+                .iter()
+                .map(|&name| charter_core::NewChart::named(name))
+                .collect(),
         }
+    }
+
+    fn levelled(charts: &[(&str, usize)]) -> charter_core::NewSong {
+        charter_core::NewSong {
+            charts: charts
+                .iter()
+                .map(|&(name, level)| charter_core::NewChart {
+                    name: name.to_owned(),
+                    level: Some(level),
+                })
+                .collect(),
+            ..new_song(0, &[])
+        }
+    }
+
+    fn preset(name: &str) -> Vec<(usize, String)> {
+        let difficulties = Plugin.difficulties().unwrap();
+        let found = difficulties
+            .presets
+            .iter()
+            .find(|preset| preset.name == name);
+        found.unwrap().charts.clone()
+    }
+
+    fn named(charts: &[(usize, &str)]) -> Vec<(usize, String)> {
+        charts
+            .iter()
+            .map(|&(level, name)| (level, name.to_owned()))
+            .collect()
+    }
+
+    #[test]
+    fn charts_come_in_four_standard_levels_that_each_game_names_its_own_way() {
+        let difficulties = Plugin.difficulties().unwrap();
+        assert_eq!(difficulties.levels, ["Easy", "Medium", "Hard", "Extreme"]);
+        assert_eq!(difficulties.presets[0].name, "Custom, Extreme only");
+        assert_eq!(preset("Custom, Extreme only"), named(&[(3, "Extreme")]));
+        assert_eq!(
+            preset("Custom, all levels"),
+            named(&[(0, "Easy"), (1, "Medium"), (2, "Hard"), (3, "Extreme")])
+        );
+        assert_eq!(
+            preset("Tap Tap Reloaded"),
+            named(&[(1, "Metallica"), (2, "Downloads"), (3, "Customs")])
+        );
+        assert_eq!(
+            preset("Tap Tap Hardcore"),
+            named(&[
+                (0, "Extreme"),
+                (1, "Intense"),
+                (2, "Severe"),
+                (3, "Customs")
+            ])
+        );
+    }
+
+    #[test]
+    fn a_new_chart_keeps_its_standard_level_under_the_name_its_game_gives_it() {
+        let document = Plugin
+            .new_song(&levelled(&[("Extreme", 0), ("Customs", 3)]))
+            .unwrap();
+        let value: Value = serde_json::from_slice(&document.to_json().unwrap()).unwrap();
+        assert_eq!(value["charts"][0]["name"], json!("Extreme"));
+        assert_eq!(
+            value["charts"][0]["settings"],
+            json!({ "difficulty": "easy" })
+        );
+        assert_eq!(
+            value["charts"][1]["settings"],
+            json!({ "difficulty": "extreme" })
+        );
+        let song = Song::try_from(&document).unwrap();
+        let levels: Vec<_> = song.charts().iter().map(|chart| chart.difficulty).collect();
+        assert_eq!(levels, [Some(Difficulty::Easy), Some(Difficulty::Extreme)]);
+    }
+
+    #[test]
+    fn a_chart_of_no_standard_level_has_no_difficulty_setting() {
+        let document = Plugin.new_song(&new_song(0, &["Mine"])).unwrap();
+        let value: Value = serde_json::from_slice(&document.to_json().unwrap()).unwrap();
+        assert_eq!(value["charts"][0].get("settings"), None);
+    }
+
+    #[test]
+    fn a_level_the_game_does_not_have_is_refused() {
+        assert!(Plugin.new_song(&levelled(&[("Beyond", 4)])).is_err());
+        let mut value = document(json!([]));
+        value["charts"][0]["settings"] = json!({ "difficulty": "insane" });
+        assert!(matches!(read(&value), Err(Error::Difficulty { .. })));
+        value["charts"][0]["settings"] = json!({ "difficulty": 3 });
+        assert!(matches!(read(&value), Err(Error::Difficulty { .. })));
     }
 
     #[test]

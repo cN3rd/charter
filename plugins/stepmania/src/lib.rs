@@ -591,10 +591,10 @@ impl RulesetPlugin for Plugin {
         let charts = song
             .charts
             .iter()
-            .map(|name| Chart {
-                name: name.clone(),
+            .map(|chart| Chart {
+                name: chart.name.clone(),
                 style,
-                difficulty: serde_json::from_value(Value::String(name.to_lowercase()))
+                difficulty: serde_json::from_value(Value::String(chart.name.to_lowercase()))
                     .unwrap_or(Difficulty::Edit),
                 meter: 1,
                 description: String::new(),
@@ -1338,7 +1338,10 @@ mod tests {
                 ext: Extensions::new(),
             },
             layout,
-            charts: charts.iter().map(|&name| name.to_owned()).collect(),
+            charts: charts
+                .iter()
+                .map(|&name| charter_core::NewChart::named(name))
+                .collect(),
         }
     }
 

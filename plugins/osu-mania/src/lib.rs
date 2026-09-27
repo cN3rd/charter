@@ -552,8 +552,8 @@ impl RulesetPlugin for Plugin {
         let charts = song
             .charts
             .iter()
-            .map(|name| Chart {
-                name: name.clone(),
+            .map(|chart| Chart {
+                name: chart.name.clone(),
                 keys,
                 hp: middling,
                 od: middling,
@@ -1182,7 +1182,10 @@ mod tests {
                 ext: Extensions::new(),
             },
             layout,
-            charts: charts.iter().map(|&name| name.to_owned()).collect(),
+            charts: charts
+                .iter()
+                .map(|&name| charter_core::NewChart::named(name))
+                .collect(),
         }
     }
 

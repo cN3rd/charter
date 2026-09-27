@@ -39,7 +39,9 @@ first beat of each measure and has nine sounds to pick from, each with a preview
 synthesised click pairs dedicated to the public domain, bundled under
 `crates/charter-audio/assets/clicks` with their CC0 licence and a provenance note on how they
 were made. A new song takes its game,
-the layout every chart shares, its title, artist and chart names from a dialog, and asks for audio
+the layout every chart shares, its title, artist and chart names from a dialog; for a game with
+standard levels, such as Tap Tap Revenge, the dialog instead checks any of the levels, each named
+as its game names it, with the plugin's presets to start from. It asks for audio
 until an audio file is dropped on the window or chosen from the banner that asks for it or from
 File > Choose audio…. Under Wayland nothing can be dropped, since winit takes no drops there yet
 ([winit#1881](https://github.com/rust-windowing/winit/issues/1881)), so the window offers only

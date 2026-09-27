@@ -38,6 +38,15 @@ difficulty, such as `Hard`, gets it; others are `edit`, all at meter 1. osu!mani
 counts, 4K first, with HP and OD 5, and Tap Tap Revenge's are its 3, 4 and 5 lanes. A plugin
 without layouts cannot start songs.
 
+A game whose charts come in standard levels says so with `difficulties`: the levels, easiest
+first, and presets that each pick some of them and name their charts. A new song's chart then
+carries its level by index beside its name, so the name can be what the game calls it while the
+level stays known. Tap Tap Revenge's levels are Easy, Medium, Hard and Extreme, kept as a chart's
+`difficulty` setting (`easy` to `extreme`). Its presets are the two shapes custom charts take,
+standard Extreme alone or every level, and the renamings of two of its games: Tap Tap Reloaded
+calls Medium, Hard and Extreme `Metallica`, `Downloads` and `Customs` and has no Easy, and Tap
+Tap Hardcore calls the four `Extreme`, `Intense`, `Severe` and `Customs`.
+
 A plugin can also read another program's timing: `timing_format` names the format, and
 `import_timing` turns text in it into a `Timing` for a given song, with a list of what it left
 out. Any song can take timing from any plugin's format, so a plugin keeps its own timing events,
@@ -47,7 +56,7 @@ such as osu!mania's scroll speeds, only for songs of its game. osu!mania reads o
 | Ruleset | Namespace | Kinds | Timing | Chart settings |
 |---|---|---|---|---|
 | StepMania | `sm` | `tap`, `hold`, `roll`, `mine`, `lift`, `fake`, `sm.auto_keysound` | Every core kind, `sm.tickcount`, `sm.combo`, `sm.speed`, `sm.scroll`, `sm.fake` | `style`, `difficulty`, `meter`, `description` |
-| Tap Tap Revenge | `ttr` | `tap`, `hold`, `ttr.shake`, `ttr.slice`, `ttr.mega_tap` | `bpm`, `time_signature` | None |
+| Tap Tap Revenge | `ttr` | `tap`, `hold`, `ttr.shake`, `ttr.slice`, `ttr.mega_tap` | `bpm`, `time_signature` | `difficulty`, optional |
 | osu!mania | `osu_mania` | `tap`, `hold` | `bpm`, `time_signature` over 4, `osu_mania.scroll_speed` | `hp`, `od` |
 
 Each ruleset fixes lanes its own way:
@@ -62,4 +71,4 @@ Each ruleset fixes lanes its own way:
   across two stages.
 
 Each plugin's vocabulary is an enum in Rust and text only in the document: StepMania's styles and
-difficulties, Tap Tap Revenge's lane counts and note kinds, and osu!mania's key counts.
+difficulties, Tap Tap Revenge's lane counts, levels and note kinds, and osu!mania's key counts.

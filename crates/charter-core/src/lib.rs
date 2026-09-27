@@ -25,7 +25,9 @@ pub use ident::{Ease, Key, Kind, MarkerKind, Name, Namespace};
 pub use json::{MAX_DOCUMENT_BYTES, Valid, ValidDocument};
 pub use number::Decimal;
 pub use path::ResourcePath;
-pub use plugin::{ImportedTiming, Layout, NewSong, RulesetPlugin};
+pub use plugin::{
+    Difficulties, DifficultyPreset, ImportedTiming, Layout, NewChart, NewSong, RulesetPlugin,
+};
 
 /// Property tests run from a fixed seed and keep no regression files, so they repeat exactly
 /// and touch no files.
