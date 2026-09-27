@@ -451,7 +451,7 @@ fn song_rows(
     );
     ui.weak("Audio");
     ui.horizontal(|ui| {
-        ui.label(metadata.audio.as_str());
+        ui.label(audio_name(metadata.audio.as_str()));
         if editable
             && style::quiet_icon(
                 ui,
@@ -502,6 +502,14 @@ fn song_rows(
     ui.end_row();
     let offered = setting_rows(ui, song, SettingScope::Song, drafts, actions);
     refused.take().or(offered)
+}
+
+fn audio_name(audio: &str) -> &str {
+    if audio == crate::new_song::NO_AUDIO {
+        "None yet"
+    } else {
+        audio
+    }
 }
 
 /// A field for each of the game's text settings in `scope`, the open chart's for a chart scope,
@@ -1329,6 +1337,9 @@ pub fn read_only(ui: &mut Ui, why: &str) {
 
 #[cfg(test)]
 mod tests {
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+
     use super::*;
 
     fn note(n: u16) -> NonZeroU16 {
@@ -1339,5 +1350,23 @@ mod tests {
     fn snaps_read_as_ordinals() {
         let names: Vec<_> = [4, 12, 16, 32, 48, 192].map(|n| ordinal(note(n))).into();
         assert_eq!(names, ["4th", "12th", "16th", "32nd", "48th", "192nd"]);
+    }
+
+    #[test]
+    fn a_song_waiting_for_audio_shows_no_filename_placeholder() {
+        let bytes = charter_editor::demo::song().to_json().unwrap();
+        let bytes = String::from_utf8(bytes)
+            .unwrap()
+            .replace("demo.ogg", crate::new_song::NO_AUDIO);
+        let song = Song::open(bytes.as_bytes(), &[]).unwrap();
+        let mut harness = Harness::builder().build_ui_state(
+            |ui, song: &mut Song| {
+                song_panel(ui, song, &mut SongDrafts::default(), &mut Vec::new());
+            },
+            song,
+        );
+        harness.run();
+        assert!(harness.query_by_label("None yet").is_some());
+        assert!(harness.query_by_label(crate::new_song::NO_AUDIO).is_none());
     }
 }

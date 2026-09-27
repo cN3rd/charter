@@ -97,7 +97,8 @@ scripts draw; the app finds them with the `system-fonts` crate and reads each fi
 the canvas rather than moving it. The settings window has a sidebar of pages, Editing, Display,
 Sounds and Autosave, each setting with a line on what it does and on and off choices as switches;
 the new-song dialog picks the game from a segmented control, sketches the layout's lanes, and takes
-the song's audio dropped on it or chosen. An audio file's tags fill in a title and artist still at
+the song's audio dropped on it or chosen. Until audio is chosen, the song panel shows "None yet"
+rather than a filename. An audio file's tags fill in a title and artist still at
 their defaults, in the dialog or on a new song; where the user has written their own, charter asks
 whether to import them. The song panel folds away with Ctrl+\\, and the tempo section sets the
 offset, where tick 0 sits in the audio, for songs that open with silence. Once the audio has loaded,
