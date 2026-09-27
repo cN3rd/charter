@@ -144,7 +144,7 @@ enum Loaded {
 /// How a save the window asked for went.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Saved {
-    /// The song is in this file now.
+    /// The song and any audio it needs are in place at this file now.
     To(PathBuf),
     /// No file was chosen.
     Cancelled,
@@ -511,14 +511,14 @@ impl Window {
         std::mem::take(&mut self.requests)
     }
 
-    /// Takes how a save the window asked for went.
+    /// Takes how a save and its audio preflight went. Only success makes the song clean.
     pub fn saved(&mut self, saved: Saved) {
         match saved {
             Saved::To(path) => {
                 if let Some(song) = &mut self.song {
                     song.mark_saved();
                 }
-                self.copy_audio(&path);
+                self.audio_file = None;
                 self.path = Some(path);
                 self.failure = None;
                 if let Some(discard) = self.after_save.take() {
@@ -904,22 +904,16 @@ impl Window {
         self.failure = Some(format!("Audio not copied: {why}"));
     }
 
-    /// Asks the host to copy the song's audio beside the song, now saved to `path`, when the
-    /// audio is somewhere else: dropped on the song, or beside where the song was before.
-    fn copy_audio(&mut self, path: &Path) {
-        let from = self.audio_file();
-        self.audio_file = None;
-        let (Some(from), Some(folder)) = (from, path.parent()) else {
-            return;
-        };
-        let Some(name) = from.file_name() else {
-            return;
-        };
-        if from.parent() == Some(folder) {
-            return;
-        }
-        let to = folder.join(name);
-        self.requests.push(Request::CopyAudio { from, to });
+    /// The source and destination of audio a save to `path` needs copied. The host can copy it
+    /// before reporting [`Saved::To`], so a failed copy leaves the song unsaved.
+    #[must_use]
+    pub fn audio_copy_for(&self, path: &Path) -> Option<(PathBuf, PathBuf)> {
+        let song = self.song.as_ref()?;
+        let from = self.audio_file()?;
+        let to = path
+            .parent()?
+            .join(song.document().document().metadata.audio.as_str());
+        (from != to).then_some((from, to))
     }
 
     /// Forgets how audio the song no longer plays stood, stopping it if it was playing.
@@ -3882,27 +3876,110 @@ mod tests {
     }
 
     #[test]
-    fn saving_a_song_into_another_folder_copies_its_audio_along() {
+    fn saving_a_song_into_another_folder_plans_its_audio_copy() {
         let mut harness = four_taps_at("/songs/four.json");
+        let path = PathBuf::from("/elsewhere/four.json");
+        assert_eq!(
+            harness.state().audio_copy_for(&path),
+            Some((
+                PathBuf::from("/songs/a.ogg"),
+                PathBuf::from("/elsewhere/a.ogg"),
+            ))
+        );
+        harness.state_mut().saved(Saved::To(path));
+        harness.run();
+        assert_eq!(harness.state_mut().take_requests(), []);
+    }
+
+    #[test]
+    fn saving_elsewhere_keeps_the_audios_relative_subdirectory() {
+        let mut document: serde_json::Value = serde_json::from_slice(&four_taps()).unwrap();
+        document["metadata"]["audio"] = serde_json::json!("assets/track.ogg");
+        let mut app = Window::new(PLUGINS);
+        app.open(
+            Path::new("/songs/four.json"),
+            &serde_json::to_vec(&document).unwrap(),
+        );
+        let mut harness = window(app);
+
+        harness.key_press_modifiers(
+            egui::Modifiers::COMMAND.plus(egui::Modifiers::SHIFT),
+            egui::Key::S,
+        );
+        harness.run();
+        let Request::SaveAs { bytes, .. } = request(&mut harness) else {
+            panic!("expected Save As");
+        };
+        let saved: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(saved["metadata"]["audio"], "assets/track.ogg");
+        let path = PathBuf::from("/elsewhere/four.json");
+        assert_eq!(
+            harness.state().audio_copy_for(&path),
+            Some((
+                PathBuf::from("/songs/assets/track.ogg"),
+                PathBuf::from("/elsewhere/assets/track.ogg"),
+            ))
+        );
+        harness.state_mut().saved(Saved::To(path));
+        harness.run();
+        assert_eq!(harness.state_mut().take_requests(), []);
+    }
+
+    #[test]
+    fn a_host_can_preflight_audio_without_marking_a_failed_save_as_saved() {
+        let mut harness = created();
+        drop_file(&mut harness, "/music/track.ogg");
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::S);
+        harness.run();
+        assert!(matches!(request(&mut harness), Request::SaveAs { .. }));
+
+        let original = harness.state().audio_file();
+        assert_eq!(
+            harness
+                .state()
+                .audio_copy_for(Path::new("/songs/mine.json")),
+            Some((
+                PathBuf::from("/music/track.ogg"),
+                PathBuf::from("/songs/track.ogg"),
+            ))
+        );
+        assert_eq!(harness.state().audio_file(), original);
         harness
             .state_mut()
-            .saved(Saved::To(PathBuf::from("/elsewhere/four.json")));
+            .saved(Saved::Failed("the copy failed".to_owned()));
         harness.run();
+        assert_eq!(harness.state().audio_file(), original);
+        assert!(harness.state().song.as_ref().unwrap().is_modified());
+        assert_eq!(harness.state().path, None);
+        assert_eq!(harness.state_mut().take_requests(), []);
+    }
+
+    #[test]
+    fn a_confirmed_save_after_audio_preflight_queues_no_second_copy() {
+        let mut harness = created();
+        drop_file(&mut harness, "/music/track.ogg");
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::S);
+        harness.run();
+        assert!(matches!(request(&mut harness), Request::SaveAs { .. }));
+        let path = PathBuf::from("/songs/mine.json");
+        assert!(harness.state().audio_copy_for(&path).is_some());
+
+        harness.state_mut().saved(Saved::To(path));
+        harness.run();
+        assert_eq!(harness.state_mut().take_requests(), []);
         assert_eq!(
-            harness.state_mut().take_requests(),
-            [Request::CopyAudio {
-                from: PathBuf::from("/songs/a.ogg"),
-                to: PathBuf::from("/elsewhere/a.ogg"),
-            }]
+            harness.state().audio_file(),
+            Some(PathBuf::from("/songs/track.ogg"))
         );
+        assert!(!harness.state().song.as_ref().unwrap().is_modified());
     }
 
     #[test]
     fn saving_a_song_in_its_own_folder_copies_nothing() {
         let mut harness = four_taps_at("/songs/four.json");
-        harness
-            .state_mut()
-            .saved(Saved::To(PathBuf::from("/songs/renamed.json")));
+        let path = PathBuf::from("/songs/renamed.json");
+        assert_eq!(harness.state().audio_copy_for(&path), None);
+        harness.state_mut().saved(Saved::To(path));
         harness.run();
         assert_eq!(harness.state_mut().take_requests(), []);
     }
@@ -5027,9 +5104,15 @@ mod tests {
             restored.state().audio_file(),
             Some(PathBuf::from("/music/track.ogg"))
         );
-        restored
-            .state_mut()
-            .saved(Saved::To(PathBuf::from("/songs/mine.json")));
+        let path = PathBuf::from("/songs/mine.json");
+        assert_eq!(
+            restored.state().audio_copy_for(&path),
+            Some((
+                PathBuf::from("/music/track.ogg"),
+                PathBuf::from("/songs/track.ogg"),
+            ))
+        );
+        restored.state_mut().saved(Saved::To(path));
         restored.run();
         let copies: Vec<_> = restored
             .state_mut()
@@ -5037,13 +5120,7 @@ mod tests {
             .into_iter()
             .filter(|request| matches!(request, Request::CopyAudio { .. }))
             .collect();
-        assert_eq!(
-            copies,
-            [Request::CopyAudio {
-                from: PathBuf::from("/music/track.ogg"),
-                to: PathBuf::from("/songs/track.ogg"),
-            }]
-        );
+        assert_eq!(copies, []);
     }
 
     #[test]
@@ -5675,29 +5752,28 @@ mod tests {
     }
 
     #[test]
-    fn saving_a_song_copies_the_audio_dropped_on_it_beside_it() {
+    fn saving_a_song_plans_to_copy_dropped_audio_beside_it() {
         let mut harness = created();
         drop_file(&mut harness, "/music/track.ogg");
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::S);
         harness.run();
         assert!(matches!(request(&mut harness), Request::SaveAs { .. }));
-        harness
-            .state_mut()
-            .saved(Saved::To(PathBuf::from("/songs/mine.json")));
-        harness.run();
+        let path = PathBuf::from("/songs/mine.json");
         assert_eq!(
-            harness.state_mut().take_requests(),
-            [Request::CopyAudio {
-                from: PathBuf::from("/music/track.ogg"),
-                to: PathBuf::from("/songs/track.ogg"),
-            }]
+            harness.state().audio_copy_for(&path),
+            Some((
+                PathBuf::from("/music/track.ogg"),
+                PathBuf::from("/songs/track.ogg"),
+            ))
         );
+        harness.state_mut().saved(Saved::To(path.clone()));
+        harness.run();
+        assert_eq!(harness.state_mut().take_requests(), []);
+        assert_eq!(harness.state().audio_copy_for(&path), None);
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::S);
         harness.run();
         assert!(matches!(request(&mut harness), Request::Write { .. }));
-        harness
-            .state_mut()
-            .saved(Saved::To(PathBuf::from("/songs/mine.json")));
+        harness.state_mut().saved(Saved::To(path));
         harness.run();
         assert_eq!(harness.state_mut().take_requests(), []);
     }
@@ -5706,9 +5782,9 @@ mod tests {
     fn audio_already_beside_the_song_is_not_copied() {
         let mut harness = created();
         drop_file(&mut harness, "/songs/track.ogg");
-        harness
-            .state_mut()
-            .saved(Saved::To(PathBuf::from("/songs/mine.json")));
+        let path = PathBuf::from("/songs/mine.json");
+        assert_eq!(harness.state().audio_copy_for(&path), None);
+        harness.state_mut().saved(Saved::To(path));
         harness.run();
         assert_eq!(harness.state_mut().take_requests(), []);
     }

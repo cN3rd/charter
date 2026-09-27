@@ -83,6 +83,38 @@ pub fn write_whole(disk: &dyn Disk, path: &Path, bytes: &[u8]) -> io::Result<()>
     written
 }
 
+/// Copies audio without leaving a failed partial copy at its destination. An existing file is
+/// reused only if it is the same audio.
+///
+/// # Errors
+///
+/// The source cannot be read or copied, the destination differs, or the copy cannot be moved.
+pub fn copy_whole(disk: &dyn Disk, from: &Path, to: &Path) -> io::Result<()> {
+    if disk.exists(to) {
+        // ponytail: read both files to compare; stream if large existing audio costs real memory.
+        if disk.read(from)? == disk.read(to)? {
+            return Ok(());
+        }
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("{} already holds different audio", to.display()),
+        ));
+    }
+    if let Some(folder) = to.parent() {
+        disk.make_folder(folder)?;
+    }
+    let mut beside = to.as_os_str().to_owned();
+    beside.push(".partial");
+    let beside = PathBuf::from(beside);
+    let copied = disk
+        .copy(from, &beside)
+        .and_then(|()| disk.rename(&beside, to));
+    if copied.is_err() {
+        let _ = disk.remove(&beside);
+    }
+    copied
+}
+
 #[cfg(test)]
 pub mod memory {
     use std::cell::RefCell;
@@ -98,6 +130,7 @@ pub mod memory {
         pub unwritable: Vec<PathBuf>,
         /// Whether every move fails.
         pub stuck: bool,
+        pub partial_copy_fail: bool,
     }
 
     fn missing(path: &Path) -> io::Error {
@@ -166,6 +199,12 @@ pub mod memory {
 
         fn copy(&self, from: &Path, to: &Path) -> io::Result<()> {
             let bytes = self.read(from)?;
+            if self.partial_copy_fail {
+                self.files
+                    .borrow_mut()
+                    .insert(to.to_path_buf(), bytes[..bytes.len() / 2].to_vec());
+                return Err(io::Error::other("the disk is full"));
+            }
             self.write(to, &bytes)
         }
 
@@ -211,5 +250,31 @@ mod tests {
         assert!(write_whole(&disk, Path::new("/s/song.json"), b"new").is_err());
         assert_eq!(disk.get("/s/song.json").as_deref(), Some(&b"old"[..]));
         assert_eq!(disk.get("/s/song.json.partial"), None);
+    }
+
+    #[test]
+    fn copying_audio_cleans_up_a_partial_file_on_failure() {
+        let disk = Memory {
+            partial_copy_fail: true,
+            ..Memory::with(&[("/m/audio.ogg", b"complete audio")])
+        };
+        assert!(copy_whole(&disk, Path::new("/m/audio.ogg"), Path::new("/s/audio.ogg")).is_err());
+        assert_eq!(disk.get("/s/audio.ogg"), None);
+        assert_eq!(disk.get("/s/audio.ogg.partial"), None);
+    }
+
+    #[test]
+    fn copying_audio_refuses_a_different_existing_file() {
+        let disk = Memory::with(&[
+            ("/m/audio.ogg", b"correct audio"),
+            ("/s/audio.ogg", b"other audio"),
+        ]);
+        let error =
+            copy_whole(&disk, Path::new("/m/audio.ogg"), Path::new("/s/audio.ogg")).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(
+            disk.get("/s/audio.ogg").as_deref(),
+            Some(&b"other audio"[..])
+        );
     }
 }

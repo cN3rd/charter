@@ -46,7 +46,9 @@ File > Choose audio…. Under Wayland nothing can be dropped, since winit takes 
 choosing and says why; saving
 copies that file beside the song. Saving a song somewhere new makes it a project: the name chosen
 becomes a folder holding the song's JSON file under the same name and a copy of its audio, where
-anything worked out from the audio goes. The waveform's peaks are the first such file,
+anything worked out from the audio goes. Audio in a relative subfolder keeps that subfolder;
+different audio already at the destination, or a failed copy, refuses the save without changing
+the open song or its JSON. The waveform's peaks are the first such file,
 `cache/<audio>.peaks`: the finest of the min and max levels every view reads, so the notefield,
 the timing window and any view to come draw from the same data at any zoom. The file names the
 audio by a fingerprint of its bytes, so a replaced audio file gets its peaks worked out afresh,

@@ -45,49 +45,8 @@ impl eframe::App for Host {
             ui.ctx().request_repaint();
         }
         self.window.ui(ui);
-        for request in self.window.take_requests() {
-            match request {
-                Request::SaveAs { name, bytes } => {
-                    // The name the dialog suggests is the project's, which becomes a folder.
-                    let name = name.strip_suffix(".json").unwrap_or(&name);
-                    match song_dialog().set_file_name(name).save_file() {
-                        Some(path) => self.save_as(&path, &bytes),
-                        None => self.window.saved(Saved::Cancelled),
-                    }
-                }
-                Request::Open => {
-                    if let Some(path) = song_dialog().pick_file() {
-                        self.read(&path);
-                    }
-                }
-                Request::ChooseTimingFile => {
-                    let file = rfd::FileDialog::new()
-                        .add_filter("osu! beatmap", &["osu"])
-                        .add_filter("text", &["txt"])
-                        .pick_file();
-                    if let Some(path) = file {
-                        self.read_timing(&path);
-                    }
-                }
-                Request::ChooseAudio => {
-                    let audio = rfd::FileDialog::new()
-                        .add_filter("audio", &["ogg", "mp3", "wav", "flac"])
-                        .pick_file();
-                    if let Some(path) = audio {
-                        self.window.use_audio(&path);
-                    }
-                }
-                Request::Play { .. }
-                | Request::Preview { .. }
-                | Request::Volume(_)
-                | Request::Pause
-                | Request::Seek(_)
-                | Request::Rate(_) => {
-                    self.player.answer(&request, &mut self.window);
-                }
-                files => self.answer(files),
-            }
-        }
+        let requests = self.window.take_requests();
+        self.handle_requests(requests);
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
@@ -96,16 +55,62 @@ impl eframe::App for Host {
 }
 
 impl Host {
+    fn handle_requests(&mut self, mut requests: Vec<Request>) {
+        while !requests.is_empty() {
+            for request in requests {
+                match request {
+                    Request::SaveAs { name, bytes } => {
+                        // The name the dialog suggests is the project's, which becomes a folder.
+                        let name = name.strip_suffix(".json").unwrap_or(&name);
+                        match song_dialog().set_file_name(name).save_file() {
+                            Some(path) => self.save_as(&path, &bytes),
+                            None => self.window.saved(Saved::Cancelled),
+                        }
+                    }
+                    Request::Open => {
+                        if let Some(path) = song_dialog().pick_file() {
+                            self.read(&path);
+                        }
+                    }
+                    Request::ChooseTimingFile => {
+                        let file = rfd::FileDialog::new()
+                            .add_filter("osu! beatmap", &["osu"])
+                            .add_filter("text", &["txt"])
+                            .pick_file();
+                        if let Some(path) = file {
+                            self.read_timing(&path);
+                        }
+                    }
+                    Request::ChooseAudio => {
+                        let audio = rfd::FileDialog::new()
+                            .add_filter("audio", &["ogg", "mp3", "wav", "flac"])
+                            .pick_file();
+                        if let Some(path) = audio {
+                            self.window.use_audio(&path);
+                        }
+                    }
+                    Request::Play { .. }
+                    | Request::Preview { .. }
+                    | Request::Volume(_)
+                    | Request::Pause
+                    | Request::Seek(_)
+                    | Request::Rate(_) => {
+                        self.player.answer(&request, &mut self.window);
+                    }
+                    files => self.answer(files),
+                }
+            }
+            requests = self.window.take_requests();
+        }
+    }
+
     /// Does what the window asked of the files; dialogs and playback are the caller's.
     fn answer(&mut self, request: Request) {
         match request {
             Request::Write { path, bytes } => self.write(path, &bytes),
             Request::Autosave { bytes } => self.autosave(&bytes),
             Request::CopyAudio { from, to } => {
-                // A file already there is taken to be the song's audio.
-                if !self.disk.exists(&to)
-                    && let Err(error) = self.disk.copy(&from, &to)
-                {
+                if let Err(error) = disk::copy_whole(self.disk.as_ref(), &from, &to) {
                     let why = format!("{} to {}: {error}", from.display(), to.display());
                     self.window.audio_not_copied(&why);
                 }
@@ -137,9 +142,17 @@ impl Host {
     }
 
     fn write(&mut self, path: PathBuf, bytes: &[u8]) {
-        let saved = match disk::write_whole(self.disk.as_ref(), &path, bytes) {
+        let copied = match self.window.audio_copy_for(&path) {
+            Some((from, to)) => disk::copy_whole(self.disk.as_ref(), &from, &to)
+                .map_err(|error| format!("{} to {}: {error}", from.display(), to.display())),
+            None => Ok(()),
+        };
+        let saved = match copied.and_then(|()| {
+            disk::write_whole(self.disk.as_ref(), &path, bytes)
+                .map_err(|error| format!("{}: {error}", path.display()))
+        }) {
             Ok(()) => Saved::To(path),
-            Err(error) => Saved::Failed(format!("{}: {error}", path.display())),
+            Err(error) => Saved::Failed(error),
         };
         self.window.saved(saved);
     }
@@ -329,7 +342,7 @@ mod tests {
     }
 
     #[test]
-    fn audio_is_copied_beside_the_song_unless_a_file_is_already_there() {
+    fn audio_is_copied_beside_the_song_but_different_existing_audio_is_reported() {
         let mut host = host(Memory::with(&[
             ("/m/a.ogg", b"audio"),
             ("/s/b.ogg", b"mine"),
@@ -344,7 +357,11 @@ mod tests {
             to: PathBuf::from("/s/b.ogg"),
         });
         assert_eq!(host.disk.read(Path::new("/s/b.ogg")).unwrap(), b"mine");
-        assert_eq!(host.window.message(), None);
+        assert!(
+            host.window
+                .message()
+                .is_some_and(|message| message.contains("already holds different audio"))
+        );
     }
 
     #[test]
@@ -374,6 +391,19 @@ mod tests {
             host.answer(request);
         }
         assert!(files(&host, "/s/My Song/a.ogg"));
+    }
+
+    #[test]
+    fn saving_a_song_handles_its_audio_copy_before_returning_to_the_ui() {
+        let mut host = host(Memory::with(&[("/m/a.ogg", b"audio")]));
+        host.window.open(Path::new("/m/t.json"), SONG);
+        host.handle_requests(vec![Request::Write {
+            path: PathBuf::from("/s/Song/Song.json"),
+            bytes: SONG.to_vec(),
+        }]);
+        assert!(files(&host, "/s/Song/Song.json"));
+        assert!(files(&host, "/s/Song/a.ogg"));
+        assert!(host.window.take_requests().is_empty());
     }
 
     #[test]
@@ -407,6 +437,45 @@ mod tests {
                 .message()
                 .unwrap()
                 .contains("already holds a song")
+        );
+    }
+
+    #[test]
+    fn saving_as_does_not_commit_a_song_over_different_project_audio() {
+        let mut host = host(Memory::with(&[
+            ("/m/a.ogg", b"mine"),
+            ("/s/Song/a.ogg", b"theirs"),
+        ]));
+        host.window.open(Path::new("/m/t.json"), SONG);
+        host.save_as(Path::new("/s/Song.json"), SONG);
+        let requests = host.window.take_requests();
+        host.handle_requests(requests);
+        assert!(!files(&host, "/s/Song/Song.json"));
+        assert_eq!(host.window.title(), "t.json - charter");
+        assert!(
+            host.window
+                .message()
+                .is_some_and(|message| message.contains("different audio"))
+        );
+    }
+
+    #[test]
+    fn saving_as_does_not_commit_a_song_when_audio_copy_fails_midway() {
+        let mut host = host(Memory {
+            partial_copy_fail: true,
+            ..Memory::with(&[("/m/a.ogg", b"the whole recording")])
+        });
+        host.window.open(Path::new("/m/t.json"), SONG);
+        host.save_as(Path::new("/s/Song.json"), SONG);
+        let requests = host.window.take_requests();
+        host.handle_requests(requests);
+        assert!(!files(&host, "/s/Song/Song.json"));
+        assert!(!files(&host, "/s/Song/a.ogg"));
+        assert!(!files(&host, "/s/Song/a.ogg.partial"));
+        assert!(
+            host.window
+                .message()
+                .is_some_and(|message| message.contains("the disk is full"))
         );
     }
 
