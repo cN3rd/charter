@@ -871,7 +871,13 @@ impl Window {
                 self.looping = None;
                 self.start(from, None, false);
             }
-            Some(Loaded::Failed) => {}
+            Some(Loaded::Failed) => {
+                self.failure = Some(
+                    "The audio could not be played. Choose another audio file with File > \
+                     Choose audio… and try again."
+                        .to_owned(),
+                );
+            }
             None if self.audio_file().is_none() => {
                 let name = song.document().document().metadata.audio.as_str();
                 self.failure = Some(match (name == NO_AUDIO, self.no_drops) {
@@ -3832,6 +3838,24 @@ mod tests {
             harness.state().audio_file(),
             Some(PathBuf::from("/music/track.ogg"))
         );
+    }
+
+    #[test]
+    fn play_after_an_audio_load_failure_explains_how_to_try_again() {
+        let mut harness = four_taps_at("/songs/four.json");
+        harness
+            .state_mut()
+            .audio_failed(Path::new("/songs/a.ogg"), "unsupported codec");
+        harness.run();
+        harness.get_by_label("Dismiss").click();
+        harness.run();
+        space(&mut harness);
+        assert!(
+            harness
+                .query_by_label_contains("Choose another audio file")
+                .is_some()
+        );
+        assert_eq!(harness.state_mut().take_requests(), []);
     }
 
     #[test]

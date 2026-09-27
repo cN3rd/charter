@@ -81,7 +81,8 @@ held past 200 ms, the tap grows into a hold with the playback, ending on the sna
 where the key comes up, all one step. Shift+Left and Shift+Right,
 or the Playback menu, play slower or faster from 10% to 400%, which changes the audio's pitch with
 its speed and leaves the chart alone. The status bar says whether the audio is ready, loading,
-missing or unreadable, and every message has a Dismiss button. The Edit, Timing and Playback menus
+missing or unreadable; if playback is tried after a load failure, a message points to choosing
+another audio file. Every message has a Dismiss button. The Edit, Timing and Playback menus
 carry the selection, tempo, marker and playback commands with their keys, F1 lists every key by
 group with a filter, and saving, opening, settings and help keep working while a text field has the
 keyboard. With no song open the centre offers Open song…, New song and the demo. The look follows
