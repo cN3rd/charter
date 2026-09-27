@@ -8,7 +8,7 @@ use charter_audio::Peaks;
 use charter_core::{Kind, LaneIndex, RulesetPlugin, Tick};
 use egui::Ui;
 
-use charter_editor::{NoteAt, Refusal, Selecting, Song, Step, Toggled, demo};
+use charter_editor::{KeepNotes, NoteAt, Refusal, Selecting, Song, Step, Toggled, demo};
 
 use crate::new_song::{self, NO_AUDIO};
 use crate::notefield::{self, Zoom};
@@ -1243,6 +1243,11 @@ impl Window {
         let Some(song) = &mut self.song else {
             return;
         };
+        song.keep_notes(if self.settings.notes_keep_time {
+            KeepNotes::InTime
+        } else {
+            KeepNotes::OnBeats
+        });
         match action {
             Action::OpenChart(index) => {
                 song.open_chart(index);
@@ -3090,6 +3095,34 @@ mod tests {
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
         harness.run();
         assert_eq!(bpm_at_cursor(&harness), Some((0, "150".to_owned())));
+    }
+
+    /// The tick and time of the first note after the start of the open chart.
+    fn first_note(harness: &Harness<'_, Window>) -> (Tick, f64) {
+        let song = harness.state().song.as_ref().unwrap();
+        let chart = song.chart().unwrap();
+        let note = chart
+            .objects
+            .iter()
+            .find(|note| note.tick > Tick::new(0))
+            .unwrap();
+        (note.tick, song.timing().time_at(note.tick).seconds())
+    }
+
+    #[test]
+    fn a_bpm_keeps_notes_where_they_sound_unless_the_setting_keeps_them_on_their_beats() {
+        let mut harness = editable_demo();
+        let (tick, seconds) = first_note(&harness);
+        enter_bpm(&mut harness, "175.5", egui::Key::Enter);
+        let (moved, heard) = first_note(&harness);
+        assert_ne!(moved, tick);
+        assert!((heard - seconds).abs() < 1e-3, "{heard} {seconds}");
+
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.state_mut().settings.notes_keep_time = false;
+        harness.run();
+        enter_bpm(&mut harness, "175.5", egui::Key::Enter);
+        assert_eq!(first_note(&harness).0, tick);
     }
 
     #[test]

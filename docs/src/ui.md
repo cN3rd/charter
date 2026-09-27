@@ -26,7 +26,9 @@ starts one at the cursor at the tempo it has there, and says why it cannot when 
 one already. F7 and F8 still nudge the tempo in effect at the cursor. Every timing point stays at
 its moment of the audio: a BPM set on one changes how many beats fit before the next point, and
 the next point with everything after it, notes, events and markers, moves along the grid to keep
-its moment, as EOF's anchors and osu!'s red lines do. The tempo shown is the shortest decimal that
+its moment, as EOF's anchors and osu!'s red lines do. What the BPM times, up to the next point or
+to the end, stays where it sounds too while the grid changes under it, unless the Editing page's
+"Keep notes where they sound" is off, which keeps it on its beats. The tempo shown is the shortest decimal that
 puts the next point on the same tick, which is the one typed. A value typed
 into a field applies on Enter or when the field is left; Escape leaves it as it was. Below it the song's markers are
 listed; clicking one jumps the cursor there, a name typed and entered names the section at the

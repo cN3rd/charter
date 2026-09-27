@@ -190,8 +190,9 @@ mod tests {
             bpm_event(3840, 120.0)
         ]);
         let mut song = timed(&events, None);
-        // A slower tempo fits fewer ticks before the point at 1920, which pulls the tap at 2160
-        // back onto the one at 1440.
+        song.keep_notes(crate::KeepNotes::OnBeats);
+        // Kept on their beats, a slower tempo fits fewer ticks before the point at 1920, which
+        // pulls the tap at 2160 back onto the one at 1440.
         for tick in [1440, 2160] {
             song.toggle(
                 Tick::new(tick),

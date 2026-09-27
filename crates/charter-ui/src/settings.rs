@@ -63,6 +63,9 @@ pub struct Settings {
     pub auto_jump: bool,
     /// The snap a song opens on, where its resolution holds it.
     pub snap: NonZeroU16,
+    /// Whether a BPM set on a timing point keeps the notes it times where they sound, rather
+    /// than on their beats.
+    pub notes_keep_time: bool,
     /// How close the notefield opens, as a percentage of its usual zoom.
     pub zoom: f32,
     /// How large the whole window draws, as a factor.
@@ -105,6 +108,7 @@ impl Default for Settings {
         Self {
             auto_jump: true,
             snap: NonZeroU16::new(16).unwrap_or(NonZeroU16::MIN),
+            notes_keep_time: true,
             zoom: 100.0,
             scale: 1.0,
             direction: Direction::Up,
@@ -396,6 +400,15 @@ fn editing(ui: &mut egui::Ui, settings: &mut Settings) {
             switch(ui, &mut settings.auto_jump, name);
         },
     );
+    let name = "Keep notes where they sound when a BPM changes";
+    row(
+        ui,
+        name,
+        "Off, the notes a changed BPM times stay on their beats and move with the grid.",
+        |ui, _| {
+            switch(ui, &mut settings.notes_keep_time, name);
+        },
+    );
     row(
         ui,
         "Default snap",
@@ -627,6 +640,7 @@ mod tests {
     fn settings_open_on_sixteenths_at_the_usual_zoom_moving_on_after_notes() {
         let settings = Settings::default();
         assert!(settings.auto_jump);
+        assert!(settings.notes_keep_time);
         assert_eq!(settings.snap.get(), 16);
         assert!((settings.zoom - 100.0).abs() < f32::EPSILON);
         assert!((settings.scale - 1.0).abs() < f32::EPSILON);
@@ -705,6 +719,7 @@ mod tests {
         let settings = Settings {
             auto_jump: false,
             snap: NonZeroU16::new(24).unwrap(),
+            notes_keep_time: false,
             zoom: 150.0,
             scale: 1.25,
             direction: Direction::Right,

@@ -268,7 +268,9 @@ is the tempo typed, and keeps the exact rate for resolving time, so every anchor
 
 Objects, events and markers sit on ticks and take their times from the tempo map, so changing the
 tempo moves them in the audio. Keeping them where they sound is the editor's job: when a BPM is set,
-charter moves the ticks of everything after the next anchor by the ticks that anchor moved.
+charter stretches the timed ticks up to the next anchor by the change of tempo and moves everything
+after it by the ticks that anchor moved, or, when asked to keep notes on their beats, only the
+second.
 
 The editor still shows an "offset": it is the resolved time of tick 0. Changing it shifts every
 anchor's `seconds` by the same amount.

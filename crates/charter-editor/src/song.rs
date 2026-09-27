@@ -6,9 +6,9 @@ use std::num::NonZeroU16;
 use std::ops::RangeInclusive;
 
 use charter_core::{
-    Bpm, Chart, Error, Extensions, Kind, LaneCount, LaneIndex, LaneSpan, Marker, MarkerKind,
-    Metadata, Object, Position, ResourcePath, RulesetPlugin, Shape, Tick, Ticks, TicksPerBeat,
-    Timing, TimingKind, Valid, ValidDocument,
+    Anchor, Bpm, Chart, Error, Extensions, Kind, LaneCount, LaneIndex, LaneSpan, Marker,
+    MarkerKind, Metadata, Object, Position, ResourcePath, RulesetPlugin, Shape, Tick, Ticks,
+    TicksPerBeat, Timing, TimingKind, Valid, ValidDocument,
 };
 
 use crate::edit::{Edit, Op};
@@ -76,6 +76,17 @@ pub enum Refusal {
     OffTheChart,
 }
 
+/// What setting a BPM keeps of the notes, events and markers in the stretch it times, from its
+/// point to the next or to the end. Everything past the next point keeps its moment either way.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum KeepNotes {
+    /// They stay where they sound, and the beat grid changes under them.
+    #[default]
+    InTime,
+    /// They stay on their beats, and move in the audio with the grid.
+    OnBeats,
+}
+
 /// The snaps in ArrowVortex's menu, coarsest first.
 pub const SNAPS: [u16; 10] = [4, 8, 12, 16, 24, 32, 48, 64, 96, 192];
 
@@ -90,6 +101,8 @@ pub struct Song {
     chart: usize,
     cursor: Tick,
     snap: NonZeroU16,
+    /// What a BPM set on a timing point keeps of the notes it times.
+    keep: KeepNotes,
     /// Every edit, oldest first. The first `done` are in effect; the rest were undone.
     history: Vec<Change>,
     done: usize,
@@ -154,6 +167,7 @@ impl Song {
             chart: 0,
             cursor: Tick::new(0),
             snap: NonZeroU16::MIN,
+            keep: KeepNotes::InTime,
             history: Vec::new(),
             done: 0,
             saved: Some(0),
@@ -353,12 +367,49 @@ impl Song {
             );
             index
         };
-        let (Some(from), Some(next)) = (new.anchors.get(index), new.anchors.get(index + 1)) else {
-            new.tempo = bpm;
-            return self.retime(own, new);
+        let (Some(from), next) = (
+            new.anchors.get(index).cloned(),
+            new.anchors.get(index + 1).cloned(),
+        ) else {
+            return Ok(());
         };
-        // Every anchor keeps its seconds, so `bpm` sets how many ticks fit before the next one,
-        // and everything from there on moves by the difference to stay on its audio.
+        if next.is_none() {
+            new.tempo = bpm;
+        }
+        let map = match (self.keep, next) {
+            (KeepNotes::OnBeats, None) => return self.retime(own, new),
+            (KeepNotes::OnBeats, Some(next)) => self.on_beats(&from, &next, bpm)?,
+            (KeepNotes::InTime, next) => self.in_time(&from, next.as_ref(), bpm)?,
+        };
+        for anchor in new.anchors.iter_mut().skip(index + 1) {
+            anchor.tick = map(anchor.tick)?;
+        }
+        for event in &mut new.events {
+            let tick = map(event.tick)?;
+            if let TimingKind::Warp(length) = &mut event.kind {
+                let end = map(event.tick.checked_add(*length).ok_or(Refusal::NotWhole)?)?;
+                *length = tick.ticks_until(end).ok_or(Refusal::Crosses(event.tick))?;
+            }
+            event.tick = tick;
+        }
+        new.events.sort_by_key(|event| event.tick);
+        let mut ops = vec![Op::Timing {
+            own,
+            old: Box::new(timing.clone()),
+            new: Box::new(new),
+        }];
+        ops.extend(self.shifted_along(own, &*map)?);
+        drop(map);
+        let edit = Edit(ops);
+        self.document = self.edited(self.chart, &edit)?;
+        self.record(edit);
+        Ok(())
+    }
+
+    /// Where each tick goes when `bpm` is set from `from`, keeping everything on its beats up to
+    /// `next`: every anchor keeps its seconds, so `bpm` sets how many ticks fit before `next`,
+    /// and everything from there on moves by the difference to stay on its audio.
+    fn on_beats(&self, from: &Anchor, next: &Anchor, bpm: Bpm) -> Result<Shift<'static>, Refusal> {
         let resolution = self.timing().ticks_per_beat();
         let per_beat = f64::from(u16::from(resolution));
         let apart = charter_core::ResolvedTime::from(next.seconds).seconds()
@@ -386,32 +437,57 @@ impl Song {
             return Err(Refusal::Crosses(next.tick));
         }
         let old_next = next.tick;
-        let by = i32::try_from(to - i64::from(old_next)).map_err(|_| Refusal::NotWhole)?;
-        let shift = |tick: Tick| -> Result<Tick, Refusal> {
+        let by = to - i64::from(old_next);
+        Ok(Box::new(move |tick: Tick| {
             if tick < old_next {
                 return Ok(tick);
             }
-            i32::try_from(i64::from(tick) + i64::from(by))
-                .map(Tick::new)
-                .map_err(|_| Refusal::NotWhole)
+            moved(tick, by)
+        }))
+    }
+
+    /// Where each tick goes when `bpm` is set from `from`, keeping everything where it sounds:
+    /// the timed ticks up to `next`, or to the end without one, stretch by the change of tempo
+    /// while warps keep their lengths and pauses their seconds, and everything from `next` on
+    /// moves by the ticks `next` moved.
+    fn in_time(
+        &self,
+        from: &Anchor,
+        next: Option<&Anchor>,
+        bpm: Bpm,
+    ) -> Result<Shift<'_>, Refusal> {
+        let timing = self.timing();
+        let resolution = timing.ticks_per_beat();
+        let per_beat = f64::from(u16::from(resolution));
+        let ratio = f64::from(bpm) / timing.tempo_at(from.tick);
+        let start = from.tick;
+        let stretched = move |tick: Tick| -> Result<Tick, Refusal> {
+            if tick <= start {
+                return Ok(tick);
+            }
+            let span = TimedSpan::between(timing, start, tick).ok_or(Refusal::NotWhole)?;
+            let timed = span.timed_beats(resolution) * per_beat;
+            #[allow(clippy::cast_precision_loss)] // ticks of a song
+            let warped = (i64::from(tick) - i64::from(start)) as f64 - timed;
+            #[allow(clippy::cast_possible_truncation)] // checked into a tick
+            moved(start, (timed * ratio + warped).round() as i64)
         };
-        for anchor in new.anchors.iter_mut().skip(index + 1) {
-            anchor.tick = shift(anchor.tick)?;
+        let Some(next) = next else {
+            return Ok(Box::new(stretched));
+        };
+        let old_next = next.tick;
+        let to = stretched(old_next)?;
+        if to <= start {
+            return Err(Refusal::Crosses(old_next));
         }
-        for event in &mut new.events {
-            event.tick = shift(event.tick)?;
-        }
-        new.events.sort_by_key(|event| event.tick);
-        let mut ops = vec![Op::Timing {
-            own,
-            old: Box::new(timing.clone()),
-            new: Box::new(new),
-        }];
-        ops.extend(self.shifted_along(own, &shift)?);
-        let edit = Edit(ops);
-        self.document = self.edited(self.chart, &edit)?;
-        self.record(edit);
-        Ok(())
+        let by = i64::from(to) - i64::from(old_next);
+        Ok(Box::new(move |tick: Tick| {
+            if tick < old_next {
+                stretched(tick)
+            } else {
+                moved(tick, by)
+            }
+        }))
     }
 
     /// The edits that move by `shift` the objects of every chart the timing tempo edits go to
@@ -1173,6 +1249,11 @@ impl Song {
         self.snap = finer.unwrap_or(self.snap);
     }
 
+    /// Sets what a BPM set from now on keeps of the notes it times.
+    pub fn keep_notes(&mut self, keep: KeepNotes) {
+        self.keep = keep;
+    }
+
     /// Snaps to `snap` if it is one of [`SNAPS`] and a whole number of ticks at the song's
     /// resolution, and otherwise keeps the snap there is.
     pub fn set_snap(&mut self, snap: NonZeroU16) {
@@ -1251,6 +1332,16 @@ fn shifted(object: &Object, ticks: i32, lanes: i32) -> Option<Object> {
         };
     }
     Some(moved)
+}
+
+/// Where a timing edit sends each tick.
+type Shift<'a> = Box<dyn Fn(Tick) -> Result<Tick, Refusal> + 'a>;
+
+/// `tick` moved `by` ticks, if that is still a tick.
+fn moved(tick: Tick, by: i64) -> Result<Tick, Refusal> {
+    i32::try_from(i64::from(tick) + by)
+        .map(Tick::new)
+        .map_err(|_| Refusal::NotWhole)
 }
 
 /// `object` with every tick it holds, its children's and its path's, and its end, moved by
@@ -2098,6 +2189,7 @@ pub(crate) mod tests {
         let meter = json!({ "tick": 960, "kind": { "time_signature": [3, 4] } });
         let events = json!([bpm_event(0, 120.0), meter.clone(), bpm_event(1920, 90.0)]);
         let mut song = timed(&events, None);
+        song.keep_notes(KeepNotes::OnBeats);
         song.step(Step::Later);
         assert_eq!(song.cursor(), Tick::new(240));
         song.set_bpm(tempo(150.0)).unwrap();
@@ -2116,6 +2208,7 @@ pub(crate) mod tests {
     #[test]
     fn a_bpm_keeps_every_later_point_and_note_on_its_audio_in_every_chart_it_times() {
         let mut song = timed(&json!([bpm_event(0, 120.0), bpm_event(1920, 90.0)]), None);
+        song.keep_notes(KeepNotes::OnBeats);
         for (tick, lane_index) in [(960, 0), (2880, 1), (1440, 2)] {
             song.toggle(Tick::new(tick), lane(lane_index), Kind::Tap)
                 .unwrap();
@@ -2149,6 +2242,60 @@ pub(crate) mod tests {
         assert!(song.starts_at(Tick::new(2880), lane(1)));
         song.open_chart(1);
         assert!(song.starts_at(Tick::new(2880), lane(3)));
+    }
+
+    #[test]
+    fn a_bpm_keeps_every_note_where_it_sounds_by_default() {
+        let events = json!([bpm_event(0, 120.0), bpm_event(1920, 90.0)]);
+        let mut song = timed(&events, None);
+        let stop = json!({ "tick": 480, "kind": { "stop": 0.25 } });
+        song.replace_timing(
+            serde_json::from_value(json!({
+                "anchors": [ { "tick": 0, "seconds": 0.0 }, { "tick": 1920, "seconds": 1.25 } ],
+                "tempo": 90.0,
+                "events": [stop]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        for (tick, lane_index) in [(960, 0), (2880, 1)] {
+            song.toggle(Tick::new(tick), lane(lane_index), Kind::Tap)
+                .unwrap();
+        }
+        let (inside, after) = (seconds(&song, 960), seconds(&song, 2880));
+        let (stop_at, point) = (seconds(&song, 480), seconds(&song, 1920));
+
+        song.set_bpm(tempo(150.0)).unwrap();
+
+        assert_eq!(song.bpm(), Some((Tick::new(0), tempo(150.0))));
+        let events = &song.document().document().timing.events;
+        assert_eq!(events[0].tick, Tick::new(600));
+        assert!((seconds(&song, 600) - stop_at).abs() < 1e-9);
+        assert!((seconds(&song, 1200) - inside).abs() < 1e-9);
+        assert!((seconds(&song, 2400) - point).abs() < 1e-9);
+        assert!((seconds(&song, 3360) - after).abs() < 1e-9);
+        assert!(song.starts_at(Tick::new(1200), lane(0)));
+        assert!(song.starts_at(Tick::new(3360), lane(1)));
+    }
+
+    #[test]
+    fn the_last_bpm_keeps_the_notes_after_it_in_time_or_on_their_beats() {
+        let mut song = timed(&json!([bpm_event(0, 120.0)]), None);
+        song.toggle(Tick::new(1920), lane(0), Kind::Tap).unwrap();
+        song.stretch(lane(0), Tick::new(1920), Tick::new(2880))
+            .unwrap();
+        let (start, end) = (seconds(&song, 1920), seconds(&song, 2880));
+        song.set_bpm(tempo(180.0)).unwrap();
+        let hold = &song.chart().unwrap().objects[0];
+        assert_eq!(hold.tick, Tick::new(2880));
+        assert_eq!(hold.shape.end(hold.tick), Some(Tick::new(4320)));
+        assert!((seconds(&song, 2880) - start).abs() < 1e-9);
+        assert!((seconds(&song, 4320) - end).abs() < 1e-9);
+
+        song.undo().unwrap();
+        song.keep_notes(KeepNotes::OnBeats);
+        song.set_bpm(tempo(180.0)).unwrap();
+        assert!(song.starts_at(Tick::new(1920), lane(0)));
     }
 
     #[test]
