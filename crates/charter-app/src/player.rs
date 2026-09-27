@@ -23,7 +23,7 @@ type Loading = (PathBuf, Receiver<Loaded>);
 
 /// The audio device, the song's audio and the sound playing it.
 pub struct Player {
-    /// The output, opened on first use; the error when it would not open.
+    /// The output, opened on first use and retried after a failure.
     device: Option<Result<AudioManager<DefaultBackend>, String>>,
     /// Reads and decodes an audio file.
     load: fn(&Path) -> Result<Track, String>,
@@ -240,14 +240,24 @@ impl Player {
         }
     }
 
-    /// The output device, opened the first time it is needed.
+    /// The output device, opened when needed and retried after a failure.
     fn device(&mut self) -> Result<&mut AudioManager<DefaultBackend>, String> {
-        let device = self.device.get_or_insert_with(|| {
+        let device = get_or_retry(&mut self.device, || {
             AudioManager::<DefaultBackend>::new(AudioManagerSettings::default())
                 .map_err(|error| error.to_string())
         });
-        device.as_mut().map_err(|why| why.clone())
+        device.map_err(|why| why.clone())
     }
+}
+
+fn get_or_retry<T, E>(
+    device: &mut Option<Result<T, E>>,
+    init: impl FnOnce() -> Result<T, E>,
+) -> Result<&mut T, &mut E> {
+    if device.as_ref().is_some_and(Result::is_err) {
+        *device = None;
+    }
+    device.get_or_insert_with(init).as_mut()
 }
 
 /// `clicks` mixed over silence long enough to hold them.
@@ -482,6 +492,26 @@ mod tests {
     }
 
     static FAILED_LOADS: AtomicUsize = AtomicUsize::new(0);
+
+    #[test]
+    fn an_audio_device_failure_is_retried_on_the_next_request() {
+        let mut device: Option<Result<u8, &str>> = None;
+        let mut attempts = 0;
+        assert!(
+            get_or_retry(&mut device, || {
+                attempts += 1;
+                Err("device not found")
+            })
+            .is_err()
+        );
+        let retried = get_or_retry(&mut device, || {
+            attempts += 1;
+            Ok(7)
+        })
+        .map(|device| *device);
+        assert_eq!(retried.ok(), Some(7));
+        assert_eq!(attempts, 2);
+    }
 
     fn failing(_: &Path) -> Result<Track, String> {
         FAILED_LOADS.fetch_add(1, Ordering::SeqCst);
