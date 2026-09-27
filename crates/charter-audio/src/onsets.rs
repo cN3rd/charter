@@ -2,8 +2,9 @@
 //! is mixed to mono and cut into short frames; the spectral flux, how much louder each frame is
 //! than the one before across all frequencies, peaks where something new starts. Peaks that
 //! stand out from their neighbourhood are onsets, placed between frames by fitting a parabola
-//! to the peak, then moved to the steepest rise of the track's envelope within 5 ms, which puts
-//! a sharp hit within a fraction of a millisecond.
+//! to the peak, then moved back to where the hit starts: where the track's loudness first climbs
+//! a tenth of the way from the quiet before the peak to the peak, which is where a tempo mapper
+//! puts a hit's beat, and within a fraction of a millisecond of a sharp hit's first sample.
 
 use std::sync::Arc;
 
@@ -25,8 +26,12 @@ const APART: f64 = 0.030;
 /// reaches.
 const BEFORE: f64 = 0.100;
 const AFTER: f64 = 0.030;
-/// How far from the peak's time, in seconds, the steepest rise of the envelope is looked for.
-const REFINE: f64 = 0.005;
+/// How far before and after the peak's time, in seconds, the hit's start is looked for.
+const BACK: f64 = 0.030;
+const AHEAD: f64 = 0.010;
+/// How far from the quiet before a hit to its loudest, as a share, the loudness has climbed where
+/// the hit starts.
+const START: f32 = 0.1;
 /// How much of the loudest peak a peak has to stand above its neighbourhood by.
 const DELTA: f32 = 0.05;
 /// The least flux a peak needs at all. A steady tone's frames differ by about 5 from one to the
@@ -94,11 +99,11 @@ pub fn onsets(track: &Track) -> Vec<Onset> {
     }
     let strongest = peaks.iter().map(|(_, height)| *height).fold(0.0, f32::max);
     let envelope = envelope(&mono, rate);
-    let reach = REFINE * rate;
     let mut found: Vec<Onset> = peaks
         .into_iter()
         .map(|(sample, height)| {
-            let refined = steepest_rise(&envelope, sample, reach).unwrap_or(sample);
+            let refined = attack_start(&envelope, (sample - BACK * rate, sample + AHEAD * rate))
+                .unwrap_or(sample);
             Onset {
                 seconds: refined.max(0.0) / rate,
                 strength: (height / strongest).clamp(f32::MIN_POSITIVE, 1.0),
@@ -169,11 +174,11 @@ fn parabola(values: &[f32], index: usize) -> f64 {
     f64::from((0.5 * (before - after) / curve).clamp(-0.5, 0.5))
 }
 
-/// The loudness of `mono` about each sample: its rectified samples averaged over the
-/// millisecond around it.
+/// The loudness of `mono` up to each sample: its rectified samples averaged over the 5 ms before
+/// it, long enough to span a low note's cycle and not reaching ahead of what has sounded.
 fn envelope(mono: &[f32], rate: f64) -> Vec<f32> {
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // tens of samples
-    let half = ((rate * 0.0005) as usize).max(1);
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // hundreds of samples
+    let span = ((rate * 0.005) as usize).max(1);
     let running: Vec<f64> = std::iter::once(0.0)
         .chain(mono.iter().scan(0.0, |sum, sample| {
             *sum += f64::from(sample.abs());
@@ -182,43 +187,50 @@ fn envelope(mono: &[f32], rate: f64) -> Vec<f32> {
         .collect();
     (0..mono.len())
         .map(|at| {
-            let (from, to) = (at.saturating_sub(half), (at + half + 1).min(mono.len()));
-            let span = running
+            let (from, to) = ((at + 1).saturating_sub(span), at + 1);
+            let sum = running
                 .get(to)
                 .zip(running.get(from))
                 .map_or(0.0, |(a, b)| a - b);
             #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)] // a mean
-            let mean = (span / (to - from) as f64) as f32;
+            let mean = (sum / (to - from) as f64) as f32;
             mean
         })
         .collect()
 }
 
-/// The sample within `reach` samples of `around` where `envelope` rises fastest, if it rises at
-/// all there.
-fn steepest_rise(envelope: &[f32], around: f64, reach: f64) -> Option<f64> {
+/// Where a hit between the samples `from` and `to` starts: the first sample after the quietest
+/// point before the loudest where `envelope` has climbed [`START`] of the way from the one to
+/// the other. None where it does not climb.
+fn attack_start(envelope: &[f32], (from, to): (f64, f64)) -> Option<f64> {
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // within the track
     let (from, to) = (
-        (around - reach).max(1.0) as usize,
-        ((around + reach) as usize).min(envelope.len().saturating_sub(1)),
+        from.max(0.0) as usize,
+        (to.max(0.0) as usize).min(envelope.len()),
     );
-    let mut best: Option<(usize, f32)> = None;
-    for at in from..to {
-        let (Some(&low), Some(&high)) = (envelope.get(at - 1), envelope.get(at + 1)) else {
-            continue;
-        };
-        let rise = high - low;
-        if rise > 0.0 && best.is_none_or(|(_, steepest)| rise > steepest) {
-            best = Some((at, rise));
-        }
+    let span = envelope.get(from..to)?;
+    let (peak_at, &peak) = span.iter().enumerate().max_by(|a, b| a.1.total_cmp(b.1))?;
+    let (quiet_at, &quiet) = span
+        .get(..=peak_at)?
+        .iter()
+        .enumerate()
+        .min_by(|a, b| a.1.total_cmp(b.1))?;
+    if peak <= quiet {
+        return None;
     }
+    let threshold = quiet + START * (peak - quiet);
+    let start = span
+        .get(quiet_at..=peak_at)?
+        .iter()
+        .position(|level| *level >= threshold)?;
     #[allow(clippy::cast_precision_loss)] // a sample index
-    best.map(|(at, _)| at as f64)
+    let start = (from + quiet_at + start) as f64;
+    Some(start)
 }
 
 /// What starts kept onsets, naming the layout and the detector: a change to either changes
 /// this, so onsets found another way are found again.
-const MAGIC: &[u8; 8] = b"CHONSET2";
+const MAGIC: &[u8; 8] = b"CHONSET3";
 
 /// `onsets` as bytes to keep, marked as those of the audio whose
 /// [fingerprint](crate::fingerprint) is `source`.
@@ -308,6 +320,45 @@ mod tests {
                 onset.seconds
             );
             assert!(onset.strength > 0.5);
+        }
+    }
+
+    /// Silence with a kick at each of `times`: a 60 Hz sine swelling over 15 ms and dying away,
+    /// the kind of hit whose waveform is still climbing well after it starts.
+    fn kicks(times: &[f64], seconds: f64) -> Track {
+        let rate = f64::from(RATE);
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let length = (seconds * rate) as usize;
+        let mut frames = vec![[0.0f32; 2]; length];
+        for &at in times {
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let start = (at * rate).round() as usize;
+            for (offset, frame) in frames.iter_mut().skip(start).take(19_800).enumerate() {
+                #[allow(clippy::cast_precision_loss)]
+                let t = offset as f64 / rate;
+                let swell = (t / 0.015).min(1.0);
+                #[allow(clippy::cast_possible_truncation)]
+                let sample =
+                    ((std::f64::consts::TAU * 60.0 * t).sin() * swell * (-t / 0.050).exp() * 0.8)
+                        as f32;
+                *frame = [sample; 2];
+            }
+        }
+        Track::from_frames(RATE, frames)
+    }
+
+    #[test]
+    fn a_hit_that_swells_is_found_within_a_few_milliseconds_of_where_it_starts() {
+        let times: Vec<f64> = (0..8).map(|beat| 0.3 + f64::from(beat) * 0.5).collect();
+        let found = onsets(&kicks(&times, 4.5));
+        assert_eq!(found.len(), times.len(), "{found:?}");
+        for (onset, at) in found.iter().zip(&times) {
+            let early = at - onset.seconds;
+            assert!(
+                (-0.003..=0.003).contains(&early),
+                "{} for {at}",
+                onset.seconds
+            );
         }
     }
 
