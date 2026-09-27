@@ -74,6 +74,16 @@ pub fn menu_bar(
                     ("Select all", "Ctrl+A", Action::SelectAll),
                     ("Select none", "Escape", Action::ClearSelection),
                     ("Delete the selection", "Delete", Action::DeleteSelection),
+                    (
+                        "Lengthen by the snap",
+                        "[",
+                        Action::ResizeNotes(Step::Later),
+                    ),
+                    (
+                        "Shorten by the snap",
+                        "]",
+                        Action::ResizeNotes(Step::Earlier),
+                    ),
                 ],
             );
         });
@@ -249,6 +259,10 @@ const KEYS: [(&str, &[(&str, &str)]); 6] = [
             ("Ctrl+Click", "Place or remove a tap"),
             ("Ctrl+Shift+Click", "Place or remove a mine"),
             ("Ctrl+Drag", "Draw a hold"),
+            (
+                "[, ]",
+                "Lengthen or shorten the selection, or the notes at the cursor, by the snap",
+            ),
         ],
     ),
     (

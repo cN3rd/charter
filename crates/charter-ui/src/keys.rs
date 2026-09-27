@@ -219,6 +219,8 @@ fn command(key: Key, modifiers: Modifiers) -> Option<Action> {
     match key {
         Key::Delete | Key::Backspace => Some(Action::DeleteSelection),
         Key::Escape => Some(Action::ClearSelection),
+        Key::OpenBracket => Some(Action::ResizeNotes(Step::Later)),
+        Key::CloseBracket => Some(Action::ResizeNotes(Step::Earlier)),
         Key::ArrowDown => Some(Action::Move(Step::Later)),
         Key::ArrowUp => Some(Action::Move(Step::Earlier)),
         Key::PageDown => Some(Action::MoveMeasure(Step::Later)),
@@ -267,6 +269,16 @@ mod tests {
             (Key::Z, Modifiers::COMMAND, Some(Action::Undo)),
             (Key::S, both, Some(Action::SaveAs)),
             (Key::Space, NONE, Some(Action::TogglePlay)),
+            (
+                Key::OpenBracket,
+                NONE,
+                Some(Action::ResizeNotes(Step::Later)),
+            ),
+            (
+                Key::CloseBracket,
+                NONE,
+                Some(Action::ResizeNotes(Step::Earlier)),
+            ),
             (Key::A, Modifiers::ALT, None),
         ];
         for (key, modifiers, expected) in cases {

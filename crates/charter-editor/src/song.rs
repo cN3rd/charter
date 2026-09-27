@@ -1144,6 +1144,56 @@ impl Song {
         Ok(())
     }
 
+    /// Moves the end of each selected tap and hold, or of those starting at the cursor when none
+    /// is selected, to the snap's next line later or earlier, as one step: a tap lengthens to a
+    /// hold, and a hold shortened to its own tick or before becomes a tap.
+    ///
+    /// # Errors
+    ///
+    /// Refuses on a read-only song, and when the new lengths break a rule of the format or of the
+    /// song's game; the notes stay as they were.
+    pub fn resize_notes(&mut self, step: Step) -> Result<(), Refusal> {
+        let (Some(chart), Some(length)) = (self.chart(), self.length_of(self.snap)) else {
+            return Ok(());
+        };
+        let chosen = |object: &Object| {
+            if self.selection.is_empty() {
+                object.tick == self.cursor && note_at(object).is_some()
+            } else {
+                self.is_selected(object)
+            }
+        };
+        let mut ops = Vec::new();
+        for (index, old) in chart.objects.iter().enumerate() {
+            if !matches!(old.kind, Kind::Tap | Kind::Hold) || !chosen(old) {
+                continue;
+            }
+            let Some(end) = old.shape.end(old.tick) else {
+                continue;
+            };
+            let moved = match step {
+                Step::Later => end.next_on(length),
+                Step::Earlier => end.previous_on(length),
+            };
+            let mut new = old.clone();
+            (new.kind, new.shape) = match moved.and_then(|end| old.tick.ticks_until(end)) {
+                Some(duration) => (Kind::Hold, Shape::Sustain { duration }),
+                None => (Kind::Tap, Shape::Instant),
+            };
+            if new != *old {
+                let old = old.clone();
+                ops.push(Op::Replace { index, old, new });
+            }
+        }
+        if ops.is_empty() {
+            return Ok(());
+        }
+        let edit = Edit(ops);
+        self.document = self.edited(self.chart, &edit)?;
+        self.record(edit);
+        Ok(())
+    }
+
     /// Moves every selected note `ticks` later, earlier when negative, and `lanes` to the right,
     /// left when negative, with its children and path, as one step that keeps them selected.
     ///
@@ -1750,6 +1800,76 @@ pub(crate) mod tests {
         song.stretch(lane(0), at(0), at(480)).unwrap();
         song.undo().unwrap();
         assert_eq!(objects(&song), [object(0, 0, "tap"), object(240, 1, "tap")]);
+    }
+
+    #[test]
+    fn lengthening_makes_a_selected_tap_a_hold_to_the_next_line_and_a_hold_longer() {
+        let mut song = Song::new(
+            document(json!([
+                object(0, 0, "tap"),
+                hold(0, 1, 100),
+                object(0, 2, "tap")
+            ])),
+            EDITABLE,
+        );
+        let notes = [0, 1].map(|index| NoteAt {
+            tick: at(0),
+            lane: lane(index),
+        });
+        song.select(notes, Selecting::Replace);
+        song.resize_notes(Step::Later).unwrap();
+        assert_eq!(
+            objects(&song),
+            [hold(0, 0, 240), hold(0, 1, 240), object(0, 2, "tap")]
+        );
+        song.resize_notes(Step::Later).unwrap();
+        assert_eq!(
+            objects(&song),
+            [hold(0, 0, 480), hold(0, 1, 480), object(0, 2, "tap")]
+        );
+        assert_eq!(song.selection().count(), 2);
+        song.undo().unwrap();
+        assert_eq!(
+            objects(&song),
+            [hold(0, 0, 240), hold(0, 1, 240), object(0, 2, "tap")]
+        );
+    }
+
+    #[test]
+    fn shortening_takes_a_hold_back_a_line_and_one_line_long_to_a_tap() {
+        let mut song = Song::new(
+            document(json!([hold(0, 0, 300), object(240, 1, "tap")])),
+            EDITABLE,
+        );
+        song.resize_notes(Step::Earlier).unwrap();
+        assert_eq!(objects(&song), [hold(0, 0, 240), object(240, 1, "tap")]);
+        song.resize_notes(Step::Earlier).unwrap();
+        assert_eq!(objects(&song), [object(0, 0, "tap"), object(240, 1, "tap")]);
+        let steps = song.history.len();
+        song.resize_notes(Step::Earlier).unwrap();
+        assert_eq!(song.history.len(), steps, "a tap cannot shorten");
+    }
+
+    #[test]
+    fn without_a_selection_the_notes_at_the_cursor_resize() {
+        let mut song = Song::new(
+            document(json!([
+                object(0, 0, "tap"),
+                object(240, 1, "tap"),
+                object(240, 2, "mine")
+            ])),
+            EDITABLE,
+        );
+        song.step(Step::Later);
+        song.resize_notes(Step::Later).unwrap();
+        assert_eq!(
+            objects(&song),
+            [
+                object(0, 0, "tap"),
+                hold(240, 1, 240),
+                object(240, 2, "mine")
+            ]
+        );
     }
 
     #[test]

@@ -282,6 +282,8 @@ pub(crate) enum Action {
     SelectAll,
     ClearSelection,
     DeleteSelection,
+    /// Moves the end of the selected notes, or those at the cursor, a snap later or earlier.
+    ResizeNotes(Step),
     /// Asks the host for a song to open.
     Open,
     /// Saves the song to its file, or asks where when it has none.
@@ -1490,6 +1492,7 @@ impl Window {
             Action::RemoveMarker(index) => self.failure = refused(song.remove_marker(index).err()),
             Action::SelectAll => song.select_all(),
             Action::DeleteSelection => self.failure = refused(song.delete_selection().err()),
+            Action::ResizeNotes(step) => self.failure = refused(song.resize_notes(step).err()),
             Action::MoveSelection { ticks, lanes } => {
                 self.failure = refused(song.move_selection(ticks, lanes).err());
             }
@@ -2559,6 +2562,21 @@ mod tests {
     fn note_count(harness: &Harness<'_, Window>) -> usize {
         let song = harness.state().song.as_ref().unwrap();
         song.chart().unwrap().objects.len()
+    }
+
+    #[test]
+    fn brackets_lengthen_the_note_at_the_cursor_to_a_hold_and_shorten_it_back() {
+        let mut harness = editable_four_taps();
+        let first = |harness: &Harness<'_, Window>| {
+            let song = harness.state().song.as_ref().unwrap();
+            song.chart().unwrap().objects.first().unwrap().kind.clone()
+        };
+        harness.key_press(egui::Key::OpenBracket);
+        harness.run();
+        assert_eq!(first(&harness), charter_core::Kind::Hold);
+        harness.key_press(egui::Key::CloseBracket);
+        harness.run();
+        assert_eq!(first(&harness), charter_core::Kind::Tap);
     }
 
     #[test]
