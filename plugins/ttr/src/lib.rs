@@ -1,6 +1,6 @@
 //! Tap Tap Revenge as a charter ruleset.
 //!
-//! A song has 3, 4 or 5 lanes, the same in every chart. Notes scroll at a constant speed in
+//! A chart has 3, 4 or 5 lanes, and a song's charts may differ. Notes scroll at a constant speed in
 //! time, so a BPM change only moves the beat grid and never speeds play up or slows it down the
 //! way StepMania's does. Stops, delays and warps have no meaning here.
 //!
@@ -31,7 +31,6 @@ pub const ID: &str = "ttr";
 pub struct Song {
     metadata: Metadata,
     ticks_per_beat: TicksPerBeat,
-    lanes: Lanes,
     tempo: Tempo,
     markers: Vec<Marker>,
     charts: Vec<Chart>,
@@ -68,6 +67,8 @@ pub enum TempoKind {
 /// One difficulty.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Chart {
+    /// How many lanes the chart has, which the game calls its columns.
+    pub lanes: Lanes,
     /// What the game calls the chart, which Tap Tap Reloaded and Tap Tap Hardcore name their own
     /// way.
     pub name: String,
@@ -215,7 +216,7 @@ pub enum Error {
     Difficulty { at: Location, found: String },
     #[error("{at}: a theme is a name, such as DeltaHeavyTheme, not {found}")]
     Theme { at: Location, found: String },
-    #[error("{at} has {} lanes; every chart of a song has the same 3, 4 or 5", .lanes.map_or_else(|| "no".to_owned(), |lanes| lanes.to_string()))]
+    #[error("{at} has {} lanes; a chart has 3, 4 or 5", .lanes.map_or_else(|| "no".to_owned(), |lanes| lanes.to_string()))]
     Lanes {
         at: Location,
         lanes: Option<LaneCount>,
@@ -227,17 +228,16 @@ pub enum Error {
 }
 
 impl Song {
-    /// A song of `charts`, each with `lanes` lanes.
+    /// A song of `charts`.
     ///
     /// # Errors
     ///
     /// Returns [`Error::NoCharts`] without a chart, [`Error::UnknownKey`] for metadata extension
     /// data, which this ruleset does not keep, or [`Error::Document`] for the first document rule
-    /// the song breaks, such as a tap in a lane the song does not have.
+    /// the song breaks, such as a tap in a lane its chart does not have.
     pub fn new(
         metadata: Metadata,
         ticks_per_beat: TicksPerBeat,
-        lanes: Lanes,
         tempo: Tempo,
         markers: Vec<Marker>,
         charts: Vec<Chart>,
@@ -267,7 +267,6 @@ impl Song {
         let song = Self {
             metadata,
             ticks_per_beat,
-            lanes,
             tempo,
             markers,
             charts,
@@ -285,11 +284,6 @@ impl Song {
     #[must_use]
     pub fn ticks_per_beat(&self) -> TicksPerBeat {
         self.ticks_per_beat
-    }
-
-    #[must_use]
-    pub fn lanes(&self) -> Lanes {
-        self.lanes
     }
 
     #[must_use]
@@ -339,7 +333,7 @@ impl Song {
         let charts = self
             .charts
             .iter()
-            .map(|chart| chart.to_core(self.lanes))
+            .map(Chart::to_core)
             .collect::<Result<_, _>>()?;
         let doc = Document {
             format_version: FORMAT_VERSION,
@@ -361,7 +355,7 @@ impl Song {
 }
 
 impl Lanes {
-    /// How many lanes each chart of the song has.
+    /// How many lanes a chart of this count has.
     #[must_use]
     pub const fn width(self) -> LaneCount {
         match self {
@@ -443,7 +437,8 @@ impl Tempo {
 }
 
 impl Chart {
-    fn to_core(&self, lanes: Lanes) -> Result<CoreChart, InvalidValue> {
+    fn to_core(&self) -> Result<CoreChart, InvalidValue> {
+        let lanes = self.lanes;
         Ok(CoreChart {
             name: self.name.clone(),
             lanes: Some(lanes.width()),
@@ -506,12 +501,14 @@ impl TryFrom<&ValidDocument> for Song {
                 what: "keysounds",
             });
         }
-        let lanes = song_lanes(&doc.charts)?;
+        if doc.charts.is_empty() {
+            return Err(Error::NoCharts);
+        }
         let charts = doc
             .charts
             .iter()
             .enumerate()
-            .map(|(c, chart)| read_chart(c, chart, lanes))
+            .map(|(c, chart)| read_chart(c, chart))
             .collect::<Result<_, _>>()?;
         let metadata = Metadata {
             ext: Extensions::new(),
@@ -524,28 +521,7 @@ impl TryFrom<&ValidDocument> for Song {
             .cloned()
             .collect();
         let tempo = read_tempo(&doc.timing, Stream::Song)?;
-        Self::new(metadata, doc.ticks_per_beat, lanes, tempo, markers, charts)?.with_theme(theme)
-    }
-}
-
-/// The lane count every chart shares.
-fn song_lanes(charts: &[CoreChart]) -> Result<Lanes, Error> {
-    let lanes_of = |chart: &CoreChart| chart.lanes.and_then(Lanes::of);
-    let first = charts.first().ok_or(Error::NoCharts)?;
-    let first = lanes_of(first).ok_or(Error::Lanes {
-        at: Location::Chart(0),
-        lanes: first.lanes,
-    })?;
-    match charts
-        .iter()
-        .enumerate()
-        .find(|(_, chart)| lanes_of(chart) != Some(first))
-    {
-        Some((chart, other)) => Err(Error::Lanes {
-            at: Location::Chart(chart),
-            lanes: other.lanes,
-        }),
-        None => Ok(first),
+        Self::new(metadata, doc.ticks_per_beat, tempo, markers, charts)?.with_theme(theme)
     }
 }
 
@@ -639,6 +615,7 @@ impl RulesetPlugin for Plugin {
                     ),
                 };
                 Ok::<_, &str>(Chart {
+                    lanes,
                     name: chart.name.clone(),
                     difficulty,
                     theme: None,
@@ -662,7 +639,6 @@ impl RulesetPlugin for Plugin {
         let song = Song::new(
             song.metadata.clone(),
             DEFAULT_TICKS_PER_BEAT,
-            lanes,
             tempo,
             Vec::new(),
             charts,
@@ -674,7 +650,11 @@ impl RulesetPlugin for Plugin {
 /// Every lane count a song can have.
 const LANES: [Lanes; 3] = [Lanes::Three, Lanes::Four, Lanes::Five];
 
-fn read_chart(c: usize, chart: &CoreChart, lanes: Lanes) -> Result<Chart, Error> {
+fn read_chart(c: usize, chart: &CoreChart) -> Result<Chart, Error> {
+    let lanes = chart.lanes.and_then(Lanes::of).ok_or(Error::Lanes {
+        at: Location::Chart(c),
+        lanes: chart.lanes,
+    })?;
     let at = Location::ChartSettings(c);
     reject_keys(
         chart
@@ -720,6 +700,7 @@ fn read_chart(c: usize, chart: &CoreChart, lanes: Lanes) -> Result<Chart, Error>
         None => None,
     };
     Ok(Chart {
+        lanes,
         name: chart.name.clone(),
         difficulty,
         theme,
@@ -865,11 +846,12 @@ mod tests {
     #[test]
     fn reads_taps_in_a_three_lane_song() {
         let song = read(&document(json!([lane_object(0, 1, 1, "tap")]))).unwrap();
-        assert_eq!(song.lanes(), Lanes::Three);
+        assert_eq!(song.charts()[0].lanes, Lanes::Three);
         assert_eq!(song.tempo().tempo, Bpm::try_from(150.0).unwrap());
         assert_eq!(
             song.charts(),
             [Chart {
+                lanes: Lanes::Three,
                 name: "Easy".into(),
                 difficulty: None,
                 theme: None,
@@ -931,19 +913,22 @@ mod tests {
     fn a_song_has_three_four_or_five_lanes() {
         for (count, lanes) in [(3, Lanes::Three), (4, Lanes::Four), (5, Lanes::Five)] {
             let song = read(&with_lanes(count)).unwrap();
-            assert_eq!(song.lanes(), lanes);
+            assert_eq!(song.charts()[0].lanes, lanes);
             assert_eq!(written(&song)["charts"][0]["lanes"], json!(count));
         }
     }
 
     #[test]
-    fn every_chart_shares_the_songs_three_four_or_five_lanes() {
-        let mut mismatched = with_lanes(4);
-        mismatched["charts"]
+    fn each_chart_has_three_four_or_five_lanes_of_its_own() {
+        let mut mixed = with_lanes(4);
+        mixed["charts"]
             .as_array_mut()
             .unwrap()
             .push(json!({ "name": "Hard", "lanes": 5 }));
-        for value in [with_lanes(2), with_lanes(6), mismatched] {
+        let song = read(&mixed).unwrap();
+        let lanes: Vec<_> = song.charts().iter().map(|chart| chart.lanes).collect();
+        assert_eq!(lanes, [Lanes::Four, Lanes::Five]);
+        for value in [with_lanes(2), with_lanes(6)] {
             assert!(matches!(read(&value), Err(Error::Lanes { .. })), "{value}");
         }
     }
@@ -1075,7 +1060,6 @@ mod tests {
         let crowded = Song::new(
             song.metadata().clone(),
             song.ticks_per_beat(),
-            song.lanes(),
             song.tempo().clone(),
             song.markers().to_vec(),
             charts,
@@ -1262,7 +1246,6 @@ mod tests {
             Song::new(
                 metadata,
                 song.ticks_per_beat(),
-                song.lanes(),
                 song.tempo().clone(),
                 song.markers().to_vec(),
                 charts,
@@ -1273,6 +1256,7 @@ mod tests {
             song
         );
         let outside = Chart {
+            lanes: Lanes::Three,
             name: "Hard".into(),
             difficulty: None,
             theme: None,
@@ -1481,7 +1465,7 @@ mod tests {
         let document = Plugin.new_song(&new_song(2, &["Easy", "Extreme"])).unwrap();
         Plugin.check(&document).unwrap();
         let song = Song::try_from(&document).unwrap();
-        assert_eq!(song.lanes(), Lanes::Five);
+        assert_eq!(song.charts()[0].lanes, Lanes::Five);
         let names: Vec<_> = song
             .charts()
             .iter()

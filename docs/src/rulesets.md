@@ -70,7 +70,8 @@ Each ruleset fixes lanes its own way:
 
 - StepMania takes the style's column count from its own steps-type table. Routine styles, where
   two players share the panels, get a full set per player, player 1 first.
-- Tap Tap Revenge songs have 3, 4 or 5 lanes in every chart. A shake or slice sits in the lane
+- A Tap Tap Revenge chart has 3, 4 or 5 lanes, and the charts of one song may differ, as the
+  game's `columnCountPerLevel` lets each level have its own. A shake or slice sits in the lane
   of its direction: left is lane 0 and right the last lane, and a down shake takes the middle
   lane, or both middle lanes with four. Slices go left or right only. A mega tap covers every
   lane. Notes scroll at a constant speed, so a BPM change moves only the beat grid.
