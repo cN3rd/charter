@@ -534,7 +534,7 @@ fn pointer(
         |pos: Pos2| step.map(|step| nearest_line(timing, field.view.seconds_at(pos.y), step));
     let editable = song.read_only().is_none();
     let spot = |pos: Pos2| {
-        if !editable {
+        if !editable || !field.rows.contains(pos.y) {
             return None;
         }
         Some((field.lane_at(pos.x)?, line(pos)?))

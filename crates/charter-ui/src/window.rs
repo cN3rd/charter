@@ -2520,6 +2520,21 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_clicking_a_lane_number_does_not_place_a_hidden_note() {
+        let mut harness = editable_four_taps();
+        let x = spot(&harness, 0, 0, 0.0).x;
+        let top = harness.get_by_label("Notefield").rect().top();
+        click(
+            &mut harness,
+            egui::pos2(x, top + 13.0),
+            egui::Modifiers::COMMAND,
+        );
+
+        assert_eq!(note_count(&harness), 4);
+        assert!(!harness.state().song.as_ref().unwrap().is_modified());
+    }
+
+    #[test]
     fn ctrl_shift_clicking_places_a_mine() {
         let mut harness = editable_four_taps();
         let pos = spot(&harness, 1, 480, 0.0);
