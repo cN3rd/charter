@@ -195,6 +195,7 @@ pub fn show(
                     ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
                 let colour = if lit { style::ACCENT } else { style::WAVE_BG };
                 ui.painter().circle_filled(rect.center(), 8.0, colour);
+                let caption = ui.label("Audio latency").id;
                 if ui.button("−").clicked() {
                     settings.audio_latency_ms -= 5.0;
                 }
@@ -204,7 +205,7 @@ pub fn show(
                         .range(-500.0..=500.0)
                         .suffix(" ms"),
                 )
-                .labelled_by(ui.label("Audio latency").id);
+                .labelled_by(caption);
                 if ui.button("+").clicked() {
                     settings.audio_latency_ms += 5.0;
                 }
