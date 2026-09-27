@@ -33,7 +33,7 @@ impl Song {
     ///
     /// Refuses on a read-only song, or when the game refuses the tempo.
     pub fn set_bpm_at(&mut self, tick: Tick, bpm: Bpm) -> Result<(), Refusal> {
-        if Bpm::nearest(self.timing().tempo_at(tick)) == Some(bpm) {
+        if self.timing().bpm_at(tick) == Some(bpm) {
             return Ok(());
         }
         self.set_bpm_change_at(tick, bpm)
@@ -77,7 +77,7 @@ impl Song {
         let mut new = timing.clone();
         if new.anchors.last().is_some_and(|anchor| anchor.tick == tick)
             && let Some(previous) = new.anchors.iter().rev().nth(1)
-            && let Ok(tempo) = Bpm::nearest(self.timing().tempo_at(previous.tick)).ok_or(())
+            && let Ok(tempo) = self.timing().bpm_at(previous.tick).ok_or(())
         {
             new.tempo = tempo;
         }

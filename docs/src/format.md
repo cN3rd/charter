@@ -260,6 +260,12 @@ audio time in seconds. The tempo of a segment between two anchors is derived fro
 between them after subtracting stops, delays and warped ticks. The `tempo` field is the explicit
 tail tempo after the last anchor.
 
+An anchor sits on a whole tick, so a typed tempo lands the next anchor up to half a tick from where
+it would put it, and the derived rate differs from the typed one past the sixth place or so. Charter
+shows a segment's tempo as the shortest decimal that lands its next anchor on the same tick, which
+is the tempo typed, and keeps the exact rate for resolving time, so every anchor falls on its own
+`seconds`.
+
 The editor still shows an "offset": it is the resolved time of tick 0. Changing it shifts every
 anchor's `seconds` by the same amount.
 

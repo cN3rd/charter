@@ -50,6 +50,22 @@ impl Timing {
         Some(bpm_of(per_tick, ticks_per_beat))
     }
 
+    /// The tempo at `tick` as it is shown and typed: an anchored segment's to the fewest decimal
+    /// places that land its next anchor on the same tick, and the tail's as stored.
+    pub(crate) fn bpm_at(&self, ticks_per_beat: TicksPerBeat, tick: Tick) -> Option<f64> {
+        let exact = self.tempo_at(ticks_per_beat, tick)?;
+        let index = self
+            .anchors
+            .partition_point(|anchor| anchor.tick <= tick)
+            .max(1);
+        Some(
+            match (self.anchors.get(index - 1), self.anchors.get(index)) {
+                (Some(previous), Some(next)) => simplest(exact, previous.tick, next.tick),
+                _ => exact,
+            },
+        )
+    }
+
     /// One tempo per anchor, in quarter notes per minute: each the derived tempo of the segment
     /// it starts, and the last the stored tempo after it.
     pub(crate) fn tempos(&self, ticks_per_beat: TicksPerBeat) -> Option<Vec<(Tick, f64)>> {
@@ -206,6 +222,21 @@ fn tail_rate(tempo: Bpm, ticks_per_beat: TicksPerBeat) -> f64 {
 /// The tempo, in quarter notes per minute, at which a tick takes `per_tick` seconds.
 fn bpm_of(per_tick: f64, ticks_per_beat: TicksPerBeat) -> f64 {
     60.0 / (per_tick * f64::from(ticks_per_beat.get()))
+}
+
+/// `exact`, the tempo of a segment from `from` to `to`, to the fewest decimal places that still
+/// land `to` on the same tick. An anchor sits on a whole tick, so the exact rate between two is a
+/// typed tempo off by up to half a tick; this is the tempo that was typed.
+fn simplest(exact: f64, from: Tick, to: Tick) -> f64 {
+    #[allow(clippy::cast_precision_loss)] // ticks of a song
+    let span = (i64::from(to) - i64::from(from)) as f64;
+    (0..6)
+        .map(|places| {
+            let scale = 10f64.powi(places);
+            (exact * scale).round() / scale
+        })
+        .find(|tempo| (span * tempo / exact - span).abs() < 0.5)
+        .unwrap_or(exact)
 }
 
 #[cfg(test)]
@@ -412,6 +443,30 @@ mod tests {
         let t = timing(&[(0, 0.0)], 60.0, vec![event(-960, stop(1.0))]);
         assert_time(&t, -960, -2.0);
         assert_time(&t, -1920, -3.0);
+    }
+
+    #[test]
+    fn a_segment_reads_as_the_simplest_tempo_that_lands_its_next_anchor_on_the_same_tick() {
+        // 175.5 BPM for 26.1 seconds is 73,288.8 ticks, so the anchor sits on 73,289 and the
+        // exact rate between the two is 175.500479 BPM.
+        let typed = timing(&[(0, 0.0), (73_289, 26.1)], 120.0, Vec::new());
+        let at = |tick| {
+            typed
+                .bpm_at(DEFAULT_TICKS_PER_BEAT, Tick::new(tick))
+                .unwrap()
+        };
+        assert!((at(0) - 175.5).abs() < 1e-12, "{}", at(0));
+        assert!((at(-960) - 175.5).abs() < 1e-12, "{}", at(-960));
+        assert!((at(80_000) - 120.0).abs() < 1e-12, "{}", at(80_000));
+        assert!((time(&typed, 73_289) - 26.1).abs() < 1e-9);
+        // A rate that no shorter decimal lands on the same tick is read exactly.
+        let odd = timing(&[(0, 0.0), (73_289, 26.123_457)], 120.0, Vec::new());
+        let exact = odd.tempo_at(DEFAULT_TICKS_PER_BEAT, Tick::new(0)).unwrap();
+        let read = odd.bpm_at(DEFAULT_TICKS_PER_BEAT, Tick::new(0)).unwrap();
+        assert!(
+            (read - exact).abs() * 73_289.0 / exact < 0.5,
+            "{read} {exact}"
+        );
     }
 
     #[test]

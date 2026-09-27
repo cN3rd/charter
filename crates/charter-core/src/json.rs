@@ -199,6 +199,22 @@ impl Valid<'_, Timing> {
             .expect("a valid timing map derives every segment tempo")
     }
 
+    /// The tempo at `tick` as it is shown and typed, to the fewest places that keep the next
+    /// anchor on its tick; none for a rate six places cannot hold as a tempo.
+    ///
+    /// # Panics
+    ///
+    /// Never: validation guarantees every anchored segment derives a tempo.
+    #[must_use]
+    #[allow(clippy::expect_used)] // validation guarantees every segment derives a tempo
+    pub fn bpm_at(&self, tick: Tick) -> Option<Bpm> {
+        let tempo = self
+            .part
+            .bpm_at(self.document.ticks_per_beat, tick)
+            .expect("a valid timing map derives every segment tempo");
+        Bpm::nearest(tempo)
+    }
+
     /// One tempo per anchor: each inner anchor's following segment, and the last anchor's tail.
     ///
     /// # Panics

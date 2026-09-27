@@ -314,7 +314,7 @@ impl Song {
         let anchor = anchors
             .get(index.saturating_sub(1))
             .or_else(|| anchors.first())?;
-        Bpm::nearest(timing.tempo_at(anchor.tick)).map(|bpm| (anchor.tick, bpm))
+        timing.bpm_at(anchor.tick).map(|bpm| (anchor.tick, bpm))
     }
 
     /// Gives the BPM change in effect at the cursor, the one [`Song::bpm`] names, the tempo
@@ -423,7 +423,7 @@ impl Song {
         let mut new = timing.clone();
         if new.anchors.last().is_some_and(|anchor| anchor.tick == at)
             && let Some(previous) = new.anchors.iter().rev().nth(1)
-            && let Ok(tempo) = Bpm::nearest(self.timing().tempo_at(previous.tick)).ok_or(())
+            && let Ok(tempo) = self.timing().bpm_at(previous.tick).ok_or(())
         {
             new.tempo = tempo;
         }

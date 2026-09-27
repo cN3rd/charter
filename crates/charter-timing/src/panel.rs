@@ -434,7 +434,7 @@ fn field(
 /// The tempo of the segment from `from`, as the song holds it: stops and delays in the segment
 /// take time the tempo does not.
 fn derived(frame: &Frame<'_>, from: Pin) -> Bpm {
-    Bpm::nearest(frame.timing.tempo_at(from.tick)).unwrap_or(frame.tail)
+    frame.timing.bpm_at(from.tick).unwrap_or(frame.tail)
 }
 
 /// `value` to `places`, without trailing zeros.

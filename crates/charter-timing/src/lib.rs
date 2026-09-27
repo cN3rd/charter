@@ -1539,7 +1539,7 @@ fn act(window: &mut TimingWindow, frame: &Frame<'_>, intent: Intent, commands: &
 /// The tempo of the BPM change on `tick`, as the song holds it: stops and delays between
 /// anchors take time the tempo does not.
 fn tempo_at(frame: &Frame<'_>, tick: Tick) -> Option<Bpm> {
-    Bpm::nearest(frame.timing.tempo_at(tick))
+    frame.timing.bpm_at(tick)
 }
 
 /// Ctrl+wheel notches among `events`, later first, and whether Shift made them coarse.

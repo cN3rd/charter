@@ -143,7 +143,7 @@ impl Song {
             return Err(Refusal::OnlyTempo);
         };
         let tail = if before.last().is_some_and(|old| old.tick != last.tick) {
-            Bpm::nearest(self.timing().tempo_at(last.tick)).ok_or(Refusal::NotWhole)?
+            self.timing().bpm_at(last.tick).ok_or(Refusal::NotWhole)?
         } else {
             self.tail()
         };
