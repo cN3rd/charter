@@ -54,18 +54,67 @@ impl BarsPerRow {
     }
 }
 
-/// The measures of a stretch of the song, by number, for turning ticks into bar positions and
-/// back: a bar position counts the bar and how far through it, so a correct map lines beats up
-/// down the rows whatever the tempo.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Bars {
-    measures: Vec<Measure>,
+/// How long a row is in the time layout.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SecondsPerRow {
+    One,
+    #[default]
+    Two,
+    Four,
+    Eight,
 }
 
-impl Bars {
+impl SecondsPerRow {
+    pub const ALL: [Self; 4] = [Self::One, Self::Two, Self::Four, Self::Eight];
+
+    #[must_use]
+    pub fn seconds(self) -> f64 {
+        match self {
+            Self::One => 1.0,
+            Self::Two => 2.0,
+            Self::Four => 4.0,
+            Self::Eight => 8.0,
+        }
+    }
+
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::One => "1 s",
+            Self::Two => "2 s",
+            Self::Four => "4 s",
+            Self::Eight => "8 s",
+        }
+    }
+}
+
+/// Which way the rows lay the song out.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Layout {
+    /// By bar position: the grid stays put and the audio stretches to it, so a correct map lines
+    /// its beats up down the rows, and an edit slides the waveform under the grid.
+    #[default]
+    Bars,
+    /// By audio time: each row a fixed span of seconds, the waveform never moves, and an edit
+    /// moves the grid lines and anchors over it.
+    Time,
+}
+
+/// The measures of a stretch of the song, by number, for turning ticks into bar positions and
+/// back: a bar position counts the bar and how far through it, so a correct map lines beats up
+/// down the rows whatever the tempo. The rows lay ticks out by a position that is the bar
+/// position in the bar layout and the audio time in the time layout.
+#[derive(Clone, Debug)]
+pub struct Bars<'a> {
+    measures: Vec<Measure>,
+    timing: Valid<'a, Timing>,
+    layout: Layout,
+}
+
+impl<'a> Bars<'a> {
     /// The measures from the one holding `from` to the one holding `to`, and `tail` more.
     #[must_use]
-    pub fn new(timing: Valid<'_, Timing>, from: Tick, to: Tick, tail: usize) -> Self {
+    pub fn new(timing: Valid<'a, Timing>, from: Tick, to: Tick, tail: usize) -> Self {
         let mut measures: Vec<Measure> = timing
             .measures_from(from)
             .take_while(|measure| measure.start <= to)
@@ -76,7 +125,50 @@ impl Bars {
         if let Some(after) = after {
             measures.extend(timing.measures_from(after).take(tail));
         }
-        Self { measures }
+        Self {
+            measures,
+            timing,
+            layout: Layout::Bars,
+        }
+    }
+
+    /// These bars, laid out by `layout`.
+    #[must_use]
+    pub fn laid_out(self, layout: Layout) -> Self {
+        Self { layout, ..self }
+    }
+
+    #[must_use]
+    pub fn layout(&self) -> Layout {
+        self.layout
+    }
+
+    /// Where the rows lay `tick` out, which may be between ticks: its bar position, or its time.
+    #[must_use]
+    pub fn position(&self, tick: f64) -> f64 {
+        match self.layout {
+            Layout::Bars => self.bar_of(tick),
+            Layout::Time => seconds_at_tick(self.timing, tick),
+        }
+    }
+
+    /// The tick, maybe between ticks, the rows lay out at `position`.
+    #[must_use]
+    pub fn tick_at_position(&self, position: f64) -> f64 {
+        match self.layout {
+            Layout::Bars => self.tick_at(position),
+            Layout::Time => tick_at_seconds(self.timing, position),
+        }
+    }
+
+    /// The measure holding `tick`, among these.
+    #[must_use]
+    pub fn measure_at(&self, tick: f64) -> Option<&Measure> {
+        let at = self
+            .measures
+            .partition_point(|measure| start(measure) <= tick)
+            .checked_sub(1)?;
+        self.measures.get(at)
     }
 
     #[must_use]
@@ -116,23 +208,63 @@ impl Bars {
         start(measure) + into * length(measure)
     }
 
-    /// The rows the bars make, `per` bars a row, each showing a little of the bar before.
+    /// The rows the bars make, `per` bars a row in the bar layout or `seconds` a row in the time
+    /// layout, each showing a tenth of its length from before it.
     #[must_use]
-    pub fn rows(&self, per: BarsPerRow) -> Vec<(f64, f64)> {
+    pub fn rows(&self, per: BarsPerRow, seconds: SecondsPerRow) -> Vec<Span> {
         let (Some(first), Some(last)) = (self.measures.first(), self.measures.last()) else {
             return Vec::new();
         };
-        #[allow(clippy::cast_precision_loss)]
-        let (from, to) = (first.number as f64, last.number as f64 + 1.0);
-        let per = per.bars();
+        let end = start(last) + length(last);
+        let (from, to, per) = match self.layout {
+            #[allow(clippy::cast_precision_loss)] // bar numbers of a song
+            Layout::Bars => (first.number as f64, last.number as f64 + 1.0, per.bars()),
+            Layout::Time => {
+                let per = seconds.seconds();
+                let from = (seconds_at_tick(self.timing, start(first)) / per).floor() * per;
+                (from, seconds_at_tick(self.timing, end), per)
+            }
+        };
         let mut rows = Vec::new();
         let mut at = from;
         while at < to - 1e-9 {
-            rows.push((at - LEAD_IN, at + per));
+            rows.push(Span {
+                from: at - LEAD_IN * per,
+                start: at,
+                to: at + per,
+            });
             at += per;
         }
         rows
     }
+}
+
+/// The stretch a row spans, in positions: from where it starts showing, through where its own
+/// part starts, to where it ends.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Span {
+    pub from: f64,
+    pub start: f64,
+    pub to: f64,
+}
+
+/// The tick, maybe between ticks, at `seconds` into the audio: the earliest of a paused stretch.
+#[must_use]
+pub fn tick_at_seconds(timing: Valid<'_, Timing>, seconds: f64) -> f64 {
+    let tick = timing.latest_tick_by(seconds);
+    let after = Tick::new(i32::try_from(i64::from(tick) + 1).unwrap_or(i32::MAX));
+    let (at, next) = (
+        timing.time_at(tick).seconds(),
+        timing.time_at(after).seconds(),
+    );
+    let within = if next > at {
+        (seconds - at) / (next - at)
+    } else {
+        0.0
+    };
+    #[allow(clippy::cast_precision_loss)] // ticks of a song
+    let whole = i64::from(tick) as f64;
+    whole + within.clamp(0.0, 1.0)
 }
 
 fn start(measure: &Measure) -> f64 {
@@ -145,27 +277,29 @@ fn length(measure: &Measure) -> f64 {
     f64::from(u32::from(measure.length))
 }
 
-/// A row on screen: the bar positions it spans, and where.
+/// A row on screen: the positions it spans, and where.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Row {
     pub from: f64,
+    /// Where the row's own part starts, after the lead-in from before it.
+    pub start: f64,
     pub to: f64,
     /// Where the audio is drawn, the residual strip under it.
     pub rect: Rect,
 }
 
 impl Row {
-    /// Where the bar position `bar` lies across the row.
+    /// Where the position `position` lies across the row.
     #[must_use]
-    pub fn x_of(&self, bar: f64) -> f32 {
+    pub fn x_of(&self, position: f64) -> f32 {
         #[allow(clippy::cast_possible_truncation)] // a fraction of a row
-        let across = ((bar - self.from) / (self.to - self.from)) as f32;
+        let across = ((position - self.from) / (self.to - self.from)) as f32;
         self.rect.left() + across * self.rect.width()
     }
 
-    /// The bar position at `x`.
+    /// The position at `x`.
     #[must_use]
-    pub fn bar_at(&self, x: f32) -> f64 {
+    pub fn position_at(&self, x: f32) -> f64 {
         let across = f64::from((x - self.rect.left()) / self.rect.width());
         self.from + across * (self.to - self.from)
     }
@@ -174,13 +308,13 @@ impl Row {
     pub fn x(&self, bars: &Bars, tick: Tick) -> f32 {
         #[allow(clippy::cast_precision_loss)]
         let at = i64::from(tick) as f64;
-        self.x_of(bars.bar_of(at))
+        self.x_of(bars.position(at))
     }
 
     /// The tick nearest `x`.
     #[must_use]
     pub fn tick_at(&self, bars: &Bars, x: f32) -> Tick {
-        let tick = bars.tick_at(self.bar_at(x)).round();
+        let tick = bars.tick_at_position(self.position_at(x)).round();
         #[allow(clippy::cast_possible_truncation)] // clamped to the ticks a document holds
         let tick = tick.clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32;
         Tick::new(tick)
@@ -189,15 +323,18 @@ impl Row {
     /// The moment of the audio at `x`, between ticks as finely as the row draws.
     #[must_use]
     pub fn seconds_at(&self, bars: &Bars, timing: Valid<'_, Timing>, x: f32) -> f64 {
-        seconds_at_tick(timing, bars.tick_at(self.bar_at(x)))
+        match bars.layout {
+            Layout::Bars => seconds_at_tick(timing, bars.tick_at(self.position_at(x))),
+            Layout::Time => self.position_at(x),
+        }
     }
 
     /// Whether `tick` shows in this row.
     #[must_use]
     pub fn holds(&self, bars: &Bars, tick: Tick) -> bool {
         #[allow(clippy::cast_precision_loss)]
-        let bar = bars.bar_of(i64::from(tick) as f64);
-        bar >= self.from && bar < self.to
+        let position = bars.position(i64::from(tick) as f64);
+        position >= self.from && position < self.to
     }
 
     /// The whole row on screen, header and strip included.
@@ -239,7 +376,7 @@ pub struct Anchor {
 #[derive(Debug)]
 pub struct Scene<'a> {
     pub timing: Valid<'a, Timing>,
-    pub bars: &'a Bars,
+    pub bars: &'a Bars<'a>,
     pub grid: Grid,
     pub peaks: Option<&'a Peaks>,
     pub onsets: &'a [Onset],
@@ -297,11 +434,15 @@ pub fn draw(painter: &egui::Painter, row: &Row, scene: &Scene<'_>) {
     }
 }
 
-/// The row's header: its bar number, the metre, and a badge when its bar misses its onsets.
-pub fn header(painter: &egui::Painter, row: &Row, measure: Option<&Measure>, off_ms: Option<f64>) {
+/// The row's header: `title`, its bar number or its time, the metre, and a badge when its bar
+/// misses its onsets.
+pub fn header(
+    painter: &egui::Painter,
+    row: &Row,
+    (title, measure): (&str, Option<&Measure>),
+    off_ms: Option<f64>,
+) {
     let at = pos2(row.rect.left() - 8.0, row.rect.top() + 4.0);
-    #[allow(clippy::cast_possible_truncation)] // a bar number of a song
-    let number = (row.from + LEAD_IN).floor() as i64;
     let colour = if off_ms.is_some() {
         style::WARN
     } else {
@@ -310,7 +451,7 @@ pub fn header(painter: &egui::Painter, row: &Row, measure: Option<&Measure>, off
     painter.text(
         at,
         Align2::RIGHT_TOP,
-        number.to_string(),
+        title,
         FontId::monospace(12.0),
         colour,
     );
@@ -367,13 +508,19 @@ const WAVE: Color32 = Color32::from_rgb(118, 158, 210);
 fn grid(painter: &egui::Painter, row: &Row, audio: Rect, scene: &Scene<'_>) {
     let resolution = scene.timing.ticks_per_beat();
     for measure in scene.bars.measures() {
-        #[allow(clippy::cast_precision_loss)]
-        let number = measure.number as f64;
-        if number + 1.0 < row.from || number > row.to {
+        let (from, to) = (
+            scene.bars.position(start(measure)),
+            scene.bars.position(start(measure) + length(measure)),
+        );
+        if to < row.from || from > row.to {
             continue;
         }
         let mut beat = 0;
         for (tick, line) in scene.grid.lines(measure, resolution) {
+            // Beats count from the bar's downbeat, whether or not this row shows it.
+            if matches!(line, Line::Downbeat | Line::Beat) {
+                beat += 1;
+            }
             if !row.holds(scene.bars, tick) {
                 continue;
             }
@@ -399,7 +546,6 @@ fn grid(painter: &egui::Painter, row: &Row, audio: Rect, scene: &Scene<'_>) {
                 }
             }
             if matches!(line, Line::Downbeat | Line::Beat) {
-                beat += 1;
                 let label = pos2(x + 3.0, audio.top() + 2.0);
                 let text = beat.to_string();
                 painter.text(
@@ -413,7 +559,7 @@ fn grid(painter: &egui::Painter, row: &Row, audio: Rect, scene: &Scene<'_>) {
         }
     }
     // The part of the bar before, shown ahead of the downbeat, is shaded as not this row's.
-    let downbeat = row.x_of(row.from + LEAD_IN);
+    let downbeat = row.x_of(row.start);
     let lead = Rect::from_min_max(audio.min, pos2(downbeat, audio.bottom()));
     painter.rect_filled(lead, 0.0, Color32::from_black_alpha(70));
 }
@@ -440,24 +586,10 @@ fn onsets(painter: &egui::Painter, row: &Row, audio: Rect, scene: &Scene<'_>) {
 /// Where the moment `seconds` lies across the row.
 #[must_use]
 pub fn x_at_seconds(row: &Row, scene: &Scene<'_>, seconds: f64) -> f32 {
-    let tick = scene.timing.latest_tick_by(seconds);
-    let (at, next) = (
-        scene.timing.time_at(tick).seconds(),
-        scene
-            .timing
-            .time_at(Tick::new(
-                i32::try_from(i64::from(tick) + 1).unwrap_or(i32::MAX),
-            ))
-            .seconds(),
-    );
-    let within = if next > at {
-        (seconds - at) / (next - at)
-    } else {
-        0.0
-    };
-    #[allow(clippy::cast_precision_loss)]
-    let tick = i64::from(tick) as f64 + within.clamp(0.0, 1.0);
-    row.x_of(scene.bars.bar_of(tick))
+    match scene.bars.layout() {
+        Layout::Time => row.x_of(seconds),
+        Layout::Bars => row.x_of(scene.bars.bar_of(tick_at_seconds(scene.timing, seconds))),
+    }
 }
 
 /// The residual strip: each onset on the grid as a bar in the strip under the row, blue when the
@@ -581,13 +713,15 @@ mod tests {
     fn rows_hold_their_bars_and_a_tenth_of_the_bar_before() {
         let document = song(&serde_json::json!([{ "tick": 0, "kind": { "bpm": 120.0 } }]));
         let bars = Bars::new(document.timing(), Tick::new(0), Tick::new(7000), 0);
-        let rows = bars.rows(BarsPerRow::One);
+        let seconds = SecondsPerRow::default();
+        let rows = bars.rows(BarsPerRow::One, seconds);
         assert_eq!(rows.len(), 2);
-        assert!((rows[1].0 - 0.9).abs() < 1e-9 && (rows[1].1 - 2.0).abs() < 1e-9);
-        assert_eq!(bars.rows(BarsPerRow::Half).len(), 4);
-        assert_eq!(bars.rows(BarsPerRow::Two).len(), 1);
+        assert!((rows[1].from - 0.9).abs() < 1e-9 && (rows[1].to - 2.0).abs() < 1e-9);
+        assert_eq!(bars.rows(BarsPerRow::Half, seconds).len(), 4);
+        assert_eq!(bars.rows(BarsPerRow::Two, seconds).len(), 1);
         let row = Row {
             from: 0.9,
+            start: 1.0,
             to: 2.0,
             rect: Rect::from_min_size(pos2(0.0, 0.0), vec2(110.0, ROW)),
         };
@@ -596,5 +730,54 @@ mod tests {
         assert!(row.holds(&bars, Tick::new(3456)));
         assert!(!row.holds(&bars, Tick::new(3400)));
         assert!((row.seconds_at(&bars, document.timing(), 60.0) - 3.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn in_the_time_layout_a_row_is_seconds_and_only_the_grid_follows_the_tempo() {
+        let rows_of = |bpm: f64| {
+            let document = song(&serde_json::json!([{ "tick": 0, "kind": { "bpm": bpm } }]));
+            let timing = document.timing();
+            let bars = Bars::new(timing, Tick::new(0), Tick::new(7000), 0).laid_out(Layout::Time);
+            let spans = bars.rows(BarsPerRow::One, SecondsPerRow::Two);
+            let row = Row {
+                from: spans[0].from,
+                start: spans[0].start,
+                to: spans[0].to,
+                rect: Rect::from_min_size(pos2(0.0, 0.0), vec2(110.0, ROW)),
+            };
+            (
+                spans.len(),
+                row.seconds_at(&bars, timing, 60.0),
+                row.x(&bars, Tick::new(1920)),
+            )
+        };
+        let (count, moment, beat) = rows_of(120.0);
+        assert_eq!(count, 2, "two bars of 2 s at 120 BPM");
+        // Screen points are f32, so a moment read off one is good to about 1e-7 s.
+        assert!((moment - 1.0).abs() < 1e-6);
+        assert!((beat - 60.0).abs() < 1e-3);
+        let (_, same_moment, later_beat) = rows_of(240.0);
+        assert!(
+            (same_moment - 1.0).abs() < 1e-6,
+            "the audio stays where it was"
+        );
+        assert!(
+            (later_beat - 35.0).abs() < 1e-3,
+            "beat 2 moves to 0.5 s: {later_beat}"
+        );
+    }
+
+    #[test]
+    fn a_moment_during_a_stop_falls_on_the_stopped_tick_and_reads_back() {
+        let document = song(&serde_json::json!([
+            { "tick": 0, "kind": { "bpm": 60.0 } },
+            { "tick": 960, "kind": { "stop": 1.0 } }
+        ]));
+        let timing = document.timing();
+        assert!((tick_at_seconds(timing, 0.5) - 480.0).abs() < 1e-6);
+        let paused = tick_at_seconds(timing, 1.5);
+        assert!((paused.floor() - 960.0).abs() < f64::EPSILON, "{paused}");
+        assert!((seconds_at_tick(timing, paused) - 1.5).abs() < 1e-9);
+        assert!((tick_at_seconds(timing, 3.0) - 1920.0).abs() < 1e-6);
     }
 }

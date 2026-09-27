@@ -4301,6 +4301,30 @@ mod tests {
     }
 
     #[test]
+    fn v_lays_the_rows_out_in_seconds_and_a_click_anchors_the_moment_under_it() {
+        let mut harness = syncing();
+        harness.key_press(egui::Key::V);
+        harness.run();
+        assert!(harness.query_by_label("Measure 0").is_none());
+        let row = harness.get_by_label("Row at 0.0 s").rect();
+        // Two seconds a row, a tenth of that from before it: 0.95 s is 1.15 of 2.2 across.
+        #[allow(clippy::cast_possible_truncation)]
+        let across = (1.15 / 2.2) as f32;
+        let at = egui::pos2(row.left() + across * row.width(), row.top() + 30.0);
+        click(&mut harness, at, egui::Modifiers::NONE);
+        let seconds = anchor_seconds(&harness);
+        assert_eq!(seconds.len(), 3, "{seconds:?}");
+        assert!((seconds[2] - 0.95).abs() < 5e-3, "{seconds:?}");
+        assert!(
+            (seconds[1] - 0.5).abs() < 1e-9,
+            "the other anchors keep their moments"
+        );
+        harness.key_press(egui::Key::V);
+        harness.run();
+        assert!(harness.query_by_label("Measure 0").is_some());
+    }
+
+    #[test]
     fn ctrl_t_opens_and_closes_the_timing_window() {
         let mut harness = timed_song();
         assert!(harness.query_by_label("Measure 0").is_none());

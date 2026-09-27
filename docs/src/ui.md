@@ -264,6 +264,10 @@ and the notes over a waveform that stays put.
   focused anchor or the selection to the onsets by least squares, Shift+F to half BPMs, shown
   before Enter applies it. D and Shift+D double and halve the tempo. The window takes the keyboard
   after a click in it and gives it back after a click elsewhere; ? lists its keys.
+  V, or the toolbar's Layout, switches the rows to audio time: each row one to eight seconds,
+  labelled by its start, so the waveform never moves and an edit moves the grid lines and anchors
+  over it instead. The bar layout keeps the grid still and slides the audio under it, as Tempora
+  and the Beatline specification do; both draw the audio at the times the song's anchors give it.
   To listen, L loops the bar under the cursor and Shift+L the selection, with the metronome; the
   loop's ends follow the map, and a committed edit plays it again from its start so the fix is
   heard at once. R switches to the alternate speed, 60% unless the Sounds page says otherwise,

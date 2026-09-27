@@ -24,7 +24,7 @@ use egui::{Key, Modifiers, Pos2, Sense, vec2};
 
 use crate::accuracy::{Fitted, Issue, Residual};
 use crate::grid::{Grid, RESOLUTIONS};
-use crate::rows::{Anchor, Bars, BarsPerRow, GRAB, ROW, Row, Scene};
+use crate::rows::{Anchor, Bars, BarsPerRow, GRAB, Layout, ROW, Row, Scene, SecondsPerRow};
 
 /// What the timing window asks its host to do.
 #[derive(Clone, Debug, PartialEq)]
@@ -106,7 +106,11 @@ const FINE: f64 = 10.0;
 pub struct TimingWindow {
     pub open: bool,
     pub grid: Grid,
+    /// Whether the rows lay the song out by bar or by audio time.
+    pub layout: Layout,
     pub bars_per_row: BarsPerRow,
+    /// How many seconds a row holds in the time layout.
+    pub seconds_per_row: SecondsPerRow,
     /// Whether added and moved beats snap to the grid.
     pub snap_grid: bool,
     /// Whether moments snap to an onset within 25 ms.
@@ -148,7 +152,9 @@ impl Default for TimingWindow {
         Self {
             open: false,
             grid: Grid::default(),
+            layout: Layout::default(),
             bars_per_row: BarsPerRow::default(),
+            seconds_per_row: SecondsPerRow::default(),
             snap_grid: true,
             snap_onset: true,
             sensitivity: 0.1,
@@ -213,7 +219,7 @@ pub(crate) struct Frame<'a> {
     timing: Valid<'a, Timing>,
     pins: Vec<Pin>,
     tail: Bpm,
-    bars: Bars,
+    bars: Bars<'a>,
     onsets: &'a [Onset],
     residuals: &'a [Residual],
     issues: &'a [Issue],
@@ -432,6 +438,8 @@ enum Intent {
         double: bool,
     },
     Follow,
+    /// Switch the rows between the bar layout and the time layout.
+    Layout,
     Delete,
     SelectAll,
     Help,
@@ -472,6 +480,7 @@ fn intent(key: Key, modifiers: Modifiers) -> Option<Intent> {
         Key::F => Intent::Fit { half_bpm: shift },
         Key::D => Intent::Scale { double: !shift },
         Key::O => Intent::Follow,
+        Key::V => Intent::Layout,
         Key::L => Intent::Loop { selection: shift },
         Key::R => Intent::ToggleRate,
         Key::C if shift => Intent::Mute,
@@ -517,6 +526,7 @@ const KEYS: &[(&str, &str)] = &[
     ("F, Shift+F", "Fit tempo, fit to half BPMs"),
     ("D, Shift+D", "Double, halve the tempo"),
     ("O", "Follow the playhead"),
+    ("V", "Rows of bars or rows of seconds"),
     ("L, Shift+L", "Loop the bar under the cursor, the selection"),
     ("R", "Switch to the alternate speed and back"),
     ("C, Shift+C held", "Metronome on or off; muted while held"),
@@ -562,7 +572,7 @@ pub fn show(
             };
             let cache = refreshed(window.cache.take(), song, inputs.onsets, window);
             settle(window, song);
-            let frame = frame(song, inputs.onsets, &cache, now);
+            let frame = frame(song, inputs.onsets, (&cache, window.layout), now);
             egui::Panel::top("timing toolbar").show(ui, |ui| panel::toolbar(ui, window));
             let mut hovering = false;
             egui::Panel::bottom("timing status").show(ui, |ui| {
@@ -646,7 +656,12 @@ fn settle(window: &mut TimingWindow, song: &Song) {
 }
 
 /// The frame's context: the timing as it stands, its anchors, and what it is measured against.
-fn frame<'a>(song: &'a Song, onsets: &'a [Onset], cache: &'a Cache, now: f64) -> Frame<'a> {
+fn frame<'a>(
+    song: &'a Song,
+    onsets: &'a [Onset],
+    (cache, layout): (&'a Cache, Layout),
+    now: f64,
+) -> Frame<'a> {
     let timing = song.timing();
     let first = timing.latest_tick_by(0.0).min(Tick::new(0));
     let last = song.end().max(song.cursor());
@@ -656,7 +671,7 @@ fn frame<'a>(song: &'a Song, onsets: &'a [Onset], cache: &'a Cache, now: f64) ->
             .tail_bpm()
             .unwrap_or_else(|| Bpm::try_from(120.0).unwrap_or_else(|_| unreachable!())),
         pins: song.anchors(),
-        bars: Bars::new(timing, first, last, 4),
+        bars: Bars::new(timing, first, last, 4).laid_out(layout),
         onsets,
         residuals: &cache.residuals,
         issues: &cache.issues,
@@ -690,15 +705,15 @@ fn rows(
     inputs: Inputs<'_>,
     commands: &mut Vec<Command>,
 ) -> bool {
-    let spans = frame.bars.rows(window.bars_per_row);
+    let spans = frame.bars.rows(window.bars_per_row, window.seconds_per_row);
     let spacing = 4.0;
     let pitch = ROW + spacing;
     let row_of = |tick: Tick| {
         #[allow(clippy::cast_precision_loss)]
-        let bar = frame.bars.bar_of(i64::from(tick) as f64);
+        let position = frame.bars.position(i64::from(tick) as f64);
         spans
             .iter()
-            .position(|(from, to)| bar >= *from + rows::LEAD_IN && bar < *to)
+            .position(|span| position >= span.start && position < span.to)
     };
     let target = window
         .scroll_to
@@ -743,27 +758,36 @@ fn rows(
     let reach = reach(window, frame);
     area.show_rows(ui, ROW, spans.len(), |ui, range| {
         ui.spacing_mut().item_spacing.y = spacing;
-        for &(from, to) in spans.get(range).unwrap_or_default() {
+        for span in spans.get(range).unwrap_or_default() {
             let (whole, _) =
                 ui.allocate_exact_size(vec2(ui.available_width(), ROW), Sense::hover());
             let mut rect = whole;
             rect.min.x += rows::GUTTER;
-            let row = Row { from, to, rect };
-            #[allow(clippy::cast_possible_truncation)] // a bar number of a song
-            let number = (from + rows::LEAD_IN).floor() as i64;
-            #[allow(clippy::cast_possible_truncation)] // eighths of a bar of a song
-            let eighth = (from * 8.0).round() as i64;
-            let id = ui.id().with(("timing row", number, eighth));
+            let row = Row {
+                from: span.from,
+                start: span.start,
+                to: span.to,
+                rect,
+            };
+            // The measure the row's own part starts in, which names it in the bar layout.
+            let measure = frame
+                .bars
+                .measure_at(frame.bars.tick_at_position(span.start).floor());
+            let number = measure.map_or(0, |measure| measure.number);
+            let (title, label) = match window.layout {
+                Layout::Bars => (number.to_string(), format!("Measure {number}")),
+                Layout::Time => (
+                    format!("{:.1}s", span.start),
+                    format!("Row at {:.1} s", span.start),
+                ),
+            };
+            #[allow(clippy::cast_possible_truncation)] // hundredths of a row's start
+            let key = (span.start * 100.0).round() as i64;
+            let id = ui.id().with(("timing row", key));
             let response = ui.interact(rect, id, Sense::click_and_drag());
-            let label = format!("Measure {number}");
             response
                 .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Other, true, &label));
             let painter = ui.painter_at(whole);
-            let measure = frame
-                .bars
-                .measures()
-                .iter()
-                .find(|measure| measure.number == number);
             let off = frame.issues.iter().find_map(|issue| match *issue {
                 Issue::Bar {
                     number: at,
@@ -772,7 +796,7 @@ fn rows(
                 } if at == number => Some(median_ms),
                 _ => None,
             });
-            rows::header(&painter, &row, measure, off);
+            rows::header(&painter, &row, (&title, measure), off);
             let ghost = ghost(window, frame, &row, response.hover_pos(), shift);
             let scene = Scene {
                 timing: frame.timing,
@@ -833,7 +857,7 @@ fn reach(window: &TimingWindow, frame: &Frame<'_>) -> Option<(f64, f64)> {
     let bar = |tick: Tick| {
         #[allow(clippy::cast_precision_loss)]
         let at = i64::from(tick) as f64;
-        frame.bars.bar_of(at)
+        frame.bars.position(at)
     };
     let moving = moving(window, from);
     let (first, last) = (moving.first().copied()?, moving.last().copied()?);
@@ -907,7 +931,7 @@ fn seconds_x(frame: &Frame<'_>, row: &Row, seconds: f64) -> Option<f32> {
         };
         #[allow(clippy::cast_precision_loss)]
         let tick = i64::from(tick) as f64 + within.clamp(0.0, 1.0);
-        row.x_of(frame.bars.bar_of(tick))
+        row.x_of(frame.bars.position(tick))
     })
 }
 
@@ -967,7 +991,7 @@ fn row_input(
             Some(tick) => Gesture::DragBeat {
                 from: tick,
                 to: tick,
-                origin: row.bar_at(origin.x),
+                origin: row.position_at(origin.x),
             },
             None => Gesture::Band { origin, to: origin },
         };
@@ -1048,13 +1072,13 @@ fn row_input(
 fn drag(window: &mut TimingWindow, frame: &Frame<'_>, row: &Row, pos: Pos2, shift: bool) {
     match window.gesture.clone() {
         Gesture::DragBeat { from, origin, .. } => {
-            let pointer = row.bar_at(pos.x);
+            let pointer = row.position_at(pos.x);
             let bar = if shift {
                 origin + (pointer - origin) / FINE
             } else {
                 pointer
             };
-            let tick = frame.bars.tick_at(bar).round();
+            let tick = frame.bars.tick_at_position(bar).round();
             #[allow(clippy::cast_possible_truncation)] // clamped to a document's ticks
             let tick = Tick::new(tick.clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32);
             let snapped = if window.snap_grid && !shift {
@@ -1339,6 +1363,7 @@ fn keyboard(
                     | Intent::Issue(_)
                     | Intent::Grid(_)
                     | Intent::Follow
+                    | Intent::Layout
                     | Intent::Help
                     | Intent::Escape
                     | Intent::Loop { .. }
@@ -1457,6 +1482,14 @@ fn act(window: &mut TimingWindow, frame: &Frame<'_>, intent: Intent, commands: &
             }));
         }
         Intent::Follow => window.follow = !window.follow,
+        Intent::Layout => {
+            window.layout = match window.layout {
+                Layout::Bars => Layout::Time,
+                Layout::Time => Layout::Bars,
+            };
+            // Keep what was in view there.
+            window.scroll_to = window.focus.or(Some(frame.cursor));
+        }
         Intent::Delete => {
             let targets = window.targets();
             if !targets.is_empty() {

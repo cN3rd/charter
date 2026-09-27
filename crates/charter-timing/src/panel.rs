@@ -8,7 +8,7 @@ use egui::{RichText, Ui};
 
 use crate::accuracy::{self, Issue, Metrics, ON_ONSET_MS};
 use crate::grid::{Grid, RESOLUTIONS};
-use crate::rows::BarsPerRow;
+use crate::rows::{BarsPerRow, Layout, SecondsPerRow};
 use crate::{Command, Edit, Frame, Gesture, TimingWindow};
 
 /// What is being typed into the inspector, while a field has the keyboard.
@@ -39,16 +39,30 @@ pub(crate) fn toolbar(ui: &mut Ui, window: &mut TimingWindow) {
             })
             .response
             .labelled_by(caption.id);
+        ui.weak("Layout");
+        ui.selectable_value(&mut window.layout, Layout::Bars, "Bars")
+            .on_hover_text("Rows of bars: the grid stays, the audio moves as you edit (V)");
+        ui.selectable_value(&mut window.layout, Layout::Time, "Time")
+            .on_hover_text("Rows of seconds: the audio stays, the grid moves as you edit (V)");
         let caption = ui.weak("Rows");
-        egui::ComboBox::from_id_salt("timing rows")
-            .selected_text(window.bars_per_row.name())
-            .show_ui(ui, |ui| {
-                for per in BarsPerRow::ALL {
-                    ui.selectable_value(&mut window.bars_per_row, per, per.name());
-                }
-            })
-            .response
-            .labelled_by(caption.id);
+        let rows = egui::ComboBox::from_id_salt("timing rows");
+        let rows = match window.layout {
+            Layout::Bars => rows
+                .selected_text(window.bars_per_row.name())
+                .show_ui(ui, |ui| {
+                    for per in BarsPerRow::ALL {
+                        ui.selectable_value(&mut window.bars_per_row, per, per.name());
+                    }
+                }),
+            Layout::Time => rows
+                .selected_text(window.seconds_per_row.name())
+                .show_ui(ui, |ui| {
+                    for per in SecondsPerRow::ALL {
+                        ui.selectable_value(&mut window.seconds_per_row, per, per.name());
+                    }
+                }),
+        };
+        rows.response.labelled_by(caption.id);
         ui.separator();
         ui.weak("Snap");
         ui.checkbox(&mut window.snap_grid, "Grid");
