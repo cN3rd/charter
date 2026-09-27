@@ -14,6 +14,8 @@ use std::num::NonZeroU16;
 use charter_audio::Onset;
 use charter_core::{Section, SectionError, TicksPerBeat, Timing, sectioned};
 
+/// How far from a beat, in seconds, an onset is looked for to learn the tracker's lag.
+const LAG: f64 = 0.080;
 /// How far from a beat, in seconds, an onset can be to take its place.
 const REFINE: f64 = 0.030;
 /// How much a beat no onset confirmed counts in a fit, next to one that an onset did.
@@ -93,13 +95,16 @@ pub fn estimate(
 }
 
 /// Each beat moved onto the nearest onset within [`REFINE`] of it, counting fully, or left where
-/// it is counting [`UNREFINED`], and marked when a downbeat falls on it. The tracker's beats are
-/// within about a frame, so the nearest onset is the beat's own even where a louder one, such as
-/// a hi-hat's, is near.
+/// it is counting [`UNREFINED`], and marked when a downbeat falls on it. The tracker's beats sit
+/// a steady few tens of milliseconds from the song's onsets, so they are first moved by the
+/// song's median of that; after it, the nearest onset is the beat's own even where a louder
+/// one, such as a hi-hat's, is near.
 fn refined(beats: &[f64], downbeats: &[f64], onsets: &[Onset]) -> Vec<(f64, f64, bool)> {
+    let lag = lag(beats, onsets);
     beats
         .iter()
-        .map(|&beat| {
+        .map(|&tracked| {
+            let beat = tracked + lag;
             let from = onsets.partition_point(|onset| onset.seconds < beat - REFINE);
             let nearest = onsets
                 .get(from..)
@@ -111,13 +116,33 @@ fn refined(beats: &[f64], downbeats: &[f64], onsets: &[Onset]) -> Vec<(f64, f64,
                         .abs()
                         .total_cmp(&(b.seconds - beat).abs())
                 });
-            let downbeat = downbeats.iter().any(|down| (down - beat).abs() < 1e-3);
+            let downbeat = downbeats.iter().any(|down| (down - tracked).abs() < 1e-3);
             match nearest {
                 Some(onset) => (onset.seconds, 1.0, downbeat),
                 None => (beat, UNREFINED, downbeat),
             }
         })
         .collect()
+}
+
+/// How far the song's onsets typically sit from its beats: the median, over the beats with an
+/// onset within [`LAG`], of the nearest one's distance, later positive.
+fn lag(beats: &[f64], onsets: &[Onset]) -> f64 {
+    let mut shifts: Vec<f64> = beats
+        .iter()
+        .filter_map(|&beat| {
+            let from = onsets.partition_point(|onset| onset.seconds < beat - LAG);
+            onsets
+                .get(from..)
+                .unwrap_or_default()
+                .iter()
+                .take_while(|onset| onset.seconds <= beat + LAG)
+                .map(|onset| onset.seconds - beat)
+                .min_by(|a, b| a.abs().total_cmp(&b.abs()))
+        })
+        .collect();
+    shifts.sort_by(f64::total_cmp);
+    shifts.get(shifts.len() / 2).copied().unwrap_or(0.0)
 }
 
 /// The beats counted against the song's typical gap between them: a gap of about two counts as
