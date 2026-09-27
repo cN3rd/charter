@@ -216,8 +216,10 @@ impl Host {
         let Some(recovery) = &self.recovery else {
             return;
         };
-        if let Ok(bytes) = self.disk.read(recovery) {
-            self.window.recover(&bytes);
+        match self.disk.read(recovery) {
+            Ok(bytes) => self.window.recover(&bytes),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => self.window.refuse(recovery, &error),
         }
     }
 }
@@ -544,6 +546,18 @@ mod tests {
                 .unwrap()
                 .contains("could not be restored")
         );
+    }
+
+    #[test]
+    fn an_unreadable_recovery_file_reports_the_path_and_error() {
+        let mut host = host(Memory {
+            unreadable: vec![PathBuf::from("/data/recovery.json")],
+            ..Memory::with(&[("/data/recovery.json", b"kept")])
+        });
+        host.recover();
+        assert!(host.window.message().is_some_and(|message| {
+            message.contains("recovery.json") && message.contains("access denied")
+        }));
     }
 
     #[test]

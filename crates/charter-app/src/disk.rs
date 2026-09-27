@@ -128,6 +128,7 @@ pub mod memory {
         pub files: RefCell<BTreeMap<PathBuf, Vec<u8>>>,
         /// Files that refuse writes.
         pub unwritable: Vec<PathBuf>,
+        pub unreadable: Vec<PathBuf>,
         /// Whether every move fails.
         pub stuck: bool,
         pub partial_copy_fail: bool,
@@ -159,6 +160,12 @@ pub mod memory {
 
     impl Disk for Memory {
         fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+            if self.unreadable.iter().any(|refused| refused == path) {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "access denied",
+                ));
+            }
             self.files
                 .borrow()
                 .get(path)
