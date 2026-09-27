@@ -1,4 +1,4 @@
-use crate::document::{Anchor, Timing, TimingKind};
+use crate::document::{Anchor, Timing, TimingEvent, TimingKind};
 use crate::unit::{Bpm, ResolvedTime, Tick, TicksPerBeat};
 
 impl Timing {
@@ -54,11 +54,8 @@ impl Timing {
     /// it starts, and the last the stored tempo after it.
     pub(crate) fn tempos(&self, ticks_per_beat: TicksPerBeat) -> Option<Vec<(Tick, f64)>> {
         let mut tempos = Vec::with_capacity(self.anchors.len());
-        for pair in self.anchors.windows(2) {
-            if let [previous, next] = pair {
-                let per_tick = self.segment_rate(previous, next)?;
-                tempos.push((previous.tick, bpm_of(per_tick, ticks_per_beat)));
-            }
+        for (start, _, rate) in self.segment_rates() {
+            tempos.push((start, bpm_of(rate?, ticks_per_beat)));
         }
         tempos.push((self.anchors.last()?.tick, f64::from(self.tempo)));
         Some(tempos)
@@ -73,7 +70,7 @@ impl Timing {
         to: Tick,
         seconds: f64,
     ) -> Option<Bpm> {
-        let per_tick = self.rate_for(from, to, seconds)?;
+        let per_tick = Self::rate_for(from, to, seconds, &self.events)?;
         let tempo = bpm_of(per_tick, ticks_per_beat);
         Bpm::try_from((tempo * 1e6).round() / 1e6).ok()
     }
@@ -81,15 +78,57 @@ impl Timing {
     /// Seconds a timed tick takes between the anchors `previous` and `next`, exactly: their
     /// time apart less the pauses between, over the ticks between that warps leave timed.
     pub(crate) fn segment_rate(&self, previous: &Anchor, next: &Anchor) -> Option<f64> {
+        Self::segment_rate_in(previous, next, &self.events)
+    }
+
+    /// Derive a segment's rate from only the events that can affect it.
+    pub(crate) fn segment_rate_in(
+        previous: &Anchor,
+        next: &Anchor,
+        events: &[TimingEvent],
+    ) -> Option<f64> {
         let apart = ResolvedTime::from(next.seconds).seconds()
             - ResolvedTime::from(previous.seconds).seconds();
-        self.rate_for(previous.tick, next.tick, apart)
+        Self::rate_for(previous.tick, next.tick, apart, events)
+    }
+
+    /// Each anchored segment's rate in a forward sweep of sorted events. Anchors must be outside
+    /// warps.
+    pub(crate) fn segment_rates(&self) -> impl Iterator<Item = (Tick, Tick, Option<f64>)> + '_ {
+        let mut first_event = 0;
+        self.anchors.windows(2).map(move |pair| {
+            let [previous, next] = pair else {
+                unreachable!()
+            };
+            while self
+                .events
+                .get(first_event)
+                .is_some_and(|event| event.tick < previous.tick)
+            {
+                first_event += 1;
+            }
+            let mut after = first_event;
+            while self
+                .events
+                .get(after)
+                .is_some_and(|event| event.tick <= next.tick)
+            {
+                after += 1;
+            }
+            (
+                previous.tick,
+                next.tick,
+                self.events
+                    .get(first_event..after)
+                    .and_then(|events| Self::segment_rate_in(previous, next, events)),
+            )
+        })
     }
 
     /// Seconds a timed tick takes if the ticks from `from` to `to` last `seconds`, pauses
     /// included; none unless that is positive and finite.
-    fn rate_for(&self, from: Tick, to: Tick, seconds: f64) -> Option<f64> {
-        let (timed_ticks, pauses) = self.span_parts(from, to)?;
+    fn rate_for(from: Tick, to: Tick, seconds: f64, events: &[TimingEvent]) -> Option<f64> {
+        let (timed_ticks, pauses) = Self::span_parts_in(events, from, to)?;
         let per_tick = (seconds - pauses) / timed_ticks;
         (timed_ticks > 0.0 && per_tick.is_finite() && per_tick > 0.0).then_some(per_tick)
     }
@@ -115,6 +154,10 @@ impl Timing {
     /// between them, by the format's rules: a stop on a tick counts from it, a delay up to it.
     /// None when `to` is before `from` or a warp ends past the last tick.
     pub(crate) fn span_parts(&self, from: Tick, to: Tick) -> Option<(f64, f64)> {
+        Self::span_parts_in(&self.events, from, to)
+    }
+
+    fn span_parts_in(events: &[TimingEvent], from: Tick, to: Tick) -> Option<(f64, f64)> {
         if to < from {
             return None;
         }
@@ -130,7 +173,7 @@ impl Timing {
         let mut pauses = 0.0;
         let mut cursor = from;
         let mut warp_end = None;
-        for event in &self.events {
+        for event in events {
             let at = event.tick;
             if at > to {
                 break;
@@ -264,6 +307,37 @@ mod tests {
         let tempos = t.tempos(DEFAULT_TICKS_PER_BEAT).unwrap();
         assert_eq!(tempos.len(), 2);
         assert!((tempos[0].1 - 60.0).abs() < 1e-9 && (tempos[1].1 - 120.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn many_anchored_tempos_do_not_rescan_earlier_events() {
+        let name: crate::Key = "test.pulse".parse().unwrap();
+        let timing = Timing {
+            anchors: (0..100_000)
+                .map(|tick| {
+                    anchor(
+                        tick,
+                        crate::number::from_millionths(i64::from(tick) * 1_000),
+                    )
+                })
+                .collect(),
+            tempo: bpm(120.0),
+            events: (0..100_000)
+                .map(|tick| {
+                    event(
+                        tick,
+                        TimingKind::Other {
+                            name: name.clone(),
+                            value: serde_json::Value::Null,
+                        },
+                    )
+                })
+                .collect(),
+        };
+        let tempos = timing.tempos(DEFAULT_TICKS_PER_BEAT).unwrap();
+        assert_eq!(tempos.len(), 100_000);
+        assert_eq!(tempos[0], (Tick::new(0), 62.5));
+        assert_eq!(tempos[99_999], (Tick::new(99_999), 120.0));
     }
 
     #[test]

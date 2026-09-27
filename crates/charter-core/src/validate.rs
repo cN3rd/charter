@@ -179,19 +179,30 @@ fn check_timing(timing: &Timing, ticks_per_beat: TicksPerBeat) -> Result<(), Rul
             return Err(Rule::DuplicateEvent { tick: event.tick });
         }
     }
+    let mut events = timing.events.iter().peekable();
+    let mut warp_end = None;
     for anchor in &timing.anchors {
-        if timing.events.iter().any(|event| {
-            matches!(event.kind, TimingKind::Warp(ticks) if event.tick <= anchor.tick && Some(anchor.tick) < event.tick.checked_add(ticks))
-        }) {
+        while let Some(&event) = events.peek() {
+            if event.tick > anchor.tick {
+                break;
+            }
+            if let TimingKind::Warp(ticks) = event.kind {
+                warp_end = Some(
+                    event
+                        .tick
+                        .checked_add(ticks)
+                        .ok_or(Rule::SpanPastLastTick)?,
+                );
+            }
+            events.next();
+        }
+        if warp_end.is_some_and(|end| anchor.tick < end) {
             return Err(Rule::AnchorInWarp { tick: anchor.tick });
         }
     }
-    for pair in timing.anchors.windows(2) {
-        let [previous, next] = pair else {
-            unreachable!()
-        };
-        if timing.segment_rate(previous, next).is_none() {
-            return Err(Rule::BadAnchorSegment { tick: next.tick });
+    for (_, next, rate) in timing.segment_rates() {
+        if rate.is_none() {
+            return Err(Rule::BadAnchorSegment { tick: next });
         }
     }
     Ok(())
@@ -324,8 +335,8 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::*;
-    use crate::document::SampleId;
-    use crate::unit::{LaneCount, TimeSignature};
+    use crate::document::{Anchor, SampleId, TimingEvent};
+    use crate::unit::{LaneCount, Origin, TimeSignature};
 
     fn minimal() -> Value {
         json!({
@@ -474,6 +485,31 @@ mod tests {
                 tick: Tick::new(1920)
             }
         );
+    }
+
+    #[test]
+    fn many_anchors_and_events_validate_without_quadratic_scans() {
+        let mut document: Document = serde_json::from_value(minimal()).unwrap();
+        let name: Key = "test.pulse".parse().unwrap();
+        document.timing.anchors = (0..100_000)
+            .map(|tick| Anchor {
+                tick: Tick::new(tick),
+                seconds: Origin::try_from(crate::number::from_millionths(i64::from(tick) * 1_000))
+                    .unwrap(),
+                ext: Extensions::new(),
+            })
+            .collect();
+        document.timing.events = (0..100_000)
+            .map(|tick| TimingEvent {
+                tick: Tick::new(tick),
+                kind: TimingKind::Other {
+                    name: name.clone(),
+                    value: Value::Null,
+                },
+                ext: Extensions::new(),
+            })
+            .collect();
+        assert_eq!(validate(&document), Ok(()));
     }
 
     #[test]
