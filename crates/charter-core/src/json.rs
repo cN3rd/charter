@@ -493,7 +493,11 @@ impl<'de> Visitor<'de> for IJsonVisitor {
         Ok(IJson)
     }
 
-    fn visit_f64<E>(self, _: f64) -> Result<Self::Value, E> {
+    fn visit_f64<E: de::Error>(self, v: f64) -> Result<Self::Value, E> {
+        #[allow(clippy::cast_precision_loss)] // the largest safe integer is exact as f64
+        if v.fract() == 0.0 && v.abs() > MAX_EXACT_INTEGER as f64 {
+            return Err(inexact(v));
+        }
         Ok(IJson)
     }
 
@@ -758,6 +762,15 @@ mod tests {
         }
     }
 
+    #[test]
+    fn an_out_of_range_integer_spelled_as_a_float_is_rejected() {
+        let bytes = br#"{"format_version":1,"ruleset":{"id":"test","version":"1"},"settings":{"n":9007199254740993.0},"metadata":{"title":"t","artist":"a","audio":"song.ogg"},"timing":{"anchors":[{"tick":0,"seconds":0}],"tempo":120,"events":[]}}"#;
+        assert!(matches!(
+            ValidDocument::from_json(bytes),
+            Err(Error::Json(_))
+        ));
+    }
+
     /// Lanes in every generated chart.
     const LANES: u16 = 8;
 
@@ -785,7 +798,11 @@ mod tests {
             any::<bool>().prop_map(Value::from),
             (-exact..=exact).prop_map(Value::from),
             any::<f64>()
-                .prop_filter("finite", |f| f.is_finite())
+                .prop_filter("finite I-JSON float", |f| {
+                    #[allow(clippy::cast_precision_loss)] // the bound is exactly representable
+                    let largest_safe = MAX_EXACT_INTEGER as f64;
+                    f.is_finite() && (f.fract() != 0.0 || f.abs() <= largest_safe)
+                })
                 .prop_map(Value::from),
             "\\PC{0,8}".prop_map(Value::from),
         ];
