@@ -212,7 +212,7 @@ struct Cache {
     timing: Timing,
     grid: Grid,
     sensitivity: f32,
-    onsets: usize,
+    onsets: Vec<Onset>,
     residuals: Vec<Residual>,
     issues: Vec<Issue>,
 }
@@ -627,7 +627,7 @@ fn refreshed(cache: Option<Cache>, song: &Song, onsets: &[Onset], window: &Timin
         cache.timing == *timing
             && cache.grid == window.grid
             && (cache.sensitivity - window.sensitivity).abs() <= f32::EPSILON
-            && cache.onsets == onsets.len()
+            && cache.onsets.as_slice() == onsets
     });
     fresh.unwrap_or_else(|| {
         let pins = song.anchors();
@@ -637,7 +637,7 @@ fn refreshed(cache: Option<Cache>, song: &Song, onsets: &[Onset], window: &Timin
             timing: (*timing).clone(),
             grid: window.grid,
             sensitivity: window.sensitivity,
-            onsets: onsets.len(),
+            onsets: onsets.to_vec(),
             residuals,
             issues,
         }
@@ -667,7 +667,13 @@ fn frame<'a>(
 ) -> Frame<'a> {
     let timing = song.timing();
     let first = timing.latest_tick_by(0.0).min(Tick::new(0));
-    let last = song.end().max(song.cursor());
+    let mut last = song.end().max(song.cursor());
+    if let Some(anchor) = timing.anchors.last() {
+        last = last.max(anchor.tick);
+    }
+    if let Some(event) = timing.events.last() {
+        last = last.max(event.tick);
+    }
     Frame {
         timing,
         tail: song
@@ -1556,7 +1562,80 @@ fn nudge_notches(events: &[egui::Event]) -> Option<(i32, bool)> {
 
 #[cfg(test)]
 mod tests {
+    use charter_core::ValidDocument;
+    use serde_json::json;
+
     use super::*;
+
+    #[test]
+    fn empty_chart_rows_reach_late_anchors_and_timing_events() {
+        let value = json!({
+            "format_version": 1,
+            "ruleset": { "id": "test", "version": "1" },
+            "metadata": { "title": "t", "artist": "a", "audio": "a.ogg" },
+            "timing": {
+                "anchors": [
+                    { "tick": 0, "seconds": 0.0 },
+                    { "tick": 38400, "seconds": 20.0 }
+                ],
+                "tempo": 120.0,
+                "events": [
+                    { "tick": 76800, "kind": { "time_signature": [3, 4] } }
+                ]
+            },
+            "charts": [{ "name": "Empty", "lanes": 4 }]
+        });
+        let document = ValidDocument::from_json(&serde_json::to_vec(&value).unwrap()).unwrap();
+        let song = Song::new(document, &[]);
+        let window = TimingWindow::default();
+        let cache = refreshed(None, &song, &[], &window);
+        let frame = frame(&song, &[], (&cache, Layout::Bars), 0.0);
+
+        for tick in [Tick::new(38400), Tick::new(76800)] {
+            assert!(
+                frame
+                    .bars
+                    .measures()
+                    .iter()
+                    .any(|measure| measure.start == tick),
+                "no row for {tick:?}"
+            );
+        }
+        assert!(
+            frame
+                .bars
+                .rows(BarsPerRow::One, SecondsPerRow::default())
+                .len()
+                >= 21
+        );
+    }
+
+    #[test]
+    fn changed_onsets_with_the_same_count_refresh_residuals() {
+        let value = json!({
+            "format_version": 1,
+            "ruleset": { "id": "test", "version": "1" },
+            "metadata": { "title": "t", "artist": "a", "audio": "a.ogg" },
+            "timing": {
+                "anchors": [{ "tick": 0, "seconds": 0.0 }],
+                "tempo": 120.0,
+                "events": []
+            }
+        });
+        let document = ValidDocument::from_json(&serde_json::to_vec(&value).unwrap()).unwrap();
+        let song = Song::new(document, &[]);
+        let window = TimingWindow::default();
+        let onset = |seconds| Onset {
+            seconds,
+            strength: 1.0,
+        };
+        let previous = refreshed(None, &song, &[onset(0.5)], &window);
+        assert_eq!(previous.residuals.len(), 1);
+
+        let current = refreshed(Some(previous), &song, &[onset(0.51)], &window);
+        assert_eq!(current.residuals.len(), 1);
+        assert!((current.residuals[0].ms - 10.0).abs() < 1e-6);
+    }
 
     #[test]
     fn keys_ask_for_what_the_specification_gives_them() {
