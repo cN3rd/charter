@@ -145,6 +145,8 @@ pub struct TimingWindow {
     /// Whether the metronome is muted while Shift+C is held.
     muting: bool,
     drafts: panel::Drafts,
+    /// Where the open context menu started, while the pointer moves over its buttons.
+    menu_target: Option<(Option<Tick>, Pos2)>,
     /// A tick whose row to scroll to, as the second row.
     scroll_to: Option<Tick>,
     cache: Option<Cache>,
@@ -175,6 +177,7 @@ impl Default for TimingWindow {
             help: false,
             muting: false,
             drafts: panel::Drafts::default(),
+            menu_target: None,
             scroll_to: None,
             cache: None,
         }
@@ -987,6 +990,7 @@ fn anchor_near(frame: &Frame<'_>, row: &Row, x: f32) -> Option<Tick> {
 }
 
 /// A row's presses, clicks and the start and run of drags on it.
+#[allow(clippy::too_many_lines)] // this handles the row's pointer gestures and context menu
 fn row_input(
     response: &egui::Response,
     row: &Row,
@@ -1080,7 +1084,17 @@ fn row_input(
             None => commands.push(Command::PlayFrom(row.tick_at(&frame.bars, pos.x))),
         }
     }
-    response.context_menu(|ui| menu(ui, window, frame, row, anchor, pointer, commands));
+    if response.secondary_clicked()
+        && let Some(pos) = pointer
+    {
+        window.menu_target = Some((anchor, pos));
+    }
+    response.context_menu(|ui| {
+        let (anchor, pointer) = window
+            .menu_target
+            .map_or((anchor, pointer), |(tick, pos)| (tick, Some(pos)));
+        menu(ui, window, frame, row, anchor, pointer, commands);
+    });
     if response.hovered()
         && let Some((notches, fine)) = response.ctx.input(|input| nudge_notches(&input.events))
     {
@@ -1970,6 +1984,31 @@ mod tests {
         assert_eq!(harness.state().window.layout, Layout::Time);
         assert_eq!(harness.state().window.scroll_to, None);
         assert!(harness.query_by_label("Row at 0.0 s").is_some());
+    }
+
+    #[test]
+    fn an_anchor_context_menu_keeps_its_target_while_the_pointer_moves_to_a_button() {
+        let mut harness = timing_harness();
+        let at = row_point(&harness, 960);
+        harness.hover_at(at);
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            });
+        }
+        harness.step();
+        harness.get_by_label("Double tempo").click();
+        harness.step();
+        assert_eq!(
+            harness.state().commands,
+            [Command::Edit(Edit::Scale {
+                ticks: vec![Tick::new(960)],
+                double: true
+            })]
+        );
     }
 
     #[test]
