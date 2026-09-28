@@ -1154,21 +1154,27 @@ impl Window {
             return;
         };
         let file = self.artwork_file();
-        if self
-            .artwork
-            .as_ref()
-            .is_some_and(|artwork| artwork.name == named && artwork.file == file)
-        {
+        let step = self.song.as_ref().map_or(0, Song::history_step);
+        let parked_here = self
+            .parked
+            .iter()
+            .position(|parked| parked.name == named && parked.step == step);
+        // Another picture of the same name may belong to the step undo or redo reached.
+        let current = self.artwork.as_ref().is_some_and(|artwork| {
+            artwork.name == named
+                && artwork.file == file
+                && (artwork.step == step || parked_here.is_none())
+        });
+        if current {
             return;
         }
         self.park_artwork();
         // A picture chosen but not saved, which an undo took away, comes back at its step.
-        let step = self.song.as_ref().map_or(0, Song::history_step);
-        if let Some(at) = self
+        let parked_here = self
             .parked
             .iter()
-            .position(|parked| parked.name == named && parked.step == step)
-        {
+            .position(|parked| parked.name == named && parked.step == step);
+        if let Some(at) = parked_here {
             let mut artwork = self.parked.swap_remove(at);
             artwork.file = file;
             self.artwork = Some(artwork);
@@ -1755,6 +1761,17 @@ impl Window {
 
     #[allow(clippy::too_many_lines)] // one arm for every action
     fn apply(&mut self, action: Action) {
+        // A chord's notes undo as one, but anything else done while it is held is its own step.
+        let chord = matches!(
+            action,
+            Action::Toggle(..) | Action::LaneUp(_) | Action::LanesReleased
+        );
+        if !chord
+            && let Some(step) = self.chord_since.take()
+            && let Some(song) = &mut self.song
+        {
+            song.merge_since(step);
+        }
         if let Action::Here(tick, action) = action {
             self.apply(Action::JumpTo(tick));
             self.apply(*action);
@@ -5052,6 +5069,38 @@ mod tests {
     }
 
     #[test]
+    fn an_edit_made_while_a_chord_is_held_is_its_own_step() {
+        let mut harness = editable_four_taps();
+        harness.key_press(egui::Key::PageDown);
+        harness.run();
+        harness.key_down(egui::Key::Num1);
+        harness.key_down(egui::Key::Num2);
+        harness.run();
+        harness.key_press(egui::Key::F8);
+        harness.run();
+        harness.key_up(egui::Key::Num1);
+        harness.key_up(egui::Key::Num2);
+        harness.run();
+        let bpm = |harness: &Harness<'_, Window>| {
+            let song = harness.state().song.as_ref().unwrap();
+            song.timing().tempo_at(Tick::new(0))
+        };
+        let raised = bpm(&harness);
+        assert_eq!(note_count(&harness), 6);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.run();
+        assert!(bpm(&harness) < raised, "the BPM change undoes alone");
+        assert_eq!(note_count(&harness), 6);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.run();
+        assert_eq!(
+            lanes_at(&harness, 3840),
+            Vec::<u16>::new(),
+            "then the chord as one"
+        );
+    }
+
+    #[test]
     fn a_lane_key_let_go_quickly_while_playing_stays_a_tap() {
         let mut harness = playable();
         space(&mut harness);
@@ -7345,6 +7394,40 @@ mod tests {
             harness.state().artwork_write_for(path),
             Some((PathBuf::from("/songs/Four/a.png"), b"A".to_vec()))
         );
+    }
+
+    #[test]
+    fn redo_brings_back_a_same_name_picture_chosen_after_another_edit() {
+        let mut harness = four_taps_at("/songs/Four/four.json");
+        harness
+            .state_mut()
+            .use_artwork(Path::new("/p/cover.png"), Some(picture(b"A")));
+        harness.run();
+        select_note(&mut harness, 3, 720);
+        harness.key_press(egui::Key::Delete);
+        harness.run();
+        harness
+            .state_mut()
+            .use_artwork(Path::new("/q/cover.png"), Some(picture(b"B")));
+        harness.run();
+        let path = Path::new("/songs/Four/four.json");
+        let written = |harness: &Harness<'_, Window>| {
+            harness
+                .state()
+                .artwork_write_for(path)
+                .map(|(_, bytes)| bytes)
+        };
+        for _ in 0..2 {
+            harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+            harness.run();
+        }
+        let redo = egui::Modifiers::COMMAND.plus(egui::Modifiers::SHIFT);
+        harness.key_press_modifiers(redo, egui::Key::Z);
+        harness.run();
+        assert_eq!(written(&harness), Some(b"A".to_vec()));
+        harness.key_press_modifiers(redo, egui::Key::Z);
+        harness.run();
+        assert_eq!(written(&harness), Some(b"B".to_vec()));
     }
 
     #[test]
