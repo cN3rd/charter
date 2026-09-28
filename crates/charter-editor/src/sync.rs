@@ -480,6 +480,18 @@ mod tests {
     }
 
     #[test]
+    fn setting_the_existing_tail_tempo_leaves_the_save_and_history_alone() {
+        let mut song = timed(&json!([bpm_event(0, 120.0)]), None);
+        let tail = song.tail_bpm().unwrap();
+        let before = song.history_step();
+        song.set_tail_bpm(tail, false).unwrap();
+        song.set_tail_bpm(tail, true).unwrap();
+        assert_eq!(song.tail_bpm(), Some(tail));
+        assert_eq!(song.history_step(), before);
+        assert!(!song.is_modified());
+    }
+
+    #[test]
     fn the_first_anchor_moved_on_the_grid_moves_the_offset_to_keep_its_moment() {
         let mut song = timed(&json!([bpm_event(0, 120.0), bpm_event(1920, 120.0)]), None);
         song.move_anchor(at(0), at(480)).unwrap();
