@@ -1476,6 +1476,13 @@ impl Song {
         self.prune_selection();
     }
 
+    /// How many steps of the history are done: where undo and redo have left the song, so
+    /// state kept beside it, such as a picture not yet saved, can follow them.
+    #[must_use]
+    pub fn history_step(&self) -> usize {
+        self.done
+    }
+
     #[must_use]
     pub fn can_undo(&self) -> bool {
         self.done > 0

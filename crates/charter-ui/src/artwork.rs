@@ -13,6 +13,9 @@ pub struct Artwork {
     pub name: String,
     /// Where that file is, when the song has been saved: it is read again once this changes.
     pub file: Option<PathBuf>,
+    /// The step of the song's history that named it, for a picture not yet saved, which an
+    /// undo back to that step brings back.
+    pub step: usize,
     /// The picture's bytes, once read or chosen.
     bytes: Option<Vec<u8>>,
     /// Whether the bytes are still to be written beside the song.
@@ -46,6 +49,7 @@ impl Artwork {
         Self {
             name: name.to_owned(),
             file: file.map(Path::to_path_buf),
+            step: 0,
             bytes: None,
             unsaved: false,
             preview: if file.is_some() {
@@ -61,6 +65,7 @@ impl Artwork {
         Self {
             name,
             file,
+            step: 0,
             bytes: Some(bytes),
             unsaved: true,
             preview: Preview::Decoded(image),

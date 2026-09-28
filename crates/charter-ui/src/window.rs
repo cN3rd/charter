@@ -1131,7 +1131,10 @@ impl Window {
         if self.failure.is_none() {
             // The picture it replaces comes back with an undo.
             self.park_artwork();
-            self.artwork = Some(Artwork::taken(name, self.artwork_file(), picture));
+            let step = self.song.as_ref().map_or(0, Song::history_step);
+            let mut artwork = Artwork::taken(name, self.artwork_file(), picture);
+            artwork.step = step;
+            self.artwork = Some(artwork);
             // A picture under the same name leaves the revision as it was, so autosave again.
             self.autosaved = None;
         }
@@ -1157,8 +1160,13 @@ impl Window {
             return;
         }
         self.park_artwork();
-        // A picture chosen but not saved, which an undo took away, comes back with its name.
-        if let Some(at) = self.parked.iter().position(|parked| parked.name == named) {
+        // A picture chosen but not saved, which an undo took away, comes back at its step.
+        let step = self.song.as_ref().map_or(0, Song::history_step);
+        if let Some(at) = self
+            .parked
+            .iter()
+            .position(|parked| parked.name == named && parked.step == step)
+        {
             let mut artwork = self.parked.swap_remove(at);
             artwork.file = file;
             self.artwork = Some(artwork);
@@ -1177,7 +1185,7 @@ impl Window {
             return;
         };
         if artwork.unsaved().is_some() {
-            self.parked.retain(|parked| parked.name != artwork.name);
+            self.parked.retain(|parked| parked.step != artwork.step);
             self.parked.push(artwork);
         }
     }
@@ -7249,6 +7257,41 @@ mod tests {
                 .artwork_write_for(Path::new("/songs/Four/four.json")),
             Some((PathBuf::from("/songs/Four/a.png"), b"a".to_vec()))
         );
+    }
+
+    #[test]
+    fn undo_brings_back_each_picture_of_one_name_at_its_own_step() {
+        let mut harness = four_taps_at("/songs/Four/four.json");
+        for (file, bytes) in [
+            ("/p/cover.png", b"A"),
+            ("/p/other.png", b"B"),
+            ("/p/cover.png", b"C"),
+        ] {
+            harness
+                .state_mut()
+                .use_artwork(Path::new(file), Some(picture(bytes)));
+            harness.run();
+        }
+        let path = Path::new("/songs/Four/four.json");
+        let written = |harness: &Harness<'_, Window>| {
+            harness
+                .state()
+                .artwork_write_for(path)
+                .map(|(_, bytes)| bytes)
+        };
+        let undo = |harness: &mut Harness<'_, Window>| {
+            harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+            harness.run();
+        };
+        undo(&mut harness);
+        assert_eq!(written(&harness), Some(b"B".to_vec()));
+        undo(&mut harness);
+        assert_eq!(written(&harness), Some(b"A".to_vec()));
+        let redo = egui::Modifiers::COMMAND.plus(egui::Modifiers::SHIFT);
+        harness.key_press_modifiers(redo, egui::Key::Z);
+        harness.key_press_modifiers(redo, egui::Key::Z);
+        harness.run();
+        assert_eq!(written(&harness), Some(b"C".to_vec()));
     }
 
     #[test]
