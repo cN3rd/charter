@@ -89,7 +89,11 @@ pub fn menu_bar(
                 [
                     ("Cut", "Ctrl+X", Action::Cut),
                     ("Copy", "Ctrl+C", Action::Copy),
-                    ("Paste at the cursor", "Ctrl+V", Action::Paste(None)),
+                    (
+                        "Paste at the cursor",
+                        "Ctrl+V",
+                        Action::PasteHere(song.map_or(Tick::new(0), Song::cursor)),
+                    ),
                     ("Duplicate", "Ctrl+D", Action::Duplicate),
                     ("Delete the selection", "Delete", Action::DeleteSelection),
                     (

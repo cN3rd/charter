@@ -186,16 +186,31 @@ impl Host {
                 .map_err(|error| format!("{} to {}: {error}", from.display(), to.display())),
             None => Ok(()),
         };
-        let copied = copied.and_then(|()| match self.window.artwork_write_for(&path) {
-            Some((to, bytes)) => self.write_artwork(&to, &bytes),
+        let artwork = self.window.artwork_write_for(&path);
+        // What the artwork's file held before, to put back when the song's own write fails.
+        let before = artwork
+            .as_ref()
+            .map(|(to, _)| (to.clone(), self.disk.read(to).ok()));
+        let copied = copied.and_then(|()| match &artwork {
+            Some((to, bytes)) => self.write_artwork(to, bytes),
             None => Ok(()),
         });
+        let wrote_artwork = copied.is_ok();
         let saved = match copied.and_then(|()| {
             disk::write_whole(self.disk.as_ref(), &path, bytes)
                 .map_err(|error| format!("{}: {error}", path.display()))
         }) {
             Ok(()) => Saved::To(path),
-            Err(error) => Saved::Failed(error),
+            Err(error) => {
+                if wrote_artwork && let Some((to, old)) = before {
+                    // Best effort: the save says it failed either way.
+                    let _ = match old {
+                        Some(old) => disk::write_whole(self.disk.as_ref(), &to, &old),
+                        None => self.disk.remove(&to),
+                    };
+                }
+                Saved::Failed(error)
+            }
         };
         self.window.saved(saved);
     }
@@ -685,12 +700,17 @@ mod tests {
 
     /// An empty StepMania song the plugin accepts, as its file holds it.
     fn sm_song() -> Vec<u8> {
+        sm_song_with(None)
+    }
+
+    /// An empty StepMania song naming `artwork` beside it.
+    fn sm_song_with(artwork: Option<&str>) -> Vec<u8> {
         let metadata = charter_core::Metadata {
             title: "t".to_owned(),
             artist: "a".to_owned(),
             audio: charter_core::ResourcePath::new("a.ogg").unwrap(),
             preview: None,
-            artwork: None,
+            artwork: artwork.map(|name| charter_core::ResourcePath::new(name).unwrap()),
             genre: None,
             ext: charter_core::Extensions::new(),
         };
@@ -829,6 +849,34 @@ mod tests {
         let mut storage = Kept::default();
         eframe::Storage::set_string(&mut storage, SETTINGS, r#"{ "zoom": 150.0 }"#.to_owned());
         assert!((kept_settings(&storage).zoom - 150.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn a_save_that_fails_puts_the_artwork_file_back_as_it_was() {
+        let mut host = host(Memory {
+            unwritable: vec![PathBuf::from("/s/Song/Song.json.partial")],
+            ..Memory::with(&[("/s/Song/art.png", b"the old picture")])
+        });
+        host.window = Window::new(PLUGINS);
+        let song = sm_song_with(Some("art.png"));
+        host.window.open(Path::new("/s/Song/Song.json"), &song);
+        host.window
+            .use_artwork(Path::new("/p/art.png"), picture(png(2, 2)));
+        host.window.take_requests();
+        host.write(PathBuf::from("/s/Song/Song.json"), &song);
+        assert!(
+            host.window
+                .message()
+                .is_some_and(|message| message.contains("disk is full"))
+        );
+        assert_eq!(
+            host.disk.read(Path::new("/s/Song/art.png")).unwrap(),
+            b"the old picture"
+        );
+        host.window
+            .use_artwork(Path::new("/p/new.png"), picture(png(2, 2)));
+        host.write(PathBuf::from("/s/Song/Song.json"), &song);
+        assert!(!files(&host, "/s/Song/new.png"));
     }
 
     #[test]
