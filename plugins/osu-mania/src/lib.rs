@@ -1195,6 +1195,31 @@ mod tests {
     }
 
     #[test]
+    fn the_plugin_imports_timing_and_reports_bad_pasted_points() {
+        let doc =
+            ValidDocument::from_json(&serde_json::to_vec(&document(json!([]))).unwrap()).unwrap();
+        assert_eq!(Plugin.timing_format(), Some("osu! timing points"));
+        let imported = Plugin.import_timing("250,500\n1250,-50", &doc).unwrap();
+        assert_eq!(
+            imported.timing.anchors[0].seconds,
+            Origin::try_from(0.25).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(&imported.timing.events).unwrap(),
+            json!([{ "tick": 1920, "kind": { "other": {
+                "name": "osu_mania.scroll_speed", "value": 2.0
+            } } }])
+        );
+        assert_eq!(
+            Plugin
+                .import_timing("soon,500", &doc)
+                .unwrap_err()
+                .to_string(),
+            "line 1: `soon` is not a time"
+        );
+    }
+
+    #[test]
     fn zero_and_twenty_keys_are_checked_against_the_format_and_the_ruleset() {
         let mut missing = document(json!([]));
         missing["charts"][0]
