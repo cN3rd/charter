@@ -1111,6 +1111,8 @@ impl Window {
         self.failure = refused(song.set_metadata(metadata).err());
         if self.failure.is_none() {
             self.artwork = Some(Artwork::taken(name, self.artwork_file(), picture));
+            // A picture under the same name leaves the revision as it was, so autosave again.
+            self.autosaved = None;
         }
     }
 
@@ -1610,7 +1612,9 @@ impl Window {
                 if std::mem::take(&mut self.playing) {
                     self.requests.push(Request::Pause);
                 }
-                self.artwork_on_disk = self.artwork_file();
+                // A restored song names what its unsaved changes chose, not what is on disk, so
+                // no file there counts as its own.
+                self.artwork_on_disk = if restored { None } else { self.artwork_file() };
                 if restored && let Some(bytes) = self.restored_artwork.take() {
                     self.requests.push(Request::DecodeArtwork { bytes });
                 }
@@ -6960,11 +6964,41 @@ mod tests {
             bytes: b"png".to_vec()
         }));
         restored.state_mut().artwork_restored(Some(picture(b"png")));
+        assert!(
+            !restored
+                .state()
+                .may_replace(Path::new("/songs/New/art.png"))
+        );
         let path = Path::new("/songs/New/New.json");
         assert_eq!(
             restored.state().artwork_write_for(path),
             Some((PathBuf::from("/songs/New/art.png"), b"png".to_vec()))
         );
+    }
+
+    #[test]
+    fn another_picture_under_the_same_name_is_autosaved_again() {
+        let mut harness = created();
+        let chosen = Path::new("/pictures/art.png");
+        harness
+            .state_mut()
+            .use_artwork(chosen, Some(picture(b"one")));
+        at_time(&mut harness, 100.0);
+        at_time(&mut harness, 131.0);
+        let autosaves = |harness: &mut Harness<'_, Window>| {
+            let requests = harness.state_mut().take_requests();
+            requests
+                .iter()
+                .filter(|request| matches!(request, Request::Autosave { .. }))
+                .count()
+        };
+        assert_eq!(autosaves(&mut harness), 1);
+        harness
+            .state_mut()
+            .use_artwork(chosen, Some(picture(b"two")));
+        at_time(&mut harness, 140.0);
+        at_time(&mut harness, 171.0);
+        assert_eq!(autosaves(&mut harness), 1);
     }
 
     #[test]

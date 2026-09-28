@@ -1617,26 +1617,37 @@ fn mapped(
     let mut moved = object.clone();
     moved.tick = tick(object.tick)?;
     moved.position = position(object.position)?;
+    moved.shape = mapped_shape(&object.shape, tick, position)?;
     for child in &mut moved.children {
         child.tick = tick(child.tick)?;
         child.position = position(child.position)?;
-    }
-    if let Shape::Path { points } = &object.shape {
-        let points = points
-            .as_slice()
-            .iter()
-            .map(|point| {
-                let mut point = point.clone();
-                point.tick = tick(point.tick)?;
-                point.position = position(point.position)?;
-                Some(point)
-            })
-            .collect::<Option<Vec<_>>>()?;
-        moved.shape = Shape::Path {
-            points: charter_core::Points::new(points).ok()?,
-        };
+        child.shape = mapped_shape(&child.shape, tick, position)?;
     }
     Some(moved)
+}
+
+/// `shape` with its path's ticks and positions through `tick` and `position`.
+fn mapped_shape(
+    shape: &Shape,
+    tick: &dyn Fn(Tick) -> Option<Tick>,
+    position: &dyn Fn(Position) -> Option<Position>,
+) -> Option<Shape> {
+    let Shape::Path { points } = shape else {
+        return Some(shape.clone());
+    };
+    let points = points
+        .as_slice()
+        .iter()
+        .map(|point| {
+            let mut point = point.clone();
+            point.tick = tick(point.tick)?;
+            point.position = position(point.position)?;
+            Some(point)
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(Shape::Path {
+        points: charter_core::Points::new(points).ok()?,
+    })
 }
 
 /// Where a timing edit sends each tick.
@@ -2190,6 +2201,24 @@ pub(crate) mod tests {
         assert_eq!(mirrored["position"]["lane"]["index"], 3);
         assert_eq!(
             mirrored["shape"]["path"]["points"][0]["position"]["lane"]["index"],
+            2
+        );
+    }
+
+    #[test]
+    fn mirroring_flips_a_child_s_path_too() {
+        let parent = json!({ "tick": 0, "position": { "lane": { "index": 0 } }, "kind": "hold",
+            "shape": { "sustain": { "duration": 480 } }, "children": [ { "tick": 0, "position": { "lane": { "index": 0 } },
+            "kind": "tap", "shape": { "path": { "points": [
+                { "tick": 240, "position": { "lane": { "index": 1 } }, "ease": "linear" } ] } } } ] });
+        let mut song = Song::new(document(json!([parent])), EDITABLE);
+        select_everything(&mut song);
+        song.mirror_selection().unwrap();
+        let mirrored = objects(&song);
+        let child = &mirrored.first().unwrap()["children"][0];
+        assert_eq!(child["position"]["lane"]["index"], 3);
+        assert_eq!(
+            child["shape"]["path"]["points"][0]["position"]["lane"]["index"],
             2
         );
     }
