@@ -258,6 +258,7 @@ fn command(key: Key, modifiers: Modifiers) -> Option<Action> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui_kittest::Harness;
 
     const NONE: Modifiers = Modifiers::NONE;
 
@@ -320,5 +321,174 @@ mod tests {
         let mut actions = Vec::new();
         keys.went(5, true, NONE, 4, &mut actions);
         assert_eq!(actions, []);
+    }
+
+    #[test]
+    fn every_shortcut_dispatches_its_distinct_command() {
+        let cmd = Modifiers::COMMAND;
+        let shift = Modifiers::SHIFT;
+        let alt = Modifiers::ALT;
+        let both = cmd.plus(shift);
+        let cases = [
+            (Key::Y, cmd, Action::Redo),
+            (Key::O, cmd, Action::Open),
+            (Key::N, cmd, Action::NewSong),
+            (Key::Comma, cmd, Action::Settings),
+            (Key::B, cmd, Action::ToggleBookmark),
+            (Key::T, cmd, Action::ToggleSync),
+            (Key::F1, NONE, Action::Help),
+            (Key::ArrowRight, alt, Action::NudgeOffset(0.001)),
+            (Key::ArrowLeft, alt, Action::NudgeOffset(-0.001)),
+            (Key::ArrowRight, alt.plus(shift), Action::NudgeOffset(0.010)),
+            (Key::ArrowLeft, alt.plus(shift), Action::NudgeOffset(-0.010)),
+            (Key::ArrowLeft, both, Action::NudgeRate(-0.01)),
+            (Key::A, cmd, Action::SelectAll),
+            (Key::D, cmd, Action::Duplicate),
+            (Key::M, cmd, Action::Mirror),
+            (Key::Plus, cmd, Action::ZoomBy(Zoom::STEP)),
+            (Key::Equals, cmd, Action::ZoomBy(Zoom::STEP)),
+            (Key::Minus, cmd, Action::ZoomBy(Zoom::STEP.recip())),
+            (
+                Key::ArrowLeft,
+                cmd,
+                Action::ShiftSelection {
+                    snaps: 0,
+                    lanes: -1,
+                },
+            ),
+            (
+                Key::ArrowRight,
+                cmd,
+                Action::ShiftSelection { snaps: 0, lanes: 1 },
+            ),
+            (
+                Key::ArrowUp,
+                cmd,
+                Action::ShiftSelection {
+                    snaps: -1,
+                    lanes: 0,
+                },
+            ),
+            (
+                Key::ArrowDown,
+                cmd,
+                Action::ShiftSelection { snaps: 1, lanes: 0 },
+            ),
+            (Key::Backslash, cmd, Action::ToggleSongPanel),
+            (Key::Delete, NONE, Action::DeleteSelection),
+            (Key::Backspace, NONE, Action::DeleteSelection),
+            (Key::Escape, NONE, Action::ClearSelection),
+            (Key::Q, NONE, Action::Quantize),
+            (Key::ArrowUp, NONE, Action::Move(Step::Earlier)),
+            (Key::PageDown, NONE, Action::MoveMeasure(Step::Later)),
+            (Key::PageUp, NONE, Action::MoveMeasure(Step::Earlier)),
+            (Key::Home, NONE, Action::JumpTo(Tick::new(0))),
+            (Key::End, NONE, Action::JumpEnd),
+            (Key::F3, NONE, Action::ToggleMetronome),
+            (Key::F7, NONE, Action::NudgeBpm(-1.0)),
+            (Key::F8, NONE, Action::NudgeBpm(1.0)),
+        ];
+        for (key, modifiers, expected) in cases {
+            assert_eq!(
+                command(key, modifiers),
+                Some(expected),
+                "{key:?} {modifiers:?}"
+            );
+        }
+        assert_eq!(command(Key::A, alt), None);
+    }
+
+    #[test]
+    fn physical_digit_keys_place_mines_even_when_shift_changes_the_symbol() {
+        let mut harness = Harness::builder().build_ui_state(
+            |ui, (keys, actions): &mut (LaneKeys, Vec<Action>)| {
+                actions.extend(ui.input(|input| key_actions(input, 10, keys)));
+            },
+            (LaneKeys::default(), Vec::new()),
+        );
+        harness.run();
+        let event = |key, physical_key, pressed, modifiers| egui::Event::Key {
+            key,
+            physical_key,
+            pressed,
+            repeat: false,
+            modifiers,
+        };
+        harness.event(event(
+            Key::Exclamationmark,
+            Some(Key::Num1),
+            true,
+            Modifiers::SHIFT,
+        ));
+        harness.event(event(Key::Num2, None, true, NONE));
+        harness.event(event(Key::Num2, None, true, NONE));
+        harness.run();
+        assert_eq!(
+            harness.state().1,
+            [
+                Action::Toggle(LaneIndex::new(0), Note::Mine),
+                Action::Toggle(LaneIndex::new(1), Note::Tap)
+            ]
+        );
+        harness.state_mut().1.clear();
+        harness.event(event(Key::Num1, Some(Key::Num1), false, NONE));
+        harness.event(event(Key::Num2, None, false, NONE));
+        harness.run();
+        assert_eq!(
+            harness.state().1,
+            [
+                Action::LaneUp(LaneIndex::new(0)),
+                Action::LaneUp(LaneIndex::new(1)),
+                Action::LanesReleased
+            ]
+        );
+    }
+
+    #[test]
+    fn focus_loss_releases_a_chord_and_clipboard_events_keep_their_payload() {
+        let mut harness = Harness::builder().build_ui_state(
+            |ui, (keys, actions): &mut (LaneKeys, Vec<Action>)| {
+                actions.extend(ui.input(|input| key_actions(input, 4, keys)));
+            },
+            (LaneKeys::default(), Vec::new()),
+        );
+        harness.run();
+        harness.key_down(Key::Num1);
+        harness.run();
+        harness.state_mut().1.clear();
+        harness.event(egui::Event::WindowFocused(false));
+        harness.event(egui::Event::Copy);
+        harness.event(egui::Event::Cut);
+        harness.event(egui::Event::Paste("notes".to_owned()));
+        harness.run();
+        assert_eq!(
+            harness.state().1,
+            [
+                Action::LaneUp(LaneIndex::new(0)),
+                Action::LanesReleased,
+                Action::Copy,
+                Action::Cut,
+                Action::Paste(Some("notes".to_owned()))
+            ]
+        );
+        harness.state_mut().1.clear();
+        harness.event(egui::Event::WindowFocused(false));
+        harness.run();
+        assert!(harness.state().1.is_empty());
+    }
+
+    #[test]
+    fn unknown_lanes_and_modifier_combinations_do_not_create_actions() {
+        let mut keys = LaneKeys::default();
+        let mut actions = Vec::new();
+        keys.went(10, true, NONE, 10, &mut actions);
+        keys.went(0, true, Modifiers::COMMAND, 10, &mut actions);
+        keys.went(0, false, NONE, 10, &mut actions);
+        assert!(actions.is_empty());
+        assert_eq!(
+            command(Key::F2, Modifiers::COMMAND.plus(Modifiers::SHIFT)),
+            None
+        );
+        assert_eq!(command(Key::F2, Modifiers::ALT), None);
     }
 }

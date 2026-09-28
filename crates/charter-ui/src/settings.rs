@@ -816,6 +816,7 @@ fn percent(factor: f32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui::accesskit::Role;
     use egui_kittest::Harness;
     use egui_kittest::kittest::Queryable;
 
@@ -1009,5 +1010,235 @@ mod tests {
             ..Settings::default()
         };
         assert_eq!(Settings::from_kept(&chosen.to_kept()), chosen);
+    }
+
+    #[test]
+    fn older_grid_and_sound_settings_migrate_without_losing_other_choices() {
+        let cases = [
+            (
+                r#"{"sixteenths":true,"note_ticks":"beep","metronome":"off"}"#,
+                16,
+                true,
+                false,
+            ),
+            (
+                r#"{"sixteenths":false,"note_ticks":"off","metronome":"click"}"#,
+                4,
+                false,
+                true,
+            ),
+            (
+                r#"{"grid":0,"tick_sound":"off","zoom":175}"#,
+                4,
+                false,
+                false,
+            ),
+            (
+                r#"{"grid":7,"tick_sound":"hit","latency_ms":18}"#,
+                4,
+                true,
+                false,
+            ),
+        ];
+        for (kept, grid, ticks, metronome) in cases {
+            let settings = Settings::from_kept(kept);
+            assert_eq!(settings.grid.get(), grid, "{kept}");
+            assert_eq!(settings.note_ticks, ticks, "{kept}");
+            assert_eq!(settings.metronome, metronome, "{kept}");
+        }
+        let mixed = Settings::from_kept(r#"{"sixteenths":true,"zoom":"bad","auto_jump":false}"#);
+        assert_eq!(mixed.grid.get(), 16);
+        assert!(!mixed.auto_jump);
+        assert!((mixed.zoom - 100.0).abs() < f32::EPSILON);
+        assert_eq!(Settings::from_kept("[]"), Settings::default());
+    }
+
+    #[test]
+    fn invalid_scale_and_autosave_waits_are_bounded_at_both_ends() {
+        for (value, expected) in [
+            (f32::NAN, 1.0),
+            (f32::NEG_INFINITY, 1.0),
+            (0.5, 0.5),
+            (3.0, 3.0),
+        ] {
+            let settings = Settings {
+                scale: value,
+                ..Settings::default()
+            };
+            assert!((settings.scale() - expected).abs() < f32::EPSILON);
+        }
+        for (seconds, expected) in [(4, 5.0), (5, 5.0), (600, 600.0), (601, 600.0)] {
+            let settings = Settings {
+                autosave_seconds: seconds,
+                ..Settings::default()
+            };
+            assert_eq!(settings.autosave_after(), Some(expected));
+        }
+    }
+
+    fn settings_window() -> Harness<'static, (Settings, bool)> {
+        let mut harness = Harness::builder().build_ui_state(
+            |ui, (settings, open): &mut (Settings, bool)| {
+                show(ui.ctx(), settings, open);
+            },
+            (Settings::default(), true),
+        );
+        harness.run();
+        harness
+    }
+
+    fn page(harness: &mut Harness<'_, (Settings, bool)>, name: &str) {
+        harness.get_by_label(name).click();
+        harness.run();
+    }
+
+    #[test]
+    fn editing_and_display_controls_change_the_settings_they_name() {
+        let mut harness = settings_window();
+        harness
+            .get_by_role_and_label(Role::CheckBox, "Move on a snap after placing a note")
+            .click();
+        harness.run();
+        assert!(!harness.state().0.auto_jump);
+        harness
+            .get_by_role_and_label(
+                Role::CheckBox,
+                "Keep notes where they sound when a BPM changes",
+            )
+            .click();
+        harness.run();
+        assert!(!harness.state().0.notes_keep_time);
+        harness.get_by_label("Default snap").click();
+        harness.run();
+        harness.get_by_label("24th snap").click();
+        harness.run();
+        assert_eq!(harness.state().0.snap.get(), 24);
+
+        page(&mut harness, "Display");
+        harness.get_by_label("Interface size").click();
+        harness.run();
+        harness.get_by_label("125%").click();
+        harness.run();
+        assert!((harness.state().0.scale - 1.25).abs() < f32::EPSILON);
+        harness.get_by_label("Notefield").click();
+        harness.run();
+        harness
+            .get_by_label("Horizontal, notes travel left")
+            .click();
+        harness.run();
+        assert_eq!(harness.state().0.direction, Direction::Left);
+        for (name, initial) in [
+            ("Waveform", true),
+            ("Frequencies", false),
+            ("Minimap", true),
+        ] {
+            harness.get_by_role_and_label(Role::CheckBox, name).click();
+            harness.run();
+            let value = match name {
+                "Waveform" => harness.state().0.waveform,
+                "Frequencies" => harness.state().0.frequencies,
+                _ => harness.state().0.minimap,
+            };
+            assert_ne!(value, initial, "{name}");
+        }
+        harness.get_by_label("Grid lines").scroll_to_me();
+        harness.run();
+        harness.get_by_label("Grid lines").click();
+        harness.run();
+        harness.get_by_label("16th notes").click();
+        harness.run();
+        assert_eq!(harness.state().0.grid.get(), 16);
+    }
+
+    #[test]
+    fn sounds_and_autosave_pages_apply_their_switches_and_sound_choices() {
+        let mut harness = settings_window();
+        page(&mut harness, "Sounds");
+        for (name, before) in [
+            ("Note ticks", false),
+            ("Tuned lanes", false),
+            ("Metronome", false),
+            ("Metronome follows the grid", false),
+            ("Keep pitch at other speeds", true),
+        ] {
+            harness
+                .get_by_role_and_label(Role::CheckBox, name)
+                .scroll_to_me();
+            harness.run();
+            harness.get_by_role_and_label(Role::CheckBox, name).click();
+            harness.run();
+            let after = match name {
+                "Note ticks" => harness.state().0.note_ticks,
+                "Tuned lanes" => harness.state().0.tuned_lanes,
+                "Metronome" => harness.state().0.metronome,
+                "Metronome follows the grid" => harness.state().0.metronome_grid,
+                _ => harness.state().0.keep_pitch,
+            };
+            assert_ne!(after, before, "{name}");
+        }
+        harness.get_by_label("Note tick sound").scroll_to_me();
+        harness.run();
+        harness.get_by_label("Note tick sound").click();
+        harness.run();
+        harness.get_by_label("Clap").click();
+        harness.run();
+        assert_eq!(harness.state().0.tick_sound, Sound::Clap);
+        page(&mut harness, "Autosave");
+        harness
+            .get_by_role_and_label(Role::CheckBox, "Autosave unsaved changes")
+            .click();
+        harness.run();
+        assert_eq!(harness.state().0.autosave_after(), None);
+    }
+
+    #[test]
+    fn sound_preview_and_calibration_buttons_ask_for_their_distinct_actions() {
+        let mut harness = Harness::builder().build_ui_state(
+            |ui, (settings, open, asked): &mut (Settings, bool, Option<Asked>)| {
+                *asked = show(ui.ctx(), settings, open).or(*asked);
+            },
+            (Settings::default(), true, None),
+        );
+        harness.run();
+        harness.get_by_label("Sounds").click();
+        harness.run();
+        harness.get_by_label("Metronome sound").click();
+        harness.run();
+        harness.get_by_label("Shaker burst").click();
+        harness.run();
+        assert_eq!(harness.state().0.metronome_sound, Kit::ShakerBurst);
+        harness.get_by_label("Preview the metronome").click();
+        harness.run();
+        assert_eq!(harness.state().2, Some(Asked::Preview(Kit::ShakerBurst)));
+        harness.state_mut().2 = None;
+        harness.get_by_label("Calibrate…").scroll_to_me();
+        harness.run();
+        harness.get_by_label("Calibrate…").click();
+        harness.run();
+        assert_eq!(harness.state().2, Some(Asked::Calibrate));
+    }
+
+    #[test]
+    fn restoring_defaults_keeps_the_two_calibrations() {
+        let mut harness = Harness::builder().build_ui_state(
+            |ui, (settings, open): &mut (Settings, bool)| {
+                show(ui.ctx(), settings, open);
+            },
+            (
+                Settings {
+                    zoom: 175.0,
+                    audio_latency_ms: 12.0,
+                    input_latency_ms: -8.0,
+                    ..Settings::default()
+                },
+                true,
+            ),
+        );
+        harness.run();
+        harness.get_by_label("Restore defaults").click();
+        harness.run();
+        assert!((harness.state().0.zoom - 100.0).abs() < f32::EPSILON);
+        assert!((harness.state().0.audio_latency_ms - 12.0).abs() < f64::EPSILON);
+        assert!((harness.state().0.input_latency_ms + 8.0).abs() < f64::EPSILON);
     }
 }
