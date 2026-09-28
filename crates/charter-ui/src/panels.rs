@@ -924,6 +924,7 @@ pub(crate) fn entry_sized(
     read: impl FnOnce(&str) -> Result<Action, String>,
     actions: &mut Vec<Action>,
 ) -> Option<String> {
+    let had_draft = draft.is_some();
     let mut text = draft.take().unwrap_or_else(|| current.to_owned());
     let empty = current.is_empty();
     let field = egui::TextEdit::singleline(&mut text).desired_width(width);
@@ -943,8 +944,16 @@ pub(crate) fn entry_sized(
     } else if left {
         match read(text.trim()) {
             Ok(action) => actions.push(action),
-            Err(why) => return Some(why),
+            Err(why) => {
+                *draft = Some(text);
+                return Some(why);
+            }
         }
+    } else if had_draft
+        && text.trim() != current
+        && !ui.input(|input| input.key_pressed(egui::Key::Escape))
+    {
+        *draft = Some(text);
     }
     None
 }
@@ -1508,6 +1517,7 @@ pub fn read_only(ui: &mut Ui, why: &str) {
 #[cfg(test)]
 mod tests {
     use charter_core::RulesetPlugin;
+    use egui::accesskit::Role;
     use egui_kittest::Harness;
     use egui_kittest::kittest::Queryable;
 
@@ -1594,5 +1604,345 @@ mod tests {
         // The ruler, the narrowest timing gutter and eight of the narrowest lanes.
         let fits = 80.0 + 72.0 + 8.0 * 20.0;
         assert!(after >= fits, "before {before}, after {after}");
+    }
+
+    #[test]
+    fn an_unmatched_help_filter_hides_shortcuts_without_losing_the_filter() {
+        let mut harness = Harness::builder().build_ui_state(
+            |ui, (open, filter): &mut (bool, String)| shortcuts(ui.ctx(), open, filter),
+            (true, "no such shortcut xyz".to_owned()),
+        );
+        harness.run();
+        assert_eq!(
+            harness
+                .get_by_role_and_label(Role::TextInput, "Filter")
+                .value()
+                .as_deref(),
+            Some("no such shortcut xyz")
+        );
+        assert!(harness.query_by_label("Note entry").is_none());
+        assert!(harness.query_by_label("Selection").is_none());
+    }
+
+    fn answer_dialog(dialog: fn(&Ui) -> Option<bool>, button: &str, expected: bool) {
+        let mut harness = Harness::builder().build_ui_state(
+            move |ui, result: &mut Option<bool>| *result = dialog(ui).or(*result),
+            None,
+        );
+        harness.run();
+        assert_eq!(harness.state(), &None);
+        harness.get_by_label(button).click();
+        harness.run();
+        assert_eq!(harness.state(), &Some(expected), "{button}");
+    }
+
+    #[test]
+    fn each_confirmation_button_returns_the_answer_it_names() {
+        for (dialog, yes, no) in [
+            (
+                (|ui: &Ui| ask_to_restore(ui, "Demo")) as fn(&Ui) -> Option<bool>,
+                "Restore",
+                "Discard",
+            ),
+            (
+                |ui: &Ui| offer_tags(ui, Some("New title"), Some("Artist")),
+                "Import",
+                "Keep mine",
+            ),
+            (ask_to_download_weights, "Download", "Cancel"),
+            (ask_to_reset_timing, "Reset", "Cancel"),
+        ] {
+            answer_dialog(dialog, yes, true);
+            answer_dialog(dialog, no, false);
+        }
+    }
+
+    #[test]
+    fn saving_changes_distinguishes_save_discard_and_cancel() {
+        for (button, answer) in [
+            ("Save", Answer::Save),
+            ("Don't save", Answer::DontSave),
+            ("Cancel", Answer::Cancel),
+        ] {
+            let mut harness = Harness::builder().build_ui_state(
+                |ui, result: &mut Option<Answer>| *result = ask_to_save(ui, "Demo").or(*result),
+                None,
+            );
+            harness.run();
+            assert_eq!(harness.state(), &None);
+            harness.get_by_label(button).click();
+            harness.run();
+            assert_eq!(harness.state(), &Some(answer), "{button}");
+        }
+    }
+
+    fn editable_panel() -> Harness<'static, (Song, SongDrafts, Vec<Action>, Option<String>)> {
+        let mut value = serde_json::to_value(charter_editor::demo::song().document()).unwrap();
+        value["metadata"]["preview"] =
+            serde_json::json!({"start_seconds": 1.0, "length_seconds": 2.0});
+        let song = Song::open(
+            &serde_json::to_vec(&value).unwrap(),
+            &[&charter_stepmania::Plugin],
+        )
+        .unwrap();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(650.0, 900.0))
+            .build_ui_state(
+                |ui,
+                 (song, drafts, actions, refused): &mut (
+                    Song,
+                    SongDrafts,
+                    Vec<Action>,
+                    Option<String>,
+                )| {
+                    *refused = song_panel(ui, song, (drafts, None), actions).or(refused.take());
+                },
+                (song, SongDrafts::default(), Vec::new(), None),
+            );
+        harness.run();
+        harness
+    }
+
+    #[test]
+    fn invalid_song_fields_refuse_an_edit_without_losing_the_typed_draft() {
+        for (label, typed) in [
+            ("Artwork", "../outside.png"),
+            ("Preview", "not a time"),
+            ("Preview length", "-2"),
+        ] {
+            let mut harness = editable_panel();
+            let field = harness.get_by_role_and_label(Role::TextInput, label);
+            field.focus();
+            harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+            field.type_text(typed);
+            harness.run();
+            harness.key_press(egui::Key::Enter);
+            harness.run();
+            let state = harness.state();
+            assert!(
+                state
+                    .3
+                    .as_deref()
+                    .is_some_and(|reason| reason.contains(typed)),
+                "{label}"
+            );
+            assert!(state.2.is_empty(), "{label}: {:?}", state.2);
+            let draft = match label {
+                "Artwork" => &state.1.artwork,
+                "Preview" => &state.1.preview,
+                _ => &state.1.length,
+            };
+            assert_eq!(draft.as_deref(), Some(typed), "{label}");
+        }
+    }
+
+    #[test]
+    fn correcting_a_refused_artwork_path_submits_only_the_corrected_value() {
+        let mut harness = editable_panel();
+        let field = harness.get_by_role_and_label(Role::TextInput, "Artwork");
+        field.focus();
+        field.type_text("../outside.png");
+        harness.run();
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+        assert_eq!(harness.state().1.artwork.as_deref(), Some("../outside.png"));
+        assert_eq!(
+            harness
+                .get_by_role_and_label(Role::TextInput, "Artwork")
+                .value()
+                .as_deref(),
+            Some("../outside.png")
+        );
+        let field = harness.get_by_role_and_label(Role::TextInput, "Artwork");
+        field.focus();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        field.type_text("cover.png");
+        harness.run();
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+        assert!(
+            harness.state().3.is_some(),
+            "the earlier refusal was recorded"
+        );
+        let [Action::SetMetadata(metadata)] = harness.state().2.as_slice() else {
+            panic!("expected one metadata edit");
+        };
+        assert_eq!(
+            metadata
+                .artwork
+                .as_ref()
+                .map(ToString::to_string)
+                .as_deref(),
+            Some("cover.png")
+        );
+        assert_eq!(harness.state().1.artwork, None);
+    }
+
+    #[test]
+    fn a_narrow_transport_keeps_playback_and_sound_controls_without_crowding_in_zoom() {
+        let song = Song::open(
+            &charter_editor::demo::song().to_json().unwrap(),
+            &[&charter_stepmania::Plugin],
+        )
+        .unwrap();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(700.0, 500.0))
+            .build_ui_state(
+                |ui, (song, actions): &mut (Song, Vec<Action>)| {
+                    transport_bar(
+                        ui,
+                        Some(song),
+                        (
+                            Zoom::default(),
+                            Rate::default(),
+                            false,
+                            true,
+                            NonZeroU16::new(4).unwrap(),
+                        ),
+                        (false, (false, false), charter_audio::Volumes::default()),
+                        actions,
+                    );
+                },
+                (song, Vec::new()),
+            );
+        harness.run();
+        assert!(harness.query_by_label("Play").is_some());
+        assert!(harness.query_by_label("Zoom in").is_none());
+        assert!(harness.query_by_label("Finer snap").is_none());
+        harness.get_by_label("Play").click();
+        harness.run();
+        assert_eq!(harness.state().1, [Action::TogglePlay]);
+    }
+
+    #[test]
+    fn artwork_preview_failure_is_visible_without_changing_the_song() {
+        let song = Song::open(
+            &charter_editor::demo::song().to_json().unwrap(),
+            &[&charter_stepmania::Plugin],
+        )
+        .unwrap();
+        let mut harness = Harness::builder().build_ui_state(
+            |ui, (song, actions): &mut (Song, Vec<Action>)| {
+                song_panel(
+                    ui,
+                    song,
+                    (&mut SongDrafts::default(), Some(Err("Picture missing"))),
+                    actions,
+                );
+            },
+            (song, Vec::new()),
+        );
+        harness.run();
+        assert!(harness.query_by_label("Picture missing").is_some());
+        assert!(harness.state().1.is_empty());
+    }
+
+    #[test]
+    fn markers_jump_to_their_tick_and_offer_removal_only_when_editable() {
+        let song = Song::open(
+            &charter_editor::demo::song().to_json().unwrap(),
+            &[&charter_stepmania::Plugin],
+        )
+        .unwrap();
+        let mut harness = Harness::builder().build_ui_state(
+            |ui, (song, actions): &mut (Song, Vec<Action>)| {
+                markers(ui, song, &mut None, actions);
+            },
+            (song, Vec::new()),
+        );
+        harness.run();
+        let first = harness
+            .state()
+            .0
+            .document()
+            .document()
+            .markers
+            .first()
+            .unwrap();
+        let (tick, text) = (first.tick, first.text.clone());
+        assert!(
+            harness
+                .query_by_label(&format!("Remove marker {text}"))
+                .is_some()
+        );
+        harness.get_by_label(&text).click();
+        harness.run();
+        assert_eq!(harness.state().1, [Action::JumpTo(tick)]);
+        harness.state_mut().1.clear();
+        harness
+            .get_by_label(&format!("Remove marker {text}"))
+            .click();
+        harness.run();
+        assert_eq!(harness.state().1, [Action::RemoveMarker(0)]);
+    }
+
+    #[test]
+    fn menu_choices_dispatch_the_same_actions_as_their_shortcuts() {
+        for (menu, item, expected) in [
+            ("File", "Choose artwork", Action::ChooseArtwork),
+            ("Edit", "Mirror across the lanes", Action::Mirror),
+            ("Timing", "Reset timing", Action::AskResetTiming),
+            ("View", "Song panel", Action::ToggleSongPanel),
+            ("Playback", "50% speed", Action::SetRate(0.5)),
+            ("Help", "Keyboard shortcuts", Action::Help),
+        ] {
+            let song = Song::open(
+                &charter_editor::demo::song().to_json().unwrap(),
+                &[&charter_stepmania::Plugin],
+            )
+            .unwrap();
+            let mut harness = Harness::builder().build_ui_state(
+                |ui, (song, actions): &mut (Song, Vec<Action>)| {
+                    menu_bar(ui, Some(song), (false, true, true), actions);
+                },
+                (song, Vec::new()),
+            );
+            harness.run();
+            harness.get_by_label(menu).click();
+            harness.run();
+            harness.get_by_label_contains(item).click();
+            harness.run();
+            assert_eq!(harness.state().1, [expected], "{menu}: {item}");
+        }
+    }
+
+    #[test]
+    fn plugin_song_and_chart_text_settings_keep_their_separate_scopes() {
+        for (label, scope) in [
+            ("Theme", SettingScope::Song),
+            ("Chart theme", SettingScope::Chart),
+        ] {
+            let document = charter_ttr::Plugin
+                .new_song(&charter_core::NewSong {
+                    metadata: charter_editor::demo::song().document().metadata.clone(),
+                    layout: 0,
+                    charts: vec![charter_core::NewChart::named("Easy")],
+                })
+                .unwrap();
+            let song = Song::open(&document.to_json().unwrap(), &[&charter_ttr::Plugin]).unwrap();
+            let mut harness = Harness::builder().build_ui_state(
+                |ui, (song, drafts, actions): &mut (Song, SongDrafts, Vec<Action>)| {
+                    song_panel(ui, song, (drafts, None), actions);
+                },
+                (song, SongDrafts::default(), Vec::new()),
+            );
+            harness.run();
+            let field = harness.get_by_role_and_label(Role::TextInput, label);
+            field.focus();
+            harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+            field.type_text("NewTheme");
+            harness.run();
+            harness.key_press(egui::Key::Enter);
+            harness.run();
+            assert_eq!(
+                harness.state().2,
+                [Action::SetSetting {
+                    scope,
+                    key: "theme".to_owned(),
+                    value: Some("NewTheme".to_owned()),
+                }],
+                "{label}"
+            );
+        }
     }
 }
