@@ -6871,6 +6871,33 @@ mod tests {
     }
 
     #[test]
+    fn a_new_song_takes_the_cover_its_audio_holds_and_writes_it_into_its_folder() {
+        let mut harness = new_song_dialog();
+        drop_file(&mut harness, "/music/track.flac");
+        let (bytes, image) = (
+            b"jpeg".to_vec(),
+            egui::ColorImage::filled([2, 2], egui::Color32::RED),
+        );
+        harness
+            .state_mut()
+            .artwork_embedded(Path::new("/music/track.flac"), "jpg", (bytes, image));
+        harness.get_by_label("Create").click();
+        harness.run();
+        let song = harness.state().song.as_ref().unwrap();
+        let artwork = song.document().document().metadata.artwork.clone();
+        assert_eq!(
+            artwork.map(|path| path.to_string()).as_deref(),
+            Some("cover.jpg")
+        );
+        assert_eq!(
+            harness
+                .state()
+                .artwork_write_for(Path::new("/s/Track/Track.json")),
+            Some((PathBuf::from("/s/Track/cover.jpg"), b"jpeg".to_vec()))
+        );
+    }
+
+    #[test]
     fn tags_for_a_title_already_typed_are_offered_rather_than_taken() {
         let mut harness = new_song_dialog();
         let title = harness.get_by_role_and_label(Role::TextInput, "Title");

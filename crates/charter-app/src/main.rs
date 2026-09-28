@@ -667,6 +667,47 @@ mod tests {
     }
 
     #[test]
+    fn saving_writes_the_cover_new_audio_holds_into_the_song_folder() {
+        let mut host = host(Memory::with(&[("/m/track.flac", b"audio")]));
+        host.window = Window::new(PLUGINS);
+        let metadata = charter_core::Metadata {
+            title: "t".to_owned(),
+            artist: "a".to_owned(),
+            audio: charter_core::ResourcePath::new("a.ogg").unwrap(),
+            preview: None,
+            artwork: None,
+            genre: None,
+            ext: charter_core::Extensions::new(),
+        };
+        let song = charter_stepmania::Plugin
+            .new_song(&charter_core::NewSong {
+                metadata,
+                layout: 0,
+                charts: vec![charter_core::NewChart::named("Easy")],
+            })
+            .unwrap()
+            .to_json()
+            .unwrap();
+        host.window.open(Path::new("/s/Song/Song.json"), &song);
+        let audio = Path::new("/m/track.flac");
+        host.window.use_audio(audio);
+        host.window.take_requests();
+        let (bytes, _) = picture(png(2, 2)).unwrap();
+        host.window
+            .artwork_embedded(audio, "png", picture(bytes).unwrap());
+        host.handle_requests(vec![Request::Write {
+            path: PathBuf::from("/s/Song/Song.json"),
+            bytes: song,
+        }]);
+        assert_eq!(host.window.message(), None);
+        assert_eq!(
+            host.disk.read(Path::new("/s/Song/cover.png")).unwrap(),
+            png(2, 2)
+        );
+        assert!(files(&host, "/s/Song/track.flac"));
+    }
+
+    #[test]
     fn tags_of_audio_that_cannot_be_read_leave_the_song_alone() {
         let mut host = host(Memory::with(&[("/s/song.json", SONG)]));
         host.read(Path::new("/s/song.json"));
