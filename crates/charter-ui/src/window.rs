@@ -1755,10 +1755,11 @@ impl Window {
         }
     }
 
-    /// What this frame's keys ask for. Lane keys edit only a song open for editing.
+    /// What this frame's keys ask for. Lane keys edit only a song open for editing. Floating
+    /// windows such as the settings leave the keys to the editor; only a text field being typed
+    /// in, a question, or the timing window once clicked takes them.
     fn keyboard(&mut self, ui: &Ui) -> Vec<Action> {
-        let browsing = self.settings_open || self.help_open || self.import.open;
-        let lanes = if browsing || self.calibration.open {
+        let lanes = if self.calibration.open {
             0
         } else {
             self.song.as_ref().map_or(0, editable_lanes)
@@ -1774,7 +1775,11 @@ impl Window {
             || self.calibration.open
             || self.resetting
             || self.finding == Finding::Asking;
-        let typing = ui.ctx().egui_wants_keyboard_input();
+        // A button that Tab focused wants no letters, so only a text field counts.
+        let typing = ui
+            .ctx()
+            .memory(egui::Memory::focused)
+            .is_some_and(|id| egui::text_edit::TextEditState::load(ui.ctx(), id).is_some());
         // The timing window, once clicked, takes the keys it has a use for; undo and redo still
         // reach the song.
         let timing = self.sync.has_keyboard();
@@ -1797,7 +1802,7 @@ impl Window {
         asked
             .into_iter()
             .filter(|action| {
-                let open = if typing || browsing {
+                let open = if typing {
                     global(action)
                 } else if timing {
                     global(action) || history(action)
@@ -3623,7 +3628,7 @@ mod tests {
     }
 
     #[test]
-    fn lane_keys_do_not_edit_the_song_behind_settings() {
+    fn lane_keys_and_commands_still_work_with_the_settings_open() {
         let mut harness = editable_demo();
         let before = harness
             .state()
@@ -3646,7 +3651,22 @@ mod tests {
             .chart()
             .unwrap()
             .objects;
-        assert_eq!(after, &before);
+        assert_ne!(after, &before);
+        harness.key_press(egui::Key::ArrowDown);
+        harness.run();
+        assert!(harness.state().song.as_ref().unwrap().cursor() > Tick::new(0));
+    }
+
+    #[test]
+    fn a_button_tab_focused_leaves_the_keys_to_the_editor() {
+        let mut harness = editable_demo();
+        harness.key_press(egui::Key::Tab);
+        harness.run();
+        assert!(harness.ctx.memory(egui::Memory::focused).is_some());
+        let before = harness.state().song.as_ref().unwrap().cursor();
+        harness.key_press(egui::Key::ArrowDown);
+        harness.run();
+        assert!(harness.state().song.as_ref().unwrap().cursor() > before);
     }
 
     #[test]
