@@ -17,9 +17,9 @@ use serde_json::Value;
 use charter_core::{
     Anchor, Bpm, Chart as CoreChart, DEFAULT_TICKS_PER_BEAT, Difficulties, DifficultyPreset,
     Document, Extensions, FORMAT_VERSION, InvalidValue, Key, Kind, LaneCount, LaneIndex, Layout,
-    Location, Marker, MarkerKind, Metadata, Name, Namespace, NewSong, Object, Origin, Position,
-    Ruleset, RulesetPlugin, SettingScope, Settings, Shape, Stream, TextSetting, Tick, Ticks,
-    TicksPerBeat, TimeSignature, Timing, TimingEvent, TimingKind, ValidDocument,
+    Location, Marker, MarkerKind, Metadata, Name, Namespace, NewSong, NoteChange, Object, Origin,
+    Position, Ruleset, RulesetPlugin, SettingScope, Settings, Shape, Stream, TextSetting, Tick,
+    Ticks, TicksPerBeat, TimeSignature, Timing, TimingEvent, TimingKind, ValidDocument,
 };
 
 /// The ruleset namespace.
@@ -406,6 +406,12 @@ const fn lanes(n: u16) -> LaneCount {
     }
 }
 
+/// The note changes the editor offers, by their ids.
+const CHANGE_ARROW: &str = "arrow";
+const CHANGE_SLICE: &str = "slice";
+const CHANGE_BIG_TAP: &str = "big_tap";
+const CHANGE_TAP: &str = "tap";
+
 const SHAKE: &str = "shake";
 const SLICE: &str = "slice";
 const MEGA_TAP: &str = "mega_tap";
@@ -557,6 +563,52 @@ impl RulesetPlugin for Plugin {
                 lanes: lanes.width(),
             })
             .collect()
+    }
+
+    fn note_changes(&self) -> Vec<NoteChange> {
+        let change = |id: &str, name: &str, about: &str| NoteChange {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            about: about.to_owned(),
+        };
+        vec![
+            change(
+                CHANGE_ARROW,
+                "Arrow",
+                "A shake: left on the first lane, right on the last, down between",
+            ),
+            change(
+                CHANGE_SLICE,
+                "Slice",
+                "A slice: left on the left half of the lanes, right on the right",
+            ),
+            change(CHANGE_BIG_TAP, "Big tap", "A mega tap across every lane"),
+            change(CHANGE_TAP, "Tap", "A tap on the note's first lane"),
+        ]
+    }
+
+    fn change_note(&self, id: &str, object: &Object, lanes: LaneCount) -> Option<Object> {
+        let lanes = Lanes::of(lanes)?;
+        read_note(object, lanes)?;
+        let Position::Lane { index, .. } = object.position else {
+            return None;
+        };
+        let (lane, width) = (u16::from(index), u16::from(lanes.width()));
+        let left = 2 * lane < width;
+        let kind = match id {
+            CHANGE_ARROW if lane == 0 => NoteKind::Shake(Shake::Left),
+            CHANGE_ARROW if lane + 1 == width => NoteKind::Shake(Shake::Right),
+            CHANGE_ARROW => NoteKind::Shake(Shake::Down),
+            CHANGE_SLICE => NoteKind::Slice(if left { Side::Left } else { Side::Right }),
+            CHANGE_BIG_TAP => NoteKind::MegaTap,
+            CHANGE_TAP => NoteKind::Tap { lane: index },
+            _ => return None,
+        };
+        let note = Note {
+            tick: object.tick,
+            kind,
+        };
+        note.to_object(lanes).ok()
     }
 
     fn text_settings(&self) -> Vec<TextSetting> {
@@ -1468,6 +1520,45 @@ mod tests {
         assert!(matches!(read(&value), Err(Error::Difficulty { .. })));
         value["charts"][0]["settings"] = json!({ "difficulty": 3 });
         assert!(matches!(read(&value), Err(Error::Difficulty { .. })));
+    }
+
+    #[test]
+    fn a_note_changes_to_the_arrow_or_slice_its_lane_gives_or_a_big_tap_and_back() {
+        let lanes = Lanes::Five;
+        let tap = |lane: u16| {
+            let note = Note {
+                tick: Tick::new(0),
+                kind: NoteKind::Tap {
+                    lane: LaneIndex::new(lane),
+                },
+            };
+            note.to_object(lanes).unwrap()
+        };
+        let changed = |id: &str, lane: u16| {
+            let object = Plugin.change_note(id, &tap(lane), lanes.width()).unwrap();
+            read_note(&object, lanes).unwrap()
+        };
+        let arrows: Vec<_> = (0..5).map(|lane| changed("arrow", lane)).collect();
+        let (l, r, d) = (Shake::Left, Shake::Right, Shake::Down);
+        assert_eq!(arrows, [l, d, d, d, r].map(NoteKind::Shake));
+        let slices: Vec<_> = (0..5).map(|lane| changed("slice", lane)).collect();
+        let (sl, sr) = (Side::Left, Side::Right);
+        assert_eq!(slices, [sl, sl, sl, sr, sr].map(NoteKind::Slice));
+        assert_eq!(changed("big_tap", 3), NoteKind::MegaTap);
+        let arrow = Plugin.change_note("arrow", &tap(4), lanes.width()).unwrap();
+        let back = Plugin.change_note("tap", &arrow, lanes.width()).unwrap();
+        assert_eq!(
+            read_note(&back, lanes),
+            Some(NoteKind::Tap {
+                lane: LaneIndex::new(4)
+            })
+        );
+        assert_eq!(Plugin.note_changes().len(), 4);
+        assert!(
+            Plugin
+                .change_note("nonsense", &tap(0), lanes.width())
+                .is_none()
+        );
     }
 
     #[test]
