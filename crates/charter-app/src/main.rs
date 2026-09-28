@@ -355,12 +355,9 @@ fn main() -> eframe::Result {
         APP,
         options,
         Box::new(|creation| {
-            let settings = creation.storage.map_or_else(Settings::default, |storage| {
-                storage.get_string(SETTINGS).map_or_else(
-                    || eframe::get_value(storage, OLD_SETTINGS).unwrap_or_default(),
-                    |kept| Settings::from_kept(&kept),
-                )
-            });
+            let settings = creation
+                .storage
+                .map_or_else(Settings::default, kept_settings);
             let window = Window::new(PLUGINS)
                 .with_settings(settings)
                 .with_fallback_fonts(cjk_fonts());
@@ -385,6 +382,35 @@ fn main() -> eframe::Result {
             Ok(Box::new(host))
         }),
     )
+}
+
+/// The settings `storage` keeps: the changes from the defaults, or the whole copy an older version
+/// kept, whose note ticks were on as the sound they made and off as `off`.
+fn kept_settings(storage: &dyn eframe::Storage) -> Settings {
+    #[derive(Default, serde::Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum OldSound {
+        #[default]
+        Off,
+        Click,
+        Beep,
+        Hit,
+        Clap,
+        SoftClap,
+        Finish,
+    }
+    #[derive(serde::Deserialize)]
+    struct OldTicks {
+        #[serde(default)]
+        tick_sound: OldSound,
+    }
+    if let Some(kept) = storage.get_string(SETTINGS) {
+        return Settings::from_kept(&kept);
+    }
+    let mut settings: Settings = eframe::get_value(storage, OLD_SETTINGS).unwrap_or_default();
+    let old: Option<OldTicks> = eframe::get_value(storage, OLD_SETTINGS);
+    settings.note_ticks = old.is_some_and(|old| !matches!(old.tick_sound, OldSound::Off));
+    settings
 }
 
 /// The picture `bytes` encode, with a preview of it no larger than a song panel needs, unless
@@ -750,6 +776,59 @@ mod tests {
                 .message()
                 .is_some_and(|message| message.contains("another picture named cover.png"))
         );
+    }
+
+    /// eframe's storage, in memory.
+    #[derive(Default)]
+    struct Kept(std::collections::HashMap<String, String>);
+
+    impl eframe::Storage for Kept {
+        fn get_string(&self, key: &str) -> Option<String> {
+            self.0.get(key).cloned()
+        }
+
+        fn set_string(&mut self, key: &str, value: String) {
+            self.0.insert(key.to_owned(), value);
+        }
+
+        fn remove_string(&mut self, key: &str) {
+            self.0.remove(key);
+        }
+
+        fn flush(&mut self) {}
+    }
+
+    #[test]
+    fn settings_an_older_version_kept_whole_keep_their_note_ticks_on_or_off() {
+        #[derive(Clone, Copy, Debug, serde::Serialize)]
+        #[serde(rename_all = "snake_case")]
+        enum Sound {
+            Beep,
+            Off,
+        }
+        #[derive(serde::Serialize)]
+        struct Old {
+            tick_sound: Sound,
+            metronome: bool,
+        }
+        for (sound, on) in [(Sound::Beep, true), (Sound::Off, false)] {
+            let mut storage = Kept::default();
+            let old = Old {
+                tick_sound: sound,
+                metronome: true,
+            };
+            eframe::set_value(&mut storage, OLD_SETTINGS, &old);
+            eprintln!(
+                "PROBE {:?}",
+                eframe::Storage::get_string(&storage, OLD_SETTINGS)
+            );
+            let settings = kept_settings(&storage);
+            assert_eq!(settings.note_ticks, on, "{sound:?}");
+            assert!(settings.metronome);
+        }
+        let mut storage = Kept::default();
+        eframe::Storage::set_string(&mut storage, SETTINGS, r#"{ "zoom": 150.0 }"#.to_owned());
+        assert!((kept_settings(&storage).zoom - 150.0).abs() < f32::EPSILON);
     }
 
     #[test]

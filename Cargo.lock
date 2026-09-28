@@ -1484,6 +1484,7 @@ dependencies = [
  "image",
  "kira",
  "rfd",
+ "serde",
  "system-fonts",
  "timestretch",
  "ureq 3.4.2",

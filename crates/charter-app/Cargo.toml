@@ -21,6 +21,7 @@ eframe = { workspace = true, features = ["persistence"] }
 image.workspace = true
 kira.workspace = true
 rfd.workspace = true
+serde.workspace = true
 system-fonts.workspace = true
 timestretch.workspace = true
 ureq.workspace = true
