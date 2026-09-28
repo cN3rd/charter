@@ -373,6 +373,30 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_weight_write_reports_the_error_without_claiming_a_complete_download() {
+        struct FailingWriter;
+        impl Write for FailingWriter {
+            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("out of space"))
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let (send, receive) = std::sync::mpsc::channel();
+        let error = copy_weights(
+            &mut Cursor::new(b"weights"),
+            &mut FailingWriter,
+            Some(7),
+            &send,
+        )
+        .unwrap_err();
+        assert!(error.contains("out of space"));
+        assert!(receive.try_recv().is_err());
+    }
+
+    #[test]
     fn without_a_data_folder_the_window_hears_why_nothing_was_found() {
         let mut window = Window::new(&[]);
         let mut finder = Finder::new(None);

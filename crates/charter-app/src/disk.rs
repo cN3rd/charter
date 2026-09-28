@@ -284,4 +284,36 @@ mod tests {
             Some(&b"other audio"[..])
         );
     }
+
+    #[test]
+    fn copying_identical_audio_reuses_the_destination_without_a_move() {
+        let disk = Memory {
+            stuck: true,
+            ..Memory::with(&[
+                ("/m/audio.ogg", b"same audio"),
+                ("/s/audio.ogg", b"same audio"),
+            ])
+        };
+        copy_whole(&disk, Path::new("/m/audio.ogg"), Path::new("/s/audio.ogg")).unwrap();
+        assert_eq!(
+            disk.get("/s/audio.ogg").as_deref(),
+            Some(&b"same audio"[..])
+        );
+        assert_eq!(disk.get("/s/audio.ogg.partial"), None);
+    }
+
+    #[test]
+    fn a_failed_audio_move_preserves_the_destination_and_cleans_up_the_copy() {
+        let disk = Memory {
+            stuck: true,
+            ..Memory::with(&[("/m/audio.ogg", b"complete audio")])
+        };
+        assert!(copy_whole(&disk, Path::new("/m/audio.ogg"), Path::new("/s/audio.ogg")).is_err());
+        assert_eq!(
+            disk.get("/m/audio.ogg").as_deref(),
+            Some(&b"complete audio"[..])
+        );
+        assert_eq!(disk.get("/s/audio.ogg"), None);
+        assert_eq!(disk.get("/s/audio.ogg.partial"), None);
+    }
 }
