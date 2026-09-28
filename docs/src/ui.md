@@ -85,8 +85,11 @@ cursor follows the playback, and moving the cursor while playing seeks. A lane k
 playing places its note on the snap line nearest the audio and leaves the playback where it is;
 held past 200 ms, the tap grows into a hold with the playback, ending on the snap line nearest
 where the key comes up, all one step. Shift+Left and Shift+Right,
-or the Playback menu, play slower or faster from 10% to 400%, which changes the audio's pitch with
-its speed and leaves the chart alone. The status bar says whether the audio is ready, loading,
+or the Playback menu, play slower or faster from 10% to 400%, leaving the chart alone. From 25% to
+200% the audio keeps its pitch, stretched as it plays by timestretch's wide-range keylock, a phase
+vocoder, with the clicks mixed in before it and so stretched with it; a new speed plays on from the
+cursor. Outside that range, or with Keep pitch at other speeds off on the Sounds page, its pitch
+follows its speed. The status bar says whether the audio is ready, loading,
 missing or unreadable; if playback is tried after a load failure, a message points to choosing
 another audio file. Every message has a Dismiss button. The Edit, Timing and Playback menus
 carry the selection, tempo, marker and playback commands with their keys, F1 lists every key by
@@ -337,8 +340,7 @@ and the notes over a waveform that stays put.
   Settings kept by older versions, with the two latencies as one, keep it as the input latency. The
   clicks are mixed into the music before it plays, so they cannot drift from it and need no
   correction of their own, and muting or changing them while playing plays on from where it was.
-  Not yet built from the specification: scrub, pan split, count-in, pitch-preserving slow
-  playback, the magnifier, locks, the metre dialog, the command palette, the
+  Not yet built from the specification: scrub, pan split, count-in, the magnifier, locks, the metre dialog, the command palette, the
   overview, beat-stack view, auto-seed, suggested anchors, tap tempo and band solo; selection
   changes are not undo steps.
   The waveform shows here whether or not the notefield's is on.

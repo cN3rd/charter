@@ -47,6 +47,8 @@ burn-store = { version = "0.21.0", default-features = false, features = ["std", 
 # otherwise be the only way to turn on.
 burn-flex = "0.21.0"
 rubato = "5.0.0"
+# Pure Rust, no unsafe; its wide-range keylock keeps pitch from a quarter to twice the speed.
+timestretch = "0.15.0"
 # ponytail: blocking, rustls; charter's one download, the beat tracker's weights, needs no runtime.
 ureq = "3.4.2"
 audioadapter-buffers = "5.1.0"
@@ -139,6 +141,9 @@ opt-level = 3
 
 # kira mixes on the audio thread, where an unoptimized build crackles.
 [profile.dev.package.kira]
+opt-level = 3
+
+[profile.dev.package.timestretch]
 opt-level = 3
 
 [profile.dev.package."symphonia-wrap"]

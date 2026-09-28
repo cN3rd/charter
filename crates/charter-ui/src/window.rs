@@ -62,6 +62,8 @@ pub enum Request {
         clicks: Vec<(f64, charter_audio::Tone)>,
         volumes: charter_audio::Volumes,
         looping: Option<(f64, f64)>,
+        /// Whether audio played faster or slower than its speed keeps its pitch.
+        keep_pitch: bool,
     },
     /// Carry on playing with the audio at this volume.
     Volume(charter_audio::Gain),
@@ -864,6 +866,7 @@ impl Window {
             clicks,
             volumes,
             looping,
+            keep_pitch: self.settings.keep_pitch,
         });
     }
 
@@ -920,7 +923,10 @@ impl Window {
 
     fn set_rate(&mut self, rate: Rate) {
         self.rate = rate;
-        if self.playing {
+        // Audio that keeps its pitch is stretched for its speed, so a new speed plays it again.
+        if self.playing && self.settings.keep_pitch {
+            self.replay();
+        } else if self.playing {
             self.requests.push(Request::Rate(rate.factor()));
         }
     }
@@ -4330,7 +4336,10 @@ mod tests {
 
     #[test]
     fn shift_left_and_right_change_the_playback_rate_without_touching_the_chart() {
-        let mut harness = playable();
+        let mut harness = playable_with(Settings {
+            keep_pitch: false,
+            ..Settings::default()
+        });
         let before = harness.state().song.as_ref().unwrap().document().clone();
         space(&mut harness);
         harness.state_mut().take_requests();
@@ -4350,6 +4359,23 @@ mod tests {
         assert!((rate - 0.91).abs() < 1e-9, "{rate}");
         let after = harness.state().song.as_ref().unwrap().document();
         assert_eq!(after.document(), before.document());
+    }
+
+    #[test]
+    fn audio_keeping_its_pitch_plays_again_at_a_new_speed() {
+        let mut harness = playable();
+        space(&mut harness);
+        let Request::Play { keep_pitch, .. } = request(&mut harness) else {
+            panic!("expected playback");
+        };
+        assert!(keep_pitch);
+        harness.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::ArrowLeft);
+        harness.run();
+        let requests = harness.state_mut().take_requests();
+        let Some(Request::Play { rate, .. }) = requests.last() else {
+            panic!("expected playback again, got {requests:?}");
+        };
+        assert!((rate - 0.9).abs() < 1e-9, "{rate}");
     }
 
     #[test]

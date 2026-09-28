@@ -8,6 +8,9 @@ use charter_audio::{Onset, Peaks, Spectrum, Track};
 use charter_ui::{Request, Window};
 use kira::sound::PlaybackState;
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle, StaticSoundSettings};
+use kira::sound::streaming::{StreamingSoundData, StreamingSoundHandle, StreamingSoundSettings};
+
+use crate::stretch::{self, Stretched};
 use kira::{AudioManager, AudioManagerSettings, Decibels, DefaultBackend, Frame, Tween};
 
 /// What the loading thread sends: kept peaks as soon as they are read, then the audio, with its
@@ -17,6 +20,55 @@ enum Loaded {
     Audio(Result<(Arc<Track>, Option<Peaks>), String>),
     Spectrum(Spectrum),
     Onsets(Arc<[Onset]>),
+}
+
+/// The song's audio playing: as it is, at a speed that moves its pitch too, or stretched to keep
+/// its pitch at `rate` times its speed.
+enum Playing {
+    Plain(StaticSoundHandle),
+    Stretched {
+        sound: StreamingSoundHandle<std::convert::Infallible>,
+        rate: f64,
+    },
+}
+
+impl Playing {
+    fn state(&self) -> PlaybackState {
+        match self {
+            Self::Plain(sound) => sound.state(),
+            Self::Stretched { sound, .. } => sound.state(),
+        }
+    }
+
+    /// Where playback has got to, in seconds into the song's audio.
+    fn position(&self) -> f64 {
+        match self {
+            Self::Plain(sound) => sound.position(),
+            Self::Stretched { sound, rate } => sound.position() * rate,
+        }
+    }
+
+    fn set_volume(&mut self, volume: Decibels) {
+        match self {
+            Self::Plain(sound) => sound.set_volume(volume, Tween::default()),
+            Self::Stretched { sound, .. } => sound.set_volume(volume, Tween::default()),
+        }
+    }
+
+    /// Carries on from `to` seconds into the song's audio.
+    fn seek_to(&mut self, to: f64) {
+        match self {
+            Self::Plain(sound) => sound.seek_to(to),
+            Self::Stretched { sound, rate } => sound.seek_to(to / *rate),
+        }
+    }
+
+    fn stop(&mut self) {
+        match self {
+            Self::Plain(sound) => sound.stop(Tween::default()),
+            Self::Stretched { sound, .. } => sound.stop(Tween::default()),
+        }
+    }
 }
 
 /// A file being decoded, and where its results arrive.
@@ -35,7 +87,7 @@ pub struct Player {
     loaded: Option<(PathBuf, Arc<Track>, StaticSoundData)>,
     /// Audio that failed to load, which is not tried again until the window wants other audio.
     failed: Option<PathBuf>,
-    playing: Option<StaticSoundHandle>,
+    playing: Option<Playing>,
     /// A metronome sound being previewed, beside whatever else plays.
     previewing: Option<StaticSoundHandle>,
 }
@@ -168,12 +220,26 @@ impl Player {
                 ref clicks,
                 volumes,
                 looping,
+                keep_pitch,
             } => {
                 self.stop();
                 let Some((path, track, data)) = &self.loaded else {
                     window.playback_ended();
                     return;
                 };
+                if keep_pitch && stretch::keeps_pitch(rate) {
+                    // Mixed clicks carry the music's volume; alone, kira sets it.
+                    // ponytail: the clicks are stretched with the music, which softens them;
+                    // play them as sounds of their own at the scaled times if that is heard.
+                    let (track, volume) = if clicks.is_empty() {
+                        (Arc::clone(track), Some(decibels(volumes.music)))
+                    } else {
+                        (Arc::new(charter_audio::mix(track, clicks, volumes)), None)
+                    };
+                    let path = path.clone();
+                    self.play_stretched(&path, track, (from, rate, looping, volume), window);
+                    return;
+                }
                 let settings = StaticSoundSettings::new()
                     .start_position(from.max(0.0))
                     .playback_rate(rate);
@@ -200,7 +266,7 @@ impl Player {
                     .device()
                     .and_then(|device| device.play(data).map_err(|error| error.to_string()));
                 match played {
-                    Ok(sound) => self.playing = Some(sound),
+                    Ok(sound) => self.playing = Some(Playing::Plain(sound)),
                     Err(why) => {
                         window.audio_failed(&path, &why);
                         window.playback_ended();
@@ -209,7 +275,7 @@ impl Player {
             }
             Request::Volume(gain) => {
                 if let Some(sound) = &mut self.playing {
-                    sound.set_volume(decibels(gain), Tween::default());
+                    sound.set_volume(decibels(gain));
                 }
             }
             Request::Preview {
@@ -229,8 +295,9 @@ impl Player {
                     sound.seek_to(to.max(0.0));
                 }
             }
+            // Stretched audio changes speed by playing again, which the window asks for.
             Request::Rate(rate) => {
-                if let Some(sound) = &mut self.playing {
+                if let Some(Playing::Plain(sound)) = &mut self.playing {
                     sound.set_playback_rate(rate, Tween::default());
                 }
             }
@@ -240,7 +307,46 @@ impl Player {
 
     fn stop(&mut self) {
         if let Some(mut sound) = self.playing.take() {
-            sound.stop(Tween::default());
+            sound.stop();
+        }
+    }
+
+    /// Plays `track`, the audio of `path` with any clicks mixed in, from `from` seconds at `rate`
+    /// times its speed with its pitch kept, looping between `looping`'s seconds when given, at
+    /// `volume` unless the clicks mixed in carry it.
+    fn play_stretched(
+        &mut self,
+        path: &Path,
+        track: Arc<Track>,
+        (from, rate, looping, volume): (f64, f64, Option<(f64, f64)>, Option<Decibels>),
+        window: &mut Window,
+    ) {
+        let Some(stretched) = Stretched::new(track, rate) else {
+            window.audio_failed(path, "its sample rate cannot be slowed keeping its pitch");
+            window.playback_ended();
+            return;
+        };
+        let settings = StreamingSoundSettings::new().start_position(from.max(0.0) / rate);
+        let settings = match volume {
+            Some(volume) => settings.volume(volume),
+            None => settings,
+        };
+        let settings = match looping {
+            Some((start, end)) if end > start => {
+                settings.loop_region(start.max(0.0) / rate..end / rate)
+            }
+            _ => settings,
+        };
+        let data = StreamingSoundData::from_decoder(stretched).with_settings(settings);
+        let played = self
+            .device()
+            .and_then(|device| device.play(data).map_err(|error| error.to_string()));
+        match played {
+            Ok(sound) => self.playing = Some(Playing::Stretched { sound, rate }),
+            Err(why) => {
+                window.audio_failed(path, &why);
+                window.playback_ended();
+            }
         }
     }
 
@@ -614,6 +720,7 @@ mod tests {
             clicks: Vec::new(),
             volumes: charter_audio::Volumes::default(),
             looping: None,
+            keep_pitch: true,
         };
         player.answer(&play, &mut window);
         assert!(player.playing.is_none());

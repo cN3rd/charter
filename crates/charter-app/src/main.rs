@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 mod disk;
 mod finder;
 mod player;
+mod stretch;
 
 use charter_core::RulesetPlugin;
 use charter_ui::{Picture, Request, Saved, Settings, Window};

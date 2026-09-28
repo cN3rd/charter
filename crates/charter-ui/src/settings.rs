@@ -102,6 +102,9 @@ pub struct Settings {
     pub metronome_grid: bool,
     /// The alternate playback speed, as a factor, that R switches to in the timing window.
     pub rate_b: f64,
+    /// Whether audio played slower or faster than its speed keeps its pitch, from a quarter to
+    /// twice its speed.
+    pub keep_pitch: bool,
     /// How much later than it plays a sound is heard, in milliseconds, as the calibration's flash
     /// set it: the cursor takes it off the playhead to show what is heard.
     pub audio_latency_ms: f64,
@@ -134,6 +137,7 @@ impl Default for Settings {
             grid: BEATS,
             metronome_grid: false,
             rate_b: 0.6,
+            keep_pitch: true,
             audio_latency_ms: 0.0,
             input_latency_ms: 0.0,
         }
@@ -617,6 +621,12 @@ fn sounds(ui: &mut egui::Ui, settings: &mut Settings) -> Option<Asked> {
     row(ui, name, about, |ui, _| {
         switch(ui, &mut settings.metronome_grid, name);
     });
+    let name = "Keep pitch at other speeds";
+    let about = "Slowed or sped-up audio keeps its pitch from 25% to 200%; outside that, and with \
+        this off, its pitch follows its speed.";
+    row(ui, name, about, |ui, _| {
+        switch(ui, &mut settings.keep_pitch, name);
+    });
     let about = "The speed R switches to in the timing window, to hear flams slowed down.";
     row(ui, "Alternate speed", about, |ui, caption| {
         let mut percent = settings.rate_b * 100.0;
@@ -838,6 +848,7 @@ mod tests {
             grid: NonZeroU16::new(24).unwrap(),
             metronome_grid: true,
             rate_b: 0.5,
+            keep_pitch: false,
             audio_latency_ms: 12.0,
             input_latency_ms: 20.0,
         };
