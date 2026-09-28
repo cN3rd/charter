@@ -47,8 +47,6 @@ impl Spectrum {
             .iter()
             .map(|[left, right]| (left + right) / 2.0)
             .collect();
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // a short hop
-        let hop = ((rate / PER_SECOND).round() as usize).max(1);
         let window: Vec<f32> = (0..WINDOW)
             .map(|n| {
                 #[allow(clippy::cast_precision_loss)] // a window's length
@@ -60,11 +58,19 @@ impl Spectrum {
         let fft = FftPlanner::<f32>::new().plan_fft_forward(WINDOW);
         let mut buffer = vec![Complex::new(0.0, 0.0); WINDOW];
         let mut scratch = vec![Complex::new(0.0, 0.0); fft.get_inplace_scratch_len()];
-        let frames = mono.len().div_ceil(hop);
+        #[allow(clippy::cast_precision_loss)] // a track's samples, far inside f64
+        let seconds = mono.len() as f64 / rate;
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // a frame count
+        let frames = (seconds * PER_SECOND).ceil() as usize;
         let mut decibels: Vec<[f64; Self::BANDS]> = Vec::with_capacity(frames);
         for frame in 0..frames {
-            // Centred on its time, with silence before the track and after it.
-            let centre = frame * hop;
+            // Centred on the sample nearest its time, rather than a rounded hop apart, which
+            // drifts at rates 200 does not divide, such as 44.1 kHz. Silence before the track
+            // and after it.
+            #[allow(clippy::cast_precision_loss)] // a frame index
+            let time = frame as f64 / PER_SECOND;
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // a sample index
+            let centre = (time * rate).round() as usize;
             for (at, (slot, weight)) in buffer.iter_mut().zip(&window).enumerate() {
                 let sample = (centre + at)
                     .checked_sub(WINDOW / 2)
@@ -193,6 +199,26 @@ mod tests {
         assert_eq!(loudest, band_of(440.0));
         assert!(middle[band_of(440.0)] > 240);
         assert!(middle[band_of(5000.0)] < 60, "{middle:?}");
+    }
+
+    #[test]
+    fn a_click_late_in_a_44100_hz_track_lands_on_the_frame_of_its_time() {
+        // Ten seconds of silence at 44.1 kHz, which 200 frames a second do not divide, with a
+        // click at 9.5 s.
+        let mut frames = vec![[0.0f32; 2]; 10 * 44_100];
+        for frame in frames.iter_mut().skip(9 * 44_100 + 22_050).take(64) {
+            *frame = [0.9, 0.9];
+        }
+        let spectrum = Spectrum::of(&Track::from_frames(44_100, frames));
+        let loudest = spectrum
+            .frames()
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, frame)| frame.iter().map(|&level| u32::from(level)).sum::<u32>())
+            .map(|(at, _)| at)
+            .unwrap();
+        assert!(loudest.abs_diff(1900) <= 1, "frame {loudest}, not 1900");
+        assert_eq!(spectrum.frames().len(), 2000);
     }
 
     #[test]
