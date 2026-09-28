@@ -21,17 +21,34 @@ pub enum Sound {
     Off,
     Click,
     Beep,
+    Hit,
+    Clap,
+    SoftClap,
+    Finish,
 }
 
 impl Sound {
-    const ALL: [Self; 3] = [Self::Off, Self::Click, Self::Beep];
+    const ALL: [Self; 7] = [
+        Self::Off,
+        Self::Click,
+        Self::Beep,
+        Self::Hit,
+        Self::Clap,
+        Self::SoftClap,
+        Self::Finish,
+    ];
 
-    /// The tone the sound plays, if any.
-    pub(crate) fn tone(self) -> Option<charter_audio::Tone> {
+    /// What each note ticks with, if anything.
+    pub(crate) fn tick(self) -> Option<charter_audio::Tick> {
+        use charter_audio::Tick;
         match self {
             Self::Off => None,
-            Self::Click => Some(charter_audio::Tone::Click),
-            Self::Beep => Some(charter_audio::Tone::Beep),
+            Self::Click => Some(Tick::Click),
+            Self::Beep => Some(Tick::Beep),
+            Self::Hit => Some(Tick::Hit),
+            Self::Clap => Some(Tick::Clap),
+            Self::SoftClap => Some(Tick::SoftClap),
+            Self::Finish => Some(Tick::Finish),
         }
     }
 
@@ -40,7 +57,7 @@ impl Sound {
     pub(crate) fn toggled(self) -> Self {
         match self {
             Self::Off => Self::Click,
-            Self::Click | Self::Beep => Self::Off,
+            _ => Self::Off,
         }
     }
 
@@ -49,6 +66,10 @@ impl Sound {
             Self::Off => "Off",
             Self::Click => "Click",
             Self::Beep => "Beep",
+            Self::Hit => "Hit",
+            Self::Clap => "Clap",
+            Self::SoftClap => "Soft clap",
+            Self::Finish => "Finish",
         }
     }
 }
@@ -74,6 +95,8 @@ pub struct Settings {
     pub direction: Direction,
     /// What sounds as each note passes the now line during playback.
     pub tick_sound: Sound,
+    /// Whether each lane's note ticks in a pitch of its own, lowest on the left.
+    pub tuned_lanes: bool,
     /// Whether the metronome sounds on each beat during playback.
     #[serde(deserialize_with = "on_or_sound")]
     pub metronome: bool,
@@ -125,6 +148,7 @@ impl Default for Settings {
             scale: 1.0,
             direction: Direction::Up,
             tick_sound: Sound::Off,
+            tuned_lanes: false,
             metronome: false,
             metronome_sound: Kit::default(),
             volumes: Volumes::default(),
@@ -570,7 +594,8 @@ fn display(ui: &mut egui::Ui, settings: &mut Settings) {
 
 /// The sounds page. Says which metronome to preview, when its button was pressed.
 fn sounds(ui: &mut egui::Ui, settings: &mut Settings) -> Option<Asked> {
-    let about = "A tick on each note as it passes. F4 turns it on and off.";
+    let about = "A tick on each note as it passes. F4 turns it on and off. The hit sounds are \
+        synthesised, public domain.";
     row(ui, "Note ticks", about, |ui, caption| {
         let sound = &mut settings.tick_sound;
         egui::ComboBox::from_id_salt("note ticks")
@@ -582,6 +607,12 @@ fn sounds(ui: &mut egui::Ui, settings: &mut Settings) -> Option<Asked> {
             })
             .response
             .labelled_by(caption);
+    });
+    let name = "Tuned lanes";
+    let about = "Each lane ticks in its own pitch, lowest on the left, a whole tone apart and an \
+        octave at most across. Shift+F4 turns it on and off.";
+    row(ui, name, about, |ui, _| {
+        switch(ui, &mut settings.tuned_lanes, name);
     });
     let about = "A tick on each beat, accented on each measure's first. F3 turns it on and off.";
     row(ui, "Metronome", about, |ui, _| {
@@ -833,6 +864,7 @@ mod tests {
             scale: 1.25,
             direction: Direction::Right,
             tick_sound: Sound::Click,
+            tuned_lanes: true,
             metronome: true,
             metronome_sound: Kit::ShakerBurst,
             volumes: Volumes {

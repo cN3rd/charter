@@ -151,6 +151,10 @@ _licenses os:
     cp "$clicks/LICENSE-AUDIO" "$folder/licenses/metronome-sounds-LICENSE.txt"
     cp "$clicks/CC0-1.0.txt" "$folder/licenses/metronome-sounds-CC0-1.0.txt"
     cp "$clicks/PROVENANCE.md" "$folder/licenses/metronome-sounds-PROVENANCE.md"
+    hits=crates/charter-audio/assets/hitsounds
+    cp "$hits/LICENSE-AUDIO" "$folder/licenses/hit-sounds-LICENSE.txt"
+    cp "$hits/CC0-1.0.txt" "$folder/licenses/hit-sounds-CC0-1.0.txt"
+    cp "$hits/PROVENANCE.md" "$folder/licenses/hit-sounds-PROVENANCE.md"
     cargo metadata --format-version 1 --filter-platform "$target" | python3 -c '
     import json, sys
     meta = json.load(sys.stdin)

@@ -193,6 +193,11 @@ pub fn menu_bar(
                     ("Slower by 1%", "Ctrl+Shift+Left", Action::NudgeRate(-0.01)),
                     ("Metronome on or off", "F3", Action::ToggleMetronome),
                     ("Note ticks on or off", "F4", Action::ToggleTicks),
+                    (
+                        "Tuned lanes on or off",
+                        "Shift+F4",
+                        Action::ToggleTunedLanes,
+                    ),
                     ("Calibrate latency…", "", Action::Calibrate),
                 ],
             );
@@ -365,6 +370,10 @@ const KEYS: [(&str, &[(&str, &str)]); 6] = [
                 "Play slower or faster by 1%",
             ),
             ("F3, F4", "Turn the metronome or the note ticks on or off"),
+            (
+                "Shift+F4",
+                "Tune each lane's note ticks to a pitch of its own, or back",
+            ),
         ],
     ),
     (
@@ -901,7 +910,7 @@ pub fn transport_bar(
     ui: &mut Ui,
     song: Option<&Song>,
     (zoom, rate, playing, panel, grid): (Zoom, Rate, bool, bool, NonZeroU16),
-    (metronome, ticks, volumes): (bool, bool, charter_audio::Volumes),
+    (metronome, (ticks, tuned), volumes): (bool, (bool, bool), charter_audio::Volumes),
     actions: &mut Vec<Action>,
 ) {
     let width = ui.available_width();
@@ -1047,6 +1056,17 @@ pub fn transport_bar(
                 .clicked()
                 {
                     actions.push(Action::ToggleTicks);
+                }
+                if style::tool(
+                    ui,
+                    icon::PIANO_KEYS,
+                    "Tuned lanes",
+                    "Tuned lanes: each lane ticks in its own pitch (Shift+F4)",
+                    tuned,
+                )
+                .clicked()
+                {
+                    actions.push(Action::ToggleTunedLanes);
                 }
                 if style::tool(
                     ui,

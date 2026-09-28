@@ -22,13 +22,15 @@ C++ redistributable.
 | `LICENSE-MIT`, `LICENSE-APACHE` | charter's own licences |
 | `licenses/Inter-OFL.txt` | the Inter font's licence |
 | `licenses/metronome-sounds-*` | the click sounds' licence, CC0 text and provenance |
+| `licenses/hit-sounds-*` | the note-tick hit sounds' licence, CC0 text and provenance |
 | `licenses/THIRD-PARTY.md` | every crate linked into the binary, with its version and licence |
 
 There is no assets folder, and none is missing. The resources the editor ships with are compiled
 into the binary with `include_bytes!`, so it runs from anywhere with only its own file:
 
-- the metronome and note-tick sounds, two WAVs for each kit, in `charter-audio/src/click.rs` from
+- the metronome sounds, two WAVs for each kit, in `charter-audio/src/click.rs` from
   `crates/charter-audio/assets/clicks/`
+- the note-tick hit sounds, in the same file from `crates/charter-audio/assets/hitsounds/`
 - the Inter fonts, in `charter-style/src/lib.rs` from `crates/charter-style/assets/fonts/`
 - the Phosphor icon font, which the `egui-phosphor` crate embeds
 

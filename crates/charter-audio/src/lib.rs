@@ -8,7 +8,7 @@ mod spectrum;
 mod tags;
 mod track;
 
-pub use click::{Gain, Kit, Tone, Volumes, mix, render};
+pub use click::{Gain, Kit, Tick, Tone, Volumes, mix, render};
 pub use onsets::{Onset, onsets, onsets_from_bytes, onsets_to_bytes};
 pub use peaks::{Extent, Peaks, fingerprint};
 pub use spectrum::Spectrum;

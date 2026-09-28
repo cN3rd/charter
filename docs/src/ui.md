@@ -52,7 +52,13 @@ cursor or starts one, and any marker can be removed, each as one step. Songs ope
 native file dialogs, unsaved changes are asked about before they are lost and autosaved, half a
 minute after they are made unless the settings say otherwise, and a settings window holds what the
 user chooses, including which way the notefield runs and the tick on each note and the metronome on
-each beat, which play over the audio and which F3 and F4 turn on and off. The music, the note ticks and
+each beat, which play over the audio and which F3 and F4 turn on and off. A note ticks with a
+click, a beep, or one of four synthesised hit sounds, a hit, a clap, a soft clap and a finish,
+public domain like the metronome's. Tuned lanes, off until Shift+F4, the piano-keys button beside
+the note ticks or the Sounds page turns them on, gives each lane's tick a pitch of its own, lowest
+on the left: a whole tone a lane either side of the chart's middle, closer on charts wider than
+seven lanes so every chart spans an octave at most, by playing the tick faster or slower as a
+tuned drum sounds. Turning it on or off while the ticks play is heard at once. The music, the note ticks and
 the metronome each have a volume, set on the Sounds page or from the toolbar's speaker; each
 turns down only its own sound. With no clicks on, the music's volume changes as it plays; clicks
 are mixed into the audio before it plays, so with them on, a volume changed while playing plays

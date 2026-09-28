@@ -204,6 +204,7 @@ fn command(key: Key, modifiers: Modifiers) -> Option<Action> {
         match key {
             Key::ArrowRight => return Some(Action::NudgeRate(0.1)),
             Key::ArrowLeft => return Some(Action::NudgeRate(-0.1)),
+            Key::F4 => return Some(Action::ToggleTunedLanes),
             _ => {}
         }
     }
@@ -269,6 +270,8 @@ mod tests {
             (Key::Z, Modifiers::COMMAND, Some(Action::Undo)),
             (Key::S, both, Some(Action::SaveAs)),
             (Key::Space, NONE, Some(Action::TogglePlay)),
+            (Key::F4, NONE, Some(Action::ToggleTicks)),
+            (Key::F4, shift, Some(Action::ToggleTunedLanes)),
             (
                 Key::CloseBracket,
                 NONE,

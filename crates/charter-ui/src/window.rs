@@ -397,6 +397,8 @@ pub(crate) enum Action {
     ToggleMetronome,
     /// Turns the tick on each note on or off.
     ToggleTicks,
+    /// Tunes each lane's note ticks to a pitch of its own, or back.
+    ToggleTunedLanes,
     /// Finds the song's timing from its audio.
     FindTiming,
     /// Draws the notefield's grid down to this note value.
@@ -1501,6 +1503,13 @@ impl Window {
             Action::ToggleSongPanel => self.settings.song_panel = !self.settings.song_panel,
             Action::ToggleMetronome => self.settings.metronome = !self.settings.metronome,
             Action::ToggleTicks => self.settings.tick_sound = self.settings.tick_sound.toggled(),
+            Action::ToggleTunedLanes => {
+                self.settings.tuned_lanes = !self.settings.tuned_lanes;
+                // Heard at once while the ticks play.
+                if self.settings.tick_sound != settings::Sound::Off {
+                    self.replay();
+                }
+            }
             Action::SetGrid(grid) => self.settings.grid = grid,
             Action::TogglePlay => self.toggle_play(),
             Action::Audition(from) => self.audition(from),
@@ -1625,6 +1634,7 @@ impl Window {
             | Action::ToggleSongPanel
             | Action::ToggleMetronome
             | Action::ToggleTicks
+            | Action::ToggleTunedLanes
             | Action::FindTiming
             | Action::SetGrid(_)
             | Action::TogglePlay
@@ -1839,7 +1849,10 @@ impl Window {
             });
         let sounds = (
             self.settings.metronome,
-            self.settings.tick_sound != settings::Sound::Off,
+            (
+                self.settings.tick_sound != settings::Sound::Off,
+                self.settings.tuned_lanes,
+            ),
             self.settings.volumes,
         );
         let view = (
@@ -2165,6 +2178,26 @@ fn stretch(song: &mut Song, holding: &[(LaneIndex, Tick)]) -> Option<String> {
 // click from the next play; schedule them live if that gets in the way of recording.
 /// The tones `settings` ask for over the open chart of `song`, playing from `from` seconds to
 /// `until`: a tick on each note, and the metronome on each beat.
+/// How far above its own pitch a note on `position` ticks with tuned lanes, in cents: a whole tone
+/// a lane either side of the chart's middle, or closer on a chart too wide for an octave across,
+/// so every chart spans an octave at most. A note across lanes ticks at their middle.
+fn lane_cents(position: charter_core::Position, lanes: u16) -> i16 {
+    let charter_core::Position::Lane { index, width } = position else {
+        return 0;
+    };
+    let Some(gaps) = lanes.checked_sub(1).filter(|gaps| *gaps > 0) else {
+        return 0;
+    };
+    let step = (1200.0 / f64::from(gaps)).min(200.0);
+    let at = f64::from(u16::from(index)) + (f64::from(u16::from(width)) - 1.0) / 2.0;
+    let cents = ((at - f64::from(gaps) / 2.0) * step)
+        .round()
+        .clamp(-1200.0, 1200.0);
+    #[allow(clippy::cast_possible_truncation)] // within an octave either way
+    let cents = cents as i16;
+    cents
+}
+
 fn clicks(
     song: &Song,
     settings: &Settings,
@@ -2175,15 +2208,17 @@ fn clicks(
     use charter_timing::grid::Line;
     let timing = song.timing();
     let mut clicks = Vec::new();
-    if let (Some(tone), Some(chart)) = (settings.tick_sound.tone(), song.chart()) {
-        let heads = chart
-            .objects()
-            .map(|object| timing.time_at(object.tick).seconds());
-        clicks.extend(
-            heads
-                .filter(|at| (from..=until).contains(at))
-                .map(|at| (at, tone)),
-        );
+    if let (Some(tick), Some(chart)) = (settings.tick_sound.tick(), song.chart()) {
+        let lanes = chart.lanes.map_or(0, u16::from);
+        let heads = chart.objects().map(|object| {
+            let cents = if settings.tuned_lanes {
+                lane_cents(object.position, lanes)
+            } else {
+                0
+            };
+            (timing.time_at(object.tick).seconds(), tick.pitched(cents))
+        });
+        clicks.extend(heads.filter(|(at, _)| (from..=until).contains(at)));
     }
     if settings.metronome {
         let kit = settings.metronome_sound;
@@ -4513,6 +4548,50 @@ mod tests {
     }
 
     #[test]
+    fn tuned_lanes_step_a_whole_tone_from_the_middle_and_span_an_octave_at_most() {
+        let at = |index: u16, width: u16, lanes: u16| {
+            let position = charter_core::Position::Lane {
+                index: LaneIndex::new(index),
+                width: LaneCount::new(width).unwrap(),
+            };
+            lane_cents(position, lanes)
+        };
+        let row = |lanes: u16| {
+            (0..lanes)
+                .map(|lane| at(lane, 1, lanes))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(row(1), [0]);
+        assert_eq!(row(3), [-200, 0, 200]);
+        assert_eq!(row(4), [-300, -100, 100, 300]);
+        let wide = row(13);
+        assert_eq!(
+            (wide.first(), wide.get(6), wide.last()),
+            (Some(&-600), Some(&0), Some(&600))
+        );
+        assert_eq!(at(0, 2, 4), -200);
+    }
+
+    #[test]
+    fn shift_f4_tunes_the_note_ticks_by_lane() {
+        let mut harness = playable_with(Settings {
+            tick_sound: Sound::Clap,
+            ..Settings::default()
+        });
+        harness.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::F4);
+        harness.run();
+        assert!(harness.state().settings().tuned_lanes);
+        let clicks = clicks_played(&mut harness);
+        let tones: Vec<_> = clicks.iter().map(|(_, tone)| *tone).collect();
+        let clap = |cents| charter_audio::Tick::Clap.pitched(cents);
+        assert_eq!(tones, [clap(-300), clap(-100), clap(100), clap(300)]);
+        space(&mut harness);
+        harness.get_by_label("Tuned lanes").click();
+        harness.run();
+        assert!(!harness.state().settings().tuned_lanes);
+    }
+
+    #[test]
     fn the_tick_sound_plays_on_every_note_from_the_cursor_on() {
         let mut harness = playable_with(Settings {
             tick_sound: Sound::Beep,
@@ -4523,7 +4602,11 @@ mod tests {
         let clicks = clicks_played(&mut harness);
         let times: Vec<f64> = clicks.iter().map(|(at, _)| *at).collect();
         assert_eq!(times, [0.125, 0.25, 0.375]);
-        assert!(clicks.iter().all(|(_, tone)| *tone == Tone::Beep));
+        assert!(
+            clicks
+                .iter()
+                .all(|(_, tone)| *tone == charter_audio::Tick::Beep.tone())
+        );
     }
 
     #[test]
