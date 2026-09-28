@@ -8381,4 +8381,248 @@ mod tests {
         assert_eq!(audio(&harness), "demo.ogg");
         assert!(harness.query_by_label_contains("Refused").is_some());
     }
+
+    #[test]
+    fn a_read_only_song_refuses_edits_from_actions_without_changing_its_document() {
+        let mut app = Window::new(&[]);
+        app.open(Path::new("four.json"), &four_taps());
+        let before = app.song.as_ref().unwrap().document().to_json().unwrap();
+        for action in [
+            Action::Place {
+                tick: Tick::new(1920),
+                lane: LaneIndex::new(0),
+                note: Note::Tap,
+            },
+            Action::SetSection("Verse".to_owned()),
+            Action::ToggleBookmark,
+            Action::NudgeBpm(1.0),
+            Action::SetOffset(charter_core::Origin::try_from(0.1).unwrap()),
+        ] {
+            app.apply(action);
+            assert!(
+                app.message()
+                    .is_some_and(|message| message.starts_with("Refused:"))
+            );
+            assert_eq!(
+                app.song.as_ref().unwrap().document().to_json().unwrap(),
+                before
+            );
+        }
+        assert!(!app.song.as_ref().unwrap().is_modified());
+    }
+
+    #[test]
+    fn editing_actions_without_a_song_neither_create_one_nor_request_a_save() {
+        let mut app = Window::new(PLUGINS);
+        for action in [
+            Action::Place {
+                tick: Tick::new(0),
+                lane: LaneIndex::new(0),
+                note: Note::Tap,
+            },
+            Action::Undo,
+            Action::Redo,
+            Action::Copy,
+            Action::Paste(None),
+            Action::FindTiming,
+            Action::TogglePlay,
+            Action::Save,
+            Action::SaveAs,
+        ] {
+            app.apply(action);
+        }
+        let mut harness = window(app);
+        assert!(harness.state().song.is_none());
+        assert_eq!(harness.state().title(), "charter");
+        assert_eq!(harness.state_mut().take_requests(), []);
+        assert_eq!(
+            harness.state().message(),
+            Some("Finding the timing needs the song's audio")
+        );
+    }
+
+    #[test]
+    fn a_loop_restarts_from_its_beginning_when_its_sound_changes() {
+        let mut harness = listening(Settings {
+            note_ticks: true,
+            ..Settings::default()
+        });
+        harness.key_press(egui::Key::L);
+        harness.run();
+        played(&mut harness);
+        harness.state_mut().playhead(1.0);
+        harness.state_mut().settings.tuned_lanes = true;
+        harness.run();
+        let requests = harness.state_mut().take_requests();
+        assert!(
+            requests
+                .iter()
+                .any(|request| matches!(request, Request::Pause))
+        );
+        let Some(Request::Play {
+            from,
+            looping,
+            clicks,
+            ..
+        }) = requests.last()
+        else {
+            panic!("expected restarted loop: {requests:?}");
+        };
+        assert!(from.abs() < 1e-9);
+        assert_eq!(*looping, Some((0.0, 2.0)));
+        assert!(
+            clicks
+                .iter()
+                .any(|(_, tone)| *tone != charter_audio::Tick::Click.tone())
+        );
+        harness.run();
+        assert_eq!(harness.state_mut().take_requests(), []);
+    }
+
+    #[test]
+    fn a_clipboard_reply_cancels_the_wait_for_the_last_copied_notes() {
+        let mut harness = editable_four_taps();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.event(egui::Event::Copy);
+        harness.run();
+        let clipped = Clipped {
+            charter_notes: harness.state().clip.iter().take(1).cloned().collect(),
+        };
+        harness
+            .state_mut()
+            .apply(Action::PasteHere(Tick::new(3840)));
+        harness.step();
+        harness.event(egui::Event::Paste(serde_json::to_string(&clipped).unwrap()));
+        harness.run();
+        for _ in 0..PASTE_WAIT {
+            harness.step();
+        }
+        assert_eq!(note_count(&harness), 5);
+        assert_eq!(lanes_at(&harness, 3840), [0]);
+        assert_eq!(harness.state().pasting, None);
+    }
+
+    #[test]
+    fn a_failed_autosave_is_retried_after_the_delay_without_losing_the_edit() {
+        let (mut harness, _) = autosaved_four_taps();
+        harness.state_mut().autosave_failed("out of space");
+        at_time(&mut harness, 32.0);
+        assert!(
+            harness
+                .query_by_label_contains("Autosave failed: out of space")
+                .is_some()
+        );
+        assert_eq!(harness.state_mut().take_requests(), []);
+        at_time(&mut harness, 62.0);
+        let Request::Autosave { bytes } = request(&mut harness) else {
+            panic!("expected a retry");
+        };
+        let kept = recovery::read(&bytes, PLUGINS).unwrap();
+        assert!(holds_tap(&kept.song.document().to_json().unwrap(), 0, 3));
+    }
+
+    #[test]
+    fn a_failed_timing_search_keeps_the_original_timing_and_stops_searching() {
+        let mut harness = playable();
+        let before = anchor_seconds(&harness);
+        find_from_the_menu(&mut harness);
+        harness.state_mut().take_requests();
+        harness
+            .state_mut()
+            .timing_found(Err("no beats detected".to_owned()));
+        harness.run();
+        assert_eq!(anchor_seconds(&harness), before);
+        assert!(
+            harness
+                .query_by_label_contains("no beats detected")
+                .is_some()
+        );
+        assert!(
+            harness
+                .query_by_label_contains("Finding the timing")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_timing_result_for_a_song_that_cannot_be_edited_is_refused() {
+        let mut app = Window::new(&[]);
+        app.open(Path::new("four.json"), &four_taps());
+        let before = app.song.as_ref().unwrap().document().to_json().unwrap();
+        let found = serde_json::from_value(serde_json::json!({
+            "anchors": [{ "tick": 0, "seconds": 1.0 }],
+            "tempo": 120.0,
+            "events": []
+        }))
+        .unwrap();
+        app.timing_found(Ok(found));
+        assert!(
+            app.message()
+                .is_some_and(|message| message.contains("timing found was refused"))
+        );
+        assert_eq!(
+            app.song.as_ref().unwrap().document().to_json().unwrap(),
+            before
+        );
+
+        let mut empty = Window::new(PLUGINS);
+        empty.weights_needed();
+        empty.timing_found(Ok(fresh_timing()));
+        assert_eq!(empty.finding, Finding::Idle);
+        assert!(empty.song.is_none());
+    }
+
+    #[test]
+    fn playback_without_accessible_audio_explains_how_to_supply_it() {
+        let mut unsaved = Window::new(PLUGINS);
+        unsaved.open(Path::new("four.json"), &four_taps());
+        unsaved.path = None;
+        unsaved.apply(Action::TogglePlay);
+        assert!(
+            unsaved
+                .message()
+                .is_some_and(|message| message.contains("Save the song beside a.ogg"))
+        );
+        assert_eq!(unsaved.take_requests(), []);
+
+        let mut harness = created();
+        let new = harness.state_mut();
+        new.apply(Action::TogglePlay);
+        assert!(
+            new.message()
+                .is_some_and(|message| message.contains("drop an audio file"))
+        );
+        new.no_drops = true;
+        new.apply(Action::TogglePlay);
+        assert!(
+            new.message()
+                .is_some_and(|message| message.contains("choose one"))
+        );
+        assert!(!new.is_playing());
+    }
+
+    #[test]
+    fn stale_onsets_do_not_follow_a_new_audio_file() {
+        let mut app = Window::new(PLUGINS);
+        app.open(Path::new("/songs/four.json"), &four_taps());
+        let onsets: Arc<[charter_audio::Onset]> = Arc::from([]);
+        app.onsets_ready(Path::new("/songs/a.ogg"), onsets);
+        assert_eq!(app.onsets().map(<[charter_audio::Onset]>::len), Some(0));
+        app.use_audio(Path::new("/music/other.ogg"));
+        assert!(app.onsets().is_none());
+        assert_eq!(app.audio_file(), Some(PathBuf::from("/music/other.ogg")));
+    }
+
+    #[test]
+    fn a_timing_file_read_opens_the_import_and_a_read_failure_explains_it() {
+        let mut app = Window::new(PLUGINS);
+        app.timing_file_read("not timing");
+        assert!(app.import.open);
+        assert_eq!(app.import.text, "not timing");
+        app.timing_file_failed("permission denied");
+        assert_eq!(
+            app.message(),
+            Some("Could not read the timing: permission denied")
+        );
+    }
 }

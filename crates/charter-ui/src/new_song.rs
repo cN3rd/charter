@@ -736,4 +736,83 @@ mod tests {
         assert_eq!(games.len(), 1);
         assert_eq!(games[0].id(), "sm");
     }
+
+    #[test]
+    fn tags_fill_only_the_fields_the_audio_supplies_and_repeated_tags_do_not_offer_changes() {
+        let mut draft = Draft::default();
+        assert!(draft.blank());
+        draft.fill(Some(" Track "), None);
+        assert!(!draft.blank());
+        assert!(!draft.differs(Some("Track"), None));
+        draft.fill(None, Some("Artist"));
+        assert_eq!(draft.song().unwrap().metadata.title, "Track");
+        assert_eq!(draft.song().unwrap().metadata.artist, "Artist");
+        assert!(draft.differs(None, Some("Another artist")));
+    }
+
+    #[test]
+    fn an_unknown_preset_does_not_erase_a_custom_selection() {
+        let mut draft = Draft::default();
+        let difficulties = ttr();
+        draft.level_with(&difficulties);
+        draft.picks[0].on = true;
+        draft.picks[0].name = "Mine".to_owned();
+        draft.choose(&difficulties, usize::MAX);
+        draft.level_with(&difficulties);
+        assert_eq!(
+            draft.song().unwrap().charts,
+            levelled(&[("Mine", 0), ("Extreme", 3)])
+        );
+    }
+
+    #[test]
+    fn an_audio_name_that_cannot_be_a_resource_keeps_the_new_song_playable_later() {
+        let draft = Draft {
+            audio: Some(PathBuf::from("/music/..")),
+            ..Draft::default()
+        };
+        assert_eq!(draft.song().unwrap().metadata.audio.as_str(), NO_AUDIO);
+    }
+
+    #[test]
+    fn a_dialog_without_a_game_explains_why_it_cannot_create_a_song() {
+        let mut harness = Harness::builder().build_ui_state(
+            |ui, draft: &mut Draft| {
+                show(ui, &[], draft, false);
+            },
+            Draft::default(),
+        );
+        harness.run();
+        assert!(
+            harness
+                .query_by_label("No ruleset plugin can start songs.")
+                .is_some()
+        );
+        assert!(harness.query_by_label("Create").is_none());
+        harness.get_by_label("Cancel").click();
+        harness.run();
+    }
+
+    #[test]
+    fn removing_the_chosen_audio_restores_the_placeholder_on_creation() {
+        let plugins: &[&dyn RulesetPlugin] = &[&charter_stepmania::Plugin];
+        let mut harness = Harness::builder().build_ui_state(
+            move |ui, draft: &mut Draft| {
+                show(ui, plugins, draft, false);
+            },
+            Draft {
+                audio: Some(PathBuf::from("/music/song.ogg")),
+                ..Draft::default()
+            },
+        );
+        harness.run();
+        assert!(harness.query_by_label("song.ogg").is_some());
+        harness.get_by_label("Remove the audio").click();
+        harness.run();
+        assert!(harness.state().audio.is_none());
+        assert_eq!(
+            harness.state().song().unwrap().metadata.audio.as_str(),
+            NO_AUDIO
+        );
+    }
 }

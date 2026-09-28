@@ -571,4 +571,61 @@ mod tests {
             "stop row wrapped into its neighbour"
         );
     }
+
+    #[test]
+    fn timing_events_at_the_same_tick_share_one_list_entry() {
+        let value = serde_json::json!({
+            "format_version": 1,
+            "ruleset": { "id": "test", "version": "1" },
+            "metadata": { "title": "t", "artist": "a", "audio": "a.ogg" },
+            "timing": {
+                "anchors": [{ "tick": 0, "seconds": 0.0 }],
+                "tempo": 120.0,
+                "events": [
+                    { "tick": 960, "kind": { "stop": 0.5 } },
+                    { "tick": 960, "kind": { "delay": 0.25 } },
+                    { "tick": 960, "kind": { "time_signature": [3, 4] } }
+                ]
+            }
+        });
+        let document =
+            charter_core::ValidDocument::from_json(&serde_json::to_vec(&value).unwrap()).unwrap();
+        let points = points(document.timing());
+        assert_eq!(points.len(), 2);
+        assert_eq!(points[1].tick, Tick::new(960));
+        assert_eq!(
+            points[1].meter.map(|meter| meter.to_string()).as_deref(),
+            Some("3/4")
+        );
+        assert_eq!(points[1].others, ["stop 0.5 s", "delay 0.25 s"]);
+    }
+
+    #[test]
+    fn the_editable_timing_section_opens_the_timing_window_on_request() {
+        const PLUGINS: &[&dyn charter_core::RulesetPlugin] = &[&charter_stepmania::Plugin];
+        let song = Song::new(charter_editor::demo::song(), PLUGINS);
+        let mut harness = Harness::builder().build_ui_state(
+            |ui, (song, drafts, actions): &mut (Song, Drafts, Vec<Action>)| {
+                style::apply(ui.ctx(), &[]);
+                section(ui, song, drafts, actions);
+            },
+            (song, Drafts::default(), Vec::new()),
+        );
+        harness.run();
+        harness.get_by_label("Sync to the audio").click();
+        harness.run();
+        assert!(
+            harness
+                .state()
+                .2
+                .iter()
+                .any(|action| matches!(action, Action::ShowSync))
+        );
+    }
+
+    #[test]
+    fn a_tiny_negative_offset_is_shown_as_zero_not_negative_zero() {
+        assert_eq!(milliseconds_of(-0.000_000_01), "0");
+        assert_eq!(milliseconds_of(-0.001), "-1");
+    }
 }
