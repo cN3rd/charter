@@ -397,6 +397,22 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_weight_read_preserves_the_error_without_claiming_a_complete_download() {
+        struct FailingReader;
+        impl Read for FailingReader {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("stream broke"))
+            }
+        }
+        let (send, receive) = std::sync::mpsc::channel();
+        let mut output = Vec::new();
+        let error = copy_weights(&mut FailingReader, &mut output, Some(7), &send).unwrap_err();
+        assert!(error.contains("stream broke"));
+        assert!(output.is_empty());
+        assert!(receive.try_recv().is_err());
+    }
+
+    #[test]
     fn without_a_data_folder_the_window_hears_why_nothing_was_found() {
         let mut window = Window::new(&[]);
         let mut finder = Finder::new(None);
