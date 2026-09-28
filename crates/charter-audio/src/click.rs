@@ -547,7 +547,7 @@ mod tests {
     }
 
     #[test]
-    fn a_click_on_the_last_frame_is_clipped_without_extending_the_song() {
+    fn a_click_started_on_the_penultimate_frame_is_clipped_without_extending_the_song() {
         let silent = Track::silence(8000, 800);
         let mixed = mix(
             &silent,
