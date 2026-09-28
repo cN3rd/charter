@@ -109,7 +109,7 @@ pub fn latency(taps: &[f64], clicks: &[f64], spacing: f64) -> Option<f64> {
             (nearest.abs() < spacing / 2.0).then_some(nearest * 1000.0)
         })
         .collect();
-    if offsets.len() * 2 < WANTED {
+    if taps.len() < WANTED || offsets.len() * 2 <= taps.len() {
         return None;
     }
     offsets.sort_by(f64::total_cmp);
@@ -259,6 +259,8 @@ pub fn show(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
 
     const SPACING: f64 = 0.5;
 
@@ -312,5 +314,142 @@ mod tests {
         assert_eq!(latency(&[1.0, 1.5, 2.0], &clicks, SPACING), None);
         let stray: Vec<f64> = clicks.iter().map(|click| click + 0.25).collect();
         assert_eq!(latency(&stray, &clicks, SPACING), None);
+    }
+
+    #[test]
+    fn eight_accurate_taps_are_not_enough_to_keep_a_calibration() {
+        let clicks = Beat::default().clicks();
+        assert_eq!(latency(&clicks[..8], &clicks, SPACING), None);
+    }
+
+    #[test]
+    fn half_the_taps_off_the_clicks_refuse_a_measurement() {
+        let clicks = Beat::default().clicks();
+        let taps: Vec<_> = clicks[..8]
+            .iter()
+            .copied()
+            .chain(clicks[..8].iter().map(|click| click + SPACING / 2.0))
+            .collect();
+        assert_eq!(latency(&taps, &clicks, SPACING), None);
+        let mut mostly_on = taps;
+        mostly_on.push(clicks[8] + 0.02);
+        assert_eq!(latency(&mostly_on, &clicks, SPACING), Some(0.0));
+    }
+
+    #[test]
+    fn flash_starts_at_the_heard_click_and_ends_after_eighty_milliseconds() {
+        let clicks = [0.0];
+        assert!(!flashing(0.049, 50.0, &clicks));
+        assert!(flashing(0.05, 50.0, &clicks));
+        assert!(flashing(0.079, 0.0, &clicks));
+        assert!(!flashing(FLASH, 0.0, &clicks));
+        assert!(!flashing(f64::NAN, 50.0, &clicks));
+    }
+
+    #[test]
+    fn odd_meters_accent_each_first_beat_and_nonfinite_tempos_fall_back() {
+        for bpm in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 0.0] {
+            assert!((Beat::of(bpm, 3).bpm() - 120.0).abs() < 1e-9);
+        }
+        let accents: Vec<_> = Beat::of(90.0, 3)
+            .tones(Kit::SoftBuzz)
+            .into_iter()
+            .take(7)
+            .map(|(_, tone)| tone)
+            .collect();
+        assert_eq!(
+            accents,
+            [
+                Tone::Accent(Kit::SoftBuzz),
+                Tone::Beat(Kit::SoftBuzz),
+                Tone::Beat(Kit::SoftBuzz),
+                Tone::Accent(Kit::SoftBuzz),
+                Tone::Beat(Kit::SoftBuzz),
+                Tone::Beat(Kit::SoftBuzz),
+                Tone::Accent(Kit::SoftBuzz)
+            ]
+        );
+        assert!(matches!(
+            Beat::of(120.0, 0).tones(Kit::default()).get(1),
+            Some((_, Tone::Accent(_)))
+        ));
+    }
+
+    fn calibrating() -> Harness<'static, (Calibration, Settings, f64, Option<Request>)> {
+        Harness::builder().build_ui_state(
+            |ui,
+             (calibration, settings, now, request): &mut (
+                Calibration,
+                Settings,
+                f64,
+                Option<Request>,
+            )| {
+                *request = show(
+                    ui.ctx(),
+                    calibration,
+                    (*now, Kit::SoftBuzz, Beat::of(120.0, 3)),
+                    settings,
+                );
+            },
+            (
+                Calibration {
+                    open: true,
+                    ..Calibration::default()
+                },
+                Settings {
+                    audio_latency_ms: 20.0,
+                    input_latency_ms: 8.0,
+                    ..Settings::default()
+                },
+                10.0,
+                None,
+            ),
+        )
+    }
+
+    #[test]
+    fn starting_again_replaces_old_taps_and_previews_accented_clicks() {
+        let mut harness = calibrating();
+        harness.step();
+        harness.get_by_label("Start").click();
+        harness.step();
+        let Some(Request::Preview { clicks, volumes }) = &harness.state().3 else {
+            panic!("start must request a click track");
+        };
+        assert_eq!(clicks.len(), CLICKS);
+        assert_eq!(clicks[0], (1.0, Tone::Accent(Kit::SoftBuzz)));
+        assert_eq!(clicks[3], (2.5, Tone::Accent(Kit::SoftBuzz)));
+        assert_eq!(*volumes, harness.state().1.volumes);
+        harness.state_mut().0.taps.push(1.1);
+        harness.get_by_label("Start").click();
+        harness.step();
+        assert!(harness.state().0.taps.is_empty());
+        assert!((harness.state().1.input_latency_ms - 8.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn keeping_a_measurement_subtracts_audio_latency_and_stops_the_session() {
+        let mut harness = calibrating();
+        harness.step();
+        harness.get_by_label("Start").click();
+        harness.step();
+        harness.state_mut().0.taps = Beat::default()
+            .clicks()
+            .iter()
+            .take(WANTED)
+            .map(|click| click + 0.05)
+            .collect();
+        harness.step();
+        assert!(
+            harness
+                .query_by_label_contains("Taps land +30 ms late")
+                .is_some()
+        );
+        assert!((harness.state().1.input_latency_ms - 8.0).abs() < 1e-9);
+        harness.get_by_label("Keep it").click();
+        harness.step();
+        assert!((harness.state().1.input_latency_ms - 30.0).abs() < 1e-8);
+        assert!(harness.state().0.started.is_none());
+        assert!(harness.state().0.taps.is_empty());
     }
 }
