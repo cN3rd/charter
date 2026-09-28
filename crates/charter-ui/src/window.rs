@@ -555,6 +555,8 @@ pub struct Window {
     artwork_on_disk: Option<PathBuf>,
     /// The artwork an autosave kept, to decode once its song opens.
     restored_artwork: Option<Vec<u8>>,
+    /// Pictures chosen but not saved whose names an undo took away, until another song opens.
+    parked: Vec<Artwork>,
     /// Text to put on the system clipboard this frame.
     clipboard_out: Option<String>,
     /// The artwork the audio of the song being started holds, and which file, to take when the
@@ -1124,7 +1126,7 @@ impl Window {
             artwork.map(ToString::to_string)
         });
         let Some(named) = named else {
-            self.artwork = None;
+            self.park_artwork();
             return;
         };
         let file = self.artwork_file();
@@ -1135,9 +1137,29 @@ impl Window {
         {
             return;
         }
+        self.park_artwork();
+        // A picture chosen but not saved, which an undo took away, comes back with its name.
+        if let Some(at) = self.parked.iter().position(|parked| parked.name == named) {
+            let mut artwork = self.parked.swap_remove(at);
+            artwork.file = file;
+            self.artwork = Some(artwork);
+            return;
+        }
         self.artwork = Some(Artwork::named(&named, file.as_deref()));
         if let Some(file) = file {
             self.requests.push(Request::ReadArtwork { file });
+        }
+    }
+
+    /// Sets aside the song's artwork when it has bytes not yet beside the song, so an undo that
+    /// takes its name away and a redo that brings it back keep the picture.
+    fn park_artwork(&mut self) {
+        let Some(artwork) = self.artwork.take() else {
+            return;
+        };
+        if artwork.unsaved().is_some() {
+            self.parked.retain(|parked| parked.name != artwork.name);
+            self.parked.push(artwork);
         }
     }
 
@@ -1158,13 +1180,20 @@ impl Window {
         self.clip = copied;
     }
 
-    /// Pastes at the cursor the notes `text` holds, when it holds some, or else those copied
-    /// last. Notes pasted over others are left out, which it says when none could go.
+    /// Pastes at the cursor the notes `text` holds, the system clipboard's, or with no text those
+    /// copied last. Text that holds no notes pastes nothing and says so. Notes pasted over others
+    /// are left out, which it says when none could go.
     fn paste(&mut self, text: Option<&str>) {
-        let from_text = text
-            .and_then(|text| serde_json::from_str::<Clipped>(text).ok())
-            .map(|clipped| clipped.charter_notes);
-        let clip = from_text.unwrap_or_else(|| self.clip.clone());
+        let clip = if let Some(text) = text {
+            let Ok(clipped) = serde_json::from_str::<Clipped>(text) else {
+                self.failure =
+                    Some("The clipboard holds no notes: copy some first (Ctrl+C).".to_owned());
+                return;
+            };
+            clipped.charter_notes
+        } else {
+            self.clip.clone()
+        };
         let Some(song) = &mut self.song else {
             return;
         };
@@ -1609,6 +1638,7 @@ impl Window {
                 self.pressed.clear();
                 self.audio_file = audio;
                 self.artwork = None;
+                self.parked.clear();
                 if std::mem::take(&mut self.playing) {
                     self.requests.push(Request::Pause);
                 }
@@ -3539,7 +3569,15 @@ mod tests {
         harness.key_press(egui::Key::PageDown);
         harness.event(egui::Event::Paste("some other text".to_owned()));
         harness.run();
-        assert_eq!(note_count(&harness), 12);
+        assert_eq!(note_count(&harness), 8, "other text is not notes");
+        assert!(harness.query_by_label_contains("holds no notes").is_some());
+        harness.state_mut().apply(Action::Paste(None));
+        harness.run();
+        assert_eq!(
+            note_count(&harness),
+            12,
+            "the menu pastes those copied last"
+        );
     }
 
     #[test]
@@ -6973,6 +7011,28 @@ mod tests {
         assert_eq!(
             restored.state().artwork_write_for(path),
             Some((PathBuf::from("/songs/New/art.png"), b"png".to_vec()))
+        );
+    }
+
+    #[test]
+    fn chosen_artwork_survives_being_undone_and_redone() {
+        let mut harness = four_taps_at("/songs/Four/four.json");
+        harness
+            .state_mut()
+            .use_artwork(Path::new("/pictures/art.png"), Some(picture(b"png")));
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.run();
+        assert_eq!(artwork_name(&harness), None);
+        let redo = egui::Modifiers::COMMAND.plus(egui::Modifiers::SHIFT);
+        harness.key_press_modifiers(redo, egui::Key::Z);
+        harness.run();
+        assert_eq!(artwork_name(&harness).as_deref(), Some("art.png"));
+        assert_eq!(
+            harness
+                .state()
+                .artwork_write_for(Path::new("/songs/Four/four.json")),
+            Some((PathBuf::from("/songs/Four/art.png"), b"png".to_vec()))
         );
     }
 
