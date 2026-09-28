@@ -210,6 +210,9 @@ fn copy_weights(
             let _ = progress.send(Progress::Downloaded(share));
         }
     }
+    if length.is_some_and(|length| length > 0 && read != length) {
+        return Err("incomplete beat tracker download".into());
+    }
     Ok(())
 }
 
@@ -355,6 +358,18 @@ mod tests {
             assert_eq!(output, b"weights");
             assert!(receive.try_recv().is_err());
         }
+    }
+
+    #[test]
+    fn a_short_weight_response_is_not_accepted_as_a_complete_checkpoint() {
+        let mut output = Vec::new();
+        let (send, _) = std::sync::mpsc::channel();
+
+        let error =
+            copy_weights(&mut Cursor::new(b"partial"), &mut output, Some(10), &send).unwrap_err();
+
+        assert!(error.contains("incomplete"));
+        assert_eq!(output, b"partial");
     }
 
     #[test]
