@@ -19,7 +19,7 @@ use burn_store::{ModuleSnapshot, PytorchStore, SafetensorsStore};
 
 use crate::model::{BeatThis, Dims};
 
-/// The backend the tracker runs on: the CPU, through ndarray.
+/// The backend the tracker runs on: the CPU, through burn's flex backend.
 type Cpu = Flex;
 
 /// Frames the network sees at once, 30 seconds, as it was trained.
