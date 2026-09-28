@@ -342,6 +342,40 @@ mod tests {
     }
 
     #[test]
+    fn malformed_or_wrong_sized_weights_are_rejected() {
+        assert!(matches!(
+            Tracker::from_safetensors(Dims::TINY, b"not safetensors".to_vec()),
+            Err(Error::Weights(_))
+        ));
+        let wrong = Dims {
+            stem: 16,
+            ..Dims::TINY
+        };
+        assert!(matches!(
+            Tracker::from_safetensors(
+                wrong,
+                include_bytes!("../fixtures/tiny.safetensors").to_vec()
+            ),
+            Err(Error::Weights(_))
+        ));
+    }
+
+    #[test]
+    fn a_misspelled_checkpoint_module_does_not_silently_load() {
+        let mut bytes = include_bytes!("../fixtures/tiny.safetensors").to_vec();
+        let key = b"model.frontend.blocks.0.partial.attnF.";
+        let start = bytes
+            .windows(key.len())
+            .position(|window| window == key)
+            .unwrap();
+        bytes[start + key.len() - 2] = b'X';
+        assert!(matches!(
+            Tracker::from_safetensors(Dims::TINY, bytes),
+            Err(Error::Weights(_))
+        ));
+    }
+
+    #[test]
     fn the_network_gives_the_reference_logits_for_the_reference_input() {
         let spect: Vec<[f32; mel::BINS]> = floats_of(include_bytes!("../fixtures/tiny_spect.f32"))
             .as_chunks::<{ mel::BINS }>()
@@ -384,6 +418,43 @@ mod tests {
     }
 
     #[test]
+    fn empty_short_and_exact_chunk_length_audio_have_their_edges_padded() {
+        assert!(chunk_starts(0).is_empty());
+        assert_eq!(chunk_starts(1), [-6]);
+        assert_eq!(chunk_starts(CHUNK), [-6, 6]);
+        let (input, len) = chunk(&[[3.0; mel::BINS]], -6);
+        assert_eq!(len, 13);
+        assert!(input[..6 * mel::BINS].iter().all(|value| *value == 0.0));
+        assert!(
+            input[6 * mel::BINS..7 * mel::BINS]
+                .iter()
+                .all(|value| (*value - 3.0).abs() < f32::EPSILON)
+        );
+        assert!(input[7 * mel::BINS..].iter().all(|value| *value == 0.0));
+
+        let spect = vec![[2.0; mel::BINS]; CHUNK];
+        let (first, first_len) = chunk(&spect, -6);
+        let (last, last_len) = chunk(&spect, 6);
+        assert_eq!((first_len, last_len), (CHUNK, CHUNK));
+        assert!(first[..6 * mel::BINS].iter().all(|value| *value == 0.0));
+        assert!(
+            first[6 * mel::BINS..]
+                .iter()
+                .all(|value| (*value - 2.0).abs() < f32::EPSILON)
+        );
+        assert!(
+            last[..(CHUNK - 6) * mel::BINS]
+                .iter()
+                .all(|value| (*value - 2.0).abs() < f32::EPSILON)
+        );
+        assert!(
+            last[(CHUNK - 6) * mel::BINS..]
+                .iter()
+                .all(|value| *value == 0.0)
+        );
+    }
+
+    #[test]
     fn peaks_are_local_maxima_above_one_half_and_downbeats_sit_on_beats() {
         let mut beat = vec![-5.0; 60];
         let mut downbeat = vec![-5.0; 60];
@@ -397,6 +468,40 @@ mod tests {
         let found = peaks(beat, downbeat);
         assert_eq!(found.beats, [0.2, 0.41, 0.7]);
         assert_eq!(found.downbeats, [0.2]);
+    }
+
+    #[test]
+    fn adjacent_equal_peaks_merge_but_zero_logits_do_not_peak() {
+        let found = peaks(vec![0.0, 1.0, 1.0, -1.0, 0.0, 0.0, -1.0, 2.0], vec![0.0; 8]);
+        assert_eq!(found.beats, [0.03, 0.14]);
+        assert!(found.downbeats.is_empty());
+        let without_beats = peaks(vec![0.0, -1.0], vec![3.0, 0.0]);
+        assert!(without_beats.beats.is_empty());
+        assert!(without_beats.downbeats.is_empty());
+    }
+
+    #[test]
+    fn close_downbeats_snap_to_one_beat_without_duplicates() {
+        let mut beat = vec![-1.0; 30];
+        beat[2] = 2.0;
+        beat[20] = 2.0;
+        let mut downbeat = vec![-1.0; 30];
+        downbeat[3] = 1.0;
+        downbeat[9] = 1.0;
+        downbeat[21] = 1.0;
+        let found = peaks(beat, downbeat);
+        assert_eq!(found.beats, [0.04, 0.4]);
+        assert_eq!(found.downbeats, [0.04, 0.4]);
+    }
+
+    #[test]
+    fn tracking_empty_and_short_audio_uses_the_resampled_frame_count() {
+        let tracker = tiny();
+        assert_eq!(tracker.track(&[], RATE).unwrap(), Beats::default());
+        let found = tracker.track(&vec![0.0; 882], 44_100).unwrap();
+        assert_eq!(found.beat_logits.len(), 2);
+        assert_eq!(found.downbeat_logits.len(), 2);
+        assert!(matches!(tracker.track(&[0.5], 0), Err(Error::Resample(_))));
     }
 
     #[test]

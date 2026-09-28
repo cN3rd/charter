@@ -249,4 +249,35 @@ mod tests {
         );
         assert_eq!(resample(&samples, RATE).unwrap().len(), 44_100);
     }
+
+    #[test]
+    fn native_rate_is_unchanged_and_invalid_rate_is_reported() {
+        let samples = [0.0, 0.25, -0.5, 1.0];
+        assert_eq!(resample(&samples, RATE).unwrap(), samples);
+        assert!(matches!(resample(&samples, 0), Err(Error::Resample(_))));
+        assert!(resample(&[], 44_100).unwrap().is_empty());
+    }
+
+    #[test]
+    fn non_integer_rate_conversion_preserves_duration_and_level() {
+        let samples = vec![0.25; 4_800];
+        let got = resample(&samples, 48_000).unwrap();
+        assert!(got.len().abs_diff(2_205) <= 1, "{}", got.len());
+        assert!(
+            got[200..2_000]
+                .iter()
+                .all(|sample| (sample - 0.25).abs() < 1e-3)
+        );
+    }
+
+    #[test]
+    fn silence_and_a_single_sample_produce_finite_frames() {
+        let silent = log_mel(&[0.0]);
+        assert_eq!(silent.len(), 1);
+        assert!(silent[0].iter().all(|band| band.abs() < f32::EPSILON));
+        let single = log_mel(&[1.0]);
+        assert_eq!(single.len(), 1);
+        assert!(single[0].iter().all(|band| band.is_finite()));
+        assert!(single[0].iter().any(|band| *band > 0.0));
+    }
 }
