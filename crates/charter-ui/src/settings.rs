@@ -239,10 +239,18 @@ impl Settings {
         ) else {
             return "{}".to_owned();
         };
-        let changed = mine
+        let mut changed: serde_json::Map<String, Value> = mine
+            .clone()
             .into_iter()
             .filter(|(key, value)| defaults.get(key) != Some(value))
             .collect();
+        // A tick sound kept alone reads as the ticks on, as older versions kept them, so the
+        // switch is kept with it.
+        if changed.contains_key("tick_sound")
+            && let Some(on) = mine.get("note_ticks")
+        {
+            changed.insert("note_ticks".to_owned(), on.clone());
+        }
         Value::Object(changed).to_string()
     }
 
@@ -992,5 +1000,14 @@ mod tests {
         let off = Settings::from_kept(r#"{ "tick_sound": "off" }"#);
         assert!(!off.note_ticks);
         assert_eq!(off.tick_sound, Sound::Click);
+    }
+
+    #[test]
+    fn a_tick_sound_chosen_with_the_ticks_off_stays_off() {
+        let chosen = Settings {
+            tick_sound: Sound::Beep,
+            ..Settings::default()
+        };
+        assert_eq!(Settings::from_kept(&chosen.to_kept()), chosen);
     }
 }
