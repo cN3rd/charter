@@ -693,6 +693,34 @@ mod tests {
         );
         assert!(origin < later);
     }
+
+    #[test]
+    fn ticks_at_the_integer_edges_refuse_steps_past_the_range() {
+        let one = Ticks::new(1).unwrap();
+        let largest = Ticks::new(u32::MAX).unwrap();
+        assert_eq!(Tick::new(i32::MAX).checked_add(one), None);
+        assert_eq!(
+            Tick::new(i32::MIN).checked_add(largest),
+            Some(Tick::new(i32::MAX))
+        );
+        assert_eq!(Tick::new(i32::MAX).next_on(largest), None);
+        assert_eq!(Tick::new(i32::MIN).previous_on(largest), None);
+        assert_eq!(
+            Tick::new(i32::MIN).ticks_until(Tick::new(i32::MAX)),
+            Some(largest)
+        );
+    }
+
+    #[test]
+    fn the_largest_resolution_and_meter_do_not_overflow() {
+        let resolution = TicksPerBeat::new(u16::MAX).unwrap();
+        assert_eq!(resolution.note_length(NonZeroU16::MIN), Ticks::new(262_140));
+        let meter = TimeSignature {
+            numerator: NonZeroU16::MAX,
+            denominator: NonZeroU16::MIN,
+        };
+        assert!(meter.measure_is_whole(resolution));
+    }
 }
 
 /// Proofs for Kani, run with `cargo kani -p charter-core`. Each input ranges over every value its

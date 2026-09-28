@@ -246,4 +246,21 @@ mod tests {
         let refused = Checks.import_timing("", &document).unwrap_err();
         assert_eq!(refused.to_string(), "checks imports no timing");
     }
+
+    #[test]
+    fn a_plugin_that_only_checks_offers_no_optional_editor_actions() {
+        let plugin: &dyn RulesetPlugin = &Checks;
+        assert_eq!(plugin.id(), "checks");
+        assert!(plugin.check(&ValidDocument::from_json(
+            br#"{"format_version":1,"ruleset":{"id":"checks","version":"1"},"metadata":{"title":"t","artist":"a","audio":"a.ogg"},"timing":{"anchors":[{"tick":0,"seconds":0}],"tempo":120,"events":[]}}"#
+        ).unwrap()).is_ok());
+        assert_eq!(plugin.layout_kind(), "Lanes");
+        assert!(plugin.text_settings().is_empty());
+        assert!(plugin.note_changes().is_empty());
+        let object: Object = serde_json::from_str(
+            r#"{"tick":0,"position":{"lane":{"index":0}},"kind":"tap","shape":"instant"}"#,
+        )
+        .unwrap();
+        assert_eq!(plugin.change_note("unknown", &object, LaneCount::ONE), None);
+    }
 }

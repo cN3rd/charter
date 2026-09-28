@@ -683,6 +683,20 @@ mod tests {
     }
 
     #[test]
+    fn a_format_0_warp_past_the_last_tick_is_refused_during_migration() {
+        let timing = json!({
+            "offset_seconds": 0.0,
+            "events": [
+                { "tick": 0, "kind": { "bpm": 120.0 } },
+                { "tick": 1, "kind": { "warp": 4_294_967_295_u64 } },
+                { "tick": 2, "kind": { "bpm": 120.0 } }
+            ]
+        });
+        let refused = ValidDocument::from_json(&v0(&timing)).unwrap_err();
+        assert!(refused.to_string().contains("no time"), "{refused}");
+    }
+
+    #[test]
     fn newer_versions_are_refused_before_their_keys_are_read() {
         let mut value = minimal();
         value["format_version"] = json!(2);
@@ -784,6 +798,55 @@ mod tests {
             ValidDocument::from_json(bytes),
             Err(Error::Json(_))
         ));
+    }
+
+    #[test]
+    fn excessive_nesting_is_refused_without_recursing_forever() {
+        let mut document = minimal();
+        document["settings"] = json!({ "nest": 0 });
+        assert!(read(&document).is_ok());
+        let shallow = serde_json::to_string(&document).unwrap();
+        let nested = format!("{}0{}", "[".repeat(129), "]".repeat(129));
+        let text = shallow.replace(r#""nest":0"#, &format!(r#""nest":{nested}"#));
+        assert_ne!(text, shallow);
+        assert!(matches!(
+            ValidDocument::from_json(text.as_bytes()),
+            Err(Error::Json(_))
+        ));
+    }
+
+    #[test]
+    fn a_valid_map_resolves_before_its_first_anchor_and_at_its_last_tick() {
+        let mut value = minimal();
+        value["ticks_per_beat"] = json!(480);
+        value["timing"] = json!({
+            "anchors": [
+                { "tick": 480, "seconds": 1.0 },
+                { "tick": 960, "seconds": 1.5 }
+            ],
+            "tempo": 60.0, "events": []
+        });
+        let doc = read(&value).unwrap();
+        let timing = doc.timing();
+        assert!((timing.time_at(Tick::new(0)).seconds() - 0.5).abs() < 1e-10);
+        assert!((timing.tempo_at(Tick::new(0)) - 120.0).abs() < 1e-10);
+        assert_eq!(timing.bpm_at(Tick::new(480)), Bpm::try_from(120.0).ok());
+        assert_eq!(timing.bpm_at(Tick::new(960)), Bpm::try_from(60.0).ok());
+        assert_eq!(
+            timing.tempos(),
+            vec![(Tick::new(480), 120.0), (Tick::new(960), 60.0)]
+        );
+        assert!((timing.time_at(Tick::new(1440)).seconds() - 2.5).abs() < 1e-10);
+        assert_eq!(timing.latest_tick_by(1.5), Tick::new(960));
+    }
+
+    proptest! {
+        #![proptest_config(crate::proptest_config())]
+
+        #[test]
+        fn arbitrary_short_json_never_panics(the_bytes in proptest::collection::vec(any::<u8>(), 0..512)) {
+            let _ = ValidDocument::from_json(&the_bytes);
+        }
     }
 
     /// Lanes in every generated chart.

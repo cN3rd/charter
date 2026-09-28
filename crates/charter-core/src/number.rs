@@ -167,6 +167,37 @@ mod tests {
         assert!((f64::from(crate::Bpm::try_from(150.5).unwrap()) - 150.5).abs() < f64::EPSILON);
         assert!((f64::from(decimal(-0.25).unwrap()) + 0.25).abs() < f64::EPSILON);
     }
+
+    #[test]
+    fn negative_zero_serializes_as_zero_and_nonfinite_numbers_are_refused() {
+        let zero = decimal(-0.0).unwrap();
+        assert_eq!(zero.to_string(), "0");
+        assert_eq!(serde_json::to_string(&zero).unwrap(), "0.0");
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(decimal(bad).is_err());
+        }
+    }
+
+    #[test]
+    fn rounding_does_not_silently_accept_a_seventh_decimal_place() {
+        for bad in [0.000_000_5, -0.000_000_5, 0.000_001_4, -0.000_001_4] {
+            assert!(decimal(bad).is_err(), "{bad} was rounded");
+        }
+        assert_eq!(decimal(0.000_001).unwrap().to_string(), "0.000001");
+    }
+
+    proptest::proptest! {
+        #![proptest_config(crate::proptest_config())]
+
+        #[test]
+        fn every_representable_millionth_survives_a_round_trip(
+            millionths in -MAX_MILLIONTHS..=MAX_MILLIONTHS
+        ) {
+            let decimal = Decimal::from_millionths(millionths).unwrap();
+            let decoded: Decimal = serde_json::from_str(&serde_json::to_string(&decimal).unwrap()).unwrap();
+            proptest::prop_assert_eq!(decoded, decimal);
+        }
+    }
 }
 
 /// Proofs for Kani, run with `cargo kani -p charter-core`. The round trip from millionths to a
