@@ -96,7 +96,7 @@ fn body(
     text_height: f32,
 ) -> bool {
     import.format = import.format.min(formats.len().saturating_sub(1));
-    let Some(&(name, plugin)) = formats.get(import.format) else {
+    let Some(&(name, _)) = formats.get(import.format) else {
         ui.weak("No game charter knows reads timing.");
         return false;
     };
@@ -119,6 +119,9 @@ fn body(
             }
         });
     });
+    let Some(&(_, plugin)) = formats.get(import.format) else {
+        return false;
+    };
     ui.weak("Paste the section that holds the timing, or a whole file.");
     ui.add_space(4.0);
     egui::ScrollArea::vertical()
@@ -245,6 +248,7 @@ fn trimmed(value: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui::accesskit::Role;
     use egui_kittest::Harness;
     use egui_kittest::kittest::Queryable;
 
@@ -266,6 +270,166 @@ mod tests {
         fn timing_format(&self) -> Option<&str> {
             Some("test timing")
         }
+
+        fn import_timing(
+            &self,
+            text: &str,
+            into: &charter_core::ValidDocument,
+        ) -> Result<ImportedTiming, Box<dyn std::error::Error + Send + Sync>> {
+            if text != "good" {
+                return Err("bad timing".into());
+            }
+            let mut timing = into.document().timing.clone();
+            timing.events.push(charter_core::TimingEvent {
+                tick: charter_core::Tick::new(0),
+                kind: TimingKind::Other {
+                    name: "test.scroll".parse()?,
+                    value: serde_json::json!(1.5),
+                },
+                ext: std::collections::BTreeMap::new(),
+            });
+            Ok(ImportedTiming {
+                timing,
+                left_out: vec!["visual effects".to_owned()],
+            })
+        }
+    }
+
+    #[derive(Debug)]
+    struct Sm;
+
+    impl RulesetPlugin for Sm {
+        fn id(&self) -> &'static str {
+            "sm"
+        }
+
+        fn check(
+            &self,
+            _: &charter_core::ValidDocument,
+        ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            Ok(())
+        }
+    }
+
+    #[derive(Debug)]
+    struct OtherImporter;
+
+    impl RulesetPlugin for OtherImporter {
+        fn id(&self) -> &'static str {
+            "other-importer"
+        }
+
+        fn check(
+            &self,
+            _: &charter_core::ValidDocument,
+        ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            Ok(())
+        }
+
+        fn timing_format(&self) -> Option<&str> {
+            Some("alternate timing")
+        }
+    }
+
+    const PLUGINS: &[&dyn RulesetPlugin] = &[&Sm, &Importer];
+
+    fn preview(
+        editable: bool,
+        plugins: &'static [&'static dyn RulesetPlugin],
+    ) -> Harness<'static, (Import, Vec<Action>)> {
+        let song = Song::new(
+            charter_editor::demo::song(),
+            if editable { PLUGINS } else { &[] },
+        );
+        Harness::builder().build_ui_state(
+            move |ui, (import, actions): &mut (Import, Vec<Action>)| {
+                show(ui.ctx(), Some(&song), plugins, import, actions);
+            },
+            (
+                Import {
+                    open: true,
+                    ..Import::default()
+                },
+                Vec::new(),
+            ),
+        )
+    }
+
+    #[test]
+    fn a_plugin_without_timing_import_offers_no_format_or_apply_action() {
+        let mut harness = preview(true, &[&Sm]);
+        harness.state_mut().0.text = "good".to_owned();
+        harness.run();
+        assert!(!offered(&[&Sm]));
+        assert!(
+            harness
+                .query_by_label_contains("No game charter knows")
+                .is_some()
+        );
+        assert!(harness.query_by_label("Replace the timing").is_none());
+        assert!(harness.state().1.is_empty());
+    }
+
+    #[test]
+    fn malformed_pasted_timing_shows_an_error_and_cannot_be_applied() {
+        let mut harness = preview(true, PLUGINS);
+        harness.state_mut().0.text = "garbage".to_owned();
+        harness.run();
+        assert!(harness.query_by_label_contains("bad timing").is_some());
+        harness.get_by_label("Replace the timing").click();
+        harness.run();
+        assert!(harness.state().0.open);
+        assert!(harness.state().1.is_empty());
+    }
+
+    #[test]
+    fn changing_pasted_text_refreshes_the_preview_and_imports_its_timing() {
+        let mut harness = preview(true, PLUGINS);
+        harness.state_mut().0.text = "garbage".to_owned();
+        harness.run();
+        harness.state_mut().0.text = "good".to_owned();
+        harness.run();
+        assert!(harness.query_by_label_contains("visual effects").is_some());
+        assert!(harness.query_by_label_contains("Game events").is_some());
+        assert!(harness.query_by_label_contains("1 change").is_some());
+        harness.get_by_label("Replace the timing").click();
+        harness.run();
+        assert!(!harness.state().0.open);
+        assert!(matches!(
+            harness.state().1.as_slice(),
+            [Action::ImportTiming(_)]
+        ));
+    }
+
+    #[test]
+    fn a_read_only_song_previews_timing_but_refuses_to_replace_it() {
+        let mut harness = preview(false, PLUGINS);
+        harness.state_mut().0.text = "good".to_owned();
+        harness.run();
+        assert!(harness.query_by_label_contains("visual effects").is_some());
+        harness.get_by_label("Replace the timing").click();
+        harness.run();
+        assert!(harness.state().0.open);
+        assert!(harness.state().1.is_empty());
+    }
+
+    #[test]
+    fn switching_import_formats_rejects_the_old_formats_cached_preview() {
+        let mut harness = preview(true, &[&Sm, &Importer, &OtherImporter]);
+        harness.state_mut().0.text = "good".to_owned();
+        harness.run();
+        assert!(harness.query_by_label_contains("visual effects").is_some());
+        harness.get_by_role(Role::ComboBox).click();
+        harness.run();
+        harness.get_by_label("alternate timing").click();
+        harness.run();
+        assert_eq!(harness.state().0.format, 1);
+        assert!(
+            harness
+                .query_by_label_contains("imports no timing")
+                .is_some()
+        );
+        assert!(harness.state().1.is_empty());
     }
 
     #[test]
