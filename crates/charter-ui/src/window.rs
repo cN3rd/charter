@@ -313,6 +313,8 @@ pub(crate) enum Action {
     },
     /// Flips the selected notes across the lanes.
     Mirror,
+    /// Moves the selected notes to the snap's nearest lines.
+    Quantize,
     /// Makes the selected notes what the song's game makes them by the change named.
     ChangeNotes(String),
     /// Places taps from the cursor on, one `per_beat`th of a beat apart, on the lanes `steps`
@@ -1807,6 +1809,7 @@ impl Window {
                 self.failure = refused(song.move_selection(ticks, lanes).err());
             }
             Action::Mirror => self.failure = refused(song.mirror_selection().err()),
+            Action::Quantize => self.failure = refused(song.quantize_selection().err()),
             Action::ChangeNotes(change) => {
                 self.failure = refused(song.change_selection(&change).err());
             }
@@ -3457,6 +3460,10 @@ mod tests {
     #[test]
     fn ctrl_arrows_move_the_selection_and_ctrl_d_and_ctrl_m_duplicate_and_mirror() {
         let mut harness = editable_four_taps();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.key_press(egui::Key::Q);
+        harness.run();
+        assert_eq!(note_count(&harness), 4);
         select_note(&mut harness, 3, 720);
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::ArrowLeft);
         harness.run();

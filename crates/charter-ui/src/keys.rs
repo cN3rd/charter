@@ -235,6 +235,7 @@ fn command(key: Key, modifiers: Modifiers) -> Option<Action> {
     match key {
         Key::Delete | Key::Backspace => Some(Action::DeleteSelection),
         Key::Escape => Some(Action::ClearSelection),
+        Key::Q => Some(Action::Quantize),
         Key::CloseBracket => Some(Action::ResizeNotes(Step::Later)),
         Key::OpenBracket => Some(Action::ResizeNotes(Step::Earlier)),
         Key::ArrowDown => Some(Action::Move(Step::Later)),

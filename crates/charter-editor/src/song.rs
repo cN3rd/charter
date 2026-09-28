@@ -1215,6 +1215,25 @@ impl Song {
         })
     }
 
+    /// Moves every selected note to the snap's line nearest it, holds keeping their length, as one
+    /// step that keeps them selected: for notes placed by ear or while playing.
+    ///
+    /// # Errors
+    ///
+    /// Refuses as [`Song::move_selection`] does.
+    pub fn quantize_selection(&mut self) -> Result<(), Refusal> {
+        let Some(step) = self.length_of(self.snap) else {
+            return Ok(());
+        };
+        let step = i64::from(u32::from(step));
+        self.replace_selection(&|object| {
+            let tick = i64::from(object.tick);
+            let nearest = (tick + step / 2).div_euclid(step) * step;
+            let by = i32::try_from(nearest - tick).map_err(|_| Refusal::OffTheChart)?;
+            shifted(object, by, 0).ok_or(Refusal::OffTheChart)
+        })
+    }
+
     /// Flips every selected note across the chart, its first lane becoming its last, as one step
     /// that keeps them selected.
     ///
@@ -2113,6 +2132,28 @@ pub(crate) mod tests {
             .unwrap();
         assert_eq!(added, 1);
         assert_eq!(objects(&song), [object(0, 0, "tap"), object(0, 1, "tap")]);
+    }
+
+    #[test]
+    fn quantizing_moves_the_selection_to_the_nearest_snap_line() {
+        let mut song = Song::new(
+            document(json!([
+                object(130, 2, "tap"),
+                object(250, 0, "tap"),
+                hold(470, 1, 100)
+            ])),
+            EDITABLE,
+        );
+        select_everything(&mut song);
+        song.quantize_selection().unwrap();
+        assert_eq!(
+            objects(&song),
+            [
+                object(240, 2, "tap"),
+                object(240, 0, "tap"),
+                hold(480, 1, 100)
+            ]
+        );
     }
 
     #[test]

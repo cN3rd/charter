@@ -106,6 +106,7 @@ pub fn menu_bar(
                         Action::ShiftSelection { snaps: 0, lanes: 1 },
                     ),
                     ("Mirror across the lanes", "Ctrl+M", Action::Mirror),
+                    ("Snap to the grid", "Q", Action::Quantize),
                     (
                         "Lengthen by the snap",
                         "]",
@@ -360,6 +361,7 @@ const KEYS: [(&str, &[(&str, &str)]); 6] = [
             ("Ctrl+Left, Ctrl+Right", "Move the selection a lane"),
             ("Ctrl+Up, Ctrl+Down", "Move the selection by the snap"),
             ("Ctrl+M", "Mirror the selection across the lanes"),
+            ("Q", "Snap the selection to the nearest snap lines"),
             ("Shift+Click, Shift+Drag", "Add to the selection"),
             ("Alt+Click, Alt+Drag", "Take from the selection"),
             ("Ctrl+A, Escape", "Select every note, or none"),

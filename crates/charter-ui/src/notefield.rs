@@ -710,6 +710,12 @@ fn menu_items(ui: &mut Ui, song: &Song, lane: LaneIndex, actions: &mut Vec<Actio
     item(
         ui,
         actions,
+        ("Snap to the grid", "Q", chosen),
+        Action::Quantize,
+    );
+    item(
+        ui,
+        actions,
         ("Lengthen by the snap", "]", edits),
         Action::ResizeNotes(Step::Later),
     );
