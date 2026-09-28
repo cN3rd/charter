@@ -1476,6 +1476,42 @@ impl Song {
         self.prune_selection();
     }
 
+    /// Folds every step done since `step`, a [`Song::history_step`], into one, so they undo and
+    /// redo together: for a chord of lane keys and the holds it grows while playing. Does nothing
+    /// unless the steps are two or more, all on one chart.
+    pub fn merge_since(&mut self, step: usize) {
+        let Some(steps) = self.history.get(step..self.done) else {
+            return;
+        };
+        let chart = steps.first().map(|change| change.chart);
+        if steps.len() < 2 || steps.iter().any(|change| Some(change.chart) != chart) {
+            return;
+        }
+        let ops = steps
+            .iter()
+            .flat_map(|change| change.edit.0.iter().cloned())
+            .collect();
+        let merged = steps.len();
+        let first = self.history.splice(step..self.done, []).next();
+        let Some(first) = first else {
+            return;
+        };
+        self.history.insert(
+            step,
+            Change {
+                chart: first.chart,
+                cursor: first.cursor,
+                edit: Edit(ops),
+            },
+        );
+        self.done -= merged - 1;
+        self.saved = match self.saved {
+            Some(saved) if saved <= step => Some(saved),
+            Some(saved) if saved >= step + merged => Some(saved - (merged - 1)),
+            _ => None,
+        };
+    }
+
     /// How many steps of the history are done: where undo and redo have left the song, so
     /// state kept beside it, such as a picture not yet saved, can follow them.
     #[must_use]
@@ -2035,6 +2071,22 @@ pub(crate) mod tests {
         assert!(!song.can_undo());
         song.redo().unwrap();
         assert_eq!(objects(&song), [hold(0, 0, 480)]);
+    }
+
+    #[test]
+    fn steps_merged_since_a_point_undo_and_redo_as_one() {
+        let mut song = Song::new(document(json!([])), EDITABLE);
+        let start = song.history_step();
+        song.toggle(at(0), lane(0), Kind::Tap).unwrap();
+        song.toggle(at(0), lane(1), Kind::Tap).unwrap();
+        song.stretch(lane(0), at(0), at(480)).unwrap();
+        song.merge_since(start);
+        assert_eq!(song.history_step(), start + 1);
+        song.undo().unwrap();
+        assert_eq!(objects(&song), Vec::<Value>::new());
+        assert!(!song.can_undo());
+        song.redo().unwrap();
+        assert_eq!(objects(&song), [hold(0, 0, 480), object(0, 1, "tap")]);
     }
 
     #[test]

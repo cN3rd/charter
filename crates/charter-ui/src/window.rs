@@ -567,6 +567,8 @@ pub struct Window {
     played_pitch: bool,
     /// Where the menu's paste goes, and how many frames are left to wait for the clipboard.
     pasting: Option<(Tick, u8)>,
+    /// The history step before the lane keys held now placed their first note.
+    chord_since: Option<usize>,
     /// Whether to ask the host for the clipboard's text this frame.
     request_paste: bool,
     /// The settings the audio playing was mixed with, so a change to them plays it again.
@@ -1577,6 +1579,8 @@ impl Window {
     /// Asks the host to write the song to its file, or to ask where when `saving` says so or the
     /// song has no file.
     fn save(&mut self, saving: Saving) {
+        // An undo in this frame may have named other artwork since the frame began.
+        self.follow_artwork();
         let Some(song) = &self.song else {
             return;
         };
@@ -1795,6 +1799,9 @@ impl Window {
             Action::CoarserSnap => song.coarser_snap(),
             Action::ZoomBy(factor) => self.zoom = self.zoom.by(factor),
             Action::Toggle(lane, note) => {
+                if self.holding.is_empty() {
+                    self.chord_since = Some(song.history_step());
+                }
                 let at = placing_at(song, self.playing.then_some(input_latency));
                 let toggled = song.toggle(at, lane, note.kind());
                 if let Ok(Toggled::Placed) = toggled {
@@ -1826,6 +1833,10 @@ impl Window {
             }
             // Playback moves the cursor on already; a jump would seek the audio ahead.
             Action::LanesReleased => {
+                // A chord, and the holds it grew while playing, undo as one.
+                if let Some(step) = self.chord_since.take() {
+                    song.merge_since(step);
+                }
                 if std::mem::take(&mut self.placed) && self.settings.auto_jump && !self.playing {
                     song.step(Step::Later);
                 }
@@ -5020,6 +5031,27 @@ mod tests {
     }
 
     #[test]
+    fn a_chord_held_while_playing_undoes_in_one_step() {
+        let mut harness = playable();
+        space(&mut harness);
+        play_to(&mut harness, 0.5);
+        harness.key_down(egui::Key::Num1);
+        harness.key_down(egui::Key::Num2);
+        harness.run();
+        for seconds in [0.75, 0.9, 1.1] {
+            play_to(&mut harness, seconds);
+        }
+        harness.key_up(egui::Key::Num1);
+        harness.key_up(egui::Key::Num2);
+        harness.run();
+        assert!(note_at(&harness, 960, 0).is_some_and(|note| note["kind"] == "hold"));
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.run();
+        assert_eq!(note_at(&harness, 960, 0), None);
+        assert_eq!(note_at(&harness, 960, 1), None);
+    }
+
+    #[test]
     fn a_lane_key_let_go_quickly_while_playing_stays_a_tap() {
         let mut harness = playable();
         space(&mut harness);
@@ -7292,6 +7324,27 @@ mod tests {
         harness.key_press_modifiers(redo, egui::Key::Z);
         harness.run();
         assert_eq!(written(&harness), Some(b"C".to_vec()));
+    }
+
+    #[test]
+    fn a_save_in_the_frame_of_an_undo_writes_the_artwork_the_song_names() {
+        let mut harness = four_taps_at("/songs/Four/four.json");
+        for (file, bytes) in [("/p/a.png", b"A"), ("/p/b.png", b"B")] {
+            harness
+                .state_mut()
+                .use_artwork(Path::new(file), Some(picture(bytes)));
+            harness.run();
+        }
+        harness.state_mut().take_requests();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::S);
+        harness.run();
+        assert_eq!(artwork_name(&harness).as_deref(), Some("a.png"));
+        let path = Path::new("/songs/Four/four.json");
+        assert_eq!(
+            harness.state().artwork_write_for(path),
+            Some((PathBuf::from("/songs/Four/a.png"), b"A".to_vec()))
+        );
     }
 
     #[test]
