@@ -697,6 +697,62 @@ mod tests {
     }
 
     #[test]
+    fn a_format_0_song_without_chart_timing_migrates_only_its_song_timing() {
+        let mut value = minimal();
+        value["format_version"] = json!(0);
+        value["timing"] = json!({
+            "offset_seconds": 0.25,
+            "events": [{ "tick": 0, "kind": { "bpm": 120.0 } }]
+        });
+        value["charts"] = json!([{ "name": "Easy", "lanes": 4 }]);
+        let migrated = read(&value).unwrap();
+        assert!((migrated.timing().time_at(Tick::new(960)).seconds() - 0.75).abs() < 1e-9);
+        assert_eq!(migrated.charts().next().unwrap().timing().anchors.len(), 1);
+        let mut without_charts = value;
+        without_charts.as_object_mut().unwrap().remove("charts");
+        assert_eq!(read(&without_charts).unwrap().document().charts.len(), 0);
+    }
+
+    #[test]
+    fn a_format_0_bpm_before_tick_zero_migrates_to_a_negative_tick_anchor() {
+        let timing = json!({
+            "offset_seconds": 1.0,
+            "events": [
+                { "tick": -960, "kind": { "bpm": 120.0 } },
+                { "tick": 0, "kind": { "bpm": 60.0 } }
+            ]
+        });
+        let migrated = ValidDocument::from_json(&v0(&timing)).unwrap();
+        let anchors = &migrated.timing().anchors;
+        assert_eq!(anchors[0].tick, Tick::new(-960));
+        assert_eq!(anchors[0].seconds, Origin::try_from(0.5).unwrap());
+        assert!((migrated.timing().time_at(Tick::new(960)).seconds() - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_format_0_delay_and_stop_keep_their_distinct_tick_boundaries() {
+        let timing = json!({
+            "offset_seconds": 0.0,
+            "events": [
+                { "tick": 0, "kind": { "bpm": 120.0 } },
+                { "tick": 960, "kind": { "stop": 0.25 } },
+                { "tick": 1920, "kind": { "delay": 0.5 } },
+                { "tick": 2880, "kind": { "bpm": 60.0 } }
+            ]
+        });
+        let migrated = ValidDocument::from_json(&v0(&timing)).unwrap();
+        assert_eq!(
+            migrated.timing().anchors[1].seconds,
+            Origin::try_from(2.25).unwrap()
+        );
+        assert_eq!(migrated.timing().events.len(), 2);
+        assert_eq!(
+            ValidDocument::from_json(&migrated.to_json().unwrap()).unwrap(),
+            migrated
+        );
+    }
+
+    #[test]
     fn newer_versions_are_refused_before_their_keys_are_read() {
         let mut value = minimal();
         value["format_version"] = json!(2);
