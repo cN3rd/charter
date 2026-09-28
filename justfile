@@ -105,7 +105,7 @@ dist-windows: _dist-build-windows (_stage "windows" "charter-app.exe" "charter.e
     (cd dist && zip -qr "$name.zip" "$name")
     echo "dist/$name.zip"
 
-# Package both
+# Package both; docs/src/packaging.md says what ships and why no assets folder is needed
 dist: dist-linux dist-windows
 
 # Remove build output and packages
