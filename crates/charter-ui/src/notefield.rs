@@ -675,7 +675,7 @@ fn menu_items(ui: &mut Ui, song: &Song, (lane, at): (LaneIndex, Tick), actions: 
         ui,
         actions,
         ("Paste here", "Ctrl+V", edits),
-        Action::Here(at, Box::new(Action::Paste(None))),
+        Action::PasteHere(at),
     );
     item(
         ui,

@@ -335,6 +335,9 @@ pub(crate) enum Action {
     /// Moves the cursor to the tick and then does the action there, for what a menu opened on
     /// that tick places.
     Here(Tick, Box<Action>),
+    /// Pastes what the system clipboard holds at the tick, or with no text there the notes
+    /// copied last.
+    PasteHere(Tick),
     /// Asks the host for a song to open.
     Open,
     /// Saves the song to its file, or asks where when it has none.
@@ -562,6 +565,10 @@ pub struct Window {
     parked: Vec<Artwork>,
     /// Whether the audio playing was asked to keep its pitch.
     played_pitch: bool,
+    /// Where the menu's paste goes, and how many frames are left to wait for the clipboard.
+    pasting: Option<(Tick, u8)>,
+    /// Whether to ask the host for the clipboard's text this frame.
+    request_paste: bool,
     /// The settings the audio playing was mixed with, so a change to them plays it again.
     played_sounds: Option<Sounds>,
     /// Text to put on the system clipboard this frame.
@@ -1122,6 +1129,8 @@ impl Window {
         };
         self.failure = refused(song.set_metadata(metadata).err());
         if self.failure.is_none() {
+            // The picture it replaces comes back with an undo.
+            self.park_artwork();
             self.artwork = Some(Artwork::taken(name, self.artwork_file(), picture));
             // A picture under the same name leaves the revision as it was, so autosave again.
             self.autosaved = None;
@@ -1739,6 +1748,17 @@ impl Window {
             self.apply(*action);
             return;
         }
+        if let Action::PasteHere(tick) = action {
+            // The host answers with the clipboard's text as a paste, or nothing without any.
+            self.pasting = Some((tick, PASTE_WAIT));
+            self.request_paste = true;
+            return;
+        }
+        if let Action::Paste(Some(_)) = &action
+            && let Some((tick, _)) = self.pasting.take()
+        {
+            self.apply(Action::JumpTo(tick));
+        }
         self.apply_to_window(&action);
         let input_latency = self.input_latency();
         let Some(song) = &mut self.song else {
@@ -1850,6 +1870,7 @@ impl Window {
             | Action::ChooseAudio
             | Action::ChooseArtwork
             | Action::Here(..)
+            | Action::PasteHere(_)
             | Action::NudgeRate(_)
             | Action::SetRate(_)
             | Action::SetVolumes(_)
@@ -2124,6 +2145,22 @@ impl Window {
         }
         if let Some(text) = self.clipboard_out.take() {
             ui.ctx().copy_text(text);
+        }
+        if std::mem::take(&mut self.request_paste) {
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+        }
+        // No text on the clipboard sends no paste, so the notes copied last go instead.
+        match self.pasting {
+            Some((tick, 0)) => {
+                self.pasting = None;
+                self.apply(Action::Here(tick, Box::new(Action::Paste(None))));
+            }
+            Some((tick, left)) => {
+                self.pasting = Some((tick, left - 1));
+                ui.ctx().request_repaint();
+            }
+            None => {}
         }
         let artwork = self.artwork.as_mut().map(|artwork| artwork.shown(ui.ctx()));
         if let Some(song) = self.song.as_ref().filter(|_| self.settings.song_panel) {
@@ -2430,6 +2467,9 @@ fn stretch(song: &mut Song, holding: &[(LaneIndex, Tick)]) -> Option<String> {
 // click from the next play; schedule them live if that gets in the way of recording.
 /// The tones `settings` ask for over the open chart of `song`, playing from `from` seconds to
 /// `until`: a tick on each note, and the metronome on each beat.
+/// Frames the menu's paste waits for the clipboard's text before pasting the notes copied last.
+const PASTE_WAIT: u8 = 3;
+
 /// The settings playback is mixed and stretched with: a change to any of them plays again.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[allow(clippy::struct_excessive_bools)] // a copy of independent settings, compared whole
@@ -3754,6 +3794,33 @@ mod tests {
         let paste = Action::Here(Tick::new(7680), Box::new(Action::Paste(None)));
         harness.state_mut().apply(paste);
         harness.run();
+        assert_eq!(lanes_at(&harness, 7680), [0]);
+    }
+
+    #[test]
+    fn the_menu_pastes_the_clipboard_where_it_was_opened_or_else_the_last_copy() {
+        let mut harness = editable_four_taps();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.event(egui::Event::Copy);
+        harness.run();
+        let clipped = Clipped {
+            charter_notes: harness.state().clip.iter().take(1).cloned().collect(),
+        };
+        let text = serde_json::to_string(&clipped).unwrap();
+        harness
+            .state_mut()
+            .apply(Action::PasteHere(Tick::new(3840)));
+        harness.event(egui::Event::Paste(text));
+        harness.run();
+        assert_eq!(note_count(&harness), 5, "the clipboard's one note");
+        assert_eq!(lanes_at(&harness, 3840), [0]);
+        harness
+            .state_mut()
+            .apply(Action::PasteHere(Tick::new(7680)));
+        for _ in 0..5 {
+            harness.step();
+        }
+        assert_eq!(note_count(&harness), 9, "no text, so the last copy");
         assert_eq!(lanes_at(&harness, 7680), [0]);
     }
 
@@ -7161,6 +7228,26 @@ mod tests {
                 .state()
                 .artwork_write_for(Path::new("/songs/Four/four.json")),
             Some((PathBuf::from("/songs/Four/art.png"), b"png".to_vec()))
+        );
+    }
+
+    #[test]
+    fn undoing_a_second_chosen_picture_brings_the_first_back() {
+        let mut harness = four_taps_at("/songs/Four/four.json");
+        let state = harness.state_mut();
+        state.use_artwork(Path::new("/pictures/a.png"), Some(picture(b"a")));
+        harness.run();
+        let state = harness.state_mut();
+        state.use_artwork(Path::new("/pictures/b.png"), Some(picture(b"b")));
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.run();
+        assert_eq!(artwork_name(&harness).as_deref(), Some("a.png"));
+        assert_eq!(
+            harness
+                .state()
+                .artwork_write_for(Path::new("/songs/Four/four.json")),
+            Some((PathBuf::from("/songs/Four/a.png"), b"a".to_vec()))
         );
     }
 
