@@ -18,6 +18,7 @@ charter-stepmania.workspace = true
 charter-ttr.workspace = true
 charter-ui.workspace = true
 eframe = { workspace = true, features = ["persistence"] }
+image.workspace = true
 kira.workspace = true
 rfd.workspace = true
 system-fonts.workspace = true

@@ -1472,6 +1472,7 @@ dependencies = [
  "charter-ttr",
  "charter-ui",
  "eframe",
+ "image",
  "kira",
  "rfd",
  "system-fonts",

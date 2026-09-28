@@ -18,7 +18,11 @@ selection; `[` lengthens the selected notes, or those at the cursor when none is
 the snap's next line, making a tap a hold, and `]` shortens them back to a tap; undo and redo return to where each edit was made. The song panel's Song section edits
 the song's title and artist in place, chooses its audio with the button beside the file's name,
 and sets its preview, where a song list starts playing it, as a time and a length in seconds;
-clearing the time takes the preview away. Each change is one step, and the ruleset shows as it
+clearing the time takes the preview away. Its artwork is a PNG or JPEG named beside the song,
+typed or chosen with the button beside the field or File › Choose artwork…, and a preview of it
+shows under the field. Audio chosen for a song without artwork brings the cover its tags hold, as
+`cover.jpg` or `cover.png`. A chosen or embedded picture is written beside the song when it is
+saved, and a song saved to a new folder takes its artwork along. Each change is one step, and the ruleset shows as it
 is. Settings the song's game reads as text follow as fields of their own, such as Tap Tap
 Revenge's theme, and the open chart's under the chart list. The song panel's Timing section is laid out as osu!'s timing panel is.
 The song's offset comes first: where beat 0 falls in the audio, in milliseconds, stepped by 1 ms

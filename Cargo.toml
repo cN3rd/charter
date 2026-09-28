@@ -57,6 +57,8 @@ rfd = "0.17.2"
 # kira frames.
 kira = { version = "0.12.4", default-features = false, features = ["cpal"] }
 egui-phosphor = "0.14.0"
+# Already linked through eframe; charter adds JPEG, how most embedded covers are encoded.
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg"] }
 # ponytail: finds installed fonts by family for CJK song titles; egui-system-fonts wraps it but
 # writes into the egui context, which the window's own font setup would then replace.
 system-fonts = "0.1.2"

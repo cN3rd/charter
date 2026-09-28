@@ -13,7 +13,7 @@ mod finder;
 mod player;
 
 use charter_core::RulesetPlugin;
-use charter_ui::{Request, Saved, Settings, Window};
+use charter_ui::{Picture, Request, Saved, Settings, Window};
 
 use crate::disk::Disk;
 use crate::finder::Finder;
@@ -93,6 +93,15 @@ impl Host {
                             self.window.use_audio(&path);
                         }
                     }
+                    Request::ChooseArtwork => {
+                        let file = rfd::FileDialog::new()
+                            .add_filter("picture", &["png", "jpg", "jpeg"])
+                            .pick_file();
+                        if let Some(path) = file {
+                            let picture = self.disk.read(&path).ok().and_then(picture);
+                            self.window.use_artwork(&path, picture);
+                        }
+                    }
                     Request::FindTiming {
                         file,
                         ticks_per_beat,
@@ -134,7 +143,17 @@ impl Host {
                     let extension = file.extension().and_then(|extension| extension.to_str());
                     let tags = charter_audio::tags(bytes, extension);
                     self.window.tags_read(&file, tags.title, tags.artist);
+                    if let Some(artwork) = tags.artwork
+                        && let Some(found) = picture(artwork.bytes)
+                    {
+                        self.window
+                            .artwork_embedded(&file, artwork.extension, found);
+                    }
                 }
+            }
+            Request::ReadArtwork { file } => {
+                let found = self.disk.read(&file).ok().and_then(picture);
+                self.window.artwork_read(&file, found);
             }
             Request::DropAutosave => {
                 if let Some(recovery) = &self.recovery {
@@ -160,6 +179,11 @@ impl Host {
                 .map_err(|error| format!("{} to {}: {error}", from.display(), to.display())),
             None => Ok(()),
         };
+        let copied = copied.and_then(|()| match self.window.artwork_write_for(&path) {
+            Some((to, bytes)) => disk::write_whole(self.disk.as_ref(), &to, &bytes)
+                .map_err(|error| format!("{}: {error}", to.display())),
+            None => Ok(()),
+        });
         let saved = match copied.and_then(|()| {
             disk::write_whole(self.disk.as_ref(), &path, bytes)
                 .map_err(|error| format!("{}: {error}", path.display()))
@@ -333,6 +357,18 @@ fn main() -> eframe::Result {
             Ok(Box::new(host))
         }),
     )
+}
+
+/// The picture `bytes` encode, with a preview of it no larger than a song panel needs, unless
+/// they are not a PNG or a JPEG.
+fn picture(bytes: Vec<u8>) -> Option<Picture> {
+    let preview = image::load_from_memory(&bytes)
+        .ok()?
+        .thumbnail(512, 512)
+        .to_rgba8();
+    let size = [preview.width(), preview.height()].map(|side| side as usize);
+    let image = eframe::egui::ColorImage::from_rgba_unmultiplied(size, preview.as_raw());
+    Some((bytes, image))
 }
 
 #[cfg(test)]
@@ -575,6 +611,59 @@ mod tests {
         assert!(host.window.message().is_some_and(|message| {
             message.contains("recovery.json") && message.contains("access denied")
         }));
+    }
+
+    /// A PNG of `width` by `height` red pixels.
+    fn png(width: u32, height: u32) -> Vec<u8> {
+        let image = image::RgbaImage::from_pixel(width, height, image::Rgba([255, 0, 0, 255]));
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        image.write_to(&mut bytes, image::ImageFormat::Png).unwrap();
+        bytes.into_inner()
+    }
+
+    #[test]
+    fn a_picture_previews_no_larger_than_512_and_anything_else_is_none() {
+        let (bytes, preview) = picture(png(1024, 256)).unwrap();
+        assert_eq!(bytes, png(1024, 256));
+        assert_eq!(preview.size, [512, 128]);
+        assert!(picture(b"not a picture".to_vec()).is_none());
+    }
+
+    #[test]
+    fn saving_writes_chosen_artwork_beside_the_song() {
+        let mut host = host(Memory::with(&[("/m/a.ogg", b"audio")]));
+        host.window = Window::new(PLUGINS);
+        let metadata = charter_core::Metadata {
+            title: "t".to_owned(),
+            artist: "a".to_owned(),
+            audio: charter_core::ResourcePath::new("a.ogg").unwrap(),
+            preview: None,
+            artwork: None,
+            genre: None,
+            ext: charter_core::Extensions::new(),
+        };
+        let song = charter_stepmania::Plugin
+            .new_song(&charter_core::NewSong {
+                metadata,
+                layout: 0,
+                charts: vec![charter_core::NewChart::named("Easy")],
+            })
+            .unwrap()
+            .to_json()
+            .unwrap();
+        host.window.open(Path::new("/m/t.json"), &song);
+        host.window
+            .use_artwork(Path::new("/p/art.png"), picture(png(2, 2)));
+        assert_eq!(host.window.message(), None);
+        host.handle_requests(vec![Request::Write {
+            path: PathBuf::from("/s/Song/Song.json"),
+            bytes: SONG.to_vec(),
+        }]);
+        assert_eq!(
+            host.disk.read(Path::new("/s/Song/art.png")).unwrap(),
+            png(2, 2)
+        );
+        assert!(files(&host, "/s/Song/Song.json"));
     }
 
     #[test]

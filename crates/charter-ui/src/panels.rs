@@ -43,6 +43,12 @@ pub fn menu_bar(
             if ui.add_enabled(editable, choose).clicked() {
                 actions.push(Action::ChooseAudio);
             }
+            if ui
+                .add_enabled(editable, egui::Button::new("Choose artwork…"))
+                .clicked()
+            {
+                actions.push(Action::ChooseArtwork);
+            }
             ui.separator();
             if ui.button("Open the demo song").clicked() {
                 actions.push(Action::OpenDemo);
@@ -373,17 +379,19 @@ const KEYS: [(&str, &[(&str, &str)]); 6] = [
     ),
 ];
 
+/// The song panel's Song and Charts sections. `artwork` is the song's artwork to preview, or why
+/// there is none to show, when the song names some.
 pub fn song_panel(
     ui: &mut Ui,
     song: &Song,
-    drafts: &mut SongDrafts,
+    (drafts, artwork): (&mut SongDrafts, Option<Result<&egui::TextureHandle, &str>>),
     actions: &mut Vec<Action>,
 ) -> Option<String> {
     let document = song.document().document();
     let mut refused = None;
     style::section(ui, "Song", |ui| {
         table(ui, "song", |ui| {
-            refused = song_rows(ui, song, drafts, actions);
+            refused = song_rows(ui, song, (drafts, artwork), actions);
         });
     });
     style::section(ui, "Charts", |ui| {
@@ -428,10 +436,11 @@ const WIDE: f32 = 180.0;
 
 /// The song's title, artist, audio, preview and ruleset, each that can change a field of its
 /// own. Says why something typed is not a value.
+#[allow(clippy::too_many_lines)] // one row a fact, top to bottom
 fn song_rows(
     ui: &mut Ui,
     song: &Song,
-    drafts: &mut SongDrafts,
+    (drafts, preview): (&mut SongDrafts, Option<Result<&egui::TextureHandle, &str>>),
     actions: &mut Vec<Action>,
 ) -> Option<String> {
     let document = song.document().document();
@@ -509,19 +518,46 @@ fn song_rows(
                 .map_err(|_| format!("{typed} is not a file beside the song"))?;
             Ok(changed(&|new| new.artwork = Some(path.clone())))
         };
-        let offered = entry_sized(
-            ui,
-            (caption.id, WIDE),
-            artwork,
-            &mut drafts.artwork,
-            read,
-            actions,
-        );
-        refused = refused.take().or(offered);
+        ui.horizontal(|ui| {
+            let offered = entry_sized(
+                ui,
+                (caption.id, WIDE - 28.0),
+                artwork,
+                &mut drafts.artwork,
+                read,
+                actions,
+            );
+            refused = refused.take().or(offered);
+            if style::quiet_icon(
+                ui,
+                icon::FOLDER_OPEN,
+                "Choose the song's artwork",
+                "Choose a PNG or JPEG picture",
+            )
+            .clicked()
+            {
+                actions.push(Action::ChooseArtwork);
+            }
+        });
     } else {
         ui.label(if artwork.is_empty() { "none" } else { artwork });
     }
     ui.end_row();
+    if let Some(preview) = preview {
+        ui.label("");
+        match preview {
+            Ok(texture) => {
+                let image = egui::Image::new(texture)
+                    .max_size(egui::vec2(WIDE, 120.0))
+                    .corner_radius(4);
+                ui.add(image).on_hover_text(artwork);
+            }
+            Err(why) => {
+                ui.weak(why);
+            }
+        }
+        ui.end_row();
+    }
     let offered = preview_rows(ui, (metadata, editable), drafts, actions);
     refused = refused.take().or(offered);
     ui.weak("Ruleset");
@@ -1440,7 +1476,12 @@ mod tests {
         let song = Song::open(bytes.as_bytes(), &[]).unwrap();
         let mut harness = Harness::builder().build_ui_state(
             |ui, song: &mut Song| {
-                song_panel(ui, song, &mut SongDrafts::default(), &mut Vec::new());
+                song_panel(
+                    ui,
+                    song,
+                    (&mut SongDrafts::default(), None),
+                    &mut Vec::new(),
+                );
             },
             song,
         );

@@ -3,6 +3,7 @@
 //! write and choose files through [`Request`]s, so the binary that hosts it opens the window and
 //! does that I/O.
 
+mod artwork;
 mod flip;
 mod import;
 mod keys;
@@ -18,6 +19,7 @@ use charter_style as style;
 mod timing_panel;
 mod window;
 
+pub use artwork::Picture;
 pub use flip::Direction;
 pub use settings::{Settings, Sound};
 use window::{Action, Note};

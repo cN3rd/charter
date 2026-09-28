@@ -10,6 +10,7 @@ use egui::Ui;
 
 use charter_editor::{KeepNotes, NoteAt, Refusal, Selecting, Song, Step, Toggled, demo};
 
+use crate::artwork::{Artwork, Picture};
 use crate::flip::Direction;
 use crate::new_song::{self, NO_AUDIO};
 use crate::notefield::{self, Zoom};
@@ -78,6 +79,14 @@ pub enum Request {
     /// Ask the user to choose an audio file for the open song, and pass it to
     /// [`Window::use_audio`].
     ChooseAudio,
+    /// Ask the user to choose a picture for the open song's artwork, and pass it to
+    /// [`Window::use_artwork`].
+    ChooseArtwork,
+    /// Read and decode the picture at `file`, the song's artwork, and pass it to
+    /// [`Window::artwork_read`].
+    ReadArtwork {
+        file: PathBuf,
+    },
     /// Ask the user to choose a file holding timing in another program's format, such as a
     /// `.osu` file, and pass its text to [`Window::timing_file_read`].
     ChooseTimingFile,
@@ -301,6 +310,8 @@ pub(crate) enum Action {
     TogglePlay,
     /// Asks the host to let the user choose the song's audio.
     ChooseAudio,
+    /// Asks the host to let the user choose a picture for the song's artwork.
+    ChooseArtwork,
     /// Makes the audio play this much faster, or slower when negative.
     NudgeRate(f64),
     /// Makes the audio play at this factor of its speed.
@@ -495,6 +506,11 @@ pub struct Window {
     /// The audio file dropped on the song, which is copied beside the song when it is saved
     /// elsewhere.
     audio_file: Option<PathBuf>,
+    /// The song's cover artwork, as read, chosen or taken from its audio.
+    artwork: Option<Artwork>,
+    /// The artwork the audio of the song being started holds, and which file, to take when the
+    /// song starts.
+    embedded: Option<(PathBuf, String, Picture)>,
 }
 
 impl Window {
@@ -575,6 +591,9 @@ impl Window {
                 }
                 self.audio_file = None;
                 self.path = Some(path);
+                if let Some(artwork) = &mut self.artwork {
+                    artwork.saved();
+                }
                 self.failure = None;
                 if let Some(discard) = self.after_save.take() {
                     self.carry_on(discard);
@@ -913,6 +932,124 @@ impl Window {
             self.draft_audio(file);
         } else {
             self.add_audio(file);
+        }
+    }
+
+    /// Makes the picture the host read from `file`, which the user chose, the open song's
+    /// artwork, written beside the song when it is saved. Says so when it could not be read as
+    /// a picture.
+    pub fn use_artwork(&mut self, file: &Path, picture: Option<Picture>) {
+        let Some(picture) = picture else {
+            self.failure = Some(format!(
+                "{} cannot be the song's artwork: it is not a PNG or JPEG picture",
+                file.display()
+            ));
+            return;
+        };
+        let name = file
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned());
+        self.take_artwork(name.unwrap_or_default(), picture);
+    }
+
+    /// Takes the picture the audio `file` holds, with the extension a file of it is named with.
+    /// The song, or the song being started, takes it as `cover` beside it when it has no artwork
+    /// yet and plays that file.
+    pub fn artwork_embedded(&mut self, file: &Path, extension: &str, picture: Picture) {
+        if self
+            .new_song
+            .as_ref()
+            .is_some_and(|draft| draft.audio.as_deref() == Some(file))
+        {
+            self.embedded = Some((file.to_path_buf(), extension.to_owned(), picture));
+            return;
+        }
+        let bare = self
+            .song
+            .as_ref()
+            .is_some_and(|song| song.document().document().metadata.artwork.is_none());
+        if bare && self.audio_file.as_deref() == Some(file) {
+            self.take_artwork(format!("cover.{extension}"), picture);
+        }
+    }
+
+    /// Takes what the host read of `file`, the song's artwork, or that it could not.
+    pub fn artwork_read(&mut self, file: &Path, picture: Option<Picture>) {
+        if self.artwork_file().as_deref() == Some(file)
+            && let Some(artwork) = &mut self.artwork
+        {
+            artwork.read(picture);
+        }
+    }
+
+    /// Where and what the song's artwork writes when the song is saved to `path`, if it is not
+    /// there already. The host writes it before reporting [`Saved::To`].
+    #[must_use]
+    pub fn artwork_write_for(&self, path: &Path) -> Option<(PathBuf, Vec<u8>)> {
+        self.artwork
+            .as_ref()?
+            .write_for(path, self.artwork_file().as_deref())
+    }
+
+    /// The file beside the saved song its artwork names.
+    fn artwork_file(&self) -> Option<PathBuf> {
+        let name = self
+            .song
+            .as_ref()?
+            .document()
+            .document()
+            .metadata
+            .artwork
+            .as_ref()?;
+        Some(self.song_folder()?.join(name.as_str()))
+    }
+
+    /// Names `picture` the open song's artwork as `name`.
+    fn take_artwork(&mut self, name: String, picture: Picture) {
+        let Some(song) = &mut self.song else {
+            self.failure = Some("Open or start a song before adding its artwork.".to_owned());
+            return;
+        };
+        let path = match charter_core::ResourcePath::new(&name) {
+            Ok(path) => path,
+            Err(error) => {
+                self.failure = Some(format!("{name} cannot be a song's artwork: {error}"));
+                return;
+            }
+        };
+        let old = &song.document().document().metadata;
+        let metadata = charter_core::Metadata {
+            artwork: Some(path),
+            ..old.clone()
+        };
+        self.failure = refused(song.set_metadata(metadata).err());
+        if self.failure.is_none() {
+            self.artwork = Some(Artwork::taken(name, picture));
+        }
+    }
+
+    /// Keeps the artwork in step with what the song names: artwork named anew is read from beside
+    /// the song, and none is none.
+    fn follow_artwork(&mut self) {
+        let named = self.song.as_ref().and_then(|song| {
+            let artwork = song.document().document().metadata.artwork.as_ref();
+            artwork.map(ToString::to_string)
+        });
+        let Some(named) = named else {
+            self.artwork = None;
+            return;
+        };
+        if self
+            .artwork
+            .as_ref()
+            .is_some_and(|artwork| artwork.name == named)
+        {
+            return;
+        }
+        let file = self.artwork_file();
+        self.artwork = Some(Artwork::named(&named, file.as_deref()));
+        if let Some(file) = file {
+            self.requests.push(Request::ReadArtwork { file });
         }
     }
 
@@ -1312,8 +1449,15 @@ impl Window {
                 self.holding.clear();
                 self.pressed.clear();
                 self.audio_file = audio;
+                self.artwork = None;
                 if std::mem::take(&mut self.playing) {
                     self.requests.push(Request::Pause);
+                }
+                let embedded = self.embedded.take();
+                if let Some((file, extension, picture)) = embedded
+                    && self.audio_file.as_ref() == Some(&file)
+                {
+                    self.artwork_embedded(&file, &extension, picture);
                 }
             }
         }
@@ -1363,6 +1507,7 @@ impl Window {
                 self.replay();
             }
             Action::ChooseAudio => self.requests.push(Request::ChooseAudio),
+            Action::ChooseArtwork => self.requests.push(Request::ChooseArtwork),
             Action::NudgeRate(step) => self.set_rate(self.rate.by(step)),
             Action::SetRate(factor) => self.set_rate(Rate::of(factor)),
             Action::SetVolumes(volumes) => self.settings.volumes = volumes,
@@ -1483,6 +1628,7 @@ impl Window {
             | Action::ToggleRate
             | Action::MuteMetronome(_)
             | Action::ChooseAudio
+            | Action::ChooseArtwork
             | Action::NudgeRate(_)
             | Action::SetRate(_)
             | Action::SetVolumes(_)
@@ -1707,6 +1853,8 @@ impl Window {
             .show(ui, |ui| {
                 panels::status_bar(ui, self.song.as_ref(), (&audio_state, self.playing));
             });
+        self.follow_artwork();
+        let artwork = self.artwork.as_mut().map(|artwork| artwork.shown(ui.ctx()));
         if let Some(song) = self.song.as_ref().filter(|_| self.settings.song_panel) {
             let timing = &mut self.timing_drafts;
             let facts = &mut self.song_drafts;
@@ -1718,7 +1866,8 @@ impl Window {
                     style::solid_scroll_bars(ui);
                     egui::ScrollArea::vertical()
                         .show(ui, |ui| {
-                            let named = panels::song_panel(ui, song, facts, &mut actions);
+                            let named =
+                                panels::song_panel(ui, song, (facts, artwork), &mut actions);
                             let refused = timing_panel::section(ui, song, timing, &mut actions);
                             let refused = named.or(refused);
                             panels::markers(ui, song, section, &mut actions);
@@ -2750,6 +2899,98 @@ mod tests {
     fn metadata(harness: &Harness<'_, Window>) -> charter_core::Metadata {
         let song = harness.state().song.as_ref().unwrap();
         song.document().document().metadata.clone()
+    }
+
+    fn picture(bytes: &[u8]) -> Picture {
+        (
+            bytes.to_vec(),
+            egui::ColorImage::filled([4, 4], egui::Color32::RED),
+        )
+    }
+
+    fn artwork_name(harness: &Harness<'_, Window>) -> Option<String> {
+        metadata(harness).artwork.map(|path| path.to_string())
+    }
+
+    #[test]
+    fn chosen_artwork_previews_and_is_written_beside_the_song_on_save() {
+        let mut harness = four_taps_at("/songs/Four/four.json");
+        harness.get_by_label("Choose the song's artwork").click();
+        harness.run();
+        assert_eq!(request(&mut harness), Request::ChooseArtwork);
+        harness
+            .state_mut()
+            .use_artwork(Path::new("/pictures/art.png"), Some(picture(b"png")));
+        harness.run();
+        assert_eq!(artwork_name(&harness).as_deref(), Some("art.png"));
+        assert!(
+            harness
+                .query_by_label("Not a picture beside the song")
+                .is_none()
+        );
+        let saving = Path::new("/songs/Four/four.json");
+        assert_eq!(
+            harness.state().artwork_write_for(saving),
+            Some((PathBuf::from("/songs/Four/art.png"), b"png".to_vec()))
+        );
+        harness.state_mut().saved(Saved::To(saving.to_path_buf()));
+        assert_eq!(harness.state().artwork_write_for(saving), None);
+    }
+
+    #[test]
+    fn a_file_that_is_not_a_picture_is_refused_as_artwork() {
+        let mut harness = four_taps_at("/songs/four.json");
+        harness
+            .state_mut()
+            .use_artwork(Path::new("/pictures/notes.txt"), None);
+        harness.run();
+        assert_eq!(artwork_name(&harness), None);
+        assert!(
+            harness
+                .query_by_label_contains("is not a PNG or JPEG picture")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn new_audio_brings_its_embedded_cover_unless_the_song_has_artwork() {
+        let mut harness = four_taps_at("/songs/four.json");
+        let audio = Path::new("/music/song.flac");
+        harness.state_mut().use_audio(audio);
+        harness.run();
+        harness
+            .state_mut()
+            .artwork_embedded(Path::new("/music/other.flac"), "jpg", picture(b"x"));
+        assert_eq!(artwork_name(&harness), None);
+        harness
+            .state_mut()
+            .artwork_embedded(audio, "jpg", picture(b"jpeg"));
+        harness.run();
+        assert_eq!(artwork_name(&harness).as_deref(), Some("cover.jpg"));
+        harness
+            .state_mut()
+            .artwork_embedded(audio, "png", picture(b"png"));
+        assert_eq!(artwork_name(&harness).as_deref(), Some("cover.jpg"));
+    }
+
+    #[test]
+    fn a_song_naming_artwork_asks_for_it_beside_the_song_and_previews_it() {
+        let mut harness = four_taps_at("/songs/four.json");
+        retype(&mut harness, "Artwork", "art.png");
+        let requests = harness.state_mut().take_requests();
+        let file = PathBuf::from("/songs/art.png");
+        assert!(
+            requests.contains(&Request::ReadArtwork { file: file.clone() }),
+            "{requests:?}"
+        );
+        assert!(harness.query_by_label("Reading…").is_some());
+        harness.state_mut().artwork_read(&file, None);
+        harness.run();
+        assert!(
+            harness
+                .query_by_label("Not a picture beside the song")
+                .is_some()
+        );
     }
 
     #[test]
