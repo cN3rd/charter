@@ -27,8 +27,8 @@ pub use json::{MAX_DOCUMENT_BYTES, Valid, ValidDocument};
 pub use number::Decimal;
 pub use path::ResourcePath;
 pub use plugin::{
-    Difficulties, DifficultyPreset, ImportedTiming, Layout, NewChart, NewSong, RulesetPlugin,
-    SettingScope, TextSetting,
+    Difficulties, DifficultyPreset, ImportedTiming, Layout, NewChart, NewSong, NoteChange,
+    RulesetPlugin, SettingScope, TextSetting,
 };
 pub use sections::{Section, SectionError, Sectioned, sectioned};
 

@@ -3,7 +3,7 @@
 use std::error::Error;
 use std::fmt::Debug;
 
-use crate::document::{Metadata, Timing};
+use crate::document::{Metadata, Object, Timing};
 use crate::json::ValidDocument;
 use crate::unit::LaneCount;
 
@@ -83,6 +83,18 @@ pub struct TextSetting {
     pub scope: SettingScope,
 }
 
+/// A change a plugin offers for the selected notes, such as turning taps into another of its
+/// game's kinds of note.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NoteChange {
+    /// What the plugin knows the change by, passed back to [`RulesetPlugin::change_note`].
+    pub id: String,
+    /// What the editor calls it, such as `Arrow`.
+    pub name: String,
+    /// What it does, for a tooltip.
+    pub about: String,
+}
+
 /// Timing read from another program's format, ready to take the place of a song's.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ImportedTiming {
@@ -133,6 +145,19 @@ pub trait RulesetPlugin: Debug {
     /// The settings, of the song or of each chart, that the editor shows as text fields.
     fn text_settings(&self) -> Vec<TextSetting> {
         Vec::new()
+    }
+
+    /// The changes the editor offers for selected notes, which [`RulesetPlugin::change_note`]
+    /// makes.
+    fn note_changes(&self) -> Vec<NoteChange> {
+        Vec::new()
+    }
+
+    /// `object`, a note of a chart `lanes` wide, as the change `id` makes it, or none when the
+    /// change does not apply to it. The editor checks the result as it does any edit.
+    fn change_note(&self, id: &str, object: &Object, lanes: LaneCount) -> Option<Object> {
+        let _ = (id, object, lanes);
+        None
     }
 
     /// A song with no notes made from `song`, which this plugin accepts.

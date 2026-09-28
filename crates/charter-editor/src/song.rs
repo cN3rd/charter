@@ -1203,22 +1203,185 @@ impl Song {
     /// would start where a note that is not moving starts on a lane it covers, and when the move
     /// breaks a rule of the format or of the song's game. The notes stay as they were.
     pub fn move_selection(&mut self, ticks: i32, lanes: i32) -> Result<(), Refusal> {
+        if (ticks, lanes) == (0, 0) {
+            return Ok(());
+        }
+        let width = self.lane_count();
+        self.replace_selection(&|object| {
+            let moved = shifted(object, ticks, lanes).ok_or(Refusal::OffTheChart)?;
+            fits(&moved, width)
+                .then_some(moved)
+                .ok_or(Refusal::OffTheChart)
+        })
+    }
+
+    /// Flips every selected note across the chart, its first lane becoming its last, as one step
+    /// that keeps them selected.
+    ///
+    /// # Errors
+    ///
+    /// Refuses as [`Song::move_selection`] does.
+    pub fn mirror_selection(&mut self) -> Result<(), Refusal> {
+        let width = self.lane_count();
+        self.replace_selection(&|object| {
+            let mut mirrored = object.clone();
+            if let Position::Lane { index, width: span } = object.position {
+                let right = u16::from(index) + u16::from(span);
+                let index = width.checked_sub(right).ok_or(Refusal::OffTheChart)?;
+                mirrored.position = Position::Lane {
+                    index: LaneIndex::new(index),
+                    width: span,
+                };
+            }
+            Ok(mirrored)
+        })
+    }
+
+    /// Makes every selected note what the song's game makes it by its change `change`, such as
+    /// a tap into another kind of note, as one step that keeps them selected. Notes the change
+    /// does not apply to stay as they are, and notes it makes the same merge into one.
+    ///
+    /// # Errors
+    ///
+    /// Refuses on a read-only song, and as [`Song::move_selection`] does.
+    pub fn change_selection(&mut self, change: &str) -> Result<(), Refusal> {
+        let plugin = self.plugin().ok_or(Refusal::ReadOnly)?;
+        let lanes = self
+            .chart()
+            .and_then(|chart| chart.lanes)
+            .ok_or(Refusal::NoChart)?;
+        self.replace_selection(&|object| {
+            Ok(plugin
+                .change_note(change, object, lanes)
+                .unwrap_or_else(|| object.clone()))
+        })
+    }
+
+    /// The selected notes, earliest first, as a clipboard holds them: their ticks counted from
+    /// the earliest's.
+    #[must_use]
+    pub fn copied(&self) -> Vec<Object> {
+        let Some(chart) = self.chart() else {
+            return Vec::new();
+        };
+        let selected: Vec<&Object> = chart
+            .objects
+            .iter()
+            .filter(|object| self.is_selected(object))
+            .collect();
+        let Some(first) = selected.first().map(|object| i64::from(object.tick)) else {
+            return Vec::new();
+        };
+        let back = |tick: Tick| {
+            i32::try_from(i64::from(tick) - first)
+                .map(Tick::new)
+                .map_err(|_| Refusal::NotWhole)
+        };
+        selected
+            .into_iter()
+            .filter_map(|object| shifted_at(object, &back).ok())
+            .collect()
+    }
+
+    /// Adds the notes of `clip`, as [`Song::copied`] gives them, starting at `at`, as one step,
+    /// and selects them. Notes past the chart's lanes, or where a note starts on a lane they
+    /// cover, are left out. Says how many were added.
+    ///
+    /// # Errors
+    ///
+    /// Refuses on a read-only song, and when the notes break a rule of the format or of the
+    /// song's game.
+    pub fn paste(&mut self, clip: &[Object], at: Tick) -> Result<usize, Refusal> {
+        let offset = i64::from(at);
+        let on = |tick: Tick| {
+            i32::try_from(i64::from(tick) + offset)
+                .map(Tick::new)
+                .map_err(|_| Refusal::OffTheChart)
+        };
+        let placed: Vec<Object> = clip
+            .iter()
+            .filter_map(|object| shifted_at(object, &on).ok())
+            .collect();
+        self.add(placed)
+    }
+
+    /// Adds a tap on each lane at each tick of `taps`, as one step, and selects them, leaving out
+    /// those where a note already starts. Says how many were added.
+    ///
+    /// # Errors
+    ///
+    /// Refuses as [`Song::paste`] does.
+    pub fn add_taps(
+        &mut self,
+        taps: impl IntoIterator<Item = (Tick, LaneIndex)>,
+    ) -> Result<usize, Refusal> {
+        let taps = taps
+            .into_iter()
+            .map(|(tick, lane)| note(tick, lane, Kind::Tap))
+            .collect();
+        self.add(taps)
+    }
+
+    /// The open chart's lanes, or none without a chart.
+    fn lane_count(&self) -> u16 {
+        self.chart()
+            .and_then(|chart| chart.lanes)
+            .map_or(0, u16::from)
+    }
+
+    /// Adds `objects` as one step and selects them, leaving out those past the lanes, where a
+    /// note already starts on a lane they cover, or the same as one added before them.
+    fn add(&mut self, mut objects: Vec<Object>) -> Result<usize, Refusal> {
+        let Some(chart) = self.chart() else {
+            return Err(Refusal::NoChart);
+        };
+        let width = self.lane_count();
+        objects.sort_by_key(|object| object.tick);
+        let mut all: Vec<Object> = chart.objects.clone();
+        let mut ops = Vec::new();
+        let mut selection = BTreeSet::new();
+        for object in objects {
+            if !fits(&object, width) || taken(&all, &object) {
+                continue;
+            }
+            let index = all.partition_point(|other| other.tick <= object.tick);
+            selection.extend(note_at(&object));
+            all.insert(index, object.clone());
+            ops.push(Op::Insert { index, object });
+        }
+        let added = ops.len();
+        if added == 0 {
+            return Ok(0);
+        }
+        let edit = Edit(ops);
+        self.document = self.edited(self.chart, &edit)?;
+        self.selection = selection;
+        self.record(edit);
+        Ok(added)
+    }
+
+    /// Puts each selected note where `change` puts it, as one step that keeps them selected.
+    /// A changed note the same as one changed before it merges into it.
+    fn replace_selection(
+        &mut self,
+        change: &dyn Fn(&Object) -> Result<Object, Refusal>,
+    ) -> Result<(), Refusal> {
         let Some(chart) = self.chart() else {
             return Ok(());
         };
-        if (ticks, lanes) == (0, 0) || self.selection.is_empty() {
+        if self.selection.is_empty() {
             return Ok(());
         }
         // Removing from the back keeps the index of every note still to remove.
         let mut ops = Vec::new();
-        let mut moved = Vec::new();
+        let mut changed = Vec::new();
         for (index, object) in chart.objects.iter().enumerate().rev() {
             if self.is_selected(object) {
                 ops.push(Op::Remove {
                     index,
                     object: object.clone(),
                 });
-                moved.push(shifted(object, ticks, lanes).ok_or(Refusal::OffTheChart)?);
+                changed.push(change(object)?);
             }
         }
         let mut objects: Vec<Object> = chart
@@ -1227,28 +1390,20 @@ impl Song {
             .filter(|object| !self.is_selected(object))
             .cloned()
             .collect();
-        moved.reverse();
+        changed.reverse();
         let mut selection = BTreeSet::new();
-        for object in moved {
-            let from = objects.partition_point(|other| other.tick < object.tick);
-            let index = objects.partition_point(|other| other.tick <= object.tick);
-            let span = object.position.lanes();
-            let taken = objects
-                .get(from..index)
-                .unwrap_or_default()
-                .iter()
-                .any(|other| {
-                    other
-                        .position
-                        .lanes()
-                        .zip(span)
-                        .is_some_and(|(other, span)| other.overlaps(span))
-                });
-            if taken {
+        let mut placed: Vec<Object> = Vec::new();
+        for object in changed {
+            if placed.contains(&object) {
+                continue;
+            }
+            if taken(&objects, &object) {
                 return Err(Refusal::Occupied);
             }
+            let index = objects.partition_point(|other| other.tick <= object.tick);
             selection.extend(note_at(&object));
             objects.insert(index, object.clone());
+            placed.push(object.clone());
             ops.push(Op::Insert { index, object });
         }
         let edit = Edit(ops);
@@ -1373,6 +1528,32 @@ impl Song {
 
     fn length_of(&self, snap: NonZeroU16) -> Option<Ticks> {
         self.document.document().ticks_per_beat.note_length(snap)
+    }
+}
+
+/// Whether a note starts at `object`'s tick on a lane it covers, among `objects`.
+fn taken(objects: &[Object], object: &Object) -> bool {
+    let from = objects.partition_point(|other| other.tick < object.tick);
+    let to = objects.partition_point(|other| other.tick <= object.tick);
+    let span = object.position.lanes();
+    objects
+        .get(from..to)
+        .unwrap_or_default()
+        .iter()
+        .any(|other| {
+            other
+                .position
+                .lanes()
+                .zip(span)
+                .is_some_and(|(other, span)| other.overlaps(span))
+        })
+}
+
+/// Whether `object` sits within `lanes` lanes, as a note on the plane always does.
+fn fits(object: &Object, lanes: u16) -> bool {
+    match object.position {
+        Position::Lane { index, width } => u16::from(index) + u16::from(width) <= lanes,
+        Position::Plane { .. } => true,
     }
 }
 
@@ -1870,6 +2051,107 @@ pub(crate) mod tests {
                 object(240, 2, "mine")
             ]
         );
+    }
+
+    /// Offers one change, "across", which makes a note cover every lane.
+    #[derive(Debug)]
+    struct Across;
+
+    impl RulesetPlugin for Across {
+        fn id(&self) -> &'static str {
+            "test"
+        }
+
+        fn check(&self, _: &ValidDocument) -> Result<(), Box<dyn Error + Send + Sync>> {
+            Ok(())
+        }
+
+        fn change_note(&self, id: &str, object: &Object, lanes: LaneCount) -> Option<Object> {
+            (id == "across").then(|| Object {
+                position: Position::Lane {
+                    index: LaneIndex::new(0),
+                    width: lanes,
+                },
+                ..object.clone()
+            })
+        }
+    }
+
+    fn select_everything(song: &mut Song) {
+        song.select_all();
+    }
+
+    #[test]
+    fn copied_notes_paste_at_another_tick_as_one_step_and_come_out_selected() {
+        let mut song = Song::new(
+            document(json!([object(240, 0, "tap"), hold(480, 1, 240)])),
+            EDITABLE,
+        );
+        select_everything(&mut song);
+        let clip = song.copied();
+        assert_eq!(clip.first().unwrap().tick, at(0));
+        assert_eq!(song.paste(&clip, at(1920)).unwrap(), 2);
+        assert_eq!(
+            objects(&song),
+            [
+                object(240, 0, "tap"),
+                hold(480, 1, 240),
+                object(1920, 0, "tap"),
+                hold(2160, 1, 240)
+            ]
+        );
+        assert_eq!(song.selection().count(), 2);
+        song.undo().unwrap();
+        assert_eq!(objects(&song).len(), 2);
+    }
+
+    #[test]
+    fn a_paste_or_taps_leave_out_places_already_taken() {
+        let mut song = Song::new(document(json!([object(0, 0, "tap")])), EDITABLE);
+        let added = song
+            .add_taps([(at(0), lane(0)), (at(0), lane(1)), (at(240), lane(9))])
+            .unwrap();
+        assert_eq!(added, 1);
+        assert_eq!(objects(&song), [object(0, 0, "tap"), object(0, 1, "tap")]);
+    }
+
+    #[test]
+    fn mirroring_flips_the_selection_across_the_lanes() {
+        let mut song = Song::new(
+            document(json!([object(0, 0, "tap"), object(240, 2, "tap")])),
+            EDITABLE,
+        );
+        select_everything(&mut song);
+        song.mirror_selection().unwrap();
+        assert_eq!(objects(&song), [object(0, 3, "tap"), object(240, 1, "tap")]);
+        assert_eq!(song.selection().count(), 2);
+    }
+
+    #[test]
+    fn moving_a_lane_past_the_last_is_refused() {
+        let mut song = Song::new(document(json!([object(0, 3, "tap")])), EDITABLE);
+        select_everything(&mut song);
+        assert!(matches!(
+            song.move_selection(0, 1),
+            Err(Refusal::OffTheChart)
+        ));
+        song.move_selection(0, -2).unwrap();
+        assert_eq!(objects(&song), [object(0, 1, "tap")]);
+    }
+
+    #[test]
+    fn a_game_change_applies_to_the_selection_and_merges_notes_it_makes_the_same() {
+        let mut song = Song::new(
+            document(json!([object(0, 0, "tap"), object(0, 2, "tap")])),
+            &[&Across],
+        );
+        select_everything(&mut song);
+        song.change_selection("across").unwrap();
+        let across = json!({ "tick": 0, "position": { "lane": { "index": 0, "width": 4 } },
+                             "kind": "tap", "shape": "instant" });
+        assert_eq!(objects(&song), [across]);
+        song.change_selection("unknown").unwrap();
+        assert_eq!(objects(&song).len(), 1);
     }
 
     #[test]
