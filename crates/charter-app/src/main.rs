@@ -27,8 +27,10 @@ const PLUGINS: &[&dyn RulesetPlugin] = &[
     &charter_osu_mania::Plugin,
 ];
 
-/// Where the settings are kept in eframe's storage.
-const SETTINGS: &str = "settings";
+/// Where the settings are kept in eframe's storage: as the changes from the defaults, and in the
+/// whole copy older versions kept, read when there are no changes kept yet.
+const SETTINGS: &str = "settings.changes";
+const OLD_SETTINGS: &str = "settings";
 
 /// The app's name, which also names its folder in the user's data.
 const APP: &str = "charter";
@@ -55,7 +57,7 @@ impl eframe::App for Host {
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        eframe::set_value(storage, SETTINGS, self.window.settings());
+        storage.set_string(SETTINGS, self.window.settings().to_kept());
     }
 }
 
@@ -330,10 +332,12 @@ fn main() -> eframe::Result {
         APP,
         options,
         Box::new(|creation| {
-            let kept = creation
-                .storage
-                .and_then(|storage| eframe::get_value(storage, SETTINGS));
-            let settings: Settings = kept.unwrap_or_default();
+            let settings = creation.storage.map_or_else(Settings::default, |storage| {
+                storage.get_string(SETTINGS).map_or_else(
+                    || eframe::get_value(storage, OLD_SETTINGS).unwrap_or_default(),
+                    |kept| Settings::from_kept(&kept),
+                )
+            });
             let window = Window::new(PLUGINS)
                 .with_settings(settings)
                 .with_fallback_fonts(cjk_fonts());

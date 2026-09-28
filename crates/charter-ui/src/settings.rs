@@ -3,6 +3,7 @@
 use std::num::NonZeroU16;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use charter_audio::{Gain, Kit, Volumes};
 use charter_editor::SNAPS;
@@ -233,6 +234,43 @@ const AUTOSAVE_SECONDS: (u32, u32) = (5, 600);
 const SCALES: [f32; 6] = [0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
 
 impl Settings {
+    /// The settings as the host keeps them between runs, as JSON: only those that differ from
+    /// the defaults, so a setting left at its default follows the default when a later version
+    /// changes it.
+    #[must_use]
+    pub fn to_kept(&self) -> String {
+        let (Ok(Value::Object(mine)), Ok(Value::Object(defaults))) = (
+            serde_json::to_value(self),
+            serde_json::to_value(Self::default()),
+        ) else {
+            return "{}".to_owned();
+        };
+        let changed = mine
+            .into_iter()
+            .filter(|(key, value)| defaults.get(key) != Some(value))
+            .collect();
+        Value::Object(changed).to_string()
+    }
+
+    /// The settings the host kept, from [`Settings::to_kept`] or an older whole copy: each kept
+    /// setting that still reads, and the default for every other, so one setting a version can
+    /// no longer read costs only itself.
+    #[must_use]
+    pub fn from_kept(kept: &str) -> Self {
+        let Ok(Value::Object(kept)) = serde_json::from_str(kept) else {
+            return Self::default();
+        };
+        let mut taken = serde_json::Map::new();
+        for (key, value) in kept {
+            let mut trial = taken.clone();
+            trial.insert(key.clone(), value.clone());
+            if serde_json::from_value::<Self>(Value::Object(trial)).is_ok() {
+                taken.insert(key, value);
+            }
+        }
+        serde_json::from_value(Value::Object(taken)).unwrap_or_default()
+    }
+
     /// How long unsaved changes wait before they are autosaved, in seconds, kept to a range
     /// that neither writes constantly nor risks much; none when autosave is off.
     pub(crate) fn autosave_after(&self) -> Option<f64> {
@@ -368,13 +406,7 @@ pub fn show(ctx: &egui::Context, settings: &mut Settings, open: &mut bool) -> Op
                                 ui.label(RichText::new(title).family(titles(ui)).size(16.0));
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        let tip = "Close settings (Ctrl+Comma)";
-                                        if quiet_icon(ui, icon::X, "Close settings", tip).clicked()
-                                        {
-                                            *open = false;
-                                        }
-                                    },
+                                    |ui| header_buttons(ui, settings, open),
                                 );
                             });
                             ui.weak(about);
@@ -403,6 +435,18 @@ pub fn show(ctx: &egui::Context, settings: &mut Settings, open: &mut bool) -> Op
         });
     ctx.data_mut(|data| data.insert_temp(page_id, page));
     preview
+}
+
+/// The page header's buttons, right to left: close, then restore the defaults.
+fn header_buttons(ui: &mut egui::Ui, settings: &mut Settings, open: &mut bool) {
+    let tip = "Close settings (Ctrl+Comma)";
+    if quiet_icon(ui, icon::X, "Close settings", tip).clicked() {
+        *open = false;
+    }
+    let tip = "Every setting on every page back to how charter starts, the latency calibration too";
+    if quiet_icon(ui, icon::ARROW_COUNTER_CLOCKWISE, "Restore defaults", tip).clicked() {
+        *settings = Settings::default();
+    }
 }
 
 /// The pages, down the left of the window on a darker strip.
@@ -897,5 +941,31 @@ mod tests {
                 ..Settings::default()
             }
         );
+    }
+
+    #[test]
+    fn only_settings_changed_from_the_defaults_are_kept() {
+        assert_eq!(Settings::default().to_kept(), "{}");
+        let changed = Settings {
+            metronome: true,
+            zoom: 150.0,
+            ..Settings::default()
+        };
+        let kept = changed.to_kept();
+        let value: Value = serde_json::from_str(&kept).unwrap();
+        let mut keys: Vec<_> = value.as_object().unwrap().keys().cloned().collect();
+        keys.sort();
+        assert_eq!(keys, ["metronome", "zoom"]);
+        assert_eq!(Settings::from_kept(&kept), changed);
+    }
+
+    #[test]
+    fn a_kept_setting_that_no_longer_reads_takes_its_default_and_leaves_the_rest() {
+        let kept = r#"{ "metronome": true, "tick_sound": "trombone", "zoom": "wide" }"#;
+        let settings = Settings::from_kept(kept);
+        assert!(settings.metronome);
+        assert_eq!(settings.tick_sound, Settings::default().tick_sound);
+        assert!((settings.zoom - Settings::default().zoom).abs() < f32::EPSILON);
+        assert_eq!(Settings::from_kept("not json"), Settings::default());
     }
 }

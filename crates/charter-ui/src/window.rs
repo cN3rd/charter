@@ -3671,6 +3671,23 @@ mod tests {
     }
 
     #[test]
+    fn restore_defaults_puts_every_setting_back() {
+        let mut app = Window::new(PLUGINS).with_settings(Settings {
+            metronome: true,
+            tuned_lanes: true,
+            zoom: 150.0,
+            ..Settings::default()
+        });
+        app.open(Path::new("/songs/four.json"), &four_taps());
+        let mut harness = window(app);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Comma);
+        harness.run();
+        harness.get_by_label("Restore defaults").click();
+        harness.run();
+        assert_eq!(harness.state().settings(), &Settings::default());
+    }
+
+    #[test]
     fn the_settings_window_turns_the_notefield_and_picks_sounds() {
         let mut harness = editable_demo();
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Comma);
