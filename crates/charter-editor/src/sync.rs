@@ -459,6 +459,27 @@ mod tests {
     }
 
     #[test]
+    fn a_nudge_to_a_neighbours_exact_moment_is_refused_without_changing_history() {
+        let events = json!([
+            bpm_event(0, 120.0),
+            bpm_event(1920, 120.0),
+            bpm_event(3840, 120.0)
+        ]);
+        let mut song = timed(&events, None);
+        let before = song.anchors();
+        assert!(matches!(
+            song.nudge_anchors(&[at(1920)], 1.0, false),
+            Err(Refusal::Crosses(_))
+        ));
+        assert!(matches!(
+            song.nudge_anchors(&[at(1920)], -1.0, false),
+            Err(Refusal::Crosses(_))
+        ));
+        assert_eq!(song.anchors(), before);
+        assert!(!song.can_undo());
+    }
+
+    #[test]
     fn the_first_anchor_moved_on_the_grid_moves_the_offset_to_keep_its_moment() {
         let mut song = timed(&json!([bpm_event(0, 120.0), bpm_event(1920, 120.0)]), None);
         song.move_anchor(at(0), at(480)).unwrap();

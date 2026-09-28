@@ -2090,6 +2090,39 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_saved_state_inside_merged_steps_cannot_be_restored_by_undo_or_redo() {
+        let mut song = Song::new(document(json!([])), EDITABLE);
+        let start = song.history_step();
+        song.toggle(at(0), lane(0), Kind::Tap).unwrap();
+        song.mark_saved();
+        song.toggle(at(240), lane(1), Kind::Tap).unwrap();
+        song.merge_since(start);
+        assert!(song.is_modified());
+        song.undo().unwrap();
+        assert_eq!(objects(&song), Vec::<Value>::new());
+        assert!(song.is_modified());
+        song.redo().unwrap();
+        assert_eq!(objects(&song), [object(0, 0, "tap"), object(240, 1, "tap")]);
+        assert!(song.is_modified());
+    }
+
+    #[test]
+    fn merging_edits_after_the_saved_step_keeps_the_saved_state_reachable() {
+        let mut song = Song::new(document(json!([])), EDITABLE);
+        song.toggle(at(0), lane(0), Kind::Tap).unwrap();
+        song.mark_saved();
+        let start = song.history_step();
+        song.toggle(at(240), lane(1), Kind::Tap).unwrap();
+        song.toggle(at(480), lane(2), Kind::Tap).unwrap();
+        song.merge_since(start);
+        song.undo().unwrap();
+        assert_eq!(objects(&song), [object(0, 0, "tap")]);
+        assert!(!song.is_modified());
+        song.redo().unwrap();
+        assert!(song.is_modified());
+    }
+
+    #[test]
     fn stretching_an_older_note_is_a_step_of_its_own() {
         let mut song = Song::new(document(json!([object(0, 0, "tap")])), EDITABLE);
         song.toggle(at(240), lane(1), Kind::Tap).unwrap();
