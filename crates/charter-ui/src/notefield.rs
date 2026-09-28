@@ -407,7 +407,7 @@ pub fn show(
         strip,
         grid: finest,
     }: Shown<'_>,
-    scrolled: &mut f32,
+    scrolled: &mut [f32; 2],
     gesture: &mut Option<Gesture>,
     actions: &mut Vec<Action>,
 ) -> Option<(f64, f64)> {
@@ -453,8 +453,10 @@ pub fn show(
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Other, true, "Notefield"));
     if response.hovered() {
         let (steps, measures, zoom) = ui.input(|input| {
-            let steps = wheel_steps(&input.events, scrolled);
-            (steps, measure_steps(&input.events), input.zoom_delta())
+            let [steps_left, measures_left] = scrolled;
+            let steps = wheel_steps(&input.events, steps_left);
+            let measures = measure_steps(&input.events, measures_left);
+            (steps, measures, input.zoom_delta())
         });
         let way = |steps: i32| {
             if steps > 0 {
@@ -1712,9 +1714,10 @@ pub fn wheel_steps(events: &[egui::Event], remainder: &mut f32) -> i32 {
     steps
 }
 
-/// How many measures the wheel turned under Shift this frame, later positive: a notch a measure.
+/// How many measures the wheel turned under Shift this frame, later positive: a notch a measure,
+/// with what a touchpad turned short of a whole one kept in `remainder` for the next frame.
 /// Shift turns some wheels sideways, so either way counts.
-fn measure_steps(events: &[egui::Event]) -> i32 {
+fn measure_steps(events: &[egui::Event], remainder: &mut f32) -> i32 {
     let notches: f32 = events
         .iter()
         .filter_map(|event| match event {
@@ -1733,9 +1736,12 @@ fn measure_steps(events: &[egui::Event]) -> i32 {
             _ => None,
         })
         .sum();
+    *remainder += notches;
+    let whole = remainder.trunc();
+    *remainder -= whole;
     #[allow(clippy::cast_possible_truncation)] // a handful of notches a frame
-    let notches = notches.round() as i32;
-    notches
+    let whole = whole as i32;
+    whole
 }
 
 /// Points of touchpad scrolling that make one cursor step.
@@ -1859,6 +1865,21 @@ mod tests {
 
     fn song() -> Song {
         Song::new(demo::song(), &[])
+    }
+
+    #[test]
+    fn shift_scrolling_a_touchpad_adds_up_to_whole_measures() {
+        let nudge = egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -10.0),
+            modifiers: egui::Modifiers::SHIFT,
+            phase: egui::TouchPhase::Move,
+        };
+        let mut remainder = 0.0;
+        let steps: Vec<i32> = (0..4)
+            .map(|_| measure_steps(std::slice::from_ref(&nudge), &mut remainder))
+            .collect();
+        assert_eq!(steps, [0, 0, 0, 1]);
     }
 
     #[test]

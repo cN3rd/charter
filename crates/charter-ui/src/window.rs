@@ -481,8 +481,8 @@ pub struct Window {
     zoom: Zoom,
     /// Why the last file failed to open, or the last edit was refused.
     failure: Option<String>,
-    /// Touchpad scrolling not yet turned into cursor steps.
-    scrolled: f32,
+    /// Touchpad scrolling not yet turned into cursor steps, and into measures under Shift.
+    scrolled: [f32; 2],
     /// Which lane keys are down, and which of those placed or removed a note.
     lane_keys: keys::LaneKeys,
     /// Whether a lane key placed a note that the cursor has not moved on from, which it does once
@@ -2365,15 +2365,21 @@ fn pattern(song: &mut Song, steps: &[u16], per_beat: u16, lane: LaneIndex) -> Op
     why
 }
 
-/// The notefield grid's finest lines for the chosen `grid` at `snap`: the grid while every snap
-/// line is one of its lines, and the snap's lines otherwise, so the cursor never steps onto a line
-/// the grid leaves out.
+/// The notefield grid's finest lines for the chosen `grid` at `snap`: the coarsest lines holding
+/// both the grid's and the snap's, so the cursor never steps onto a line the grid leaves out and
+/// the grid keeps every line it was chosen for. Past 192nds, the snap's alone.
 fn shown_grid(grid: std::num::NonZeroU16, snap: std::num::NonZeroU16) -> std::num::NonZeroU16 {
-    if grid.get().is_multiple_of(snap.get()) {
-        grid
-    } else {
-        snap
+    let (a, b) = (u32::from(grid.get()), u32::from(snap.get()));
+    let (mut x, mut y) = (a, b);
+    while y != 0 {
+        (x, y) = (y, x % y);
     }
+    let both = a / x * b;
+    u16::try_from(both)
+        .ok()
+        .filter(|both| *both <= 192)
+        .and_then(std::num::NonZeroU16::new)
+        .unwrap_or(snap)
 }
 
 /// How far above its own pitch a note on `position` ticks with tuned lanes, in cents: a whole tone
@@ -4996,7 +5002,8 @@ mod tests {
         assert_eq!(shown_grid(n(4), n(16)), n(16));
         assert_eq!(shown_grid(n(16), n(4)), n(16));
         assert_eq!(shown_grid(n(48), n(12)), n(48));
-        assert_eq!(shown_grid(n(16), n(12)), n(12));
+        assert_eq!(shown_grid(n(16), n(12)), n(48));
+        assert_eq!(shown_grid(n(48), n(64)), n(192));
         assert_eq!(shown_grid(n(16), n(16)), n(16));
     }
 

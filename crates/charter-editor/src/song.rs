@@ -1242,18 +1242,17 @@ impl Song {
     /// Refuses as [`Song::move_selection`] does.
     pub fn mirror_selection(&mut self) -> Result<(), Refusal> {
         let width = self.lane_count();
-        self.replace_selection(&|object| {
-            let mut mirrored = object.clone();
-            if let Position::Lane { index, width: span } = object.position {
+        let flip = |position: Position| match position {
+            Position::Lane { index, width: span } => {
                 let right = u16::from(index) + u16::from(span);
-                let index = width.checked_sub(right).ok_or(Refusal::OffTheChart)?;
-                mirrored.position = Position::Lane {
-                    index: LaneIndex::new(index),
+                Some(Position::Lane {
+                    index: LaneIndex::new(width.checked_sub(right)?),
                     width: span,
-                };
+                })
             }
-            Ok(mirrored)
-        })
+            Position::Plane { .. } => Some(position),
+        };
+        self.replace_selection(&|object| mapped(object, &Some, &flip).ok_or(Refusal::OffTheChart))
     }
 
     /// Makes every selected note what the song's game makes it by its change `change`, such as
@@ -1605,6 +1604,16 @@ fn shifted(object: &Object, ticks: i32, lanes: i32) -> Option<Object> {
         }
         Position::Plane { .. } => Some(position),
     };
+    mapped(object, &tick, &position)
+}
+
+/// `object` with every tick through `tick` and every position through `position`: its own, its
+/// children's and its path's, unless one leaves the ticks or the lanes.
+fn mapped(
+    object: &Object,
+    tick: &dyn Fn(Tick) -> Option<Tick>,
+    position: &dyn Fn(Position) -> Option<Position>,
+) -> Option<Object> {
     let mut moved = object.clone();
     moved.tick = tick(object.tick)?;
     moved.position = position(object.position)?;
@@ -2166,6 +2175,23 @@ pub(crate) mod tests {
         song.mirror_selection().unwrap();
         assert_eq!(objects(&song), [object(0, 3, "tap"), object(240, 1, "tap")]);
         assert_eq!(song.selection().count(), 2);
+    }
+
+    #[test]
+    fn mirroring_flips_a_path_and_its_children_too() {
+        let path = json!({ "tick": 0, "position": { "lane": { "index": 0 } }, "kind": "tap",
+            "shape": { "path": { "points": [
+                { "tick": 240, "position": { "lane": { "index": 1 } }, "ease": "linear" } ] } } });
+        let mut song = Song::new(document(json!([path])), EDITABLE);
+        select_everything(&mut song);
+        song.mirror_selection().unwrap();
+        let mirrored = objects(&song);
+        let mirrored = mirrored.first().unwrap();
+        assert_eq!(mirrored["position"]["lane"]["index"], 3);
+        assert_eq!(
+            mirrored["shape"]["path"]["points"][0]["position"]["lane"]["index"],
+            2
+        );
     }
 
     #[test]
