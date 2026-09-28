@@ -1212,13 +1212,21 @@ impl Window {
         }
     }
 
-    /// Copies the selected notes to start a snap line after the last of them.
+    /// Copies the selected notes to start on the snap line after the last of them ends.
     fn duplicate(&mut self) {
         let Some(song) = &mut self.song else {
             return;
         };
         let copied = song.copied();
-        let last = song.selection().map(|note| note.tick).max();
+        // After the selection's last end, so a hold is not copied over itself.
+        let last = song.chart().and_then(|chart| {
+            chart
+                .objects
+                .iter()
+                .filter(|object| song.is_selected(object))
+                .filter_map(|object| object.shape.end(object.tick))
+                .max()
+        });
         let step = song
             .document()
             .document()
@@ -3610,6 +3618,19 @@ mod tests {
         harness.run();
         assert_eq!(lanes_at(&harness, 1200), [1]);
         assert_eq!(note_count(&harness), 5);
+    }
+
+    #[test]
+    fn a_duplicated_hold_starts_after_it_ends() {
+        let mut harness = editable_four_taps();
+        select_note(&mut harness, 0, 0);
+        harness.key_press(egui::Key::CloseBracket);
+        harness.key_press(egui::Key::CloseBracket);
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::D);
+        harness.run();
+        assert_eq!(lanes_at(&harness, 240), [1]);
+        assert_eq!(lanes_at(&harness, 720), [0, 3]);
     }
 
     #[test]
