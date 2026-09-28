@@ -1241,4 +1241,65 @@ mod tests {
         assert!((harness.state().0.audio_latency_ms - 12.0).abs() < f64::EPSILON);
         assert!((harness.state().0.input_latency_ms + 8.0).abs() < f64::EPSILON);
     }
+
+    #[test]
+    fn zoom_speed_and_each_volume_slider_change_their_own_setting() {
+        let mut harness = settings_window();
+        harness.get_by_label("Default zoom").click();
+        harness.run();
+        assert!((harness.state().0.zoom - 100.0).abs() > 1.0);
+
+        page(&mut harness, "Sounds");
+        harness.get_by_label("Alternate speed").scroll_to_me();
+        harness.run();
+        harness.get_by_label("Alternate speed").click();
+        harness.run();
+        assert!((harness.state().0.rate_b - 0.6).abs() > 0.01);
+        harness.state_mut().0.volumes.subdivision = Gain::from(0.0);
+        harness.run();
+        for label in [
+            "Music volume",
+            "Note tick volume",
+            "Metronome volume",
+            "Subdivision volume",
+        ] {
+            let before = match label {
+                "Music volume" => harness.state().0.volumes.music,
+                "Note tick volume" => harness.state().0.volumes.ticks,
+                "Metronome volume" => harness.state().0.volumes.metronome,
+                _ => harness.state().0.volumes.subdivision,
+            };
+            harness.get_by_label(label).scroll_to_me();
+            harness.run();
+            harness.get_by_label(label).click();
+            harness.run();
+            let after = match label {
+                "Music volume" => harness.state().0.volumes.music,
+                "Note tick volume" => harness.state().0.volumes.ticks,
+                "Metronome volume" => harness.state().0.volumes.metronome,
+                _ => harness.state().0.volumes.subdivision,
+            };
+            assert_ne!(after, before, "{label}");
+        }
+    }
+
+    #[test]
+    fn autosave_wait_can_change_only_while_autosave_is_on() {
+        let mut harness = settings_window();
+        page(&mut harness, "Autosave");
+        let wait = harness.get_by_label("Wait before saving");
+        wait.focus();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        wait.type_text("12");
+        harness.run();
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+        assert_eq!(harness.state().0.autosave_after(), Some(12.0));
+        harness
+            .get_by_role_and_label(Role::CheckBox, "Autosave unsaved changes")
+            .click();
+        harness.run();
+        assert_eq!(harness.state().0.autosave_after(), None);
+        assert_eq!(harness.state().0.autosave_seconds, 12);
+    }
 }

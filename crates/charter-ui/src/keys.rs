@@ -489,6 +489,7 @@ mod tests {
             command(Key::F2, Modifiers::COMMAND.plus(Modifiers::SHIFT)),
             None
         );
+        assert_eq!(command(Key::F2, Modifiers::COMMAND), None);
         assert_eq!(command(Key::F2, Modifiers::ALT), None);
     }
 }

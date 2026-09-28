@@ -1945,4 +1945,33 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn status_distinguishes_no_song_playback_and_read_only_charts() {
+        let mut empty = Harness::builder()
+            .build_ui_state(|ui, (): &mut ()| status_bar(ui, None, ("", false)), ());
+        empty.run();
+        assert!(empty.query_by_label("No song open").is_some());
+
+        for (plugins, playing, expected_state, expected_mode) in [
+            (
+                &[&charter_stepmania::Plugin as &dyn RulesetPlugin][..],
+                true,
+                "Playing",
+                "Editing",
+            ),
+            (&[][..], false, "Paused", "Read only"),
+        ] {
+            let song =
+                Song::open(&charter_editor::demo::song().to_json().unwrap(), plugins).unwrap();
+            let mut harness = Harness::builder().build_ui_state(
+                move |ui, song: &mut Song| status_bar(ui, Some(song), ("Audio ready", playing)),
+                song,
+            );
+            harness.run();
+            assert!(harness.query_by_label(expected_state).is_some());
+            assert!(harness.query_by_label("Audio ready").is_some());
+            assert!(harness.query_by_label(expected_mode).is_some());
+        }
+    }
 }
