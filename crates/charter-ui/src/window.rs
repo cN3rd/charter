@@ -2825,10 +2825,10 @@ mod tests {
             let song = harness.state().song.as_ref().unwrap();
             song.chart().unwrap().objects.first().unwrap().kind.clone()
         };
-        harness.key_press(egui::Key::OpenBracket);
+        harness.key_press(egui::Key::CloseBracket);
         harness.run();
         assert_eq!(first(&harness), charter_core::Kind::Hold);
-        harness.key_press(egui::Key::CloseBracket);
+        harness.key_press(egui::Key::OpenBracket);
         harness.run();
         assert_eq!(first(&harness), charter_core::Kind::Tap);
     }

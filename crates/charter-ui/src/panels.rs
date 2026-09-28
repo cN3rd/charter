@@ -90,12 +90,12 @@ pub fn menu_bar(
                     ("Delete the selection", "Delete", Action::DeleteSelection),
                     (
                         "Lengthen by the snap",
-                        "[",
+                        "]",
                         Action::ResizeNotes(Step::Later),
                     ),
                     (
                         "Shorten by the snap",
-                        "]",
+                        "[",
                         Action::ResizeNotes(Step::Earlier),
                     ),
                 ],
@@ -312,7 +312,7 @@ const KEYS: [(&str, &[(&str, &str)]); 6] = [
             ("Ctrl+Drag", "Draw a hold"),
             (
                 "[, ]",
-                "Lengthen or shorten the selection, or the notes at the cursor, by the snap",
+                "Shorten or lengthen the selection, or the notes at the cursor, by the snap",
             ),
         ],
     ),
