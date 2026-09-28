@@ -126,6 +126,9 @@ const DIFFICULTY: &str = "difficulty";
 /// that names none, a chart's for that level alone.
 const THEME: &str = "theme";
 
+/// The theme a new song and each of its levels start in: the game's own.
+pub const DEFAULT_THEME: &str = "TTRDJ";
+
 /// The sets of levels a new song can start with, and what each game calls their charts: custom
 /// charts come in standard Extreme alone or every level, Tap Tap Reloaded has no Easy, and Tap
 /// Tap Hardcore renames all four.
@@ -566,11 +569,11 @@ impl RulesetPlugin for Plugin {
         vec![
             theme(
                 SettingScope::Song,
-                "The theme every level plays in unless it names its own, such as DeltaHeavyTheme",
+                "The theme every level plays in unless it names its own; new songs start in TTRDJ",
             ),
             theme(
                 SettingScope::Chart,
-                "The theme this level plays in, over the song's",
+                "The theme this level plays in, over the song's; new levels start in TTRDJ",
             ),
         ]
     }
@@ -618,7 +621,7 @@ impl RulesetPlugin for Plugin {
                     lanes,
                     name: chart.name.clone(),
                     difficulty,
-                    theme: None,
+                    theme: Some(DEFAULT_THEME.to_owned()),
                     tempo: None,
                     notes: Vec::new(),
                 })
@@ -642,7 +645,8 @@ impl RulesetPlugin for Plugin {
             tempo,
             Vec::new(),
             charts,
-        )?;
+        )?
+        .with_theme(Some(DEFAULT_THEME.to_owned()))?;
         Ok(song.to_document())
     }
 }
@@ -1396,11 +1400,11 @@ mod tests {
         assert_eq!(value["charts"][0]["name"], json!("Extreme"));
         assert_eq!(
             value["charts"][0]["settings"],
-            json!({ "difficulty": "easy" })
+            json!({ "difficulty": "easy", "theme": "TTRDJ" })
         );
         assert_eq!(
             value["charts"][1]["settings"],
-            json!({ "difficulty": "extreme" })
+            json!({ "difficulty": "extreme", "theme": "TTRDJ" })
         );
         let song = Song::try_from(&document).unwrap();
         let levels: Vec<_> = song.charts().iter().map(|chart| chart.difficulty).collect();
@@ -1411,7 +1415,21 @@ mod tests {
     fn a_chart_of_no_standard_level_has_no_difficulty_setting() {
         let document = Plugin.new_song(&new_song(0, &["Mine"])).unwrap();
         let value: Value = serde_json::from_slice(&document.to_json().unwrap()).unwrap();
-        assert_eq!(value["charts"][0].get("settings"), None);
+        assert_eq!(value["charts"][0]["settings"], json!({ "theme": "TTRDJ" }));
+    }
+
+    #[test]
+    fn a_new_song_and_each_of_its_levels_play_in_the_ttrdj_theme() {
+        let document = Plugin
+            .new_song(&levelled(&[("Easy", 0), ("Extreme", 3)]))
+            .unwrap();
+        let song = Song::try_from(&document).unwrap();
+        assert_eq!(song.theme(), Some(DEFAULT_THEME));
+        assert!(
+            song.charts()
+                .iter()
+                .all(|chart| chart.theme.as_deref() == Some(DEFAULT_THEME))
+        );
     }
 
     #[test]

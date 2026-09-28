@@ -52,7 +52,8 @@ does, and whether it sits on the song or on each chart. The song panel shows a f
 song's under the song's facts and a chart's under the chart list, and clearing one takes its key
 away; every change goes through the plugin's check like any edit. Tap Tap Revenge has one of each,
 `theme`: the song's names the theme every level plays in, such as `DeltaHeavyTheme`, and a chart's
-names the theme of that level alone.
+names the theme of that level alone. A new song, and each level it starts with, plays in
+`TTRDJ`, the game's own theme; a song read without a theme keeps none.
 
 A plugin can also read another program's timing: `timing_format` names the format, and
 `import_timing` turns text in it into a `Timing` for a given song, with a list of what it left
