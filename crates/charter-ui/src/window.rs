@@ -1816,7 +1816,8 @@ impl Window {
             Action::CoarserSnap => song.coarser_snap(),
             Action::ZoomBy(factor) => self.zoom = self.zoom.by(factor),
             Action::Toggle(lane, note) => {
-                if self.holding.is_empty() {
+                // Mines and removals are not held, so a chord starts once, with its first key.
+                if self.chord_since.is_none() {
                     self.chord_since = Some(song.history_step());
                 }
                 let at = placing_at(song, self.playing.then_some(input_latency));
@@ -5098,6 +5099,39 @@ mod tests {
             Vec::<u16>::new(),
             "then the chord as one"
         );
+    }
+
+    #[test]
+    fn a_chord_of_mines_undoes_in_one_step() {
+        let mut harness = editable_four_taps();
+        harness.key_press(egui::Key::PageDown);
+        harness.run();
+        harness.event(egui::Event::ModifiersChanged(egui::Modifiers::SHIFT));
+        for key in [egui::Key::Num1, egui::Key::Num2] {
+            harness.event(egui::Event::Key {
+                key,
+                physical_key: Some(key),
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::SHIFT,
+            });
+        }
+        harness.run();
+        for key in [egui::Key::Num1, egui::Key::Num2] {
+            harness.event(egui::Event::Key {
+                key,
+                physical_key: Some(key),
+                pressed: false,
+                repeat: false,
+                modifiers: egui::Modifiers::SHIFT,
+            });
+        }
+        harness.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+        harness.run();
+        assert_eq!(note_count(&harness), 6);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.run();
+        assert_eq!(note_count(&harness), 4);
     }
 
     #[test]
