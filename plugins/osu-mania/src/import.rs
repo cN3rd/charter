@@ -197,6 +197,9 @@ fn points(text: &str) -> Result<Vec<Point>, ImportError> {
     let section = lines
         .iter()
         .position(|(_, line)| line.trim() == "[TimingPoints]");
+    if section.is_none() && lines.iter().any(|(_, line)| line.trim().starts_with('[')) {
+        return Ok(Vec::new());
+    }
     let from = section.map_or(0, |at| at + 1);
     let mut points = Vec::new();
     for &(number, line) in lines.get(from..).unwrap_or_default() {
@@ -296,6 +299,7 @@ fn out_of_range(error: impl std::fmt::Display) -> ImportError {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
     use serde_json::{Value, json};
 
     use super::*;
@@ -478,5 +482,142 @@ mod tests {
                 .to_string()
                 .starts_with("line 1: an uninherited point")
         );
+    }
+
+    #[test]
+    fn missing_required_fields_and_nonfinite_numbers_report_their_line() {
+        for (text, why) in [
+            (",500", "there is no time"),
+            ("0,", "there is no beat length"),
+            ("0,nan", "`nan` is not a beat length"),
+            ("inf,500", "`inf` is not a time"),
+            ("0,500,3.5", "`3.5` is not a meter"),
+            ("0,500,65536", "`65536` is not a meter"),
+            ("0,500,4,1,0,100,no", "`no` is not 0 or 1"),
+        ] {
+            assert_eq!(
+                import(&format!("// a comment\n{text}"), &song(ID)),
+                Err(ImportError::Line {
+                    line: 2,
+                    why: why.to_owned()
+                }),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn zero_and_wrongly_signed_beat_lengths_are_refused() {
+        for text in ["0,0", "0,-500,4,1,0,100,1", "0,500,4,1,0,100,0"] {
+            assert!(
+                matches!(
+                    import(text, &song(ID)),
+                    Err(ImportError::Line { line: 1, .. })
+                ),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn crlf_comments_and_missing_optional_fields_preserve_timing() {
+        let text = "[TimingPoints]\r\n// ignore\r\n125,500\r\n\r\n[HitObjects]\r\nbad";
+        let imported = import(text, &song(ID)).unwrap();
+        assert_eq!(
+            imported.timing.anchors,
+            vec![charter_core::Anchor {
+                tick: Tick::new(0),
+                seconds: charter_core::Origin::try_from(0.125).unwrap()
+            }]
+        );
+        assert_eq!(
+            imported.timing.tempo,
+            charter_core::Bpm::try_from(120.0).unwrap()
+        );
+        assert!(imported.timing.events.is_empty());
+    }
+
+    #[test]
+    fn a_zero_meter_uses_osus_four_beat_default() {
+        let imported = import("0,500,0\n2000,500,3", &song(ID)).unwrap();
+        assert_eq!(
+            events(&imported),
+            json!([{ "tick": 3840, "kind": { "time_signature": [3, 4] } }])
+        );
+    }
+
+    #[test]
+    fn a_whole_file_without_timing_points_does_not_invent_a_tempo() {
+        let text = "osu file format v14\n[General]\nAudioFilename: a.ogg\n[HitObjects]\n";
+        assert_eq!(import(text, &song(ID)), Err(ImportError::NoTempo));
+    }
+
+    #[test]
+    fn duplicate_red_times_keep_the_last_tempo_and_report_the_discarded_point() {
+        let imported = import("0,500\n0,250\n1000,250", &song(ID)).unwrap();
+        assert_eq!(
+            imported.timing.tempo,
+            charter_core::Bpm::try_from(240.0).unwrap()
+        );
+        assert_eq!(imported.timing.anchors.len(), 2);
+        assert!(
+            imported
+                .left_out
+                .iter()
+                .any(|item| item.starts_with("1 uninherited point"))
+        );
+        let timing = ValidDocument::new(charter_core::Document {
+            timing: imported.timing,
+            ..song(ID).document().clone()
+        });
+        assert!(timing.is_ok());
+    }
+
+    #[test]
+    fn a_red_point_before_audio_zero_keeps_its_negative_anchor() {
+        let imported = import("-500,500\n500,500", &song(ID)).unwrap();
+        assert_eq!(
+            serde_json::to_value(&imported.timing.anchors).unwrap(),
+            json!([{"tick": 0, "seconds": -0.5}, {"tick": 1920, "seconds": 0.5}])
+        );
+    }
+
+    #[test]
+    fn a_green_point_before_the_first_red_uses_the_first_red_grid() {
+        let imported = import("-500,-50\n0,500", &song(ID)).unwrap();
+        assert_eq!(
+            events(&imported),
+            json!([
+                {"tick": -960, "kind": {"other": {"name": "osu_mania.scroll_speed", "value": 2.0}}},
+                {"tick": 0, "kind": {"other": {"name": "osu_mania.scroll_speed", "value": 1.0}}}
+            ])
+        );
+    }
+
+    #[test]
+    fn enormous_red_and_green_points_are_refused_instead_of_wrapping_ticks_or_ratios() {
+        for text in ["0,1e-300\n1,500", "0,500\n1,-1e-300", "0,500\n1e100,-50"] {
+            assert!(
+                matches!(import(text, &song(ID)), Err(ImportError::OutOfRange(_))),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn arbitrary_timing_text_never_panics() {
+        let config = proptest::test_runner::Config {
+            failure_persistence: None,
+            rng_seed: proptest::test_runner::RngSeed::Fixed(0),
+            ..proptest::test_runner::Config::default()
+        };
+        let mut runner = proptest::test_runner::TestRunner::new(config);
+        runner
+            .run(&proptest::collection::vec(any::<char>(), 0..256), |text| {
+                let text: String = text.into_iter().collect();
+                let _ = import(&text, &song(ID));
+                Ok(())
+            })
+            .unwrap();
     }
 }

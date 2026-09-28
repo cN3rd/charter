@@ -1193,6 +1193,80 @@ mod tests {
                 .is_err()
         );
     }
+
+    #[test]
+    fn zero_and_twenty_keys_are_checked_against_the_format_and_the_ruleset() {
+        let mut missing = document(json!([]));
+        missing["charts"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("lanes");
+        assert!(matches!(
+            read(&missing),
+            Err(Error::Keys {
+                at: Location::Chart(0),
+                found: None
+            })
+        ));
+        let mut twenty = document(json!([tap(0, 19)]));
+        twenty["charts"][0]["lanes"] = json!(20);
+        let song = read(&twenty).unwrap();
+        assert_eq!(song.charts()[0].keys, Keys::K20);
+        let mut out = expected(twenty["charts"][0]["objects"].clone());
+        out["charts"][0]["lanes"] = json!(20);
+        assert_eq!(written(&song), out);
+        twenty["charts"][0]["objects"][0]["position"]["lane"]["index"] = json!(20);
+        assert!(matches!(
+            ValidDocument::from_json(&serde_json::to_vec(&twenty).unwrap()),
+            Err(charter_core::Error::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn malformed_scroll_speed_reports_its_event_and_wrong_chart_setting_reports_its_chart() {
+        let speed = json!({ "tick": 0, "kind": { "other": {
+            "name": "osu_mania.scroll_speed", "value": "quick"
+        } } });
+        assert!(matches!(
+            read(&with_events(&[speed])),
+            Err(Error::Malformed {
+                at: Location::Event {
+                    stream: Stream::Song,
+                    index: 0
+                },
+                ..
+            })
+        ));
+        let mut chart = document(json!([]));
+        chart["charts"][0]["settings"]["od"] = json!(11);
+        assert!(matches!(
+            read(&chart),
+            Err(Error::Malformed {
+                at: Location::ChartSettings(0),
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn a_hold_at_the_last_valid_tick_round_trips_but_an_overrunning_hold_is_refused() {
+        let hold = json!({ "tick": 2_147_483_646_i32,
+            "position": { "lane": { "index": 6 } }, "kind": "hold",
+            "shape": { "sustain": { "duration": 1 } } });
+        let value = document(json!([hold]));
+        let song = read(&value).unwrap();
+        assert_eq!(song.charts()[0].notes[0].hold, Ticks::new(1));
+        assert_eq!(
+            written(&song),
+            expected(value["charts"][0]["objects"].clone())
+        );
+        let mut invalid = value;
+        invalid["charts"][0]["objects"][0]["shape"]["sustain"]["duration"] = json!(2);
+        assert!(matches!(
+            ValidDocument::from_json(&serde_json::to_vec(&invalid).unwrap()),
+            Err(charter_core::Error::Invalid(_))
+        ));
+    }
 }
 
 /// Proofs for Kani, run with `cargo kani -p charter-osu-mania`.
