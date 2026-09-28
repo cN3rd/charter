@@ -559,6 +559,8 @@ pub struct Window {
     parked: Vec<Artwork>,
     /// Whether the audio playing was asked to keep its pitch.
     played_pitch: bool,
+    /// The settings the audio playing was mixed with, so a change to them plays it again.
+    played_sounds: Option<Sounds>,
     /// Text to put on the system clipboard this frame.
     clipboard_out: Option<String>,
     /// The artwork the audio of the song being started holds, and which file, to take when the
@@ -928,6 +930,7 @@ impl Window {
             keep_pitch: self.settings.keep_pitch,
         });
         self.played_pitch = self.settings.keep_pitch;
+        self.played_sounds = Some(Sounds::of(&self.settings));
     }
 
     /// Switches between the usual speed and the alternate one.
@@ -1702,13 +1705,7 @@ impl Window {
             Action::ToggleSongPanel => self.settings.song_panel = !self.settings.song_panel,
             Action::ToggleMetronome => self.settings.metronome = !self.settings.metronome,
             Action::ToggleTicks => self.settings.note_ticks = !self.settings.note_ticks,
-            Action::ToggleTunedLanes => {
-                self.settings.tuned_lanes = !self.settings.tuned_lanes;
-                // Heard at once while the ticks play.
-                if self.settings.note_ticks {
-                    self.replay();
-                }
-            }
+            Action::ToggleTunedLanes => self.settings.tuned_lanes = !self.settings.tuned_lanes,
             Action::SetGrid(grid) => self.settings.grid = grid,
             Action::TogglePlay => self.toggle_play(),
             Action::Audition(from) => self.audition(from),
@@ -2110,8 +2107,10 @@ impl Window {
                 panels::status_bar(ui, self.song.as_ref(), (&audio_state, self.playing));
             });
         self.follow_artwork();
-        // Keeping the pitch or not changes how the audio plays, so it plays again.
-        if self.playing && self.played_pitch != self.settings.keep_pitch {
+        // The ticks and metronome are mixed in, and the pitch kept or not, as playback starts,
+        // so a change to them plays again from where it is, once the pointer lets go.
+        let changed = self.played_sounds != Some(Sounds::of(&self.settings));
+        if self.playing && changed && !ui.input(|input| input.pointer.any_down()) {
             self.replay();
         }
         if let Some(text) = self.clipboard_out.take() {
@@ -2422,6 +2421,33 @@ fn stretch(song: &mut Song, holding: &[(LaneIndex, Tick)]) -> Option<String> {
 // click from the next play; schedule them live if that gets in the way of recording.
 /// The tones `settings` ask for over the open chart of `song`, playing from `from` seconds to
 /// `until`: a tick on each note, and the metronome on each beat.
+/// The settings playback is mixed and stretched with: a change to any of them plays again.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[allow(clippy::struct_excessive_bools)] // a copy of independent settings, compared whole
+struct Sounds {
+    keep_pitch: bool,
+    note_ticks: bool,
+    tick_sound: settings::Sound,
+    tuned_lanes: bool,
+    metronome: bool,
+    metronome_sound: charter_audio::Kit,
+    metronome_grid: bool,
+}
+
+impl Sounds {
+    fn of(settings: &Settings) -> Self {
+        Self {
+            keep_pitch: settings.keep_pitch,
+            note_ticks: settings.note_ticks,
+            tick_sound: settings.tick_sound,
+            tuned_lanes: settings.tuned_lanes,
+            metronome: settings.metronome,
+            metronome_sound: settings.metronome_sound,
+            metronome_grid: settings.metronome_grid,
+        }
+    }
+}
+
 /// What the system clipboard holds of copied notes: their JSON under a key of their own, so
 /// other text is not taken for notes.
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -4975,6 +5001,29 @@ mod tests {
             panic!("expected playback again, got {requests:?}");
         };
         assert!((rate - 0.9).abs() < 1e-9, "{rate}");
+    }
+
+    #[test]
+    fn changing_the_sounds_in_the_settings_while_playing_plays_again_with_them() {
+        let mut harness = playable_with(Settings {
+            note_ticks: true,
+            ..Settings::default()
+        });
+        space(&mut harness);
+        harness.state_mut().take_requests();
+        harness.state_mut().settings.tuned_lanes = true;
+        harness.run();
+        let requests = harness.state_mut().take_requests();
+        let Some(Request::Play { clicks, .. }) = requests.last() else {
+            panic!("expected playback again, got {requests:?}");
+        };
+        assert!(
+            clicks
+                .iter()
+                .any(|(_, tone)| *tone != charter_audio::Tick::Click.tone())
+        );
+        harness.run();
+        assert_eq!(harness.state_mut().take_requests(), [], "once");
     }
 
     #[test]
