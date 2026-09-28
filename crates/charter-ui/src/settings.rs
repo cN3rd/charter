@@ -91,6 +91,8 @@ pub struct Settings {
     pub waveform: bool,
     /// Whether that strip shows how loud each pitch is instead of the waveform.
     pub frequencies: bool,
+    /// Whether the whole chart shows in a strip beside the notefield, to jump across it.
+    pub minimap: bool,
     /// The note value of the notefield grid's finest lines, one of [`GRIDS`]: 4 draws the beats
     /// alone. Older versions kept a sixteenths switch here.
     #[serde(alias = "sixteenths", deserialize_with = "grid_or_switch")]
@@ -128,6 +130,7 @@ impl Default for Settings {
             song_panel: true,
             waveform: true,
             frequencies: false,
+            minimap: true,
             grid: BEATS,
             metronome_grid: false,
             rate_b: 0.6,
@@ -541,6 +544,15 @@ fn display(ui: &mut egui::Ui, settings: &mut Settings) {
             switch(ui, &mut settings.frequencies, name);
         },
     );
+    let name = "Minimap";
+    row(
+        ui,
+        name,
+        "The whole chart in a strip beside the notefield; click or drag it to jump there.",
+        |ui, _| {
+            switch(ui, &mut settings.minimap, name);
+        },
+    );
     row(
         ui,
         "Grid lines",
@@ -822,6 +834,7 @@ mod tests {
             song_panel: false,
             waveform: false,
             frequencies: true,
+            minimap: false,
             grid: NonZeroU16::new(24).unwrap(),
             metronome_grid: true,
             rate_b: 0.5,

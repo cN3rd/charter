@@ -7,6 +7,7 @@ mod flip;
 mod import;
 mod keys;
 mod latency;
+mod minimap;
 mod new_song;
 mod notefield;
 mod panels;

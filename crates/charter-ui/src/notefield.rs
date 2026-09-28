@@ -388,7 +388,7 @@ impl Field {
 }
 
 /// Draws the open chart, and turns the wheel, zoom gestures, clicks and drags over it into
-/// actions.
+/// actions. Gives the seconds of audio it shows, earliest first, when there is a chart.
 #[allow(clippy::too_many_lines)] // one pass over the frame, drawing in order
 pub fn show(
     ui: &mut Ui,
@@ -402,10 +402,10 @@ pub fn show(
     scrolled: &mut f32,
     gesture: &mut Option<Gesture>,
     actions: &mut Vec<Action>,
-) {
+) -> Option<(f64, f64)> {
     let Some(chart) = song.chart() else {
         ui.weak("This song has no charts yet.");
-        return;
+        return None;
     };
     let lanes = chart.lanes.map_or(0, u16::from);
     let across = ui.available_rect_before_wrap().x_range();
@@ -587,6 +587,8 @@ pub fn show(
         }
     }
     now_line(&clipped, columns, view.now_y);
+    let (top, bottom) = (view.seconds_at(rows.min), view.seconds_at(rows.max));
+    Some((top.min(bottom), top.max(bottom)))
 }
 
 /// What clicks and drags over the notefield ask for. With Ctrl they place notes, a tap or under
@@ -1166,6 +1168,17 @@ fn events(
 
 /// One object on lanes, in the shared vocabulary's glyphs: the ruleset draws its own kinds
 /// once plugins can draw.
+/// The colours a note of `kind` draws in: its head, and the body of a sustain.
+pub(crate) fn kind_colours(kind: &Kind) -> (egui::Color32, egui::Color32) {
+    match kind {
+        Kind::Tap | Kind::Lift | Kind::Hold => (style::TAP, style::HOLD),
+        Kind::Roll => (style::ROLL, style::ROLL.gamma_multiply(0.5)),
+        Kind::Mine => (style::MINE, style::MINE.gamma_multiply(0.5)),
+        Kind::Fake => (style::FAKE, style::FAKE.gamma_multiply(0.5)),
+        Kind::Other(_) => (style::OTHER, style::OTHER.gamma_multiply(0.5)),
+    }
+}
+
 fn draw_object(
     painter: &Canvas,
     columns: &Columns,
@@ -1182,13 +1195,7 @@ fn draw_object(
     let across = columns
         .span(index, width)
         .shrink((columns.lane_w * 0.12).max(2.0));
-    let (head, body) = match object.kind {
-        Kind::Tap | Kind::Lift | Kind::Hold => (style::TAP, style::HOLD),
-        Kind::Roll => (style::ROLL, style::ROLL.gamma_multiply(0.5)),
-        Kind::Mine => (style::MINE, style::MINE.gamma_multiply(0.5)),
-        Kind::Fake => (style::FAKE, style::FAKE.gamma_multiply(0.5)),
-        Kind::Other(_) => (style::OTHER, style::OTHER.gamma_multiply(0.5)),
-    };
+    let (head, body) = kind_colours(&object.kind);
     match &object.shape {
         Shape::Instant => {}
         Shape::Sustain { .. } => {

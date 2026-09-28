@@ -1478,6 +1478,8 @@ mod tests {
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::B);
         harness.run();
         let after = harness.get_by_label("Notefield").rect().width();
-        assert!(after >= 360.0, "before {before}, after {after}");
+        // The ruler, the narrowest timing gutter and eight of the narrowest lanes.
+        let fits = 80.0 + 72.0 + 8.0 * 20.0;
+        assert!(after >= fits, "before {before}, after {after}");
     }
 }

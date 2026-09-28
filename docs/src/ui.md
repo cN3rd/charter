@@ -112,7 +112,10 @@ their defaults, in the dialog or on a new song; where the user has written their
 whether to import them. The song panel folds away with Ctrl+\\, and the tempo section sets the
 offset, where tick 0 sits in the audio, for songs that open with silence. Once the audio has loaded,
 its waveform draws in a strip between the timing column and the lanes, lined up with the notes.
-With Frequencies on in the Display settings, the strip shows the audio's spectrum instead: 48
+A minimap beside the notefield shows the whole chart, its notes by lane and its sections as
+green lines, from the start to the end of the audio or the last note, with a box over the stretch
+the notefield shows; a click or a drag moves the cursor to the snap line nearest that point, and
+the Minimap switch on the Display page hides it. With Frequencies on in the Display settings, the strip shows the audio's spectrum instead: 48
 bands from 30 Hz on its left to 16 kHz on its right, brighter the louder, so a kick and a hi-hat
 that sound together show apart. The
 toolbar's Grid choice, also on the Display page, draws lines between the beats down to an 8th,

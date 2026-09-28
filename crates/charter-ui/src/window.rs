@@ -10,10 +10,11 @@ use egui::Ui;
 
 use charter_editor::{KeepNotes, NoteAt, Refusal, Selecting, Song, Step, Toggled, demo};
 
+use crate::flip::Direction;
 use crate::new_song::{self, NO_AUDIO};
 use crate::notefield::{self, Zoom};
 use crate::settings::{self, Settings};
-use crate::{import, keys, latency, panels, recovery, style, timing_panel};
+use crate::{import, keys, latency, minimap, panels, recovery, style, timing_panel};
 
 /// The extensions of the audio files a song can play.
 const AUDIO: [&str; 4] = ["ogg", "mp3", "wav", "flac"];
@@ -1760,10 +1761,43 @@ impl Window {
                             ),
                             grid: self.settings.grid,
                         };
+                        let map = self.settings.minimap && song.chart().is_some();
+                        let length = match self.loaded() {
+                            Some(Loaded::Ready(seconds)) => Some(*seconds),
+                            _ => None,
+                        };
+                        let reversed = self.settings.direction == Direction::Down;
                         let (scrolled, gesture) = (&mut self.scrolled, &mut self.gesture);
                         style::stage().show(ui, |ui| {
                             ui.set_min_size(ui.available_size());
-                            notefield::show(ui, song, shown, scrolled, gesture, &mut actions);
+                            let whole = ui.available_rect_before_wrap();
+                            let (field, beside) = if map {
+                                let gap = minimap::WIDTH + 8.0;
+                                let (field, beside) =
+                                    whole.split_left_right_at_x(whole.right() - gap);
+                                (field, Some(beside.with_min_x(beside.left() + 8.0)))
+                            } else {
+                                (whole, None)
+                            };
+                            let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(field));
+                            let visible = notefield::show(
+                                &mut inner,
+                                song,
+                                shown,
+                                scrolled,
+                                gesture,
+                                &mut actions,
+                            );
+                            if let (Some(beside), Some(visible)) = (beside, visible) {
+                                minimap::show(
+                                    ui,
+                                    beside,
+                                    song,
+                                    (visible, length, reversed),
+                                    &mut actions,
+                                );
+                            }
+                            ui.allocate_rect(whole, egui::Sense::hover());
                         });
                     }
                     None => panels::empty(ui, self.no_drops, &mut actions),
@@ -2131,7 +2165,7 @@ mod tests {
     use egui_kittest::kittest::{NodeT, Queryable};
 
     use super::*;
-    use crate::flip::{Direction, Flip};
+    use crate::flip::Flip;
     use crate::recovery;
     use crate::settings::Sound;
     use charter_audio::{Gain, Kit, Tone, Volumes};
@@ -2648,6 +2682,27 @@ mod tests {
         harness.key_press(egui::Key::CloseBracket);
         harness.run();
         assert_eq!(first(&harness), charter_core::Kind::Tap);
+    }
+
+    #[test]
+    fn clicking_the_minimap_moves_the_cursor_there_and_the_setting_hides_it() {
+        let mut harness = editable_four_taps();
+        let map = harness.get_by_label("Minimap").rect();
+        // The last tap starts at tick 720 of a map running to its end.
+        click(
+            &mut harness,
+            egui::pos2(map.center().x, map.bottom() - 1.0),
+            egui::Modifiers::NONE,
+        );
+        let cursor = harness.state().song.as_ref().unwrap().cursor();
+        assert!(cursor > Tick::new(0), "{cursor:?}");
+        let mut app = Window::new(PLUGINS).with_settings(Settings {
+            minimap: false,
+            ..Settings::default()
+        });
+        app.open(Path::new("four.json"), &four_taps());
+        let harness = window(app);
+        assert!(harness.query_by_label("Minimap").is_none());
     }
 
     #[test]
