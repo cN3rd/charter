@@ -1028,6 +1028,14 @@ pub fn transport_bar(
                         if chosen != grid {
                             actions.push(Action::SetGrid(chosen));
                         }
+                        // The notefield draws the snap's lines when the grid leaves some out.
+                        if !grid.get().is_multiple_of(song.snap().get()) {
+                            ui.weak("+ snap").on_hover_text(format!(
+                                "The notefield draws the {} lines too, since the snap lands on \
+                                 them",
+                                ordinal(song.snap())
+                            ));
+                        }
                     }
                 });
             }

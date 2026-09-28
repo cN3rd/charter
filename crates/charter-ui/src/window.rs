@@ -4980,6 +4980,17 @@ mod tests {
     }
 
     #[test]
+    fn the_toolbar_says_when_the_grid_draws_the_snap_s_lines_too() {
+        let mut harness = editable_four_taps();
+        assert!(harness.query_by_label("+ snap").is_some());
+        for _ in 0..8 {
+            harness.key_press(egui::Key::ArrowLeft);
+        }
+        harness.run();
+        assert!(harness.query_by_label("+ snap").is_none());
+    }
+
+    #[test]
     fn the_grid_draws_every_snap_line() {
         let n = |value: u16| NonZeroU16::new(value).unwrap();
         assert_eq!(shown_grid(n(4), n(16)), n(16));
