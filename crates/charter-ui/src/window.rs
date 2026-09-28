@@ -1933,7 +1933,7 @@ impl Window {
                                 self.spectrum.as_ref(),
                                 self.audio_file().as_deref(),
                             ),
-                            grid: self.settings.grid,
+                            grid: shown_grid(self.settings.grid, song.snap()),
                         };
                         let map = self.settings.minimap && song.chart().is_some();
                         let length = match self.loaded() {
@@ -2184,6 +2184,17 @@ fn stretch(song: &mut Song, holding: &[(LaneIndex, Tick)]) -> Option<String> {
 // click from the next play; schedule them live if that gets in the way of recording.
 /// The tones `settings` ask for over the open chart of `song`, playing from `from` seconds to
 /// `until`: a tick on each note, and the metronome on each beat.
+/// The notefield grid's finest lines for the chosen `grid` at `snap`: the grid while every snap
+/// line is one of its lines, and the snap's lines otherwise, so the cursor never steps onto a line
+/// the grid leaves out.
+fn shown_grid(grid: std::num::NonZeroU16, snap: std::num::NonZeroU16) -> std::num::NonZeroU16 {
+    if grid.get().is_multiple_of(snap.get()) {
+        grid
+    } else {
+        snap
+    }
+}
+
 /// How far above its own pitch a note on `position` ticks with tuned lanes, in cents: a whole tone
 /// a lane either side of the chart's middle, or closer on a chart too wide for an octave across,
 /// so every chart spans an octave at most. A note across lanes ticks at their middle.
@@ -4583,6 +4594,16 @@ mod tests {
     fn with_no_sounds_chosen_playback_clicks_nothing() {
         let mut harness = playable_with(Settings::default());
         assert_eq!(clicks_played(&mut harness), []);
+    }
+
+    #[test]
+    fn the_grid_draws_every_snap_line() {
+        let n = |value: u16| NonZeroU16::new(value).unwrap();
+        assert_eq!(shown_grid(n(4), n(16)), n(16));
+        assert_eq!(shown_grid(n(16), n(4)), n(16));
+        assert_eq!(shown_grid(n(48), n(12)), n(48));
+        assert_eq!(shown_grid(n(16), n(12)), n(12));
+        assert_eq!(shown_grid(n(16), n(16)), n(16));
     }
 
     #[test]

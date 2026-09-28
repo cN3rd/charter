@@ -136,7 +136,8 @@ bands from 30 Hz on its left to 16 kHz on its right, brighter the louder, so a k
 that sound together show apart. The
 toolbar's Grid choice, also on the Display page, draws lines between the beats down to an 8th,
 12th, 16th, 24th, 32nd or 48th note: sixteen places to a measure of 4/4 on the 16th grid, each
-beat's line brighter. The metronome keeps to the beats. In
+beat's line brighter. Where the snap has lines the grid leaves out, the notefield draws the snap's
+lines instead, so the cursor always lands on a drawn line. The metronome keeps to the beats. In
 the notefield, the timing events at one tick form a single timing point, as osu! has them: one
 line, its values stacked beneath it (`150 BPM`, then `3/4`), and one handle. A tempo point drags
 along the timing column to the moment it is dropped on, keeping its beat, and the first one takes
