@@ -3897,6 +3897,49 @@ mod tests {
     }
 
     #[test]
+    fn a_pattern_wraps_each_step_around_a_two_lane_chart() {
+        let mut document: serde_json::Value = serde_json::from_slice(&four_taps()).unwrap();
+        document["charts"][0]["lanes"] = serde_json::json!(2);
+        document["charts"][0]["objects"] = serde_json::json!([]);
+        let mut app = Window::new(PLUGINS);
+        app.open(
+            Path::new("two.json"),
+            &serde_json::to_vec(&document).unwrap(),
+        );
+        let song = app.song.as_mut().unwrap();
+        assert!(song.read_only().is_none());
+        song.jump_to(Tick::new(1920));
+        assert_eq!(
+            pattern(song, &[0, 1, 2, 0, 1, 2], 4, LaneIndex::new(1)),
+            None
+        );
+        let placed: Vec<_> = song
+            .chart()
+            .unwrap()
+            .objects
+            .iter()
+            .map(|object| {
+                let Position::Lane { index, .. } = object.position else {
+                    panic!("the pattern places lane notes");
+                };
+                (object.tick, u16::from(index))
+            })
+            .collect();
+        assert_eq!(
+            placed,
+            [
+                (Tick::new(1920), 1),
+                (Tick::new(2160), 0),
+                (Tick::new(2400), 1),
+                (Tick::new(2640), 1),
+                (Tick::new(2880), 0),
+                (Tick::new(3120), 1),
+            ]
+        );
+        assert_eq!(song.cursor(), Tick::new(3360));
+    }
+
+    #[test]
     fn ctrl_clicking_a_lane_places_a_tap_on_the_nearest_snap_line() {
         let mut harness = editable_four_taps();
         let pos = spot(&harness, 3, 240, 4.0);

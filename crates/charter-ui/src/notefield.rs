@@ -1852,6 +1852,8 @@ const POINTS_PER_STEP: f32 = 40.0;
 #[cfg(test)]
 mod tests {
     use egui::{Modifiers, MouseWheelUnit, TouchPhase, Vec2};
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::{NodeT, Queryable};
 
     use super::*;
     use charter_audio::Track;
@@ -2204,5 +2206,551 @@ mod tests {
         let stop = Tick::new(30720);
         let paused = timing.time_at(stop).seconds() + 0.25;
         assert_eq!(timing.latest_tick_by(paused), stop);
+    }
+
+    fn field(song: &Song) -> Field {
+        Field::new(
+            Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0)),
+            4,
+            song.timing().time_at(song.cursor()),
+            Zoom::START,
+            false,
+        )
+    }
+
+    #[test]
+    fn a_read_only_song_allows_scrubbing_but_not_dragging_timing_or_markers() {
+        let song = song();
+        let field = field(&song);
+        let now = field.view.now_y;
+        let handle = pos2(field.columns.handle_x(), now);
+        assert_eq!(
+            handle_at(&song, &field, handle),
+            Some(Gesture::Scrub {
+                seconds: 0.0,
+                y: now
+            })
+        );
+        assert_eq!(
+            handle_at(&song, &field, pos2(field.columns.timing_x(), now)),
+            None
+        );
+        assert_eq!(
+            handle_at(&song, &field, pos2(field.columns.ruler_x(), now)),
+            None
+        );
+        let mut actions = Vec::new();
+        let origin = pos2(field.columns.lanes.center(), field.rows.min - 2.0);
+        assert_eq!(
+            started(
+                &song,
+                &field,
+                (origin, Modifiers::COMMAND),
+                (Tick::new(0), Tick::new(3840)),
+                &mut actions,
+            ),
+            None
+        );
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn a_drag_above_the_rows_cannot_place_a_hold_but_can_box_the_lanes() {
+        let song = Song::new(demo::song(), &[&charter_stepmania::Plugin]);
+        let field = field(&song);
+        let origin = pos2(field.columns.lanes.center(), field.rows.min - 3.0);
+        let mut actions = Vec::new();
+        assert_eq!(
+            started(
+                &song,
+                &field,
+                (origin, Modifiers::COMMAND),
+                (Tick::new(0), Tick::new(3840)),
+                &mut actions,
+            ),
+            None
+        );
+        assert!(actions.is_empty());
+        let box_drag = started(
+            &song,
+            &field,
+            (origin, Modifiers::NONE),
+            (Tick::new(0), Tick::new(3840)),
+            &mut actions,
+        );
+        assert!(matches!(box_drag, Some(Gesture::Marquee { .. })));
+        let line = |pos: Pos2| snap_line(&song, field.view, pos);
+        let dropped = let_go(
+            box_drag,
+            (
+                Some(pos2(field.columns.lanes.max, field.view.now_y + 96.0)),
+                false,
+            ),
+            &field,
+            song.timing(),
+            &line,
+        );
+        assert!(matches!(dropped, Some(Action::SelectBetween { .. })));
+    }
+
+    #[test]
+    fn panning_without_a_snap_uses_the_tick_at_the_audio_time() {
+        let song = song();
+        let field = field(&song);
+        let y = field.view.now_y;
+        let pos = pos2(field.columns.lanes.center(), y - 48.0);
+        assert_eq!(
+            panned(&field, song.timing(), None, (0.0, y), pos),
+            Tick::new(480)
+        );
+        assert_eq!(
+            panned(
+                &field,
+                song.timing(),
+                Ticks::new(240),
+                (0.0, y),
+                pos2(pos.x, y - 51.0)
+            ),
+            Tick::new(480)
+        );
+    }
+
+    #[test]
+    fn moved_notes_keep_their_time_under_shift_and_stop_at_the_last_lane() {
+        let song = song();
+        let field = field(&song);
+        let moving = Gesture::MoveNotes {
+            tick: Tick::new(0),
+            lane: LaneIndex::new(1),
+            room: (-1, 1),
+        };
+        let far_right = pos2(field.columns.lanes.max + 50.0, field.view.now_y + 100.0);
+        assert_eq!(
+            moving.moved_by(&field, Tick::new(960), far_right, true),
+            Some((0, 1))
+        );
+        assert_eq!(
+            moving.moved_by(&field, Tick::new(960), far_right, false),
+            Some((960, 1))
+        );
+        assert_eq!(
+            moving.moved_by(
+                &field,
+                Tick::new(0),
+                pos2(field.columns.lanes.min - 50.0, far_right.y),
+                false
+            ),
+            Some((0, -1))
+        );
+    }
+
+    #[test]
+    fn a_hold_is_hit_through_its_body_but_not_beyond_its_tail() {
+        let song = song();
+        let field = field(&song);
+        let chart = song.chart().unwrap();
+        let timing = chart.timing();
+        let x = field
+            .columns
+            .span(LaneIndex::new(3), LaneCount::ONE)
+            .center();
+        let at = |tick| pos2(x, field.view.y(timing.time_at(Tick::new(tick))));
+        assert_eq!(
+            hit(
+                &chart.objects,
+                &field,
+                timing,
+                at(960),
+                (Tick::new(0), Tick::new(3840)),
+            ),
+            Some(NoteAt {
+                tick: Tick::new(0),
+                lane: LaneIndex::new(3),
+            })
+        );
+        assert_eq!(
+            hit(
+                &chart.objects,
+                &field,
+                timing,
+                at(2400),
+                (Tick::new(0), Tick::new(3840)),
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn an_anchor_drops_at_audio_time_but_a_meter_and_marker_drop_on_grid_lines() {
+        let song = song();
+        let field = field(&song);
+        let pos = pos2(field.columns.timing_x(), field.view.now_y + 98.0);
+        let line = |pos: Pos2| snap_line(&song, field.view, pos);
+        let anchor = let_go(
+            Some(Gesture::MoveTiming { from: Tick::new(0) }),
+            (Some(pos), false),
+            &field,
+            song.timing(),
+            &line,
+        );
+        assert!(matches!(
+            anchor,
+            Some(Action::MovePointTo(from, seconds))
+                if from == Tick::new(0) && (seconds - 98.0 / 240.0).abs() < 1e-6
+        ));
+        let meter = let_go(
+            Some(Gesture::MoveTiming {
+                from: Tick::new(92160),
+            }),
+            (Some(pos), false),
+            &field,
+            song.timing(),
+            &line,
+        );
+        assert!(
+            matches!(
+                meter,
+                Some(Action::MoveTiming { from, to })
+                    if from == Tick::new(92160) && to == Tick::new(960)
+            ),
+            "{meter:?}"
+        );
+        assert!(matches!(
+            let_go(
+                Some(Gesture::MoveMarker { index: 1 }),
+                (Some(pos), false),
+                &field,
+                song.timing(),
+                &line
+            ),
+            Some(Action::MoveMarker { index: 1, to }) if to == Tick::new(960)
+        ));
+    }
+
+    #[test]
+    fn sideways_shift_wheel_scrolls_measures_without_consuming_plain_steps() {
+        let sideways = egui::Event::MouseWheel {
+            unit: MouseWheelUnit::Point,
+            delta: vec2(-20.0, 0.0),
+            modifiers: Modifiers::SHIFT,
+            phase: TouchPhase::Move,
+        };
+        let mut measures = 0.0;
+        let mut steps = 0.0;
+        assert_eq!(
+            measure_steps(std::slice::from_ref(&sideways), &mut measures),
+            0
+        );
+        assert_eq!(
+            measure_steps(std::slice::from_ref(&sideways), &mut measures),
+            1
+        );
+        assert_eq!(wheel_steps(&[sideways], &mut steps), 0);
+        assert_eq!(
+            wheel_steps(
+                &[wheel(MouseWheelUnit::Line, -1.0, Modifiers::NONE)],
+                &mut steps
+            ),
+            -1
+        );
+        assert_eq!(
+            measure_steps(
+                &[wheel(MouseWheelUnit::Line, 1.0, Modifiers::COMMAND)],
+                &mut measures
+            ),
+            0
+        );
+    }
+
+    #[test]
+    fn a_moved_note_ghost_is_drawn_at_its_destination_only_when_visible() {
+        let song = song();
+        let field = field(&song);
+        let chart = song.chart().unwrap();
+        let object = chart
+            .objects
+            .iter()
+            .find(|object| object.tick == Tick::new(0)
+                && matches!(object.position, Position::Lane { index, .. } if index == LaneIndex::new(3)))
+            .unwrap();
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let canvas = Canvas::new(
+                ui.painter_at(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0))),
+                Flip {
+                    area: Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0)),
+                    direction: Direction::Up,
+                },
+            );
+            ghost(
+                &canvas,
+                (&field.columns, chart.timing(), field.view),
+                object,
+                (960, -1),
+                (Tick::new(0), Tick::new(3840)),
+            );
+            ghost(
+                &canvas,
+                (&field.columns, chart.timing(), field.view),
+                object,
+                (960, -1),
+                (Tick::new(10000), Tick::new(11000)),
+            );
+        });
+        let painted: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Rect(rect) if rect.fill == style::SELECTED.gamma_multiply(0.35) => {
+                    Some(rect.rect)
+                }
+                _ => None,
+            })
+            .collect();
+        output.textures_delta.clear();
+        assert_eq!(painted.len(), 2, "one visible hold has a head and a body");
+        let head = painted.iter().find(|rect| rect.height() <= 10.0).unwrap();
+        let lane = field.columns.span(LaneIndex::new(2), LaneCount::ONE);
+        assert!((head.center().x - lane.center()).abs() < 0.01);
+        assert!(
+            (head.center().y - field.view.y(chart.timing().time_at(Tick::new(960)))).abs() < 0.01
+        );
+    }
+
+    #[test]
+    fn a_drop_guide_snaps_markers_but_tracks_an_anchor_at_its_audio_moment() {
+        let song = song();
+        let field = field(&song);
+        let desired = field.view.now_y + 98.0;
+        let guide_y = |free| {
+            let ctx = egui::Context::default();
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let canvas = Canvas::new(
+                    ui.painter_at(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0))),
+                    Flip {
+                        area: Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0)),
+                        direction: Direction::Up,
+                    },
+                );
+                drop_guide(&canvas, &field.columns, (&song, free), field.view, desired);
+            });
+            let y = output.shapes.iter().find_map(|shape| match &shape.shape {
+                egui::Shape::Path(path)
+                    if path.stroke.color == egui::epaint::ColorMode::Solid(style::ACCENT) =>
+                {
+                    path.points.first().map(|point| point.y)
+                }
+                _ => None,
+            });
+            output.textures_delta.clear();
+            y
+        };
+        assert_eq!(guide_y(true), Some(desired));
+        assert_eq!(
+            guide_y(false),
+            Some(field.view.y(song.timing().time_at(Tick::new(960))))
+        );
+    }
+
+    #[test]
+    fn every_spectrum_level_caches_a_tile_and_refuses_tiles_past_the_track() {
+        let track = Track::from_frames(1000, vec![[0.5, 0.5]; 60]);
+        let tiles = Tiles::new(std::sync::Arc::new(Spectrum::of(&track)));
+        let ctx = egui::Context::default();
+        for level in 0..=COARSEST {
+            let first = tiles.tile(&ctx, level, 0).unwrap();
+            assert_eq!(tiles.tile(&ctx, level, 0), Some(first));
+            assert_eq!(tiles.tile(&ctx, level, 1), None);
+        }
+        assert_eq!(
+            tiles.made.borrow().len(),
+            usize::try_from(COARSEST).unwrap() + 1
+        );
+    }
+
+    #[test]
+    fn horizontal_fields_keep_the_timeline_and_lane_hits_in_their_turned_positions() {
+        let song = song();
+        let area = Rect::from_min_size(pos2(10.0, 20.0), vec2(700.0, 400.0));
+        for direction in [Direction::Left, Direction::Right] {
+            let flip = Flip { area, direction };
+            let field = Field::new(
+                flip.field(),
+                4,
+                song.timing().time_at(Tick::new(0)),
+                Zoom::START,
+                false,
+            );
+            let lane = field
+                .columns
+                .span(LaneIndex::new(2), LaneCount::ONE)
+                .center();
+            let on_screen = flip.pos(pos2(lane, field.view.now_y));
+            let back = flip.back(on_screen);
+            assert_eq!(
+                field.lane_at(back.x),
+                Some(LaneIndex::new(2)),
+                "{direction:?}"
+            );
+            assert!((back.y - field.view.now_y).abs() < 0.01, "{direction:?}");
+            assert_eq!(
+                handle_at(&song, &field, pos2(field.columns.handle_x(), back.y)),
+                Some(Gesture::Scrub {
+                    seconds: 0.0,
+                    y: back.y
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn read_only_menu_disables_edits_but_keeps_selection_commands() {
+        let mut song = song();
+        song.select_all();
+        let mut harness = Harness::builder().build_ui(|ui| {
+            let mut actions = Vec::new();
+            menu_items(ui, &song, (LaneIndex::new(1), Tick::new(480)), &mut actions);
+            assert!(actions.is_empty());
+        });
+        harness.run();
+        for label in [
+            "Paste here",
+            "Insert pattern here",
+            "Add a timing point here",
+            "Bookmark here",
+            "Cut",
+            "Delete",
+        ] {
+            assert!(
+                harness
+                    .get_by_label_contains(label)
+                    .accesskit_node()
+                    .is_disabled(),
+                "{label}"
+            );
+        }
+        assert!(
+            !harness
+                .get_by_label("Select lane 2")
+                .accesskit_node()
+                .is_disabled()
+        );
+        assert!(
+            !harness
+                .get_by_label_contains("Select all")
+                .accesskit_node()
+                .is_disabled()
+        );
+        assert!(
+            !harness
+                .get_by_label_contains("Copy")
+                .accesskit_node()
+                .is_disabled()
+        );
+    }
+
+    #[test]
+    fn the_pattern_menu_uses_its_clicked_lane_tick_steps_and_spacing() {
+        let mut harness = Harness::builder().build_ui_state(
+            |ui, actions: &mut Vec<Action>| {
+                patterns(ui, (LaneIndex::new(2), Tick::new(960)), actions);
+            },
+            Vec::new(),
+        );
+        harness.run();
+        harness.get_by_label("Insert pattern here").click();
+        harness.run();
+        harness.get_by_label_contains("1-2-3-1-2-3").click();
+        harness.run();
+        harness.get_by_label("Every 1/4 beat").click();
+        harness.run();
+        let [Action::Here(at, pattern)] = harness.state().as_slice() else {
+            panic!("the menu should request exactly one pattern at its click");
+        };
+        assert_eq!(*at, Tick::new(960));
+        assert!(matches!(
+            pattern.as_ref(),
+            Action::Pattern {
+                steps,
+                per_beat,
+                lane,
+            } if *steps == [0, 1, 2, 0, 1, 2]
+                && *per_beat == 4
+                && *lane == LaneIndex::new(2)
+        ));
+    }
+
+    #[test]
+    fn escape_discards_an_active_marquee_before_the_pointer_is_released() {
+        struct Drag {
+            song: Song,
+            gesture: Option<Gesture>,
+            actions: Vec<Action>,
+        }
+        let mut harness = Harness::builder()
+            .with_size(vec2(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut Drag| {
+                    show(
+                        ui,
+                        &state.song,
+                        Shown {
+                            zoom: Zoom::START,
+                            direction: Direction::Up,
+                            strip: None,
+                            grid: grid_of(16),
+                        },
+                        &mut [0.0; 2],
+                        &mut state.gesture,
+                        &mut state.actions,
+                    );
+                },
+                Drag {
+                    song: song(),
+                    gesture: None,
+                    actions: Vec::new(),
+                },
+            );
+        harness.run();
+        let field = Field::new(
+            harness.get_by_label("Notefield").rect(),
+            4,
+            harness.state().song.timing().time_at(Tick::new(0)),
+            Zoom::START,
+            false,
+        );
+        let from = pos2(field.columns.lanes.max - 10.0, field.view.now_y + 20.0);
+        let to = pos2(field.columns.lanes.min + 10.0, field.view.now_y + 95.0);
+        harness.hover_at(from);
+        harness.event(egui::Event::PointerButton {
+            pos: from,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        });
+        harness.run();
+        harness.hover_at(to);
+        harness.run();
+        assert!(matches!(
+            harness.state().gesture,
+            Some(Gesture::Marquee { .. })
+        ));
+        harness.key_press(egui::Key::Escape);
+        harness.run();
+        assert_eq!(harness.state().gesture, None);
+        harness.event(egui::Event::PointerButton {
+            pos: to,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        });
+        harness.run();
+        assert!(
+            !harness
+                .state()
+                .actions
+                .iter()
+                .any(|action| matches!(action, Action::SelectBetween { .. }))
+        );
     }
 }
