@@ -188,9 +188,23 @@ impl Host {
         };
         let artwork = self.window.artwork_write_for(&path);
         // What the artwork's file held before, to put back when the song's own write fails.
-        let before = artwork
-            .as_ref()
-            .map(|(to, _)| (to.clone(), self.disk.read(to).ok()));
+        let before = if let Some((to, _)) = &artwork {
+            let old = if self.disk.exists(to) {
+                match self.disk.read(to) {
+                    Ok(bytes) => Some(bytes),
+                    Err(error) => {
+                        self.window
+                            .saved(Saved::Failed(format!("{}: {error}", to.display())));
+                        return;
+                    }
+                }
+            } else {
+                None
+            };
+            Some((to.clone(), old))
+        } else {
+            None
+        };
         let copied = copied.and_then(|()| match &artwork {
             Some((to, bytes)) => self.write_artwork(to, bytes),
             None => Ok(()),
@@ -668,6 +682,9 @@ mod tests {
                 .unwrap()
                 .contains("could not be restored")
         );
+        let requests = host.window.take_requests();
+        host.handle_requests(requests);
+        assert!(!files(&host, "/data/recovery.json"));
     }
 
     #[test]
@@ -897,5 +914,268 @@ mod tests {
         assert_eq!(host.window.title(), "song.json - charter");
         host.read(Path::new("/s/other.json"));
         assert!(host.window.message().unwrap().contains("did not open"));
+    }
+
+    #[test]
+    fn an_unreadable_song_does_not_replace_the_open_song() {
+        let mut host = host(Memory {
+            unreadable: vec![PathBuf::from("/s/other.json")],
+            ..Memory::with(&[("/s/song.json", SONG), ("/s/other.json", SONG)])
+        });
+        host.read(Path::new("/s/song.json"));
+        host.read(Path::new("/s/other.json"));
+        assert_eq!(host.window.title(), "song.json - charter");
+        assert!(host.window.message().unwrap().contains("access denied"));
+    }
+
+    #[test]
+    fn saving_as_a_name_that_cannot_name_a_song_leaves_no_project_file() {
+        let mut host = host(Memory::default());
+        host.save_as(Path::new("/s/.json"), b"mine");
+        assert!(!files(&host, "/s/.json"));
+        assert!(
+            host.window
+                .message()
+                .unwrap()
+                .contains("cannot name a song")
+        );
+    }
+
+    #[test]
+    fn saving_as_a_project_with_a_stuck_move_keeps_the_old_song() {
+        let mut host = host(Memory {
+            stuck: true,
+            ..Memory::with(&[("/s/Song/Song.json", b"old")])
+        });
+        host.save_as(Path::new("/s/Song/Song.json"), b"new");
+        assert_eq!(
+            host.disk.read(Path::new("/s/Song/Song.json")).unwrap(),
+            b"old"
+        );
+        assert!(!files(&host, "/s/Song/Song.json.partial"));
+        assert!(host.window.message().unwrap().contains("move failed"));
+    }
+
+    #[test]
+    fn an_unreadable_existing_artwork_is_not_overwritten_by_a_new_picture() {
+        let mut host = host(Memory {
+            unreadable: vec![PathBuf::from("/s/Song/art.png")],
+            ..Memory::with(&[("/s/Song/art.png", b"their picture")])
+        });
+        host.window = Window::new(PLUGINS);
+        host.window.open(Path::new("/s/Song/Song.json"), &sm_song());
+        host.window
+            .use_artwork(Path::new("/p/art.png"), picture(png(2, 2)));
+        host.write(PathBuf::from("/s/Song/Song.json"), &sm_song());
+        assert!(!files(&host, "/s/Song/Song.json"));
+        assert!(!files(&host, "/s/Song/art.png.partial"));
+        assert!(host.window.message().unwrap().contains("access denied"));
+    }
+
+    #[test]
+    fn a_save_cannot_replace_unreadable_artwork_it_could_not_back_up() {
+        let mut host = host(Memory {
+            unreadable: vec![PathBuf::from("/s/Song/art.png")],
+            unwritable: vec![PathBuf::from("/s/Song/Song.json.partial")],
+            ..Memory::with(&[
+                ("/s/Song/Song.json", b"old song"),
+                ("/s/Song/art.png", b"old picture"),
+            ])
+        });
+        host.window = Window::new(PLUGINS);
+        let song = sm_song_with(Some("art.png"));
+        host.window.open(Path::new("/s/Song/Song.json"), &song);
+        host.window
+            .use_artwork(Path::new("/p/art.png"), picture(png(2, 2)));
+        host.write(PathBuf::from("/s/Song/Song.json"), &song);
+        assert_eq!(
+            host.disk.read(Path::new("/s/Song/Song.json")).unwrap(),
+            b"old song"
+        );
+        assert!(files(&host, "/s/Song/art.png"));
+        assert!(host.window.message().unwrap().contains("access denied"));
+    }
+
+    #[test]
+    fn an_unwritable_artwork_prevents_the_song_from_being_saved() {
+        let mut host = host(Memory {
+            unwritable: vec![PathBuf::from("/s/Song/art.png.partial")],
+            ..Memory::default()
+        });
+        host.window = Window::new(PLUGINS);
+        host.window.open(Path::new("/s/Song/Song.json"), &sm_song());
+        host.window
+            .use_artwork(Path::new("/p/art.png"), picture(png(2, 2)));
+        host.write(PathBuf::from("/s/Song/Song.json"), &sm_song());
+        assert!(!files(&host, "/s/Song/Song.json"));
+        assert!(!files(&host, "/s/Song/art.png"));
+        assert!(host.window.message().unwrap().contains("disk is full"));
+    }
+
+    #[test]
+    fn a_failed_song_write_removes_new_artwork_and_preserves_the_old_song() {
+        let mut host = host(Memory {
+            unwritable: vec![PathBuf::from("/s/Song/Song.json.partial")],
+            ..Memory::with(&[("/s/Song/Song.json", b"old song")])
+        });
+        host.window = Window::new(PLUGINS);
+        host.window.open(Path::new("/s/Song/Song.json"), &sm_song());
+        host.window
+            .use_artwork(Path::new("/p/art.png"), picture(png(2, 2)));
+        host.write(PathBuf::from("/s/Song/Song.json"), &sm_song());
+        assert_eq!(
+            host.disk.read(Path::new("/s/Song/Song.json")).unwrap(),
+            b"old song"
+        );
+        assert!(!files(&host, "/s/Song/art.png"));
+        assert!(!files(&host, "/s/Song/Song.json.partial"));
+        assert!(host.window.message().unwrap().contains("disk is full"));
+    }
+
+    #[test]
+    fn an_autosave_with_a_stuck_move_preserves_the_last_recovery() {
+        let mut host = host(Memory {
+            stuck: true,
+            ..Memory::with(&[("/data/recovery.json", b"older changes")])
+        });
+        host.autosave(b"new changes");
+        assert_eq!(
+            host.disk.read(Path::new("/data/recovery.json")).unwrap(),
+            b"older changes"
+        );
+        assert!(!files(&host, "/data/recovery.json.partial"));
+        assert!(host.window.message().unwrap().contains("move failed"));
+    }
+
+    #[test]
+    fn autosaving_without_a_recovery_folder_reports_the_missing_location() {
+        let mut host = host(Memory::default());
+        host.recovery = None;
+        host.autosave(b"changes");
+        assert_eq!(
+            host.window.message(),
+            Some("Autosave failed: there is no folder to keep it in")
+        );
+    }
+
+    #[test]
+    fn an_unreadable_timing_file_reports_the_failure_without_importing_it() {
+        let mut host = host(Memory {
+            unreadable: vec![PathBuf::from("/m/map.osu")],
+            ..Memory::with(&[("/m/map.osu", b"[TimingPoints]\n0,500,4,1,0,100,1,0")])
+        });
+        host.read_timing(Path::new("/m/map.osu"));
+        let message = host.window.message().unwrap();
+        assert!(message.contains("Could not read the timing"));
+        assert!(message.contains("map.osu") && message.contains("access denied"));
+    }
+
+    #[test]
+    fn project_file_keeps_names_with_dots_and_does_not_nest_an_existing_project() {
+        assert_eq!(
+            project_file(Path::new("/s/A.B.json")),
+            Some(PathBuf::from("/s/A.B/A.B.json"))
+        );
+        assert_eq!(
+            project_file(Path::new("/s/A.B/A.B.json")),
+            Some(PathBuf::from("/s/A.B/A.B.json"))
+        );
+        assert_eq!(project_file(Path::new("/s/.json")), None);
+        assert_eq!(project_file(Path::new("/")), None);
+    }
+
+    #[test]
+    fn reading_artwork_from_disk_makes_its_original_bytes_available_for_a_new_project() {
+        let image = png(2, 3);
+        let mut host = host(Memory::with(&[("/s/Song/art.png", &image)]));
+        host.window = Window::new(PLUGINS);
+        host.window.open(
+            Path::new("/s/Song/Song.json"),
+            &sm_song_with(Some("art.png")),
+        );
+        host.window
+            .use_artwork(Path::new("/p/art.png"), picture(png(1, 1)));
+        host.window
+            .saved(Saved::To(PathBuf::from("/s/Song/Song.json")));
+        host.answer(Request::ReadArtwork {
+            file: PathBuf::from("/s/Song/art.png"),
+        });
+        assert_eq!(
+            host.window.artwork_write_for(Path::new("/other/Song.json")),
+            Some((PathBuf::from("/other/art.png"), image))
+        );
+    }
+
+    #[test]
+    fn unreadable_artwork_is_not_offered_for_copying_to_a_new_project() {
+        let mut host = host(Memory {
+            unreadable: vec![PathBuf::from("/s/Song/art.png")],
+            ..Memory::with(&[("/s/Song/art.png", b"not readable")])
+        });
+        host.window = Window::new(PLUGINS);
+        host.window.open(
+            Path::new("/s/Song/Song.json"),
+            &sm_song_with(Some("art.png")),
+        );
+        host.window
+            .use_artwork(Path::new("/p/art.png"), picture(png(1, 1)));
+        host.window
+            .saved(Saved::To(PathBuf::from("/s/Song/Song.json")));
+        host.answer(Request::ReadArtwork {
+            file: PathBuf::from("/s/Song/art.png"),
+        });
+        assert_eq!(
+            host.window.artwork_write_for(Path::new("/other/Song.json")),
+            None
+        );
+    }
+
+    #[test]
+    fn decoding_autosaved_artwork_restores_its_pending_file_and_bytes() {
+        let image = png(2, 3);
+        let mut host = host(Memory::default());
+        host.window = Window::new(PLUGINS);
+        host.window.open(
+            Path::new("/s/Song/Song.json"),
+            &sm_song_with(Some("art.png")),
+        );
+        host.answer(Request::DecodeArtwork {
+            bytes: image.clone(),
+        });
+        assert_eq!(
+            host.window
+                .artwork_write_for(Path::new("/s/Song/Song.json")),
+            Some((PathBuf::from("/s/Song/art.png"), image))
+        );
+    }
+
+    #[test]
+    fn changed_settings_take_precedence_over_the_older_whole_copy() {
+        let mut storage = Kept::default();
+        eframe::Storage::set_string(
+            &mut storage,
+            OLD_SETTINGS,
+            r#"{"zoom":125.0,"tick_sound":"beep"}"#.to_owned(),
+        );
+        eframe::Storage::set_string(&mut storage, SETTINGS, r#"{"zoom":175.0}"#.to_owned());
+        let settings = kept_settings(&storage);
+        assert!((settings.zoom - 175.0).abs() < f32::EPSILON);
+        assert!(!settings.note_ticks);
+    }
+
+    #[test]
+    fn saving_settings_keeps_only_changes_for_the_next_run() {
+        let mut host = host(Memory::default());
+        host.window = Window::new(&[]).with_settings(Settings {
+            zoom: 175.0,
+            ..Settings::default()
+        });
+        let mut storage = Kept::default();
+        eframe::App::save(&mut host, &mut storage);
+        assert_eq!(
+            eframe::Storage::get_string(&storage, SETTINGS).as_deref(),
+            Some(r#"{"zoom":175.0}"#)
+        );
+        assert!((kept_settings(&storage).zoom - 175.0).abs() < f32::EPSILON);
     }
 }
