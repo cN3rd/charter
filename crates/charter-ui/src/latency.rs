@@ -452,4 +452,28 @@ mod tests {
         assert!(harness.state().0.started.is_none());
         assert!(harness.state().0.taps.is_empty());
     }
+
+    #[test]
+    fn audio_adjustments_and_an_early_tap_leave_the_input_latency_alone() {
+        let mut harness = calibrating();
+        harness.step();
+        harness.get_by_label("Tap").click();
+        harness.step();
+        assert!(harness.state().0.taps.is_empty());
+        harness.get_by_label("Start").click();
+        harness.step();
+        harness.state_mut().2 = 11.05;
+        harness.get_by_label("Tap").click();
+        harness.step();
+        assert_eq!(harness.state().0.taps.len(), 1);
+        assert!((harness.state().0.taps[0] - 1.05).abs() < 1e-9);
+        assert!(harness.query_by_label("Keep it").is_none());
+        harness.get_by_label("+").click();
+        harness.step();
+        assert!((harness.state().1.audio_latency_ms - 25.0).abs() < 1e-9);
+        harness.get_by_label("−").click();
+        harness.step();
+        assert!((harness.state().1.audio_latency_ms - 20.0).abs() < 1e-9);
+        assert!((harness.state().1.input_latency_ms - 8.0).abs() < 1e-9);
+    }
 }
