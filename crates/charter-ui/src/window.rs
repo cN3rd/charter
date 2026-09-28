@@ -858,7 +858,8 @@ impl Window {
             ..self.settings.clone()
         };
         let until = looping.map_or(seconds, |(_, end)| end.min(seconds));
-        let clicks = clicks(song, &settings, (from, until), self.sync.grid);
+        // From the song's start, so a seek back while playing still ticks.
+        let clicks = clicks(song, &settings, (0.0, until), self.sync.grid);
         let volumes = self.settings.volumes;
         self.playing = true;
         self.played = Some((volumes, !clicks.is_empty()));
@@ -4612,7 +4613,7 @@ mod tests {
     }
 
     #[test]
-    fn the_tick_sound_plays_on_every_note_from_the_cursor_on() {
+    fn the_tick_sound_plays_on_every_note_even_before_the_cursor() {
         let mut harness = playable_with(Settings {
             tick_sound: Sound::Beep,
             ..Settings::default()
@@ -4621,7 +4622,7 @@ mod tests {
         harness.run();
         let clicks = clicks_played(&mut harness);
         let times: Vec<f64> = clicks.iter().map(|(at, _)| *at).collect();
-        assert_eq!(times, [0.125, 0.25, 0.375]);
+        assert_eq!(times, [0.0, 0.125, 0.25, 0.375]);
         assert!(
             clicks
                 .iter()
@@ -4675,9 +4676,10 @@ mod tests {
         harness.run();
         let clicks = clicks_played(&mut harness);
         let (a, b) = (Tone::Accent(Kit::PureSine), Tone::Beat(Kit::PureSine));
-        // 120 BPM in 4/4 from 0.5 s; from 2.5 s, 240 BPM in 3/4, with half a second stopped
-        // after the beat at 2.75 s.
+        // 120 BPM in 4/4 from 0.5 s, its grid carried back into the lead-in; from 2.5 s,
+        // 240 BPM in 3/4, with half a second stopped after the beat at 2.75 s.
         let expected = [
+            (0.0, b),
             (0.5, a),
             (1.0, b),
             (1.5, b),
