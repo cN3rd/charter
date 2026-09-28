@@ -87,7 +87,25 @@ pub fn menu_bar(
                 editable,
                 actions,
                 [
+                    ("Cut", "Ctrl+X", Action::Cut),
+                    ("Copy", "Ctrl+C", Action::Copy),
+                    ("Paste at the cursor", "Ctrl+V", Action::Paste(None)),
+                    ("Duplicate", "Ctrl+D", Action::Duplicate),
                     ("Delete the selection", "Delete", Action::DeleteSelection),
+                    (
+                        "Move a lane left",
+                        "Ctrl+Left",
+                        Action::ShiftSelection {
+                            snaps: 0,
+                            lanes: -1,
+                        },
+                    ),
+                    (
+                        "Move a lane right",
+                        "Ctrl+Right",
+                        Action::ShiftSelection { snaps: 0, lanes: 1 },
+                    ),
+                    ("Mirror across the lanes", "Ctrl+M", Action::Mirror),
                     (
                         "Lengthen by the snap",
                         "]",
@@ -326,6 +344,22 @@ const KEYS: [(&str, &[(&str, &str)]); 6] = [
         &[
             ("Click, Drag", "Select notes"),
             ("Drag a note", "Move it, or the selection it is in"),
+            (
+                "Shift+Drag a note",
+                "Move it across lanes, keeping its time",
+            ),
+            (
+                "Right-click",
+                "Menu: edits, patterns, the game's note changes",
+            ),
+            (
+                "Ctrl+X, Ctrl+C, Ctrl+V",
+                "Cut, copy, or paste at the cursor",
+            ),
+            ("Ctrl+D", "Duplicate the selection after itself"),
+            ("Ctrl+Left, Ctrl+Right", "Move the selection a lane"),
+            ("Ctrl+Up, Ctrl+Down", "Move the selection by the snap"),
+            ("Ctrl+M", "Mirror the selection across the lanes"),
             ("Shift+Click, Shift+Drag", "Add to the selection"),
             ("Alt+Click, Alt+Drag", "Take from the selection"),
             ("Ctrl+A, Escape", "Select every note, or none"),
@@ -338,7 +372,11 @@ const KEYS: [(&str, &[(&str, &str)]); 6] = [
         "Moving around",
         &[
             ("Up, Down, Wheel", "Move the cursor by the snap"),
-            ("Page Up, Page Down", "Move the cursor by a measure"),
+            (
+                "Page Up, Page Down, Shift+Wheel",
+                "Move the cursor by a measure",
+            ),
+            ("Middle-drag", "Pan the chart"),
             (
                 "Home, End",
                 "Jump to the start, or to where the last note ends",

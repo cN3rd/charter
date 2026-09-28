@@ -296,6 +296,34 @@ pub(crate) enum Action {
     DeleteSelection,
     /// Moves the end of the selected notes, or those at the cursor, a snap later or earlier.
     ResizeNotes(Step),
+    /// Copies the selected notes.
+    Copy,
+    /// Copies the selected notes and removes them.
+    Cut,
+    /// Pastes the copied notes at the cursor: those the clipboard's text holds, when it holds
+    /// some, and otherwise those copied last.
+    Paste(Option<String>),
+    /// Copies the selected notes to just after themselves.
+    Duplicate,
+    /// Moves the selected notes this many snap lines later and lanes right, back and left when
+    /// negative.
+    ShiftSelection {
+        snaps: i32,
+        lanes: i32,
+    },
+    /// Flips the selected notes across the lanes.
+    Mirror,
+    /// Makes the selected notes what the song's game makes them by the change named.
+    ChangeNotes(String),
+    /// Places taps from the cursor on, one `per_beat`th of a beat apart, on the lanes `steps`
+    /// counts from `lane`, wrapping past the last.
+    Pattern {
+        steps: &'static [u16],
+        per_beat: u16,
+        lane: LaneIndex,
+    },
+    /// Selects every note on the lane.
+    SelectLane(LaneIndex),
     /// Asks the host for a song to open.
     Open,
     /// Saves the song to its file, or asks where when it has none.
@@ -512,6 +540,10 @@ pub struct Window {
     audio_file: Option<PathBuf>,
     /// The song's cover artwork, as read, chosen or taken from its audio.
     artwork: Option<Artwork>,
+    /// The notes copied last, their ticks counted from the earliest's.
+    clip: Vec<charter_core::Object>,
+    /// Text to put on the system clipboard this frame.
+    clipboard_out: Option<String>,
     /// The artwork the audio of the song being started holds, and which file, to take when the
     /// song starts.
     embedded: Option<(PathBuf, String, Picture)>,
@@ -1060,6 +1092,69 @@ impl Window {
         if let Some(file) = file {
             self.requests.push(Request::ReadArtwork { file });
         }
+    }
+
+    /// Keeps the selected notes to paste, and puts them on the system clipboard too, so another
+    /// window can paste them.
+    fn copy(&mut self) {
+        let Some(song) = &self.song else {
+            return;
+        };
+        let copied = song.copied();
+        if copied.is_empty() {
+            return;
+        }
+        let clipped = Clipped {
+            charter_notes: copied.clone(),
+        };
+        self.clipboard_out = serde_json::to_string(&clipped).ok();
+        self.clip = copied;
+    }
+
+    /// Pastes at the cursor the notes `text` holds, when it holds some, or else those copied
+    /// last. Notes pasted over others are left out, which it says when none could go.
+    fn paste(&mut self, text: Option<&str>) {
+        let from_text = text
+            .and_then(|text| serde_json::from_str::<Clipped>(text).ok())
+            .map(|clipped| clipped.charter_notes);
+        let clip = from_text.unwrap_or_else(|| self.clip.clone());
+        let Some(song) = &mut self.song else {
+            return;
+        };
+        if clip.is_empty() {
+            self.failure = Some("Nothing to paste: copy some notes first (Ctrl+C).".to_owned());
+            return;
+        }
+        match song.paste(&clip, song.cursor()) {
+            Ok(0) => self.failure = Some("Nothing pasted: every place is taken.".to_owned()),
+            Ok(_) => {}
+            Err(why) => self.failure = refused(Some(why)),
+        }
+    }
+
+    /// Copies the selected notes to start a snap line after the last of them.
+    fn duplicate(&mut self) {
+        let Some(song) = &mut self.song else {
+            return;
+        };
+        let copied = song.copied();
+        let last = song.selection().map(|note| note.tick).max();
+        let step = song
+            .document()
+            .document()
+            .ticks_per_beat
+            .note_length(song.snap());
+        let (Some(last), Some(step)) = (last, step) else {
+            return;
+        };
+        let Some(at) = last.next_on(step) else {
+            return;
+        };
+        self.failure = match song.paste(&copied, at) {
+            Ok(0) => Some("Nothing duplicated: every place is taken.".to_owned()),
+            Ok(_) => None,
+            Err(why) => refused(Some(why)),
+        };
     }
 
     /// Takes the title and artist the tags of `file` carry. Where the song, or the song being
@@ -1692,6 +1787,41 @@ impl Window {
             Action::RemoveMarker(index) => self.failure = refused(song.remove_marker(index).err()),
             Action::SelectAll => song.select_all(),
             Action::DeleteSelection => self.failure = refused(song.delete_selection().err()),
+            Action::Copy => self.copy(),
+            Action::Cut => {
+                self.copy();
+                if let Some(song) = &mut self.song {
+                    self.failure = refused(song.delete_selection().err());
+                }
+            }
+            Action::Paste(text) => self.paste(text.as_deref()),
+            Action::Duplicate => self.duplicate(),
+            Action::ShiftSelection { snaps, lanes } => {
+                let step = song
+                    .document()
+                    .document()
+                    .ticks_per_beat
+                    .note_length(song.snap())
+                    .map_or(0, |step| i64::from(u32::from(step)));
+                let ticks = i32::try_from(i64::from(snaps) * step).unwrap_or(i32::MAX);
+                self.failure = refused(song.move_selection(ticks, lanes).err());
+            }
+            Action::Mirror => self.failure = refused(song.mirror_selection().err()),
+            Action::ChangeNotes(change) => {
+                self.failure = refused(song.change_selection(&change).err());
+            }
+            Action::Pattern {
+                steps,
+                per_beat,
+                lane,
+            } => self.failure = pattern(song, steps, per_beat, lane),
+            Action::SelectLane(lane) => {
+                song.select_between(
+                    Tick::new(i32::MIN)..=Tick::new(i32::MAX),
+                    lane..=lane,
+                    Selecting::Replace,
+                );
+            }
             Action::ResizeNotes(step) => self.failure = refused(song.resize_notes(step).err()),
             Action::MoveSelection { ticks, lanes } => {
                 self.failure = refused(song.move_selection(ticks, lanes).err());
@@ -1879,6 +2009,9 @@ impl Window {
                 panels::status_bar(ui, self.song.as_ref(), (&audio_state, self.playing));
             });
         self.follow_artwork();
+        if let Some(text) = self.clipboard_out.take() {
+            ui.ctx().copy_text(text);
+        }
         let artwork = self.artwork.as_mut().map(|artwork| artwork.shown(ui.ctx()));
         if let Some(song) = self.song.as_ref().filter(|_| self.settings.song_panel) {
             let timing = &mut self.timing_drafts;
@@ -2184,6 +2317,54 @@ fn stretch(song: &mut Song, holding: &[(LaneIndex, Tick)]) -> Option<String> {
 // click from the next play; schedule them live if that gets in the way of recording.
 /// The tones `settings` ask for over the open chart of `song`, playing from `from` seconds to
 /// `until`: a tick on each note, and the metronome on each beat.
+/// What the system clipboard holds of copied notes: their JSON under a key of their own, so
+/// other text is not taken for notes.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Clipped {
+    charter_notes: Vec<charter_core::Object>,
+}
+
+/// Places the taps of a pattern from `song`'s cursor on, `per_beat` to a beat, on the lanes
+/// `steps` counts from `lane`, and moves the cursor to the line after the last. Says why if the
+/// song refuses them.
+fn pattern(song: &mut Song, steps: &[u16], per_beat: u16, lane: LaneIndex) -> Option<String> {
+    let lanes = song
+        .chart()
+        .and_then(|chart| chart.lanes)
+        .map_or(0, u16::from);
+    let note_value = per_beat.checked_mul(4).and_then(std::num::NonZeroU16::new);
+    let resolution = song.document().document().ticks_per_beat;
+    let Some(gap) = note_value.and_then(|value| resolution.note_length(value)) else {
+        return Some(format!(
+            "The song's resolution has no 1/{per_beat} of a beat"
+        ));
+    };
+    if lanes == 0 {
+        return None;
+    }
+    let start = i64::from(song.cursor());
+    let gap = i64::from(u32::from(gap));
+    let at = |index: usize| {
+        let index = i64::try_from(index).ok()?;
+        i32::try_from(start + index * gap).ok().map(Tick::new)
+    };
+    let taps: Vec<(Tick, LaneIndex)> = steps
+        .iter()
+        .enumerate()
+        .filter_map(|(index, step)| {
+            let on = (u16::from(lane) + step) % lanes;
+            Some((at(index)?, LaneIndex::new(on)))
+        })
+        .collect();
+    let why = refused(song.add_taps(taps).err());
+    if why.is_none()
+        && let Some(after) = at(steps.len())
+    {
+        song.jump_to(after);
+    }
+    why
+}
+
 /// The notefield grid's finest lines for the chosen `grid` at `snap`: the grid while every snap
 /// line is one of its lines, and the snap's lines otherwise, so the cursor never steps onto a line
 /// the grid leaves out.
@@ -3235,6 +3416,172 @@ mod tests {
         press(harness, to, false, modifiers);
         harness.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
         harness.run();
+    }
+
+    fn lane_x(harness: &Harness<'_, Window>, lane: u16) -> f32 {
+        field(harness)
+            .columns
+            .span(LaneIndex::new(lane), LaneCount::ONE)
+            .center()
+    }
+
+    fn select_note(harness: &mut Harness<'_, Window>, lane: u16, tick: i32) {
+        let pos = on_line(harness, lane_x(harness, lane), tick);
+        click(harness, pos, egui::Modifiers::NONE);
+    }
+
+    #[test]
+    fn copied_notes_paste_at_the_cursor_from_the_clipboard_or_from_memory() {
+        let mut harness = editable_four_taps();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.event(egui::Event::Copy);
+        harness.run();
+        let clipped = Clipped {
+            charter_notes: harness.state().clip.clone(),
+        };
+        assert_eq!(clipped.charter_notes.len(), 4);
+        let text = serde_json::to_string(&clipped).unwrap();
+        for _ in 0..8 {
+            harness.key_press(egui::Key::ArrowDown);
+        }
+        harness.event(egui::Event::Paste(text));
+        harness.run();
+        assert_eq!(note_count(&harness), 8);
+        assert_eq!(lanes_at(&harness, 1920), [0]);
+        harness.key_press(egui::Key::PageDown);
+        harness.event(egui::Event::Paste("some other text".to_owned()));
+        harness.run();
+        assert_eq!(note_count(&harness), 12);
+    }
+
+    #[test]
+    fn ctrl_arrows_move_the_selection_and_ctrl_d_and_ctrl_m_duplicate_and_mirror() {
+        let mut harness = editable_four_taps();
+        select_note(&mut harness, 3, 720);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::ArrowLeft);
+        harness.run();
+        assert_eq!(lanes_at(&harness, 720), [2]);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::ArrowDown);
+        harness.run();
+        assert_eq!(lanes_at(&harness, 720), Vec::<u16>::new());
+        assert_eq!(lanes_at(&harness, 960), [2]);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::M);
+        harness.run();
+        assert_eq!(lanes_at(&harness, 960), [1]);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::D);
+        harness.run();
+        assert_eq!(lanes_at(&harness, 1200), [1]);
+        assert_eq!(note_count(&harness), 5);
+    }
+
+    #[test]
+    fn dragging_a_note_with_shift_changes_its_lane_and_keeps_its_time() {
+        let mut harness = editable_four_taps();
+        let from = on_line(&harness, lane_x(&harness, 0), 0);
+        let to = on_line(&harness, lane_x(&harness, 2), 480);
+        drag(&mut harness, from, to, egui::Modifiers::SHIFT);
+        assert_eq!(lanes_at(&harness, 0), [2]);
+        assert_eq!(lanes_at(&harness, 480), [2]);
+    }
+
+    #[test]
+    fn a_middle_drag_pans_the_chart_and_shift_wheel_moves_by_measure() {
+        let mut harness = editable_four_taps();
+        let from = on_line(&harness, lane_x(&harness, 1), 960);
+        let to = on_line(&harness, lane_x(&harness, 1), 0);
+        let middle = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Middle,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        harness.hover_at(from);
+        harness.event(middle(from, true));
+        for step in 1..=4 {
+            #[allow(clippy::cast_precision_loss)] // four steps
+            harness.hover_at(from.lerp(to, step as f32 / 4.0));
+        }
+        harness.event(middle(to, false));
+        harness.run();
+        let cursor = harness.state().song.as_ref().unwrap().cursor();
+        assert_eq!(cursor, Tick::new(960), "dragging the chart up goes on");
+        assert_eq!(note_count(&harness), 4);
+        harness.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: egui::vec2(0.0, -1.0),
+            modifiers: egui::Modifiers::SHIFT,
+            phase: egui::TouchPhase::Move,
+        });
+        harness.run();
+        let cursor = harness.state().song.as_ref().unwrap().cursor();
+        assert_eq!(cursor, Tick::new(3840));
+    }
+
+    #[test]
+    fn a_right_click_moves_the_cursor_there_and_offers_the_menu() {
+        let mut harness = editable_four_taps();
+        let pos = on_line(&harness, lane_x(&harness, 2), 480);
+        harness.hover_at(pos);
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        harness.run();
+        assert_eq!(
+            harness.state().song.as_ref().unwrap().cursor(),
+            Tick::new(480)
+        );
+        assert!(harness.query_by_label("1 note selected").is_some());
+        assert!(
+            harness
+                .query_by_label_contains("Insert pattern here")
+                .is_some()
+        );
+        assert!(harness.query_by_label("Select lane 3").is_some());
+        harness
+            .get_by_label_contains("Mirror across the lanes")
+            .click();
+        harness.run();
+        assert_eq!(lanes_at(&harness, 480), [1]);
+    }
+
+    #[test]
+    fn a_pattern_places_its_steps_from_the_lane_and_moves_the_cursor_past_it() {
+        let mut app = Window::new(PLUGINS);
+        app.open(Path::new("four.json"), &four_taps());
+        let song = app.song.as_mut().unwrap();
+        song.jump_to(Tick::new(1920));
+        let steps: &'static [u16] = &[0, 1, 2, 0, 1, 2];
+        assert_eq!(pattern(song, steps, 4, LaneIndex::new(2)), None);
+        let lanes: Vec<(i64, u16)> = song
+            .chart()
+            .unwrap()
+            .objects
+            .iter()
+            .filter(|object| object.tick >= Tick::new(1920))
+            .filter_map(|object| match object.position {
+                charter_core::Position::Lane { index, .. } => {
+                    Some((i64::from(object.tick), u16::from(index)))
+                }
+                charter_core::Position::Plane { .. } => None,
+            })
+            .collect();
+        assert_eq!(
+            lanes,
+            [
+                (1920, 2),
+                (2160, 3),
+                (2400, 0),
+                (2640, 2),
+                (2880, 3),
+                (3120, 0)
+            ]
+        );
+        assert_eq!(song.cursor(), Tick::new(3360));
     }
 
     #[test]

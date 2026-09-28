@@ -140,6 +140,9 @@ pub fn key_actions(input: &egui::InputState, lanes: u16, keys: &mut LaneKeys) ->
             }
             // No key comes up while the window is away, so every lane key counts as up.
             egui::Event::WindowFocused(false) => keys.release_all(&mut actions),
+            egui::Event::Copy => actions.push(Action::Copy),
+            egui::Event::Cut => actions.push(Action::Cut),
+            egui::Event::Paste(ref text) => actions.push(Action::Paste(Some(text.clone()))),
             _ => {}
         }
     }
@@ -213,6 +216,18 @@ fn command(key: Key, modifiers: Modifiers) -> Option<Action> {
             Key::Plus | Key::Equals => Some(Action::ZoomBy(Zoom::STEP)),
             Key::Minus => Some(Action::ZoomBy(Zoom::STEP.recip())),
             Key::A => Some(Action::SelectAll),
+            Key::D => Some(Action::Duplicate),
+            Key::M => Some(Action::Mirror),
+            Key::ArrowLeft => Some(Action::ShiftSelection {
+                snaps: 0,
+                lanes: -1,
+            }),
+            Key::ArrowRight => Some(Action::ShiftSelection { snaps: 0, lanes: 1 }),
+            Key::ArrowUp => Some(Action::ShiftSelection {
+                snaps: -1,
+                lanes: 0,
+            }),
+            Key::ArrowDown => Some(Action::ShiftSelection { snaps: 1, lanes: 0 }),
             Key::Backslash => Some(Action::ToggleSongPanel),
             _ => None,
         };

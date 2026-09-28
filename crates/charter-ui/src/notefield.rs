@@ -219,6 +219,9 @@ pub enum Gesture {
     MoveMarker { index: usize },
     /// The cursor's handle, dragged from `y` on screen while the cursor was at `seconds`.
     Scrub { seconds: f64, y: f32 },
+    /// The chart, grabbed with the middle button from `y` on screen while the cursor was at
+    /// `seconds`, and dragged along as a page is.
+    Pan { seconds: f64, y: f32 },
     /// The selected notes, grabbed on the snap line `tick` over `lane`. They can move `room.0`
     /// lanes left, a negative count, to `room.1` lanes right and stay on the lanes.
     MoveNotes {
@@ -232,12 +235,17 @@ impl Gesture {
     /// How far the selection grabbed in a [`Gesture::MoveNotes`] has been dragged to `pos`, in
     /// ticks along the snap and lanes across: the snap line nearest `pos` from the one it was
     /// grabbed on, and the lane under `pos`, kept within the lanes, from the one it was grabbed
-    /// over.
-    fn moved_by(self, field: &Field, to: Tick, pos: Pos2) -> Option<(i32, i32)> {
+    /// over. With `keep_time`, as while Shift is held, the notes keep their ticks and only
+    /// change lanes.
+    fn moved_by(self, field: &Field, to: Tick, pos: Pos2, keep_time: bool) -> Option<(i32, i32)> {
         let Self::MoveNotes { tick, lane, room } = self else {
             return None;
         };
-        let ticks = i32::try_from(i64::from(to) - i64::from(tick)).ok()?;
+        let ticks = if keep_time {
+            0
+        } else {
+            i32::try_from(i64::from(to) - i64::from(tick)).ok()?
+        };
         let inside = field.columns.lanes;
         let over = field.lane_at(pos.x.clamp(inside.min, inside.max - 0.5))?;
         let lanes = i32::from(u16::from(over)) - i32::from(u16::from(lane));
@@ -444,14 +452,19 @@ pub fn show(
     let response = ui.interact(area, ui.id().with("notefield"), Sense::click_and_drag());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Other, true, "Notefield"));
     if response.hovered() {
-        let (steps, zoom) =
-            ui.input(|input| (wheel_steps(&input.events, scrolled), input.zoom_delta()));
-        let step = if steps > 0 {
-            Step::Later
-        } else {
-            Step::Earlier
+        let (steps, measures, zoom) = ui.input(|input| {
+            let steps = wheel_steps(&input.events, scrolled);
+            (steps, measure_steps(&input.events), input.zoom_delta())
+        });
+        let way = |steps: i32| {
+            if steps > 0 {
+                Step::Later
+            } else {
+                Step::Earlier
+            }
         };
-        actions.extend((0..steps.unsigned_abs()).map(|_| Action::Move(step)));
+        actions.extend((0..steps.unsigned_abs()).map(|_| Action::Move(way(steps))));
+        actions.extend((0..measures.unsigned_abs()).map(|_| Action::MoveMeasure(way(measures))));
         if (zoom - 1.0).abs() > f32::EPSILON {
             actions.push(Action::ZoomBy(zoom));
         }
@@ -512,6 +525,7 @@ pub fn show(
         (first, last),
         gesture,
     ));
+    menu(ui, &response, song, (&field, flip, (first, last)), actions);
     let latest = ui.input(|input| input.pointer.latest_pos().map(|at| flip.back(at)));
     let line = |pos: Pos2| snap_line(song, view, pos);
     if let Some(Gesture::Marquee { x, seconds, .. }) = *gesture
@@ -547,7 +561,10 @@ pub fn show(
     }
     if let Some(moving @ Gesture::MoveNotes { .. }) = *gesture
         && let Some(latest) = latest
-        && let Some(by) = line(latest).and_then(|to| moving.moved_by(&field, to, latest))
+        && let Some(by) = line(latest).and_then(|to| {
+            let keep_time = ui.input(|input| input.modifiers.shift);
+            moving.moved_by(&field, to, latest, keep_time)
+        })
     {
         for object in chart
             .objects
@@ -561,7 +578,10 @@ pub fn show(
         let hovered = input.pointer.hover_pos().map(|at| flip.back(at));
         (hovered, input.modifiers)
     });
-    if matches!(*gesture, Some(Gesture::MoveNotes { .. })) {
+    if matches!(
+        *gesture,
+        Some(Gesture::MoveNotes { .. } | Gesture::Pan { .. })
+    ) {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
     } else if gesture.is_none()
         && response.hovered()
@@ -581,7 +601,12 @@ pub fn show(
         };
         if !matches!(
             *gesture,
-            Some(Gesture::Marquee { .. } | Gesture::Hold { .. } | Gesture::MoveNotes { .. })
+            Some(
+                Gesture::Marquee { .. }
+                    | Gesture::Hold { .. }
+                    | Gesture::MoveNotes { .. }
+                    | Gesture::Pan { .. }
+            )
         ) {
             ui.ctx().set_cursor_icon(icon);
         }
@@ -591,9 +616,224 @@ pub fn show(
     Some((top.min(bottom), top.max(bottom)))
 }
 
+/// The patterns the right-click menu places, by the lanes each step counts from the lane
+/// clicked, and the spacings it places them at, as how many to a beat.
+const PATTERNS: [(&str, &[u16]); 3] = [
+    ("1-1-1-1", &[0, 0, 0, 0]),
+    ("1-2-3-1-2-3", &[0, 1, 2, 0, 1, 2]),
+    ("1-2-1-2", &[0, 1, 0, 1]),
+];
+const SPACINGS: [u16; 7] = [1, 2, 4, 8, 16, 32, 64];
+
+/// The right-click menu. A right click moves the cursor to the line under the pointer and
+/// selects the note there unless it is selected already; what the menu places goes there, from
+/// the lane clicked.
+fn menu(
+    ui: &Ui,
+    response: &egui::Response,
+    song: &Song,
+    (field, flip, visible): (&Field, Flip, (Tick, Tick)),
+    actions: &mut Vec<Action>,
+) {
+    let lane_id = ui.id().with("menu lane");
+    if response.secondary_clicked()
+        && let Some(pos) = ui.input(|input| input.pointer.latest_pos().map(|at| flip.back(at)))
+    {
+        if let Some(tick) = snap_line(song, field.view, pos) {
+            actions.push(Action::JumpTo(tick));
+        }
+        if let Some(chart) = song.chart()
+            && let Some(note) = hit(&chart.objects, field, chart.timing(), pos, visible)
+            && !song.selection().any(|selected| selected == note)
+        {
+            actions.push(Action::Select(Some(note), Selecting::Replace));
+        }
+        let lane = field.lane_at(pos.x).unwrap_or(LaneIndex::new(0));
+        ui.data_mut(|data| data.insert_temp(lane_id, lane));
+    }
+    let lane: LaneIndex = ui
+        .data(|data| data.get_temp(lane_id))
+        .unwrap_or(LaneIndex::new(0));
+    response.context_menu(|ui| menu_items(ui, song, lane, actions));
+}
+
+/// The right-click menu's items for `song`, with `lane` the lane clicked.
+#[allow(clippy::too_many_lines)] // one line an item, top to bottom
+fn menu_items(ui: &mut Ui, song: &Song, lane: LaneIndex, actions: &mut Vec<Action>) {
+    let editable = song.read_only().is_none();
+    let selected = song.selection().next().is_some();
+    let (edits, chosen) = (editable, editable && selected);
+    item(ui, actions, ("Cut", "Ctrl+X", chosen), Action::Cut);
+    item(ui, actions, ("Copy", "Ctrl+C", selected), Action::Copy);
+    item(
+        ui,
+        actions,
+        ("Paste here", "Ctrl+V", edits),
+        Action::Paste(None),
+    );
+    item(
+        ui,
+        actions,
+        ("Duplicate", "Ctrl+D", chosen),
+        Action::Duplicate,
+    );
+    item(
+        ui,
+        actions,
+        ("Delete", "Delete", chosen),
+        Action::DeleteSelection,
+    );
+    ui.separator();
+    let move_left = Action::ShiftSelection {
+        snaps: 0,
+        lanes: -1,
+    };
+    let move_right = Action::ShiftSelection { snaps: 0, lanes: 1 };
+    item(
+        ui,
+        actions,
+        ("Move a lane left", "Ctrl+Left", chosen),
+        move_left,
+    );
+    item(
+        ui,
+        actions,
+        ("Move a lane right", "Ctrl+Right", chosen),
+        move_right,
+    );
+    item(
+        ui,
+        actions,
+        ("Mirror across the lanes", "Ctrl+M", chosen),
+        Action::Mirror,
+    );
+    item(
+        ui,
+        actions,
+        ("Lengthen by the snap", "]", edits),
+        Action::ResizeNotes(Step::Later),
+    );
+    item(
+        ui,
+        actions,
+        ("Shorten by the snap", "[", edits),
+        Action::ResizeNotes(Step::Earlier),
+    );
+    let changes = song
+        .plugin()
+        .map(charter_core::RulesetPlugin::note_changes)
+        .unwrap_or_default();
+    if !changes.is_empty() {
+        ui.add_enabled_ui(chosen, |ui| {
+            ui.menu_button("Change to", |ui| {
+                for change in changes {
+                    let button = ui.button(&change.name).on_hover_text(&change.about);
+                    if button.clicked() {
+                        actions.push(Action::ChangeNotes(change.id));
+                    }
+                }
+            });
+        });
+    }
+    ui.separator();
+    ui.add_enabled_ui(edits, |ui| patterns(ui, lane, actions));
+    let lane_name = format!("Select lane {}", u16::from(lane) + 1);
+    item(
+        ui,
+        actions,
+        (&lane_name, "", true),
+        Action::SelectLane(lane),
+    );
+    item(
+        ui,
+        actions,
+        ("Select all", "Ctrl+A", true),
+        Action::SelectAll,
+    );
+    item(
+        ui,
+        actions,
+        ("Select none", "Escape", selected),
+        Action::ClearSelection,
+    );
+    ui.separator();
+    item(
+        ui,
+        actions,
+        ("Add a timing point here", "", edits),
+        Action::AddBpm,
+    );
+    item(
+        ui,
+        actions,
+        ("Bookmark here", "Ctrl+B", edits),
+        Action::ToggleBookmark,
+    );
+}
+
+/// Where a pan the middle button grabbed at `y` with the cursor at `seconds` puts the cursor with
+/// the pointer at `pos`: the chart follows the pointer, so dragging it down goes back, onto the
+/// snap line there.
+fn panned(
+    field: &Field,
+    timing: Valid<'_, Timing>,
+    step: Option<Ticks>,
+    (seconds, y): (f64, f32),
+    pos: Pos2,
+) -> Tick {
+    let earlier = f64::from((pos.y - y) / field.view.zoom.points_per_second());
+    match step {
+        Some(step) => nearest_line(timing, seconds - earlier, step),
+        None => timing.latest_tick_by(seconds - earlier),
+    }
+}
+
+/// The right-click menu's patterns, each at every spacing, placed from `lane` on.
+fn patterns(ui: &mut Ui, lane: LaneIndex, actions: &mut Vec<Action>) {
+    ui.menu_button("Insert pattern here", |ui| {
+        for (name, steps) in PATTERNS {
+            ui.menu_button(name, |ui| {
+                for per_beat in SPACINGS {
+                    let label = if per_beat == 1 {
+                        "Every beat".to_owned()
+                    } else {
+                        format!("Every 1/{per_beat} beat")
+                    };
+                    if ui.button(label).clicked() {
+                        actions.push(Action::Pattern {
+                            steps,
+                            per_beat,
+                            lane,
+                        });
+                    }
+                }
+            });
+        }
+    });
+}
+
+/// A menu item named `name`, showing `keys`, that asks for `action` when clicked.
+fn item(
+    ui: &mut Ui,
+    actions: &mut Vec<Action>,
+    (name, keys, enabled): (&str, &str, bool),
+    action: Action,
+) {
+    let button = egui::Button::new(name);
+    let button = if keys.is_empty() {
+        button
+    } else {
+        button.shortcut_text(keys)
+    };
+    if ui.add_enabled(enabled, button).clicked() {
+        actions.push(action);
+    }
+}
+
 /// What clicks and drags over the notefield ask for. With Ctrl they place notes, a tap or under
 /// Shift a mine, and a drag draws a hold; otherwise a click selects the note under the pointer,
 /// Shift adding it and Alt taking it away, and a drag selects with a box.
+#[allow(clippy::too_many_lines)] // one branch a gesture
 fn pointer(
     ui: &Ui,
     response: &egui::Response,
@@ -654,11 +894,39 @@ fn pointer(
             actions.push(Action::Place { tick, lane, note });
         }
     }
+    let (middle, secondary) = ui.input(|input| {
+        let pointer = &input.pointer;
+        (
+            pointer.button_down(egui::PointerButton::Middle),
+            pointer.secondary_down(),
+        )
+    });
     if response.drag_started()
         && !escaped
         && let Some(origin) = origin
     {
-        *gesture = started(song, field, (origin, modifiers), visible, &mut actions);
+        *gesture = if middle {
+            let seconds = field.view.seconds_at(field.view.now_y);
+            Some(Gesture::Pan {
+                seconds,
+                y: origin.y,
+            })
+        } else if secondary {
+            None
+        } else {
+            started(song, field, (origin, modifiers), visible, &mut actions)
+        };
+    }
+    if response.dragged()
+        && let (Some(Gesture::Pan { seconds, y }), Some(pos)) = (*gesture, latest)
+    {
+        actions.push(Action::JumpTo(panned(
+            field,
+            timing,
+            step,
+            (seconds, y),
+            pos,
+        )));
     }
     if response.dragged()
         && let (Some(Gesture::Scrub { seconds, y }), Some(pos)) = (*gesture, latest)
@@ -675,7 +943,14 @@ fn pointer(
         actions.push(Action::Stretch { lane, from, to });
     }
     if response.drag_stopped() {
-        actions.extend(let_go(gesture.take(), latest, field, timing, &line));
+        let keep_time = modifiers.shift;
+        actions.extend(let_go(
+            gesture.take(),
+            (latest, keep_time),
+            field,
+            timing,
+            &line,
+        ));
     }
     actions
 }
@@ -696,7 +971,7 @@ fn started(
         grab(song, field, origin, visible, modifiers, &snapped)
     {
         if let Some(note) = unselected {
-            actions.push(Action::Select(Some(note), Selecting::Replace));
+            actions.push(Action::Select(Some(note), selecting(modifiers)));
         }
         Some(moving)
     } else if modifiers.command {
@@ -723,9 +998,9 @@ fn started(
     }
 }
 
-/// The gesture a plain drag from `origin` over a note starts in an editable song: moving the
-/// selection when the note is in it, and otherwise the note alone, returned to be selected
-/// first.
+/// The gesture a plain drag, or one with Shift, from `origin` over a note starts in an editable
+/// song: moving the selection when the note is in it, and otherwise the note alone, returned to
+/// be selected first, or added to the selection under Shift.
 fn grab(
     song: &Song,
     field: &Field,
@@ -734,7 +1009,9 @@ fn grab(
     modifiers: egui::Modifiers,
     line: &dyn Fn(Pos2) -> Option<Tick>,
 ) -> Option<(Option<NoteAt>, Gesture)> {
-    if song.read_only().is_some() || !modifiers.is_none() || !field.rows.contains(origin.y) {
+    // Shift keeps the notes' ticks as they move.
+    let plain = modifiers.is_none() || modifiers.shift_only();
+    if song.read_only().is_some() || !plain || !field.rows.contains(origin.y) {
         return None;
     }
     let chart = song.chart()?;
@@ -757,7 +1034,7 @@ fn anchored(timing: Valid<'_, Timing>, tick: Tick) -> bool {
 /// dropped on the line there, or the notes the box covers selected.
 fn let_go(
     gesture: Option<Gesture>,
-    latest: Option<Pos2>,
+    (latest, keep_time): (Option<Pos2>, bool),
     field: &Field,
     timing: Valid<'_, Timing>,
     line: &dyn Fn(Pos2) -> Option<Tick>,
@@ -776,10 +1053,10 @@ fn let_go(
             .boxed(timing, (x, seconds), pos)
             .map(|(ticks, lanes)| Action::SelectBetween { ticks, lanes, how }),
         Gesture::MoveNotes { .. } => {
-            let (ticks, lanes) = gesture.moved_by(field, line(pos)?, pos)?;
+            let (ticks, lanes) = gesture.moved_by(field, line(pos)?, pos, keep_time)?;
             Some(Action::MoveSelection { ticks, lanes })
         }
-        Gesture::Scrub { .. } => None,
+        Gesture::Scrub { .. } | Gesture::Pan { .. } => None,
     }
 }
 
@@ -1411,7 +1688,8 @@ pub fn wheel_steps(events: &[egui::Event], remainder: &mut f32) -> i32 {
         else {
             continue;
         };
-        if modifiers.command || modifiers.ctrl {
+        // Ctrl zooms, and Shift moves by a measure.
+        if modifiers.command || modifiers.ctrl || modifiers.shift {
             continue;
         }
         let points = match unit {
@@ -1426,6 +1704,32 @@ pub fn wheel_steps(events: &[egui::Event], remainder: &mut f32) -> i32 {
     #[allow(clippy::cast_possible_truncation)] // a handful of notches a frame
     let steps = steps as i32;
     steps
+}
+
+/// How many measures the wheel turned under Shift this frame, later positive: a notch a measure.
+/// Shift turns some wheels sideways, so either way counts.
+fn measure_steps(events: &[egui::Event]) -> i32 {
+    let notches: f32 = events
+        .iter()
+        .filter_map(|event| match event {
+            egui::Event::MouseWheel {
+                unit,
+                delta,
+                modifiers,
+                ..
+            } if modifiers.shift && !modifiers.command && !modifiers.ctrl => {
+                let along = if delta.y == 0.0 { delta.x } else { delta.y };
+                Some(match unit {
+                    egui::MouseWheelUnit::Point => -along / POINTS_PER_STEP,
+                    egui::MouseWheelUnit::Line | egui::MouseWheelUnit::Page => -along,
+                })
+            }
+            _ => None,
+        })
+        .sum();
+    #[allow(clippy::cast_possible_truncation)] // a handful of notches a frame
+    let notches = notches.round() as i32;
+    notches
 }
 
 /// Points of touchpad scrolling that make one cursor step.

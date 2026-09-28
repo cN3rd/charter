@@ -15,7 +15,17 @@ Arcaea. `cargo run -p charter-app` is the editor so far. It draws charts in the 
 glyphs, since no ruleset plugin draws yet, and starts and edits songs of the built-in rulesets. Lane
 keys and Ctrl with the mouse place taps, holds and mines; the mouse selects and Delete removes the
 selection; `]` lengthens the selected notes, or those at the cursor when none is selected, to
-the snap's next line, making a tap a hold, and `[` shortens them back to a tap; undo and redo return to where each edit was made. The song panel's Song section edits
+the snap's next line, making a tap a hold, and `[` shortens them back to a tap. Ctrl+X, Ctrl+C
+and Ctrl+V cut, copy and paste notes at the cursor, the copy going on the system clipboard as well
+so another charter window can paste it; Ctrl+D duplicates the selection just after itself;
+Ctrl+Left and Ctrl+Right move it a lane, Ctrl+Up and Ctrl+Down by the snap, and Ctrl+M mirrors it
+across the lanes. A note dragged with Shift held changes lanes and keeps its time. A right click
+moves the cursor to the line under it and opens a menu of these edits, the game's own note changes
+under Change to, such as Tap Tap Revenge's arrows, slices and big taps, and Insert pattern here:
+1-1-1-1, 1-2-3-1-2-3 or 1-2-1-2 from the lane clicked, a beat or down to a 64th of one apart, the
+cursor moving on past it. Pastes and patterns leave out places a note already takes. Shift with
+the wheel moves by a measure, and dragging with the middle button pans the chart. Undo and redo
+return to where each edit was made. The song panel's Song section edits
 the song's title and artist in place, chooses its audio with the button beside the file's name,
 and sets its preview, where a song list starts playing it, as a time and a length in seconds;
 clearing the time takes the preview away. Its artwork is a PNG or JPEG named beside the song,
