@@ -206,4 +206,33 @@ mod tests {
         let heard = hertz(loud);
         assert!((heard - 440.0).abs() < 10.0, "{heard} Hz");
     }
+
+    #[test]
+    fn seeking_to_or_past_the_end_does_not_replay_the_source() {
+        let mut stretched = Stretched::new(tone(440.0, 1.0, 0.0), 0.5).unwrap();
+        assert_eq!(stretched.seek(stretched.num_frames()).unwrap(), 88_200);
+        assert!(
+            decoded(&mut stretched, CHUNK)
+                .iter()
+                .all(|sample| sample.abs() < 1e-3)
+        );
+        assert_eq!(stretched.seek(usize::MAX).unwrap(), usize::MAX);
+        assert!(
+            decoded(&mut stretched, CHUNK)
+                .iter()
+                .all(|sample| sample.abs() < 1e-3)
+        );
+    }
+
+    #[test]
+    fn the_extreme_pitch_preserving_rates_keep_the_tone_and_expected_length() {
+        for (rate, length) in [(SLOWEST, 529_200), (FASTEST, 66_150)] {
+            let mut stretched = Stretched::new(tone(440.0, 3.0, 0.0), rate).unwrap();
+            assert_eq!(stretched.num_frames(), length);
+            let samples = decoded(&mut stretched, 44_100);
+            let middle = samples.get(22_050..).unwrap();
+            let heard = hertz(middle);
+            assert!((heard - 440.0).abs() < 15.0, "{rate}: {heard} Hz");
+        }
+    }
 }

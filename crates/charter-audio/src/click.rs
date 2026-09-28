@@ -545,4 +545,17 @@ mod tests {
         let mixed = mix(&loud, &[(0.0, Tick::Beep.tone())], Volumes::default());
         assert!(loudest(mixed.frames()) <= 1.0);
     }
+
+    #[test]
+    fn a_click_on_the_last_frame_is_clipped_without_extending_the_song() {
+        let silent = Track::silence(8000, 800);
+        let mixed = mix(
+            &silent,
+            &[(798.0 / 8000.0, Tick::Beep.tone())],
+            Volumes::default(),
+        );
+        assert_eq!(mixed.frames().len(), 800);
+        assert_eq!(&mixed.frames()[..798], &silent.frames()[..798]);
+        assert!(mixed.frames()[799][0].abs() > 0.1);
+    }
 }

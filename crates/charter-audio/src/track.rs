@@ -196,4 +196,21 @@ mod tests {
         let track = Track::decode(wav(8000, 1, &[0, 0]), None).unwrap();
         assert_eq!(track.frames().len(), 2);
     }
+
+    #[test]
+    fn an_empty_audio_stream_does_not_make_a_track_without_a_sample_rate() {
+        let result = Track::decode(wav(8000, 1, &[]), Some("wav"));
+        assert!(matches!(result, Err(DecodeError::NoTrack)));
+    }
+
+    #[test]
+    fn a_truncated_audio_header_is_refused_without_panicking() {
+        let bytes = wav(8000, 1, &[0, 0]);
+        for end in [0, 4, 16, 36] {
+            assert!(
+                Track::decode(bytes[..end].to_vec(), Some("wav")).is_err(),
+                "truncation at {end}"
+            );
+        }
+    }
 }
