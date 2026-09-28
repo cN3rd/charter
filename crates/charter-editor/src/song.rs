@@ -1402,6 +1402,16 @@ impl Song {
                 changed.push(change(object)?);
             }
         }
+        // A change that leaves every note as it was is no edit, and no step to undo.
+        let same = chart
+            .objects
+            .iter()
+            .rev()
+            .filter(|object| self.is_selected(object))
+            .eq(changed.iter());
+        if same {
+            return Ok(());
+        }
         let mut objects: Vec<Object> = chart
             .objects
             .iter()
@@ -1668,22 +1678,28 @@ fn shifted_at(
 ) -> Result<Object, Refusal> {
     let mut moved = object.clone();
     moved.tick = shift(object.tick)?;
-    for child in &mut moved.children {
-        child.tick = shift(child.tick)?;
+    moved.shape = shifted_shape(&object.shape, (object.tick, moved.tick), shift)?;
+    for (child, was) in moved.children.iter_mut().zip(&object.children) {
+        child.tick = shift(was.tick)?;
+        child.shape = shifted_shape(&was.shape, (was.tick, child.tick), shift)?;
     }
-    match &mut moved.shape {
-        Shape::Instant => {}
+    Ok(moved)
+}
+
+/// `shape`, of a note that started at `from` and starts at `to` now, with its end or its path's
+/// ticks through `shift`.
+fn shifted_shape(
+    shape: &Shape,
+    (from, to): (Tick, Tick),
+    shift: &dyn Fn(Tick) -> Result<Tick, Refusal>,
+) -> Result<Shape, Refusal> {
+    Ok(match shape {
+        Shape::Instant => Shape::Instant,
         Shape::Sustain { duration } => {
-            let end = shift(
-                object
-                    .tick
-                    .checked_add(*duration)
-                    .ok_or(Refusal::NotWhole)?,
-            )?;
-            *duration = moved
-                .tick
-                .ticks_until(end)
-                .ok_or(Refusal::Crosses(object.tick))?;
+            let end = shift(from.checked_add(*duration).ok_or(Refusal::NotWhole)?)?;
+            Shape::Sustain {
+                duration: to.ticks_until(end).ok_or(Refusal::Crosses(from))?,
+            }
         }
         Shape::Path { points } => {
             let moved_points = points
@@ -1695,10 +1711,11 @@ fn shifted_at(
                     Ok(point)
                 })
                 .collect::<Result<Vec<_>, Refusal>>()?;
-            *points = charter_core::Points::new(moved_points).map_err(|_| Refusal::NotWhole)?;
+            Shape::Path {
+                points: charter_core::Points::new(moved_points).map_err(|_| Refusal::NotWhole)?,
+            }
         }
-    }
-    Ok(moved)
+    })
 }
 
 /// An instant note of `kind` on `lane` at `tick`.
@@ -2174,6 +2191,31 @@ pub(crate) mod tests {
                 hold(480, 1, 100)
             ]
         );
+    }
+
+    #[test]
+    fn quantizing_notes_already_on_the_grid_is_no_step() {
+        let mut song = Song::new(document(json!([object(240, 0, "tap")])), EDITABLE);
+        select_everything(&mut song);
+        song.quantize_selection().unwrap();
+        assert!(!song.can_undo());
+        assert!(!song.is_modified());
+    }
+
+    #[test]
+    fn a_pasted_note_takes_its_child_s_path_along() {
+        let parent = json!({ "tick": 0, "position": { "lane": { "index": 0 } }, "kind": "hold",
+            "shape": { "sustain": { "duration": 480 } }, "children": [ { "tick": 0,
+            "position": { "lane": { "index": 0 } }, "kind": "tap", "shape": { "path": {
+            "points": [ { "tick": 240, "position": { "lane": { "index": 1 } },
+            "ease": "linear" } ] } } } ] });
+        let mut song = Song::new(document(json!([parent])), EDITABLE);
+        select_everything(&mut song);
+        let clip = song.copied();
+        assert_eq!(song.paste(&clip, at(960)).unwrap(), 1);
+        let pasted = objects(&song);
+        let child = &pasted.get(1).unwrap()["children"][0];
+        assert_eq!(child["shape"]["path"]["points"][0]["tick"], 1200);
     }
 
     #[test]

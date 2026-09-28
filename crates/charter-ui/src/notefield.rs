@@ -637,11 +637,12 @@ fn menu(
     (field, flip, visible): (&Field, Flip, (Tick, Tick)),
     actions: &mut Vec<Action>,
 ) {
-    let lane_id = ui.id().with("menu lane");
+    let spot_id = ui.id().with("menu spot");
     if response.secondary_clicked()
         && let Some(pos) = ui.input(|input| input.pointer.latest_pos().map(|at| flip.back(at)))
     {
-        if let Some(tick) = snap_line(song, field.view, pos) {
+        let tick = snap_line(song, field.view, pos);
+        if let Some(tick) = tick {
             actions.push(Action::JumpTo(tick));
         }
         if let Some(chart) = song.chart()
@@ -651,17 +652,20 @@ fn menu(
             actions.push(Action::Select(Some(note), Selecting::Replace));
         }
         let lane = field.lane_at(pos.x).unwrap_or(LaneIndex::new(0));
-        ui.data_mut(|data| data.insert_temp(lane_id, lane));
+        let tick = tick.unwrap_or(song.cursor());
+        ui.data_mut(|data| data.insert_temp(spot_id, (lane, tick)));
     }
-    let lane: LaneIndex = ui
-        .data(|data| data.get_temp(lane_id))
-        .unwrap_or(LaneIndex::new(0));
-    response.context_menu(|ui| menu_items(ui, song, lane, actions));
+    // Where it was clicked, since playback moves the cursor on while the menu is open.
+    let spot: (LaneIndex, Tick) = ui
+        .data(|data| data.get_temp(spot_id))
+        .unwrap_or((LaneIndex::new(0), song.cursor()));
+    response.context_menu(|ui| menu_items(ui, song, spot, actions));
 }
 
-/// The right-click menu's items for `song`, with `lane` the lane clicked.
+/// The right-click menu's items for `song`, with `lane` and `at` the lane and snap line clicked,
+/// where what it places goes.
 #[allow(clippy::too_many_lines)] // one line an item, top to bottom
-fn menu_items(ui: &mut Ui, song: &Song, lane: LaneIndex, actions: &mut Vec<Action>) {
+fn menu_items(ui: &mut Ui, song: &Song, (lane, at): (LaneIndex, Tick), actions: &mut Vec<Action>) {
     let editable = song.read_only().is_none();
     let selected = song.selection().next().is_some();
     let (edits, chosen) = (editable, editable && selected);
@@ -671,7 +675,7 @@ fn menu_items(ui: &mut Ui, song: &Song, lane: LaneIndex, actions: &mut Vec<Actio
         ui,
         actions,
         ("Paste here", "Ctrl+V", edits),
-        Action::Paste(None),
+        Action::Here(at, Box::new(Action::Paste(None))),
     );
     item(
         ui,
@@ -744,7 +748,7 @@ fn menu_items(ui: &mut Ui, song: &Song, lane: LaneIndex, actions: &mut Vec<Actio
         });
     }
     ui.separator();
-    ui.add_enabled_ui(edits, |ui| patterns(ui, lane, actions));
+    ui.add_enabled_ui(edits, |ui| patterns(ui, (lane, at), actions));
     let lane_name = format!("Select lane {}", u16::from(lane) + 1);
     item(
         ui,
@@ -769,13 +773,13 @@ fn menu_items(ui: &mut Ui, song: &Song, lane: LaneIndex, actions: &mut Vec<Actio
         ui,
         actions,
         ("Add a timing point here", "", edits),
-        Action::AddBpm,
+        Action::Here(at, Box::new(Action::AddBpm)),
     );
     item(
         ui,
         actions,
         ("Bookmark here", "Ctrl+B", edits),
-        Action::ToggleBookmark,
+        Action::Here(at, Box::new(Action::ToggleBookmark)),
     );
 }
 
@@ -797,7 +801,7 @@ fn panned(
 }
 
 /// The right-click menu's patterns, each at every spacing, placed from `lane` on.
-fn patterns(ui: &mut Ui, lane: LaneIndex, actions: &mut Vec<Action>) {
+fn patterns(ui: &mut Ui, (lane, at): (LaneIndex, Tick), actions: &mut Vec<Action>) {
     ui.menu_button("Insert pattern here", |ui| {
         for (name, steps) in PATTERNS {
             ui.menu_button(name, |ui| {
@@ -808,11 +812,12 @@ fn patterns(ui: &mut Ui, lane: LaneIndex, actions: &mut Vec<Action>) {
                         format!("Every 1/{per_beat} beat")
                     };
                     if ui.button(label).clicked() {
-                        actions.push(Action::Pattern {
+                        let pattern = Action::Pattern {
                             steps,
                             per_beat,
                             lane,
-                        });
+                        };
+                        actions.push(Action::Here(at, Box::new(pattern)));
                     }
                 }
             });

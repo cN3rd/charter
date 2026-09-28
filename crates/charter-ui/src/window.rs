@@ -332,6 +332,9 @@ pub(crate) enum Action {
     },
     /// Selects every note on the lane.
     SelectLane(LaneIndex),
+    /// Moves the cursor to the tick and then does the action there, for what a menu opened on
+    /// that tick places.
+    Here(Tick, Box<Action>),
     /// Asks the host for a song to open.
     Open,
     /// Saves the song to its file, or asks where when it has none.
@@ -1731,6 +1734,11 @@ impl Window {
 
     #[allow(clippy::too_many_lines)] // one arm for every action
     fn apply(&mut self, action: Action) {
+        if let Action::Here(tick, action) = action {
+            self.apply(Action::JumpTo(tick));
+            self.apply(*action);
+            return;
+        }
         self.apply_to_window(&action);
         let input_latency = self.input_latency();
         let Some(song) = &mut self.song else {
@@ -1841,6 +1849,7 @@ impl Window {
             | Action::MuteMetronome(_)
             | Action::ChooseAudio
             | Action::ChooseArtwork
+            | Action::Here(..)
             | Action::NudgeRate(_)
             | Action::SetRate(_)
             | Action::SetVolumes(_)
@@ -3732,6 +3741,20 @@ mod tests {
             .click();
         harness.run();
         assert_eq!(lanes_at(&harness, 480), [1]);
+    }
+
+    #[test]
+    fn what_the_menu_places_here_goes_where_it_was_opened_though_the_cursor_moved() {
+        let mut harness = editable_four_taps();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.event(egui::Event::Copy);
+        harness.run();
+        harness.key_press(egui::Key::PageDown);
+        harness.run();
+        let paste = Action::Here(Tick::new(7680), Box::new(Action::Paste(None)));
+        harness.state_mut().apply(paste);
+        harness.run();
+        assert_eq!(lanes_at(&harness, 7680), [0]);
     }
 
     #[test]
