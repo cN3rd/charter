@@ -503,7 +503,9 @@ pub fn show(
     backdrop(&clipped, columns, lanes, rows);
     match strip {
         Some(Strip::Waveform(peaks)) => waveform(&clipped, columns, view, rows, peaks),
-        Some(Strip::Frequencies(spectrum)) => frequencies(&clipped, columns, view, rows, spectrum),
+        Some(Strip::Frequencies(tiles)) => {
+            frequencies(&clipped, ui.ctx(), (columns, view, rows), tiles);
+        }
         None => {}
     }
     grid(&clipped, columns, (song, finest), view, rows);
@@ -1199,66 +1201,161 @@ pub struct Shown<'a> {
 pub enum Strip<'a> {
     Waveform(&'a Peaks),
     /// How loud each band of pitch is over time, low on the strip's left and high on its right.
-    Frequencies(&'a Spectrum),
+    Frequencies(&'a Tiles),
 }
 
-/// Each row of `rows`, a point apart, with the loudest each band of `spectrum` is over the time it
-/// covers.
-fn frequency_rows(
-    spectrum: &Spectrum,
-    view: View,
-    rows: Rangef,
-) -> Vec<(f32, [u8; Spectrum::BANDS])> {
-    let mut drawn = Vec::new();
-    let mut y = rows.min.floor();
-    while y < rows.max {
-        let (from, to) = (view.seconds_at(y), view.seconds_at(y + 1.0));
-        if let Some(levels) = spectrum.between(from.min(to), from.max(to)) {
-            drawn.push((y, levels));
+/// Spectrum frames each tile image holds a row of, at its level of detail.
+const TILE: usize = 1024;
+/// The coarsest level of detail: each of its rows holds the loudest of 2^8 frames, 1.28 s.
+const COARSEST: u32 = 8;
+
+/// A song's frequencies as images the GPU stretches over the strip, a band a column and a spectrum
+/// frame a row, in tiles of [`TILE`] rows. Each level of detail holds, in each row, the loudest of
+/// twice as many frames as the one before, so zoomed out a short sound still shows; the GPU's
+/// own shrinking would skip it. Tiles are made the first time they show.
+pub struct Tiles {
+    spectrum: std::sync::Arc<Spectrum>,
+    /// Each level's tiles, by index, once made.
+    made: std::cell::RefCell<Vec<Vec<Option<egui::TextureHandle>>>>,
+}
+
+impl Tiles {
+    #[must_use]
+    pub fn new(spectrum: std::sync::Arc<Spectrum>) -> Self {
+        Self {
+            spectrum,
+            made: std::cell::RefCell::new(Vec::new()),
         }
-        y += 1.0;
     }
-    drawn
+
+    /// Tile `index` of `level`, made now unless it was before, or none past the song's end.
+    fn tile(&self, ctx: &egui::Context, level: u32, index: usize) -> Option<egui::TextureId> {
+        let mut made = self.made.borrow_mut();
+        let level_at = usize::try_from(level).ok()?;
+        if made.len() <= level_at {
+            made.resize_with(level_at + 1, Vec::new);
+        }
+        let tiles = made.get_mut(level_at)?;
+        if tiles.len() <= index {
+            tiles.resize_with(index + 1, || None);
+        }
+        let slot = tiles.get_mut(index)?;
+        if slot.is_none() {
+            let image = tile_image(self.spectrum.frames(), level, index)?;
+            let name = format!("spectrum {level} {index}");
+            *slot = Some(ctx.load_texture(name, image, egui::TextureOptions::LINEAR));
+        }
+        slot.as_ref().map(egui::TextureHandle::id)
+    }
 }
 
-/// The song's frequencies in the strip, a row a point: each band a cell across it, lowest on the
-/// left, brighter the louder, runs of one brightness drawn as one.
-fn frequencies(painter: &Canvas, columns: &Columns, view: View, rows: Rangef, spectrum: &Spectrum) {
-    let strip = columns.wave.shrink(2.0);
-    #[allow(clippy::cast_precision_loss)] // a few dozen bands
-    let cell = strip.span() / Spectrum::BANDS as f32;
-    for (y, levels) in frequency_rows(spectrum, view, rows) {
-        let mut band = 0;
-        while band < Spectrum::BANDS {
-            // Sixteen shades, so neighbouring bands of about one loudness make one rect.
-            let shade = levels.get(band).copied().unwrap_or(0) / 16;
-            let run = levels
-                .get(band..)
-                .unwrap_or_default()
-                .iter()
-                .take_while(|level| **level / 16 == shade)
-                .count()
-                .max(1);
-            if shade > 1 {
-                #[allow(clippy::cast_precision_loss)]
-                let (left, width) = (strip.min + band as f32 * cell, run as f32 * cell);
-                let rect = Rect::from_x_y_ranges(left..=left + width, y..=y + 1.0);
-                painter.rect_filled(rect, 0.0, heat(shade));
+impl std::fmt::Debug for Tiles {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Tiles")
+            .field("frames", &self.spectrum.frames().len())
+            .finish_non_exhaustive()
+    }
+}
+
+/// The image of tile `index` at `level`: a row for each run of 2^`level` frames, holding each
+/// band's loudest over the run, or none past the last frame.
+fn tile_image(
+    frames: &[[u8; Spectrum::BANDS]],
+    level: u32,
+    index: usize,
+) -> Option<egui::ColorImage> {
+    let run = 1usize.checked_shl(level)?;
+    let first = index.checked_mul(TILE)?.checked_mul(run)?;
+    let covered = frames.get(first..)?;
+    if covered.is_empty() {
+        return None;
+    }
+    let rows: Vec<[u8; Spectrum::BANDS]> = covered
+        .chunks(run)
+        .take(TILE)
+        .map(|chunk| {
+            let mut loudest = [0; Spectrum::BANDS];
+            for frame in chunk {
+                for (most, level) in loudest.iter_mut().zip(frame) {
+                    *most = (*most).max(*level);
+                }
             }
-            band += run;
-        }
+            loudest
+        })
+        .collect();
+    let pixels = rows.iter().flatten().map(|level| heat(*level)).collect();
+    Some(egui::ColorImage::new([Spectrum::BANDS, rows.len()], pixels))
+}
+
+/// The seconds tile `index` of `level` spans, `rows` rows tall: from the start of its first
+/// frame, each frame centred on its time, to the end of its last.
+fn tile_span(level: u32, index: usize, rows: usize) -> (f64, f64) {
+    let run = f64::from(1u32 << level.min(COARSEST));
+    #[allow(clippy::cast_precision_loss)] // frame counts of a song
+    let (first, rows) = (index as f64 * TILE as f64 * run, rows as f64);
+    let from = (first - 0.5) / Spectrum::PER_SECOND;
+    (from, from + rows * run / Spectrum::PER_SECOND)
+}
+
+/// The level of detail for `pixels_per_second` of screen: the finest whose rows are no closer
+/// than a pixel apart.
+fn level_for(pixels_per_second: f32) -> u32 {
+    let mut level = 0;
+    while level < COARSEST
+        && Spectrum::PER_SECOND / f64::from(1u32 << level) > f64::from(pixels_per_second)
+    {
+        level += 1;
+    }
+    level
+}
+
+/// The song's frequencies in the strip: the tiles the rows show, each band a column, lowest on
+/// the left.
+fn frequencies(
+    painter: &Canvas,
+    ctx: &egui::Context,
+    (columns, view, rows): (&Columns, View, Rangef),
+    tiles: &Tiles,
+) {
+    let strip = columns.wave.shrink(2.0);
+    let pixels = view.zoom.points_per_second() * ctx.pixels_per_point();
+    let level = level_for(pixels);
+    let (top, bottom) = (view.seconds_at(rows.min), view.seconds_at(rows.max));
+    let (from, to) = (top.min(bottom), top.max(bottom));
+    #[allow(clippy::cast_precision_loss)] // a thousand rows
+    let seconds = TILE as f64 * f64::from(1u32 << level) / Spectrum::PER_SECOND;
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // a tile index
+    let (first, last) = (
+        (from / seconds).floor().max(0.0) as usize,
+        (to / seconds).floor().max(0.0) as usize,
+    );
+    for index in first..=last {
+        let Some(texture) = tiles.tile(ctx, level, index) else {
+            break;
+        };
+        let rows_held = ctx
+            .tex_manager()
+            .read()
+            .meta(texture)
+            .map_or(TILE, |meta| meta.size[1]);
+        let (start, end) = tile_span(level, index, rows_held);
+        let rect = Rect::from_x_y_ranges(strip, view.y_of(start)..=view.y_of(end));
+        painter.image(texture, rect);
     }
 }
 
-/// The colour of a band `shade` sixteenths loud: the waveform's blue, rising to the near-white
-/// of a selection at the loudest.
-fn heat(shade: u8) -> egui::Color32 {
-    let t = f32::from(shade) / 15.0;
+/// The colour of a band `level` loud, from silent at 0 to the track's loudest at 255: nothing
+/// until it is heard, fading in through the waveform's blue, and rising to the near-white of a
+/// selection at the loudest.
+fn heat(level: u8) -> egui::Color32 {
+    let t = f32::from(level) / 255.0;
     let (low, high) = (style::WAVE.gamma_multiply(0.35), style::SELECTED);
-    egui::Color32::from_rgb(
+    let alpha = ((t - 0.06) / 0.19).clamp(0.0, 1.0);
+    egui::Color32::from_rgba_unmultiplied(
         mix(low.r(), high.r(), t),
         mix(low.g(), high.g(), t),
         mix(low.b(), high.b(), t),
+        mix(0, 255, alpha),
     )
 }
 
@@ -2005,29 +2102,44 @@ mod tests {
     }
 
     #[test]
-    fn each_row_of_the_frequencies_shows_the_bands_its_time_sounds_in() {
-        let frames: Vec<[f32; 2]> = (0..44_100)
-            .map(|n| {
-                #[allow(clippy::cast_possible_truncation)]
-                let sample =
-                    (0.5 * (std::f64::consts::TAU * 440.0 * f64::from(n) / 44_100.0).sin()) as f32;
-                [sample; 2]
-            })
-            .collect();
-        let spectrum = Spectrum::of(&Track::from_frames(44_100, frames));
-        let loudest = |levels: &[u8; Spectrum::BANDS]| {
-            levels
-                .iter()
-                .enumerate()
-                .max_by_key(|(_, level)| **level)
-                .map(|(band, _)| band)
-        };
-        let tone = loudest(&spectrum.between(0.5, 0.5).unwrap());
-        let view = View::new(0.0, song().timing().time_at(Tick::new(0)), Zoom::START);
-        let rows = frequency_rows(&spectrum, view, Rangef::new(view.y_of(0.2), view.y_of(0.8)));
-        assert!(!rows.is_empty());
-        assert!(rows.iter().all(|(_, levels)| loudest(levels) == tone));
-        assert_ne!(heat(15), heat(2));
+    fn a_tile_holds_a_row_a_frame_and_coarser_levels_keep_each_run_s_loudest() {
+        let mut frames = vec![[0u8; Spectrum::BANDS]; TILE + 10];
+        // A short sound in one frame and one band.
+        frames[3][5] = 255;
+        let image = tile_image(&frames, 0, 0).unwrap();
+        assert_eq!(image.size, [Spectrum::BANDS, TILE]);
+        assert_eq!(image.pixels[3 * Spectrum::BANDS + 5], heat(255));
+        assert_eq!(
+            tile_image(&frames, 0, 1).unwrap().size,
+            [Spectrum::BANDS, 10]
+        );
+        assert!(tile_image(&frames, 0, 2).is_none());
+        let coarse = tile_image(&frames, 2, 0).unwrap();
+        assert_eq!(coarse.size[1], (TILE + 10).div_ceil(4));
+        assert_eq!(coarse.pixels[5], heat(255), "the loudest of frames 0 to 3");
+    }
+
+    #[test]
+    fn tiles_line_up_with_the_frames_times_and_the_zoom_picks_their_detail() {
+        let (from, to) = tile_span(0, 1, TILE);
+        #[allow(clippy::cast_precision_loss)]
+        let expected = (TILE as f64 - 0.5) / Spectrum::PER_SECOND;
+        assert!((from - expected).abs() < 1e-12);
+        #[allow(clippy::cast_precision_loss)]
+        let long = TILE as f64 / Spectrum::PER_SECOND;
+        assert!((to - from - long).abs() < 1e-12);
+        assert_eq!(level_for(400.0), 0);
+        assert_eq!(level_for(200.0), 0);
+        assert_eq!(level_for(150.0), 1);
+        assert_eq!(level_for(30.0), 3);
+        assert_eq!(level_for(0.1), COARSEST);
+    }
+
+    #[test]
+    fn silence_is_clear_and_the_loudest_is_bright_and_solid() {
+        assert_eq!(heat(0).a(), 0);
+        assert_eq!(heat(255).a(), 255);
+        assert!(heat(255).r() > heat(128).r());
     }
 
     #[test]

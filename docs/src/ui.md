@@ -145,7 +145,9 @@ green lines, from the start to the end of the audio or the last note, with a box
 the notefield shows; a click or a drag moves the cursor to the snap line nearest that point, and
 the Minimap switch on the Display page hides it. With Frequencies on in the Display settings, the strip shows the audio's spectrum instead: 48
 bands from 30 Hz on its left to 16 kHz on its right, brighter the louder, so a kick and a hi-hat
-that sound together show apart. The
+that sound together show apart. It is drawn from images of the spectrum, a band a column and 5 ms a
+row, which the GPU stretches over the strip and smooths between; zoomed out, each row holds the
+loudest of the frames it covers, so a short sound still shows. The
 toolbar's Grid choice, also on the Display page, draws lines between the beats down to an 8th,
 12th, 16th, 24th, 32nd or 48th note: sixteen places to a measure of 4/4 on the 16th grid, each
 beat's line brighter. Where the snap has lines the grid leaves out, the notefield draws the snap's

@@ -28,6 +28,13 @@ chooses. `charter-audio`'s `Spectrum` builds the STFT on `rustfft`, already a de
 16 kHz and scaled over 80 dB below the track's loudest. It replaces the waveform in the strip
 rather than sitting beside it, and filtered waveform views were not added.
 
+It draws as tiles of images, 1024 frames tall, uploaded when first seen, each a band a column and
+a frame a row, stretched over the strip by the GPU with linear filtering. egui builds mipmaps only
+on its OpenGL backend, so charter keeps its own coarser levels, each row the loudest of twice as
+many frames as the level below, and picks the finest whose rows are a pixel apart or more. Against
+the earlier rects, one a run of bands a point of height, the editor's whole frame took about
+0.6 ms rather than 1.6 to 1.9 ms in a release build.
+
 ## Was open
 
 - Core feature or later

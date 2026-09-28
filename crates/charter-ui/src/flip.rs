@@ -131,6 +131,28 @@ impl Canvas {
         }
     }
 
+    /// Draws `texture` over `rect` of the layout, its left edge on the rect's left and its top
+    /// on the rect's top, turned with the rest of the notefield.
+    pub fn image(&self, texture: egui::TextureId, rect: Rect) {
+        let corners = [
+            (rect.left_top(), pos2(0.0, 0.0)),
+            (rect.right_top(), pos2(1.0, 0.0)),
+            (rect.right_bottom(), pos2(1.0, 1.0)),
+            (rect.left_bottom(), pos2(0.0, 1.0)),
+        ];
+        let mut mesh = egui::Mesh::with_texture(texture);
+        for (at, uv) in corners {
+            mesh.vertices.push(egui::epaint::Vertex {
+                pos: self.flip.pos(at),
+                uv,
+                color: egui::Color32::WHITE,
+            });
+        }
+        mesh.add_triangle(0, 1, 2);
+        mesh.add_triangle(0, 2, 3);
+        self.painter.add(Shape::mesh(mesh));
+    }
+
     pub fn rect_filled(&self, rect: Rect, rounding: f32, fill: egui::Color32) {
         self.painter
             .rect_filled(self.flip.rect(rect), rounding, fill);

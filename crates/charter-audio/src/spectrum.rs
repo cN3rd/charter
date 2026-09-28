@@ -8,7 +8,7 @@ use rustfft::num_complex::Complex;
 use crate::Track;
 
 /// Frames of the spectrum a second.
-const PER_SECOND: f64 = 200.0;
+const PER_SECOND: f64 = Spectrum::PER_SECOND;
 /// Samples each frame's window spans at 44.1 kHz, about 46 ms: enough to tell 30 Hz from 60.
 const WINDOW: usize = 2048;
 const LOWEST: f64 = 30.0;
@@ -28,6 +28,15 @@ pub struct Spectrum {
 impl Spectrum {
     /// Bands a frame holds, lowest first.
     pub const BANDS: usize = 48;
+    /// Frames a second, frame `n` centred on `n / PER_SECOND` seconds.
+    pub const PER_SECOND: f64 = 200.0;
+
+    /// Every frame, from the track's start: each band's level, 0 for silent to 255 for the
+    /// track's loudest.
+    #[must_use]
+    pub fn frames(&self) -> &[[u8; Self::BANDS]] {
+        &self.levels
+    }
 
     /// The spectrum of `track`, a frame every 5 ms from its start, each centred on its time.
     #[must_use]

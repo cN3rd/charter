@@ -541,7 +541,7 @@ pub struct Window {
     /// The waveform of an audio file, once the host has summarized it.
     waveform: Option<(PathBuf, Arc<Peaks>)>,
     /// The frequencies of an audio file, once the host has analysed them.
-    spectrum: Option<(PathBuf, Arc<Spectrum>)>,
+    spectrum: Option<(PathBuf, notefield::Tiles)>,
     /// The onsets of an audio file the host found, and which file.
     onsets: Option<(PathBuf, Arc<[charter_audio::Onset]>)>,
     /// The audio file the host last reported on, and how it went.
@@ -1360,7 +1360,7 @@ impl Window {
     /// Takes the frequencies of `file`, to draw them in place of its waveform when the settings
     /// ask.
     pub fn spectrum_ready(&mut self, file: &Path, spectrum: Arc<Spectrum>) {
-        self.spectrum = Some((file.to_path_buf(), spectrum));
+        self.spectrum = Some((file.to_path_buf(), notefield::Tiles::new(spectrum)));
     }
 
     /// Takes the onsets the host found in the audio `file`, which the timing window snaps to
@@ -2678,13 +2678,13 @@ fn clicks(
 fn shown_strip<'a>(
     settings: &Settings,
     waveform: Option<&'a (PathBuf, Arc<Peaks>)>,
-    spectrum: Option<&'a (PathBuf, Arc<Spectrum>)>,
+    spectrum: Option<&'a (PathBuf, notefield::Tiles)>,
     file: Option<&Path>,
 ) -> Option<notefield::Strip<'a>> {
     let of_file = |of: &PathBuf| settings.waveform && Some(of.as_path()) == file;
     let frequencies = spectrum
         .filter(|(of, _)| settings.frequencies && of_file(of))
-        .map(|(_, spectrum)| notefield::Strip::Frequencies(spectrum));
+        .map(|(_, tiles)| notefield::Strip::Frequencies(tiles));
     frequencies.or_else(|| {
         waveform
             .filter(|(of, _)| of_file(of))
