@@ -120,7 +120,7 @@ scripts draw; the app finds them with the `system-fonts` crate and reads each fi
 the canvas rather than moving it. The settings window has a sidebar of pages, Editing, Display,
 Sounds and Autosave, each setting with a line on what it does and on and off choices as switches;
 long pages scroll inside the window so their controls remain reachable on shorter screens;
-a button beside the close button restores every default, and only the settings changed from
+a button beside the close button restores every default but the latency calibration, and only the settings changed from
 their defaults are kept between runs, so one left alone follows its default when a later version
 changes it, and one a later version cannot read falls back to its default alone;
 the transport drops secondary tempo, snap, speed, grid and zoom controls as the window narrows,

@@ -11,6 +11,8 @@ pub type Picture = (Vec<u8>, egui::ColorImage);
 pub struct Artwork {
     /// The file the song names, beside the song.
     pub name: String,
+    /// Where that file is, when the song has been saved: it is read again once this changes.
+    pub file: Option<PathBuf>,
     /// The picture's bytes, once read or chosen.
     bytes: Option<Vec<u8>>,
     /// Whether the bytes are still to be written beside the song.
@@ -43,6 +45,7 @@ impl Artwork {
     pub fn named(name: &str, file: Option<&Path>) -> Self {
         Self {
             name: name.to_owned(),
+            file: file.map(Path::to_path_buf),
             bytes: None,
             unsaved: false,
             preview: if file.is_some() {
@@ -54,9 +57,10 @@ impl Artwork {
     }
 
     /// Artwork named `name` from `picture`, to be written beside the song when it is saved.
-    pub fn taken(name: String, (bytes, image): Picture) -> Self {
+    pub fn taken(name: String, file: Option<PathBuf>, (bytes, image): Picture) -> Self {
         Self {
             name,
+            file,
             bytes: Some(bytes),
             unsaved: true,
             preview: Preview::Decoded(image),
@@ -117,7 +121,7 @@ mod tests {
 
     #[test]
     fn taken_artwork_is_written_on_every_save_until_one_succeeds() {
-        let mut artwork = Artwork::taken("cover.jpg".to_owned(), picture(b"jpeg"));
+        let mut artwork = Artwork::taken("cover.jpg".to_owned(), None, picture(b"jpeg"));
         let path = Path::new("/songs/Song/Song.json");
         let at = Some(Path::new("/songs/Song/cover.jpg"));
         assert_eq!(
@@ -154,7 +158,7 @@ mod tests {
             artwork.shown(&ctx).err(),
             Some("Not a picture beside the song")
         );
-        let mut taken = Artwork::taken("cover.png".to_owned(), picture(b"png"));
+        let mut taken = Artwork::taken("cover.png".to_owned(), None, picture(b"png"));
         taken.read(None);
         assert!(taken.shown(&ctx).is_ok());
         let unsaved = Artwork::named("art.png", None).shown(&ctx).err();

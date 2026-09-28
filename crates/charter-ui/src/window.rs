@@ -1067,7 +1067,7 @@ impl Window {
         };
         self.failure = refused(song.set_metadata(metadata).err());
         if self.failure.is_none() {
-            self.artwork = Some(Artwork::taken(name, picture));
+            self.artwork = Some(Artwork::taken(name, self.artwork_file(), picture));
         }
     }
 
@@ -1082,14 +1082,14 @@ impl Window {
             self.artwork = None;
             return;
         };
+        let file = self.artwork_file();
         if self
             .artwork
             .as_ref()
-            .is_some_and(|artwork| artwork.name == named)
+            .is_some_and(|artwork| artwork.name == named && artwork.file == file)
         {
             return;
         }
-        let file = self.artwork_file();
         self.artwork = Some(Artwork::named(&named, file.as_deref()));
         if let Some(file) = file {
             self.requests.push(Request::ReadArtwork { file });
@@ -1600,11 +1600,11 @@ impl Window {
             Action::Help => self.help_open = !self.help_open,
             Action::ToggleSongPanel => self.settings.song_panel = !self.settings.song_panel,
             Action::ToggleMetronome => self.settings.metronome = !self.settings.metronome,
-            Action::ToggleTicks => self.settings.tick_sound = self.settings.tick_sound.toggled(),
+            Action::ToggleTicks => self.settings.note_ticks = !self.settings.note_ticks,
             Action::ToggleTunedLanes => {
                 self.settings.tuned_lanes = !self.settings.tuned_lanes;
                 // Heard at once while the ticks play.
-                if self.settings.tick_sound != settings::Sound::Off {
+                if self.settings.note_ticks {
                     self.replay();
                 }
             }
@@ -1988,10 +1988,7 @@ impl Window {
             });
         let sounds = (
             self.settings.metronome,
-            (
-                self.settings.tick_sound != settings::Sound::Off,
-                self.settings.tuned_lanes,
-            ),
+            (self.settings.note_ticks, self.settings.tuned_lanes),
             self.settings.volumes,
         );
         let view = (
@@ -2409,7 +2406,8 @@ fn clicks(
     use charter_timing::grid::Line;
     let timing = song.timing();
     let mut clicks = Vec::new();
-    if let (Some(tick), Some(chart)) = (settings.tick_sound.tick(), song.chart()) {
+    let tick = settings.note_ticks.then(|| settings.tick_sound.tick());
+    if let (Some(tick), Some(chart)) = (tick, song.chart()) {
         let lanes = chart.lanes.map_or(0, u16::from);
         let heads = chart.objects().map(|object| {
             let cents = if settings.tuned_lanes {
@@ -3177,6 +3175,28 @@ mod tests {
         );
         harness.state_mut().saved(Saved::To(saving.to_path_buf()));
         assert_eq!(harness.state().artwork_write_for(saving), None);
+    }
+
+    #[test]
+    fn artwork_named_before_the_first_save_is_read_once_the_song_is_saved() {
+        let mut harness = created();
+        retype(&mut harness, "Artwork", "art.png");
+        assert!(
+            harness
+                .query_by_label("Shown once the song is saved")
+                .is_some()
+        );
+        harness.state_mut().take_requests();
+        harness
+            .state_mut()
+            .saved(Saved::To(PathBuf::from("/songs/New/New.json")));
+        harness.run();
+        let requests = harness.state_mut().take_requests();
+        let file = PathBuf::from("/songs/New/art.png");
+        assert!(
+            requests.contains(&Request::ReadArtwork { file }),
+            "{requests:?}"
+        );
     }
 
     #[test]
@@ -4036,11 +4056,12 @@ mod tests {
     }
 
     #[test]
-    fn restore_defaults_puts_every_setting_back() {
+    fn restore_defaults_puts_every_setting_back_but_the_calibration() {
         let mut app = Window::new(PLUGINS).with_settings(Settings {
             metronome: true,
             tuned_lanes: true,
             zoom: 150.0,
+            input_latency_ms: 25.0,
             ..Settings::default()
         });
         app.open(Path::new("/songs/four.json"), &four_taps());
@@ -4049,7 +4070,11 @@ mod tests {
         harness.run();
         harness.get_by_label("Restore defaults").click();
         harness.run();
-        assert_eq!(harness.state().settings(), &Settings::default());
+        let calibrated = Settings {
+            input_latency_ms: 25.0,
+            ..Settings::default()
+        };
+        assert_eq!(harness.state().settings(), &calibrated);
     }
 
     #[test]
@@ -4074,6 +4099,10 @@ mod tests {
         harness.run();
         harness
             .get_by_role_and_label(Role::ComboBox, "Metronome sound")
+            .scroll_to_me();
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::ComboBox, "Metronome sound")
             .click();
         harness.run();
         harness.get_by_label("Shaker burst").click();
@@ -4091,7 +4120,7 @@ mod tests {
         assert_eq!(tones, [accent, beat, beat, beat]);
         assert!(
             harness
-                .query_by_role_and_label(Role::ComboBox, "Note ticks")
+                .query_by_role_and_label(Role::ComboBox, "Note tick sound")
                 .is_some()
         );
     }
@@ -4988,6 +5017,7 @@ mod tests {
     #[test]
     fn shift_f4_tunes_the_note_ticks_by_lane() {
         let mut harness = playable_with(Settings {
+            note_ticks: true,
             tick_sound: Sound::Clap,
             ..Settings::default()
         });
@@ -5007,6 +5037,7 @@ mod tests {
     #[test]
     fn the_tick_sound_plays_on_every_note_even_before_the_cursor() {
         let mut harness = playable_with(Settings {
+            note_ticks: true,
             tick_sound: Sound::Beep,
             ..Settings::default()
         });
@@ -5290,10 +5321,7 @@ mod tests {
         harness.key_press(egui::Key::F4);
         harness.run();
         let settings = harness.state().settings();
-        assert_eq!(
-            (settings.metronome, settings.tick_sound),
-            (true, Sound::Click)
-        );
+        assert_eq!((settings.metronome, settings.note_ticks), (true, true));
         harness.key_press(egui::Key::F3);
         harness.run();
         assert!(!harness.state().settings().metronome);

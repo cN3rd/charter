@@ -18,8 +18,9 @@ use egui::RichText;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Sound {
+    // Older versions kept the note ticks off as a sound of their own.
     #[default]
-    Off,
+    #[serde(alias = "off")]
     Click,
     Beep,
     Hit,
@@ -29,8 +30,7 @@ pub enum Sound {
 }
 
 impl Sound {
-    const ALL: [Self; 7] = [
-        Self::Off,
+    const ALL: [Self; 6] = [
         Self::Click,
         Self::Beep,
         Self::Hit,
@@ -39,32 +39,21 @@ impl Sound {
         Self::Finish,
     ];
 
-    /// What each note ticks with, if anything.
-    pub(crate) fn tick(self) -> Option<charter_audio::Tick> {
+    /// What each note ticks with.
+    pub(crate) fn tick(self) -> charter_audio::Tick {
         use charter_audio::Tick;
         match self {
-            Self::Off => None,
-            Self::Click => Some(Tick::Click),
-            Self::Beep => Some(Tick::Beep),
-            Self::Hit => Some(Tick::Hit),
-            Self::Clap => Some(Tick::Clap),
-            Self::SoftClap => Some(Tick::SoftClap),
-            Self::Finish => Some(Tick::Finish),
-        }
-    }
-
-    /// Off when on, and a click when off.
-    #[must_use]
-    pub(crate) fn toggled(self) -> Self {
-        match self {
-            Self::Off => Self::Click,
-            _ => Self::Off,
+            Self::Click => Tick::Click,
+            Self::Beep => Tick::Beep,
+            Self::Hit => Tick::Hit,
+            Self::Clap => Tick::Clap,
+            Self::SoftClap => Tick::SoftClap,
+            Self::Finish => Tick::Finish,
         }
     }
 
     fn name(self) -> &'static str {
         match self {
-            Self::Off => "Off",
             Self::Click => "Click",
             Self::Beep => "Beep",
             Self::Hit => "Hit",
@@ -94,7 +83,10 @@ pub struct Settings {
     pub scale: f32,
     /// Which way the notefield runs.
     pub direction: Direction,
-    /// What sounds as each note passes the now line during playback.
+    /// Whether a tick sounds as each note passes the now line during playback.
+    #[serde(deserialize_with = "on_or_sound")]
+    pub note_ticks: bool,
+    /// What that tick sounds like, kept while the ticks are off.
     pub tick_sound: Sound,
     /// Whether each lane's note ticks in a pitch of its own, lowest on the left.
     pub tuned_lanes: bool,
@@ -148,7 +140,8 @@ impl Default for Settings {
             zoom: 100.0,
             scale: 1.0,
             direction: Direction::Up,
-            tick_sound: Sound::Off,
+            note_ticks: false,
+            tick_sound: Sound::Click,
             tuned_lanes: false,
             metronome: false,
             metronome_sound: Kit::default(),
@@ -213,17 +206,18 @@ pub(crate) fn grid_name(grid: NonZeroU16) -> String {
     }
 }
 
-/// Whether the metronome is on, read from a switch or, as older versions kept it, a sound.
+/// Whether a sound is on, read from a switch or, as older versions kept it, the name of a
+/// sound, `off` for none.
 fn on_or_sound<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {
     #[derive(Deserialize)]
     #[serde(untagged)]
     enum Kept {
         On(bool),
-        Sound(Sound),
+        Sound(String),
     }
     Ok(match Kept::deserialize(deserializer)? {
         Kept::On(on) => on,
-        Kept::Sound(sound) => sound != Sound::Off,
+        Kept::Sound(sound) => sound != "off",
     })
 }
 
@@ -257,9 +251,16 @@ impl Settings {
     /// no longer read costs only itself.
     #[must_use]
     pub fn from_kept(kept: &str) -> Self {
-        let Ok(Value::Object(kept)) = serde_json::from_str(kept) else {
+        let Ok(Value::Object(mut kept)) = serde_json::from_str(kept) else {
             return Self::default();
         };
+        // Older versions kept the ticks on as the sound they made.
+        if !kept.contains_key("note_ticks")
+            && let Some(Value::String(sound)) = kept.get("tick_sound")
+        {
+            let on = Value::Bool(sound != "off");
+            kept.insert("note_ticks".to_owned(), on);
+        }
         let mut taken = serde_json::Map::new();
         for (key, value) in kept {
             let mut trial = taken.clone();
@@ -443,9 +444,14 @@ fn header_buttons(ui: &mut egui::Ui, settings: &mut Settings, open: &mut bool) {
     if quiet_icon(ui, icon::X, "Close settings", tip).clicked() {
         *open = false;
     }
-    let tip = "Every setting on every page back to how charter starts, the latency calibration too";
+    let tip = "Every setting on every page back to how charter starts, but the latency \
+        calibration, which measures this computer";
     if quiet_icon(ui, icon::ARROW_COUNTER_CLOCKWISE, "Restore defaults", tip).clicked() {
-        *settings = Settings::default();
+        *settings = Settings {
+            audio_latency_ms: settings.audio_latency_ms,
+            input_latency_ms: settings.input_latency_ms,
+            ..Settings::default()
+        };
     }
 }
 
@@ -636,11 +642,14 @@ fn display(ui: &mut egui::Ui, settings: &mut Settings) {
     );
 }
 
-/// The sounds page. Says which metronome to preview, when its button was pressed.
-fn sounds(ui: &mut egui::Ui, settings: &mut Settings) -> Option<Asked> {
-    let about = "A tick on each note as it passes. F4 turns it on and off. The hit sounds are \
-        synthesised, public domain.";
-    row(ui, "Note ticks", about, |ui, caption| {
+/// The sounds page's note tick rows: whether they sound, and what with.
+fn note_ticks(ui: &mut egui::Ui, settings: &mut Settings) {
+    let about = "A tick on each note as it passes. F4 turns it on and off.";
+    row(ui, "Note ticks", about, |ui, _| {
+        switch(ui, &mut settings.note_ticks, "Note ticks");
+    });
+    let about = "The click, the beep, or a synthesised hit sound, public domain.";
+    row(ui, "Note tick sound", about, |ui, caption| {
         let sound = &mut settings.tick_sound;
         egui::ComboBox::from_id_salt("note ticks")
             .selected_text(sound.name())
@@ -652,6 +661,11 @@ fn sounds(ui: &mut egui::Ui, settings: &mut Settings) -> Option<Asked> {
             .response
             .labelled_by(caption);
     });
+}
+
+/// The sounds page. Says which metronome to preview, when its button was pressed.
+fn sounds(ui: &mut egui::Ui, settings: &mut Settings) -> Option<Asked> {
+    note_ticks(ui, settings);
     let name = "Tuned lanes";
     let about = "Each lane ticks in its own pitch, lowest on the left, a whole tone apart and an \
         octave at most across. Shift+F4 turns it on and off.";
@@ -870,7 +884,7 @@ mod tests {
     fn notes_travel_up_with_no_tick_or_metronome_sound_to_start_with() {
         let settings = Settings::default();
         assert_eq!(settings.direction, Direction::Up);
-        assert_eq!(settings.tick_sound, Sound::Off);
+        assert!(!settings.note_ticks);
         assert!(!settings.metronome);
         assert_eq!(settings.metronome_sound, Kit::ToneGate);
     }
@@ -907,7 +921,8 @@ mod tests {
             zoom: 150.0,
             scale: 1.25,
             direction: Direction::Right,
-            tick_sound: Sound::Click,
+            note_ticks: true,
+            tick_sound: Sound::Clap,
             tuned_lanes: true,
             metronome: true,
             metronome_sound: Kit::ShakerBurst,
@@ -967,5 +982,15 @@ mod tests {
         assert_eq!(settings.tick_sound, Settings::default().tick_sound);
         assert!((settings.zoom - Settings::default().zoom).abs() < f32::EPSILON);
         assert_eq!(Settings::from_kept("not json"), Settings::default());
+    }
+
+    #[test]
+    fn ticks_kept_as_a_sound_by_older_versions_read_as_on_or_off() {
+        let on = Settings::from_kept(r#"{ "tick_sound": "beep" }"#);
+        assert!(on.note_ticks);
+        assert_eq!(on.tick_sound, Sound::Beep);
+        let off = Settings::from_kept(r#"{ "tick_sound": "off" }"#);
+        assert!(!off.note_ticks);
+        assert_eq!(off.tick_sound, Sound::Click);
     }
 }
