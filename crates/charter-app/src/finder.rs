@@ -126,6 +126,7 @@ impl Finder {
                 Err(TryRecvError::Empty) => return true,
                 Err(TryRecvError::Disconnected) => {
                     self.work = None;
+                    self.waiting = None;
                     window.timing_found(Err("the timing finder stopped".into()));
                     return false;
                 }
@@ -178,6 +179,18 @@ fn fetch(weights: &Path, progress: &Sender<Progress>) -> Result<(), String> {
     let length = body.content_length();
     let mut reader = body.as_reader();
     let mut file = std::fs::File::create(&partial).map_err(|why| why.to_string())?;
+    copy_weights(&mut reader, &mut file, length, progress)?;
+    file.sync_all().map_err(|why| why.to_string())?;
+    std::fs::rename(&partial, weights).map_err(|why| why.to_string())
+}
+
+/// Copies a response body while reporting the share received, when its length is known.
+fn copy_weights(
+    reader: &mut impl Read,
+    file: &mut impl Write,
+    length: Option<u64>,
+    progress: &Sender<Progress>,
+) -> Result<(), String> {
     let mut buffer = vec![0; 1 << 16];
     let (mut read, mut told) = (0_u64, 0_u64);
     loop {
@@ -197,13 +210,152 @@ fn fetch(weights: &Path, progress: &Sender<Progress>) -> Result<(), String> {
             let _ = progress.send(Progress::Downloaded(share));
         }
     }
-    file.sync_all().map_err(|why| why.to_string())?;
-    std::fs::rename(&partial, weights).map_err(|why| why.to_string())
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Cursor;
+
+    fn window() -> Window {
+        let mut window = Window::new(crate::PLUGINS);
+        window.open_demo();
+        window
+    }
+
+    #[test]
+    fn a_stopped_worker_drops_the_request_waiting_on_its_weights() {
+        let mut window = window();
+        let mut finder = Finder {
+            waiting: Some((
+                PathBuf::from("/songs/a.ogg"),
+                charter_core::DEFAULT_TICKS_PER_BEAT,
+                None,
+            )),
+            ..Finder::default()
+        };
+        let (send, receive) = std::sync::mpsc::channel();
+        finder.work = Some(receive);
+        drop(send);
+
+        assert!(!finder.update(&mut window));
+        assert!(finder.waiting.is_none());
+        assert!(window.message().unwrap().contains("timing finder stopped"));
+    }
+
+    #[test]
+    fn a_download_failure_reports_its_cause_and_forgets_the_waiting_song() {
+        let mut window = window();
+        let mut finder = Finder {
+            waiting: Some((
+                PathBuf::from("/songs/a.ogg"),
+                charter_core::DEFAULT_TICKS_PER_BEAT,
+                None,
+            )),
+            ..Finder::default()
+        };
+        let (send, receive) = std::sync::mpsc::channel();
+        finder.work = Some(receive);
+        send.send(Progress::Weights(Err("server refused the request".into())))
+            .unwrap();
+
+        assert!(!finder.update(&mut window));
+        assert!(finder.waiting.is_none());
+        assert!(finder.work.is_none());
+        assert!(
+            window
+                .message()
+                .unwrap()
+                .contains("the beat tracker did not download: server refused the request")
+        );
+        assert!(!finder.update(&mut window));
+    }
+
+    #[test]
+    fn a_download_without_a_waiting_song_finishes_without_starting_a_tracker() {
+        let mut window = window();
+        let mut finder = Finder::default();
+        let (send, receive) = std::sync::mpsc::channel();
+        finder.work = Some(receive);
+        send.send(Progress::Weights(Ok(()))).unwrap();
+
+        assert!(finder.update(&mut window));
+        assert!(finder.work.is_none());
+        assert!(window.message().is_none());
+        assert!(!finder.update(&mut window));
+    }
+
+    #[test]
+    fn progress_keeps_the_finder_active_until_the_worker_reports_a_result() {
+        let mut window = window();
+        let mut finder = Finder::default();
+        let (send, receive) = std::sync::mpsc::channel();
+        finder.work = Some(receive);
+
+        assert!(finder.update(&mut window));
+        send.send(Progress::Downloaded(0.42)).unwrap();
+        assert!(finder.update(&mut window));
+        assert!(finder.work.is_some());
+        send.send(Progress::Found(Err("too few beats".into())))
+            .unwrap();
+        assert!(!finder.update(&mut window));
+        assert!(finder.work.is_none());
+        assert!(window.message().unwrap().contains("too few beats"));
+    }
+
+    #[test]
+    fn found_timing_is_applied_to_the_open_song() {
+        let mut window = window();
+        let mut finder = Finder::default();
+        let (send, receive) = std::sync::mpsc::channel();
+        finder.work = Some(receive);
+        let timing = Timing {
+            anchors: vec![charter_core::Anchor {
+                tick: charter_core::Tick::new(0),
+                seconds: charter_core::Origin::try_from(3.0).unwrap(),
+            }],
+            tempo: charter_core::Bpm::try_from(132.0).unwrap(),
+            events: vec![],
+        };
+        send.send(Progress::Found(Ok(timing))).unwrap();
+
+        assert!(!finder.update(&mut window));
+        assert!(finder.work.is_none());
+        assert!(window.message().unwrap().contains("132 BPM"));
+    }
+
+    #[test]
+    fn copying_weights_reports_each_crossed_percentage_and_preserves_the_bytes() {
+        let bytes = vec![7; 2 * (1 << 16)];
+        let mut output = Vec::new();
+        let (send, receive) = std::sync::mpsc::channel();
+
+        copy_weights(
+            &mut Cursor::new(&bytes),
+            &mut output,
+            Some(bytes.len() as u64),
+            &send,
+        )
+        .unwrap();
+
+        assert_eq!(output, bytes);
+        let reports: Vec<_> = receive.try_iter().collect();
+        assert!(matches!(reports.first(), Some(Progress::Downloaded(0.5))));
+        assert!(matches!(reports.get(1), Some(Progress::Downloaded(1.0))));
+        assert_eq!(reports.len(), 2);
+    }
+
+    #[test]
+    fn a_weight_stream_without_a_known_positive_length_sends_no_percentages() {
+        for length in [None, Some(0)] {
+            let mut output = Vec::new();
+            let (send, receive) = std::sync::mpsc::channel();
+            copy_weights(&mut Cursor::new(b"weights"), &mut output, length, &send).unwrap();
+            assert_eq!(output, b"weights");
+            assert!(receive.try_recv().is_err());
+        }
+    }
 
     #[test]
     fn without_a_data_folder_the_window_hears_why_nothing_was_found() {
