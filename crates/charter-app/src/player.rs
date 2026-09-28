@@ -44,7 +44,7 @@ impl Playing {
     fn position(&self) -> f64 {
         match self {
             Self::Plain(sound) => sound.position(),
-            Self::Stretched { sound, rate } => sound.position() * rate,
+            Self::Stretched { sound, rate } => source_position(sound.position(), *rate),
         }
     }
 
@@ -59,7 +59,7 @@ impl Playing {
     fn seek_to(&mut self, to: f64) {
         match self {
             Self::Plain(sound) => sound.seek_to(to),
-            Self::Stretched { sound, rate } => sound.seek_to(to / *rate),
+            Self::Stretched { sound, rate } => sound.seek_to(stretched_position(to, *rate)),
         }
     }
 
@@ -69,6 +69,14 @@ impl Playing {
             Self::Stretched { sound, .. } => sound.stop(Tween::default()),
         }
     }
+}
+
+fn source_position(stretched_seconds: f64, rate: f64) -> f64 {
+    stretched_seconds * rate
+}
+
+fn stretched_position(source_seconds: f64, rate: f64) -> f64 {
+    source_seconds / rate
 }
 
 /// A file being decoded, and where its results arrive.
@@ -326,15 +334,16 @@ impl Player {
             window.playback_ended();
             return;
         };
-        let settings = StreamingSoundSettings::new().start_position(from.max(0.0) / rate);
+        let settings =
+            StreamingSoundSettings::new().start_position(stretched_position(from.max(0.0), rate));
         let settings = match volume {
             Some(volume) => settings.volume(volume),
             None => settings,
         };
         let settings = match looping {
-            Some((start, end)) if end > start => {
-                settings.loop_region(start.max(0.0) / rate..end / rate)
-            }
+            Some((start, end)) if end > start => settings.loop_region(
+                stretched_position(start.max(0.0), rate)..stretched_position(end, rate),
+            ),
             _ => settings,
         };
         let data = StreamingSoundData::from_decoder(stretched).with_settings(settings);
@@ -543,6 +552,31 @@ mod tests {
     }
 
     #[test]
+    fn preview_clicks_respect_the_metronome_volume_without_a_device() {
+        let clicks = [(
+            0.0,
+            charter_audio::Tone::Beat(charter_audio::Kit::StickClick),
+        )];
+        let full = preview(&clicks, charter_audio::Volumes::default());
+        let muted = preview(
+            &clicks,
+            charter_audio::Volumes {
+                metronome: charter_audio::Gain::from(0.0),
+                ..charter_audio::Volumes::default()
+            },
+        );
+        assert!(full.frames().iter().any(|frame| frame[0].abs() > 0.01));
+        assert!(
+            muted
+                .frames()
+                .iter()
+                .all(|frame| frame.iter().all(|sample| sample.abs() < f32::EPSILON))
+        );
+        assert!((decibels(charter_audio::Gain::from(0.5)).0 + 6.0206).abs() < 0.001);
+        assert!((decibels(charter_audio::Gain::from(0.0)).0 - Decibels::SILENCE.0).abs() < 0.001);
+    }
+
+    #[test]
     fn peaks_are_kept_in_the_project_folder_only_for_audio_beside_the_song() {
         let project = Some(Path::new("/s/Song"));
         assert_eq!(
@@ -610,6 +644,81 @@ mod tests {
         keep_onsets(&disk, cache, 3, &found);
         assert_eq!(kept_onsets(&disk, cache, 3).as_deref(), Some(&found[..]));
         assert_eq!(kept_onsets(&disk, cache, 4), None);
+    }
+
+    #[test]
+    fn damaged_or_unreadable_summaries_are_recomputed_instead_of_reused() {
+        use crate::disk::memory::Memory;
+        let cache = Path::new("/s/cache/a.wav.peaks");
+        let onset_cache = Path::new("/s/cache/a.wav.onsets");
+        let peaks = Peaks::of(&Track::silence(1000, 2000));
+        let onsets = [Onset {
+            seconds: 0.25,
+            strength: 0.8,
+        }];
+        let disk = Memory::with(&[
+            ("/s/cache/a.wav.peaks", b"truncated"),
+            ("/s/cache/a.wav.onsets", b"truncated"),
+        ]);
+        assert_eq!(kept_peaks(&disk, cache, 7), None);
+        assert_eq!(kept_onsets(&disk, onset_cache, 7), None);
+        keep_peaks(&disk, cache, 7, &peaks);
+        keep_onsets(&disk, onset_cache, 7, &onsets);
+        assert_eq!(kept_peaks(&disk, cache, 7), Some(peaks));
+        assert_eq!(
+            kept_onsets(&disk, onset_cache, 7).as_deref(),
+            Some(&onsets[..])
+        );
+        assert_eq!(kept_peaks(&disk, cache, 8), None);
+        assert_eq!(kept_onsets(&disk, onset_cache, 8), None);
+
+        let disk = Memory {
+            unreadable: vec![cache.to_path_buf(), onset_cache.to_path_buf()],
+            ..disk
+        };
+        assert_eq!(kept_peaks(&disk, cache, 7), None);
+        assert_eq!(kept_onsets(&disk, onset_cache, 7), None);
+    }
+
+    #[test]
+    fn a_cache_write_failure_leaves_previous_summaries_intact() {
+        use crate::disk::memory::Memory;
+        let peak_path = Path::new("/s/cache/a.wav.peaks");
+        let onset_path = Path::new("/s/cache/a.wav.onsets");
+        let peaks = Peaks::of(&Track::silence(1000, 2000));
+        let onsets = [Onset {
+            seconds: 0.5,
+            strength: 1.0,
+        }];
+        let disk = Memory::default();
+        keep_peaks(&disk, peak_path, 4, &peaks);
+        keep_onsets(&disk, onset_path, 4, &onsets);
+        let disk = Memory {
+            stuck: true,
+            ..disk
+        };
+        keep_peaks(&disk, peak_path, 5, &peaks);
+        keep_onsets(&disk, onset_path, 5, &onsets);
+        assert_eq!(kept_peaks(&disk, peak_path, 4), Some(peaks));
+        assert_eq!(
+            kept_onsets(&disk, onset_path, 4).as_deref(),
+            Some(&onsets[..])
+        );
+        assert_eq!(disk.get("/s/cache/a.wav.peaks.partial"), None);
+        assert_eq!(disk.get("/s/cache/a.wav.onsets.partial"), None);
+    }
+
+    #[test]
+    fn stretched_positions_seeks_and_loop_bounds_use_the_audio_clock() {
+        // At 1.6x, the stretched sound's clock runs for 2.5s over 4s of source.
+        assert!((source_position(2.5, 1.6) - 4.0).abs() < 1e-12);
+        assert!((stretched_position(4.0, 1.6) - 2.5).abs() < 1e-12);
+        assert!((stretched_position(8.0, 1.6) - 5.0).abs() < 1e-12);
+        // The seek and loop start are clamped in source seconds before conversion.
+        assert!(stretched_position((-2.0_f64).max(0.0), 1.6).abs() < 1e-12);
+        assert!((source_position(8.0, 0.75) - 6.0).abs() < 1e-12);
+        assert!((stretched_position(6.0, 0.75) - 8.0).abs() < 1e-12);
+        assert!((stretched_position(13.7, 1.37) - 10.0).abs() < 1e-12);
     }
 
     #[allow(clippy::unnecessary_wraps)] // a loader's signature
@@ -711,6 +820,103 @@ mod tests {
     }
 
     #[test]
+    fn a_worker_that_stops_before_audio_reports_failure_and_can_load_another_song() {
+        let mut player = player(silent);
+        let mut window = song_window();
+        let (send, receive) = std::sync::mpsc::channel();
+        player.loading = Some((PathBuf::from("/s/a.wav"), receive));
+        drop(send);
+        assert!(!player.update(&mut window));
+        assert!(window.message().unwrap().contains("loading stopped"));
+        assert_eq!(player.failed.as_deref(), Some(Path::new("/s/a.wav")));
+        assert!(player.loaded.is_none());
+
+        window.open(
+            Path::new("/s/other.json"),
+            std::str::from_utf8(SONG)
+                .unwrap()
+                .replace("a.wav", "b.wav")
+                .as_bytes(),
+        );
+        player.update(&mut window);
+        assert_eq!(
+            player.loaded.as_ref().map(|(path, ..)| path.as_path()),
+            Some(Path::new("/s/b.wav"))
+        );
+        assert_eq!(player.failed, None);
+    }
+
+    #[test]
+    fn a_worker_that_stops_after_audio_keeps_the_usable_track() {
+        let mut player = player(silent);
+        let mut window = song_window();
+        let (send, receive) = std::sync::mpsc::channel();
+        send.send(Loaded::Audio(Ok((
+            Arc::new(Track::silence(1000, 2000)),
+            None,
+        ))))
+        .unwrap();
+        drop(send);
+        player.loading = Some((PathBuf::from("/s/a.wav"), receive));
+        assert!(!player.update(&mut window));
+        assert_eq!(
+            player.loaded.as_ref().map(|(path, ..)| path.as_path()),
+            Some(Path::new("/s/a.wav"))
+        );
+        assert!(player.failed.is_none());
+        assert_eq!(window.message(), None);
+    }
+
+    #[test]
+    fn cached_peaks_arrive_before_a_failed_decode_and_failure_stops_loading() {
+        let mut player = player(silent);
+        let mut window = song_window();
+        let (send, receive) = std::sync::mpsc::channel();
+        send.send(Loaded::Peaks(Peaks::of(&Track::silence(1000, 2000))))
+            .unwrap();
+        send.send(Loaded::Audio(Err("invalid audio".to_owned())))
+            .unwrap();
+        drop(send);
+        player.loading = Some((PathBuf::from("/s/a.wav"), receive));
+        assert!(!player.update(&mut window));
+        assert!(window.strip().is_some());
+        assert!(window.message().unwrap().contains("invalid audio"));
+        assert_eq!(player.failed.as_deref(), Some(Path::new("/s/a.wav")));
+        assert!(player.loaded.is_none());
+        assert!(player.loading.is_none());
+    }
+
+    #[test]
+    fn messages_for_audio_no_longer_requested_do_not_replace_the_current_song() {
+        let mut player = player(silent);
+        let mut window = song_window();
+        let (send, receive) = std::sync::mpsc::channel();
+        send.send(Loaded::Audio(Ok((
+            Arc::new(Track::silence(1000, 9000)),
+            None,
+        ))))
+        .unwrap();
+        player.loading = Some((PathBuf::from("/s/a.wav"), receive));
+        window.open(
+            Path::new("/s/other.json"),
+            std::str::from_utf8(SONG)
+                .unwrap()
+                .replace("a.wav", "b.wav")
+                .as_bytes(),
+        );
+        player.update(&mut window);
+        assert_eq!(
+            player.loaded.as_ref().map(|(path, ..)| path.as_path()),
+            Some(Path::new("/s/b.wav"))
+        );
+        assert_eq!(
+            player.loaded.as_ref().map(|(_, _, data)| data.frames.len()),
+            Some(2000)
+        );
+        drop(send);
+    }
+
+    #[test]
     fn play_with_nothing_loaded_ends_playback_at_once() {
         let mut player = player(silent);
         let mut window = song_window();
@@ -725,6 +931,23 @@ mod tests {
         player.answer(&play, &mut window);
         assert!(player.playing.is_none());
         assert!(!window.is_playing());
+        assert!(player.device.is_none());
+    }
+
+    #[test]
+    fn idle_transport_requests_never_open_the_audio_device() {
+        let mut player = player(silent);
+        let mut window = song_window();
+        for request in [
+            Request::Seek(-4.0),
+            Request::Volume(charter_audio::Gain::default()),
+            Request::Rate(1.5),
+            Request::Pause,
+        ] {
+            player.answer(&request, &mut window);
+        }
+        assert!(player.device.is_none());
+        assert!(player.playing.is_none());
     }
 
     #[test]
