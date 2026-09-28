@@ -1,11 +1,12 @@
-//! What an audio file says about itself: the title and artist its tags carry.
+//! What an audio file says about itself: the title and artist its tags carry, and the cover
+//! artwork it holds.
 
 use std::io::Cursor;
 
 use symphonia::core::formats::FormatOptions;
 use symphonia::core::formats::probe::Hint;
 use symphonia::core::io::{MediaSourceStream, MediaSourceStreamOptions};
-use symphonia::core::meta::{MetadataOptions, StandardTag};
+use symphonia::core::meta::{MetadataOptions, StandardTag, StandardVisualKey, Visual};
 use symphonia_wrap as symphonia;
 
 /// The song facts an audio file's tags carry, where it carries them.
@@ -13,6 +14,31 @@ use symphonia_wrap as symphonia;
 pub struct Tags {
     pub title: Option<String>,
     pub artist: Option<String>,
+    /// The picture the file holds, its front cover where it names one.
+    pub artwork: Option<Artwork>,
+}
+
+/// A picture held inside an audio file, as it was encoded.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Artwork {
+    pub bytes: Vec<u8>,
+    /// What a file of it is named with: `png` or `jpg`.
+    pub extension: &'static str,
+}
+
+impl Artwork {
+    /// The artwork `visual` is, when it is a PNG or a JPEG.
+    fn of(visual: &Visual) -> Option<Self> {
+        let extension = match visual.media_type.as_deref()? {
+            "image/png" => "png",
+            "image/jpeg" | "image/jpg" => "jpg",
+            _ => return None,
+        };
+        Some(Self {
+            bytes: visual.data.to_vec(),
+            extension,
+        })
+    }
 }
 
 // ponytail: symphonia 0.6.1's WAV reader drops the INFO tags it parses, so WAV files read as
@@ -49,6 +75,24 @@ pub fn tags(bytes: Vec<u8>, extension: Option<&str>) -> Tags {
             .iter()
             .flat_map(|track| &track.metadata.tags),
     );
+    let visuals: Vec<&Visual> = revision
+        .media
+        .visuals
+        .iter()
+        .chain(
+            revision
+                .per_track
+                .iter()
+                .flat_map(|track| &track.metadata.visuals),
+        )
+        .collect();
+    let front = |visual: &&&Visual| visual.usage == Some(StandardVisualKey::FrontCover);
+    found.artwork = visuals
+        .iter()
+        .find(front)
+        .into_iter()
+        .chain(&visuals)
+        .find_map(|visual| Artwork::of(visual));
     for tag in every {
         let text = |text: &str| Some(text.trim().to_owned()).filter(|text| !text.is_empty());
         match &tag.std {
@@ -76,6 +120,24 @@ mod tests {
     /// A FLAC file of no frames, mono at 8 kHz, whose Vorbis comments are `comments`, each
     /// written as `NAME=value`.
     fn tagged(comments: &[&str]) -> Vec<u8> {
+        pictured(comments, &[])
+    }
+
+    /// A FLAC PICTURE block of picture `kind`, 3 for the front cover, holding `data` of `mime`.
+    fn picture(kind: u32, mime: &str, data: &[u8]) -> Vec<u8> {
+        let length = |n: usize| u32::try_from(n).unwrap().to_be_bytes();
+        let mut body = kind.to_be_bytes().to_vec();
+        body.extend_from_slice(&length(mime.len()));
+        body.extend_from_slice(mime.as_bytes());
+        body.extend_from_slice(&length(0));
+        body.extend_from_slice(&[0; 16]);
+        body.extend_from_slice(&length(data.len()));
+        body.extend_from_slice(data);
+        body
+    }
+
+    /// A FLAC file as [`tagged`] makes, with a PICTURE block for each of `pictures`.
+    fn pictured(comments: &[&str], pictures: &[Vec<u8>]) -> Vec<u8> {
         let mut info = Vec::new();
         info.extend_from_slice(&4096u16.to_be_bytes());
         info.extend_from_slice(&4096u16.to_be_bytes());
@@ -96,7 +158,10 @@ mod tests {
         }
         let mut bytes = b"fLaC".to_vec();
         bytes.extend(block(0, false, &info));
-        bytes.extend(block(4, true, &vorbis));
+        bytes.extend(block(4, pictures.is_empty(), &vorbis));
+        for (at, body) in pictures.iter().enumerate() {
+            bytes.extend(block(6, at + 1 == pictures.len(), body));
+        }
         bytes.extend(silent_frame());
         bytes
     }
@@ -151,6 +216,26 @@ mod tests {
     fn a_file_without_tags_or_that_is_not_audio_has_none() {
         assert_eq!(tags(tagged(&[]), Some("flac")), Tags::default());
         assert_eq!(tags(b"not audio".to_vec(), Some("ogg")), Tags::default());
+    }
+
+    #[test]
+    fn a_file_with_pictures_gives_its_front_cover_named_for_its_kind() {
+        let back = picture(4, "image/png", b"back");
+        let front = picture(3, "image/jpeg", b"front");
+        let tags = tags(pictured(&[], &[back.clone(), front]), Some("flac"));
+        let artwork = tags.artwork.unwrap();
+        assert_eq!(
+            (artwork.bytes.as_slice(), artwork.extension),
+            (&b"front"[..], "jpg")
+        );
+        let only = tags_of(pictured(&[], &[back]));
+        assert_eq!(only.artwork.map(|artwork| artwork.extension), Some("png"));
+        let unknown = tags_of(pictured(&[], &[picture(3, "image/x-weird", b"?")]));
+        assert_eq!(unknown.artwork, None);
+    }
+
+    fn tags_of(bytes: Vec<u8>) -> Tags {
+        tags(bytes, Some("flac"))
     }
 
     #[test]
