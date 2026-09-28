@@ -205,10 +205,7 @@ fn points(text: &str) -> Result<Vec<Point>, ImportError> {
     for &(number, line) in lines.get(from..).unwrap_or_default() {
         let line = line.trim();
         if line.starts_with('[') {
-            if section.is_some() {
-                break;
-            }
-            continue;
+            break;
         }
         if line.is_empty() || line.starts_with("//") {
             continue;
