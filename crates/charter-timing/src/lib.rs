@@ -1617,11 +1617,11 @@ mod tests {
         }
     }
 
-    struct WindowTest {
-        song: Song,
-        window: TimingWindow,
-        commands: Vec<Command>,
-        onsets: Vec<Onset>,
+    pub(super) struct WindowTest {
+        pub(super) song: Song,
+        pub(super) window: TimingWindow,
+        pub(super) commands: Vec<Command>,
+        pub(super) onsets: Vec<Onset>,
     }
 
     impl WindowTest {
@@ -1641,7 +1641,7 @@ mod tests {
         }
     }
 
-    fn timing_harness() -> Harness<'static, WindowTest> {
+    pub(super) fn timing_harness() -> Harness<'static, WindowTest> {
         let value = json!({
             "format_version": 1,
             "ruleset": { "id": "test", "version": "1" },
@@ -1674,7 +1674,7 @@ mod tests {
         harness
     }
 
-    fn row_point(harness: &Harness<'_, WindowTest>, tick: i32) -> Pos2 {
+    pub(super) fn row_point(harness: &Harness<'_, WindowTest>, tick: i32) -> Pos2 {
         let rect = harness.get_by_label("Measure 0").rect();
         let fraction = f64::from(tick) / 3840.0;
         #[allow(clippy::cast_possible_truncation)] // a fraction of one row
@@ -1691,7 +1691,7 @@ mod tests {
         });
     }
 
-    fn click(harness: &mut Harness<'_, WindowTest>, pos: Pos2, modifiers: Modifiers) {
+    pub(super) fn click(harness: &mut Harness<'_, WindowTest>, pos: Pos2, modifiers: Modifiers) {
         harness.hover_at(pos);
         harness.event(egui::Event::ModifiersChanged(modifiers));
         pointer(harness, pos, true, modifiers);
@@ -2246,5 +2246,145 @@ mod tests {
         assert_eq!(nudge_notches(&fine), Some((1, false)));
         let coarse = [wheel(-1.0, ctrl.plus(Modifiers::SHIFT))];
         assert_eq!(nudge_notches(&coarse), Some((-1, true)));
+    }
+
+    #[test]
+    fn issue_keys_wrap_in_both_directions_and_focus_the_named_anchor() {
+        let mut harness = timing_harness();
+        harness.state_mut().onsets = [0.012, 0.512, 1.012]
+            .map(|seconds| Onset {
+                seconds,
+                strength: 1.0,
+            })
+            .to_vec();
+        harness.run();
+        let count = harness.state().window.cache.as_ref().unwrap().issues.len();
+        assert!(count >= 3, "expected displaced anchors to be issues");
+        harness.key_press(Key::N);
+        harness.run();
+        assert_eq!(harness.state().window.issue, Some(0));
+        assert_eq!(harness.state().window.focus, Some(Tick::new(0)));
+        harness.key_press_modifiers(Modifiers::SHIFT, Key::N);
+        harness.run();
+        assert_eq!(harness.state().window.issue, Some(count - 1));
+        assert_eq!(harness.state().window.focus, Some(Tick::new(1920)));
+        harness.key_press(Key::N);
+        harness.run();
+        assert_eq!(harness.state().window.issue, Some(0));
+    }
+
+    #[test]
+    fn playback_and_metronome_keys_work_on_a_read_only_song_but_edits_do_not() {
+        let mut harness = timing_harness();
+        let document = harness.state().song.document().clone();
+        harness.state_mut().song = Song::new(document, &[]);
+        harness.run();
+        let anchor = row_point(&harness, 960);
+        click(&mut harness, anchor, Modifiers::NONE);
+        harness.key_press(Key::ArrowRight);
+        harness.key_press(Key::Delete);
+        harness.key_press(Key::Space);
+        harness.key_press(Key::R);
+        harness.key_press(Key::C);
+        harness.step();
+        assert_eq!(
+            harness.state().commands,
+            [
+                Command::TogglePlay,
+                Command::ToggleRate,
+                Command::ToggleMetronome
+            ]
+        );
+        harness.key_press_modifiers(Modifiers::SHIFT, Key::C);
+        harness.step();
+        assert!(
+            harness
+                .state()
+                .commands
+                .ends_with(&[Command::MuteMetronome(true), Command::MuteMetronome(false)])
+        );
+        harness.event(egui::Event::Key {
+            key: Key::C,
+            physical_key: None,
+            pressed: false,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        });
+        harness.step();
+        assert_eq!(
+            harness.state().commands.last(),
+            Some(&Command::MuteMetronome(false))
+        );
+    }
+
+    #[test]
+    fn the_anchor_menu_can_audition_select_a_run_and_remove_that_run() {
+        let mut harness = timing_harness();
+        let at = row_point(&harness, 960);
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            });
+        }
+        harness.step();
+        harness.get_by_label("Select to the end").click();
+        harness.step();
+        assert_eq!(
+            harness.state().window.selection,
+            [Tick::new(960), Tick::new(1920)]
+        );
+        harness.hover_at(at);
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            });
+        }
+        harness.step();
+        harness.get_by_label("Remove").click();
+        harness.step();
+        assert_eq!(
+            harness.state().commands,
+            [Command::Edit(Edit::Unsync(vec![
+                Tick::new(960),
+                Tick::new(1920)
+            ]))]
+        );
+    }
+
+    #[test]
+    fn a_fit_stays_a_preview_until_enter_and_escape_discards_it() {
+        let mut harness = timing_harness();
+        harness.state_mut().onsets = [0.0, 0.5, 1.0, 1.5, 2.0]
+            .map(|seconds| Onset {
+                seconds,
+                strength: 1.0,
+            })
+            .to_vec();
+        harness.run();
+        let at = row_point(&harness, 960);
+        click(&mut harness, at, Modifiers::NONE);
+        harness.key_press(Key::F);
+        harness.step();
+        assert!(harness.state().window.preview.is_some());
+        assert_eq!(harness.state().commands, []);
+        harness.key_press(Key::Escape);
+        harness.step();
+        assert!(harness.state().window.preview.is_none());
+        assert_eq!(harness.state().commands, []);
+        harness.key_press(Key::F);
+        harness.step();
+        harness.key_press(Key::Enter);
+        harness.step();
+        assert!(matches!(
+            harness.state().commands.as_slice(),
+            [Command::Edit(Edit::Repin { .. })]
+        ));
+        assert!(harness.state().window.preview.is_none());
     }
 }

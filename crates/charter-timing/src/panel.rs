@@ -38,6 +38,10 @@ fn start_bpm(
         .on_hover_text("The tempo from the first anchor on, until the next");
     let bpm = frame.timing.bpm_at(first.tick).unwrap_or(frame.tail);
     let text = trimmed(f64::from(bpm), 3);
+    if !frame.editable {
+        ui.label(text);
+        return;
+    }
     let Some(typed) = field(ui, caption.id, &text, &mut window.drafts.start_bpm, false) else {
         return;
     };
@@ -133,6 +137,7 @@ pub(crate) fn status(
 ) {
     ui.horizontal(|ui| {
         let hint = match (&window.gesture, window.preview.is_some()) {
+            (_, true) if !frame.editable => "Esc: discard",
             (_, true) => "Enter: apply · Esc: discard",
             (Gesture::DragBeat { .. }, _) => "Moving the beat · Shift: fine · Esc: cancel",
             (Gesture::DragAudio { .. }, _) => {
@@ -189,7 +194,7 @@ pub(crate) fn inspector(
                 fitted.before_ms, fitted.after_ms
             ));
             ui.horizontal(|ui| {
-                if ui.add(style::primary("Apply")).clicked() {
+                if frame.editable && ui.add(style::primary("Apply")).clicked() {
                     commands.push(Command::Edit(Edit::Repin {
                         pins: fitted.pins.clone(),
                         tail: fitted.tail,
@@ -493,9 +498,298 @@ pub(crate) fn issue_tick(issue: &Issue) -> Tick {
 #[cfg(test)]
 mod tests {
     use charter_core::{RulesetPlugin, ValidDocument};
+    use egui::accesskit::Role;
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
     use serde_json::json;
 
     use super::*;
+    use crate::tests::{WindowTest, timing_harness};
+
+    fn type_field(harness: &mut Harness<'_, WindowTest>, label: &str, text: &str) {
+        harness
+            .get_by_role_and_label(Role::TextInput, label)
+            .focus();
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness
+            .get_by_role_and_label(Role::TextInput, label)
+            .type_text(text);
+        harness.run();
+        harness.key_press(egui::Key::Tab);
+        harness.run();
+    }
+
+    #[test]
+    fn inspector_seconds_accept_finite_values_and_reject_invalid_values() {
+        let mut harness = timing_harness();
+        harness.state_mut().window.focus = Some(Tick::new(960));
+        harness.run();
+        type_field(&mut harness, "t", "0.625");
+        assert_eq!(
+            harness.state().commands,
+            [Command::Edit(Edit::Sync {
+                tick: Tick::new(960),
+                seconds: 0.625
+            })]
+        );
+        harness.state_mut().commands.clear();
+        for invalid in ["not a time", "NaN", "inf"] {
+            type_field(&mut harness, "t", invalid);
+            assert_eq!(harness.state().commands, []);
+            assert!(
+                harness
+                    .query_by_label_contains("is not a time in seconds")
+                    .is_some()
+            );
+        }
+    }
+
+    #[test]
+    fn inspector_bar_clamps_out_of_range_positions_and_rejects_nonfinite_input() {
+        let mut harness = timing_harness();
+        harness.state_mut().window.focus = Some(Tick::new(960));
+        harness.run();
+        type_field(&mut harness, "b", "1.5");
+        assert_eq!(
+            harness.state().commands,
+            [Command::Edit(Edit::MoveAnchors(vec![(
+                Tick::new(960),
+                Tick::new(5760)
+            )]))]
+        );
+        harness.state_mut().commands.clear();
+        type_field(&mut harness, "b", "1e100");
+        assert_eq!(
+            harness.state().commands,
+            [Command::Edit(Edit::MoveAnchors(vec![(
+                Tick::new(960),
+                Tick::new(i32::MAX)
+            )]))]
+        );
+        harness.state_mut().commands.clear();
+        type_field(&mut harness, "b", "NaN");
+        assert_eq!(harness.state().commands, []);
+        assert!(
+            harness
+                .query_by_label_contains("is not a bar position")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn inspector_bpm_edits_a_segment_or_the_tail_and_rejects_invalid_tempo() {
+        let mut harness = timing_harness();
+        harness.state_mut().window.focus = Some(Tick::new(960));
+        harness.run();
+        type_field(&mut harness, "BPM", "150");
+        assert_eq!(
+            harness.state().commands,
+            [Command::Edit(Edit::SetBpmAt {
+                tick: Tick::new(960),
+                bpm: Bpm::try_from(150.0).unwrap()
+            })]
+        );
+        harness.state_mut().commands.clear();
+        type_field(&mut harness, "BPM", "0");
+        assert_eq!(harness.state().commands, []);
+        assert!(harness.query_by_label_contains("is not a tempo").is_some());
+        harness.state_mut().window.focus = Some(Tick::new(1920));
+        harness.run();
+        type_field(&mut harness, "BPM", "90");
+        assert_eq!(
+            harness.state().commands,
+            [Command::Edit(Edit::TailBpm {
+                bpm: Bpm::try_from(90.0).unwrap(),
+                merge: false
+            })]
+        );
+    }
+
+    #[test]
+    fn start_bpm_edits_the_first_segment_and_reports_invalid_input() {
+        let mut harness = timing_harness();
+        type_field(&mut harness, "Start BPM", "140");
+        assert_eq!(
+            harness.state().commands,
+            [Command::Edit(Edit::SetBpmAt {
+                tick: Tick::new(0),
+                bpm: Bpm::try_from(140.0).unwrap()
+            })]
+        );
+        harness.state_mut().commands.clear();
+        type_field(&mut harness, "Start BPM", "999999999999999999");
+        assert_eq!(harness.state().commands, []);
+        assert!(harness.query_by_label_contains("is not a tempo").is_some());
+    }
+
+    #[test]
+    fn a_song_without_its_plugin_cannot_edit_start_bpm_or_apply_a_fit() {
+        let mut harness = timing_harness();
+        let document = harness.state().song.document().clone();
+        harness.state_mut().song = crate::Song::new(document, &[]);
+        harness.run();
+        assert!(harness.state().song.read_only().is_some());
+        assert!(
+            harness
+                .query_by_role_and_label(Role::TextInput, "Start BPM")
+                .is_none()
+        );
+        harness.state_mut().window.focus = Some(Tick::new(960));
+        harness.run();
+        assert!(
+            harness
+                .query_by_role_and_label(Role::TextInput, "t")
+                .is_none()
+        );
+        assert!(
+            harness
+                .query_by_role_and_label(Role::TextInput, "b")
+                .is_none()
+        );
+        assert!(
+            harness
+                .query_by_role_and_label(Role::TextInput, "BPM")
+                .is_none()
+        );
+        assert!(harness.query_by_label("Fit tempo  F").is_none());
+        assert_eq!(harness.state().commands, []);
+    }
+
+    #[test]
+    fn toolbar_switches_layout_rows_grid_and_snap_controls() {
+        let mut harness = timing_harness();
+        harness.get_by_label("Time").click();
+        harness.run();
+        assert_eq!(harness.state().window.layout, Layout::Time);
+        harness.get_by_label("Rows").click();
+        harness.run();
+        let rows = SecondsPerRow::ALL.last().copied().unwrap();
+        harness.get_by_label(rows.name()).click();
+        harness.run();
+        assert_eq!(harness.state().window.seconds_per_row, rows);
+        harness
+            .get_by_role_and_label(Role::ComboBox, "Grid")
+            .click();
+        harness.run();
+        harness.get_by_label("1/8   6").click();
+        harness.run();
+        assert_eq!(harness.state().window.grid.resolution.get(), 8);
+        harness.get_by_label("Onset").click();
+        harness.get_by_label("Audition").click();
+        harness.get_by_label("Follow").click();
+        harness.run();
+        assert!(!harness.state().window.snap_onset);
+        assert!(!harness.state().window.audition);
+        assert!(harness.state().window.follow);
+    }
+
+    fn preview(harness: &mut Harness<'_, WindowTest>) {
+        let pins = harness.state().song.anchors();
+        harness.state_mut().window.preview = Some((
+            crate::accuracy::Fitted {
+                pins,
+                tail: Bpm::try_from(135.0).unwrap(),
+                before_ms: 10.0,
+                after_ms: 2.0,
+            },
+            "3 anchors fitted".to_owned(),
+        ));
+        harness.run();
+    }
+
+    #[test]
+    fn fit_preview_can_be_discarded_or_applied_once_from_the_inspector() {
+        let mut harness = timing_harness();
+        preview(&mut harness);
+        assert!(
+            harness
+                .query_by_label_contains("error 10.0 → 2.0 ms")
+                .is_some()
+        );
+        assert!(harness.query_by_label_contains("Enter: apply").is_some());
+        harness.get_by_label("Discard").click();
+        harness.run();
+        assert_eq!(harness.state().window.preview, None);
+        assert_eq!(harness.state().commands, []);
+        preview(&mut harness);
+        harness.get_by_label("Apply").click();
+        harness.run();
+        assert_eq!(harness.state().window.preview, None);
+        assert_eq!(
+            harness.state().commands,
+            [Command::Edit(Edit::Repin {
+                pins: harness.state().song.anchors(),
+                tail: Bpm::try_from(135.0).unwrap()
+            })]
+        );
+    }
+
+    #[test]
+    fn read_only_fit_preview_does_not_offer_an_apply_button() {
+        let mut harness = timing_harness();
+        preview(&mut harness);
+        let document = harness.state().song.document().clone();
+        harness.state_mut().song = crate::Song::new(document, &[]);
+        harness.run();
+        assert!(harness.query_by_label("Apply").is_none());
+        assert!(harness.query_by_label("Discard").is_some());
+        assert!(harness.query_by_label_contains("Enter: apply").is_none());
+        assert_eq!(harness.state().commands, []);
+    }
+
+    #[test]
+    fn status_line_shows_the_refusal_and_changes_its_hint_during_a_drag() {
+        let mut harness = timing_harness();
+        assert!(harness.query_by_label("No issues").is_some());
+        assert!(
+            harness
+                .query_by_label_contains("Click: add anchor")
+                .is_some()
+        );
+        harness.state_mut().window.status = Some("Would cross the next anchor".to_owned());
+        harness.state_mut().window.gesture = Gesture::DragAudio {
+            tick: Tick::new(960),
+            from: 0.5,
+            to: 0.6,
+            origin: 0.5,
+        };
+        harness.run();
+        assert!(
+            harness
+                .query_by_label("Would cross the next anchor")
+                .is_some()
+        );
+        assert!(
+            harness
+                .query_by_label_contains("Moving in the audio")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn clicking_an_issue_in_the_inspector_selects_its_anchor() {
+        let mut harness = timing_harness();
+        harness.state_mut().onsets = vec![crate::Onset {
+            seconds: 0.512,
+            strength: 1.0,
+        }];
+        harness.run();
+        assert!(
+            harness
+                .state()
+                .window
+                .cache
+                .as_ref()
+                .is_some_and(|cache| !cache.issues.is_empty())
+        );
+        harness
+            .get_by_label("The anchor at 00:00.500 is 12.0 ms from its onset")
+            .click();
+        harness.run();
+        assert_eq!(harness.state().window.focus, Some(Tick::new(960)));
+        assert_eq!(harness.state().window.selection, [Tick::new(960)]);
+    }
 
     #[derive(Debug)]
     struct AcceptsTiming;
