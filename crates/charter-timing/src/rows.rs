@@ -683,6 +683,7 @@ pub fn row_at(rows: &[Row], pos: Pos2) -> Option<&Row> {
 #[cfg(test)]
 mod tests {
     use charter_core::ValidDocument;
+    use proptest::prelude::*;
 
     use super::*;
 
@@ -780,5 +781,79 @@ mod tests {
         assert!((paused.floor() - 960.0).abs() < f64::EPSILON, "{paused}");
         assert!((seconds_at_tick(timing, paused) - 1.5).abs() < 1e-9);
         assert!((tick_at_seconds(timing, 3.0) - 1920.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn an_empty_stretch_has_no_rows_and_no_measure_to_find() {
+        let document = song(&serde_json::json!([{ "tick": 0, "kind": { "bpm": 120.0 } }]));
+        let bars = Bars::new(document.timing(), Tick::new(3840), Tick::new(0), 0);
+        assert!(bars.measures().is_empty());
+        assert!(bars.rows(BarsPerRow::One, SecondsPerRow::One).is_empty());
+        assert!(bars.measure_at(0.0).is_none());
+        assert!(bars.bar_of(0.0).abs() < f64::EPSILON);
+        assert!(bars.tick_at(0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn a_one_beat_bar_and_negative_ticks_keep_their_bar_positions() {
+        let document = song(&serde_json::json!([
+            { "tick": 0, "kind": { "bpm": 120.0 } },
+            { "tick": 0, "kind": { "time_signature": [1, 4] } }
+        ]));
+        let bars = Bars::new(document.timing(), Tick::new(-960), Tick::new(1920), 0);
+        assert!((bars.bar_of(-480.0) + 0.125).abs() < 1e-9);
+        assert!((bars.tick_at(-0.125) + 480.0).abs() < 1e-9);
+        assert!((bars.bar_of(1440.0) - 1.5).abs() < 1e-9);
+        assert!((bars.tick_at(1.5) - 1440.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_delay_and_a_stop_keep_audio_time_monotonic_across_their_ticks() {
+        let document = song(&serde_json::json!([
+            { "tick": 0, "kind": { "bpm": 60.0 } },
+            { "tick": 960, "kind": { "delay": 0.5 } },
+            { "tick": 1920, "kind": { "stop": 0.5 } }
+        ]));
+        let timing = document.timing();
+        for seconds in [0.5, 1.25, 1.75, 2.25, 2.75, 3.25] {
+            let tick = tick_at_seconds(timing, seconds);
+            assert!(
+                (seconds_at_tick(timing, tick) - seconds).abs() < 1e-9,
+                "{seconds}: {tick}"
+            );
+        }
+        assert!(tick_at_seconds(timing, 1.25) < tick_at_seconds(timing, 1.75));
+    }
+
+    proptest! {
+        #![proptest_config(crate::proptest_config())]
+
+        #[test]
+        fn rows_cover_their_own_span_without_gaps_for_odd_meters_and_all_layouts(
+            numerator in 1u16..=11,
+            start_bar in 0i32..=6,
+            count in 1i32..=12,
+            layout in prop_oneof![Just(Layout::Bars), Just(Layout::Time)],
+            bars_per in prop::sample::select(BarsPerRow::ALL.to_vec()),
+            seconds_per in prop::sample::select(SecondsPerRow::ALL.to_vec()),
+        ) {
+            let document = song(&serde_json::json!([
+                { "tick": 0, "kind": { "bpm": 120.0 } },
+                { "tick": 0, "kind": { "time_signature": [numerator, 8] } }
+            ]));
+            let bar_ticks = i32::from(numerator) * 480;
+            let from = Tick::new(start_bar * bar_ticks);
+            let to = Tick::new((start_bar + count) * bar_ticks - 1);
+            let spans = Bars::new(document.timing(), from, to, 0)
+                .laid_out(layout).rows(bars_per, seconds_per);
+            prop_assert!(!spans.is_empty());
+            for span in &spans {
+                prop_assert!(span.from < span.start && span.start < span.to);
+                prop_assert!((span.start - span.from - (span.to - span.start) * LEAD_IN).abs() < 1e-9);
+            }
+            for pair in spans.windows(2) {
+                prop_assert!((pair[0].to - pair[1].start).abs() < 1e-9);
+            }
+        }
     }
 }

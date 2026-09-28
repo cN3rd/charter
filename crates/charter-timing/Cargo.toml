@@ -17,4 +17,5 @@ egui.workspace = true
 
 [dev-dependencies]
 egui_kittest.workspace = true
+proptest.workspace = true
 serde_json.workspace = true

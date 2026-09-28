@@ -510,6 +510,7 @@ pub fn issues(
 #[cfg(test)]
 mod tests {
     use charter_core::ValidDocument;
+    use proptest::prelude::*;
     use serde_json::json;
 
     use super::*;
@@ -809,5 +810,167 @@ mod tests {
         assert_eq!(median_abs([-3.0, 1.0, 2.0]), Some(2.0));
         assert_eq!(median_abs([-4.0, 1.0, 2.0, 3.0]), Some(2.5));
         assert_eq!(median_abs([]), None);
+    }
+
+    #[test]
+    fn empty_onsets_have_no_residuals_fit_or_coverage() {
+        let document = song(0.0, &json!([bpm(0, 120.0)]));
+        let timing = document.timing();
+        let grid = Grid::default();
+        assert!(residuals(timing, grid, &[], 0.0).is_empty());
+        assert_eq!(snap(&[], 0.0, 1.0), None);
+        assert_eq!(nearest_onset(&[], 0.0, 1.0), None);
+        assert_eq!(
+            metrics(timing, grid, &[], (Tick::new(0), None)),
+            Metrics {
+                error_ms: None,
+                coverage: None,
+                onsets: 0,
+            }
+        );
+        assert!(
+            fit(
+                timing,
+                (&pins_of(&document), Bpm::try_from(120.0).unwrap()),
+                0..=0,
+                &[],
+                false
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn fitting_refuses_missing_pins_and_ranges_outside_the_anchor_list() {
+        let document = song(0.0, &json!([bpm(0, 120.0)]));
+        let timing = document.timing();
+        let pins = pins_of(&document);
+        let tail = Bpm::try_from(120.0).unwrap();
+        let found = [Residual {
+            seconds: 0.5,
+            strength: 1.0,
+            line: Tick::new(960),
+            ms: 0.0,
+        }];
+        for (pins, range) in [
+            (&[][..], 0..=0),
+            (pins.as_slice(), 1..=1),
+            (pins.as_slice(), 1..=pins.len() - 1),
+        ] {
+            assert!(fit(timing, (pins, tail), range, &found, false).is_none());
+        }
+    }
+
+    #[test]
+    fn issue_descriptions_identify_each_kind_of_problem() {
+        let document = song(0.0, &json!([bpm(0, 120.0)]));
+        let timing = document.timing();
+        assert_eq!(
+            Issue::Bar {
+                tick: Tick::new(0),
+                number: 2,
+                median_ms: 7.5
+            }
+            .describe(timing),
+            "Bar 2 is 7.5 ms off its onsets"
+        );
+        assert_eq!(
+            Issue::Short { tick: Tick::new(0) }.describe(timing),
+            "The segment from 00:00.000 is shorter than a beat"
+        );
+        assert_eq!(
+            Issue::Jump {
+                tick: Tick::new(0),
+                percent: 4.0
+            }
+            .describe(timing),
+            "The tempo jumps 4.0% at 00:00.000"
+        );
+        assert_eq!(
+            Issue::Anchor {
+                tick: Tick::new(0),
+                ms: -8.0
+            }
+            .describe(timing),
+            "The anchor at 00:00.000 is 8.0 ms from its onset"
+        );
+    }
+
+    #[test]
+    fn coverage_counts_distinct_grid_lines_not_multiple_hits_on_one_line() {
+        let document = song(0.0, &json!([bpm(0, 120.0)]));
+        let timing = document.timing();
+        let found = residuals(
+            timing,
+            Grid::default(),
+            &[onset(0.01), onset(0.02), onset(1.01)],
+            0.0,
+        );
+        let measured = metrics(
+            timing,
+            Grid::default(),
+            &found,
+            (Tick::new(0), Some(Tick::new(3840))),
+        );
+        assert_eq!(measured.onsets, 3);
+        assert!((measured.error_ms.unwrap() - (200.0f64).sqrt()).abs() < 1e-9);
+        assert_eq!(measured.coverage, Some(0.5));
+        let outside = metrics(
+            timing,
+            Grid::default(),
+            &found,
+            (Tick::new(3840), Some(Tick::new(7680))),
+        );
+        assert_eq!(outside.error_ms, None);
+        assert_eq!(outside.coverage, Some(0.0));
+    }
+
+    #[test]
+    fn pauses_and_negative_ticks_measure_offsets_against_the_correct_line() {
+        let document = song(
+            0.0,
+            &json!([
+                bpm(0, 120.0),
+                { "tick": 960, "kind": { "stop": 0.5 } },
+                { "tick": 1920, "kind": { "delay": 0.25 } }
+            ]),
+        );
+        let found = residuals(
+            document.timing(),
+            Grid::default(),
+            &[onset(-0.505), onset(0.49), onset(1.01), onset(1.76)],
+            0.0,
+        );
+        assert_eq!(
+            found
+                .iter()
+                .map(|residual| residual.line)
+                .collect::<Vec<_>>(),
+            [Tick::new(-960), Tick::new(960), Tick::new(1920)]
+        );
+        assert!((found[0].ms + 5.0).abs() < 1e-9);
+        assert!((found[1].ms + 10.0).abs() < 1e-9);
+        assert!((found[2].ms - 10.0).abs() < 1e-9);
+    }
+
+    proptest! {
+        #![proptest_config(crate::proptest_config())]
+
+        #[test]
+        fn residuals_are_symmetric_around_an_unpaused_grid_line(
+            bpm_value in 60u16..=240,
+            offset_ms in 1u16..=40,
+            beat in 2i32..=20,
+        ) {
+            let document = song(0.0, &json!([bpm(0, f64::from(bpm_value))]));
+            let timing = document.timing();
+            let at = f64::from(beat) * 60.0 / f64::from(bpm_value);
+            let delta = f64::from(offset_ms) / 1000.0;
+            let found = residuals(timing, Grid::default(), &[onset(at - delta), onset(at + delta)], 0.0);
+            prop_assert_eq!(found.len(), 2);
+            prop_assert_eq!(found[0].line, Tick::new(beat * 960));
+            prop_assert_eq!(found[1].line, found[0].line);
+            prop_assert!((found[0].ms + found[1].ms).abs() < 1e-6);
+        }
     }
 }

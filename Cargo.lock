@@ -1581,6 +1581,7 @@ dependencies = [
  "charter-style",
  "egui",
  "egui_kittest",
+ "proptest",
  "serde_json",
 ]
 

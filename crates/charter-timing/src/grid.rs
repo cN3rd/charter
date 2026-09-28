@@ -169,6 +169,7 @@ fn timing_resolution(timing: Valid<'_, Timing>) -> TicksPerBeat {
 #[cfg(test)]
 mod tests {
     use charter_core::ValidDocument;
+    use proptest::prelude::*;
 
     use super::*;
 
@@ -234,5 +235,56 @@ mod tests {
         assert!((near.step_seconds - 0.5).abs() < 1e-9);
         let later = grid(4).nearest_in_time(document.timing(), 0.76).unwrap();
         assert_eq!(later.line, tick(1920));
+    }
+
+    #[test]
+    fn a_one_beat_measure_has_only_its_downbeat_at_beats() {
+        let document = song(&serde_json::json!([
+            { "tick": 0, "kind": { "bpm": 120.0 } },
+            { "tick": 0, "kind": { "time_signature": [1, 4] } }
+        ]));
+        let timing = document.timing();
+        let measure = timing.measures_from(tick(0)).next().unwrap();
+        assert_eq!(
+            grid(4).lines(&measure, timing.ticks_per_beat()),
+            vec![(tick(0), Line::Downbeat)]
+        );
+        assert_eq!(grid(4).nearest(timing, tick(960)), tick(960));
+        assert_eq!(grid(4).stepped(timing, tick(0), -1), tick(-960));
+    }
+
+    #[test]
+    fn a_resolution_without_whole_tick_steps_still_shows_the_downbeat() {
+        let document = song(&serde_json::json!([{ "tick": 0, "kind": { "bpm": 120.0 } }]));
+        let timing = document.timing();
+        let measure = timing.measures_from(tick(0)).next().unwrap();
+        assert_eq!(
+            grid(7).lines(&measure, timing.ticks_per_beat()),
+            vec![(tick(0), Line::Downbeat)]
+        );
+    }
+
+    proptest! {
+        #![proptest_config(crate::proptest_config())]
+
+        #[test]
+        fn grid_lines_are_sorted_inside_their_measure_even_before_tick_zero(
+            numerator in 1u16..=15,
+            resolution in prop::sample::select(RESOLUTIONS.to_vec()),
+            bar in -5i32..=5,
+        ) {
+            let document = song(&serde_json::json!([
+                { "tick": 0, "kind": { "bpm": 120.0 } },
+                { "tick": 0, "kind": { "time_signature": [numerator, 8] } }
+            ]));
+            let timing = document.timing();
+            let at = tick(bar * i32::from(numerator) * 480);
+            let measure = timing.measures_from(at).next().unwrap();
+            let lines = grid(resolution).lines(&measure, timing.ticks_per_beat());
+            prop_assert_eq!(lines.first(), Some(&(measure.start, Line::Downbeat)));
+            let end = measure.start.checked_add(measure.length).unwrap();
+            prop_assert!(lines.iter().all(|(line, _)| *line >= measure.start && *line < end));
+            prop_assert!(lines.windows(2).all(|pair| pair[0].0 < pair[1].0));
+        }
     }
 }

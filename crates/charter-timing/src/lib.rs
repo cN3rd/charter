@@ -1595,6 +1595,16 @@ fn nudge_notches(events: &[egui::Event]) -> Option<(i32, bool)> {
     (notches != 0).then_some((notches, coarse))
 }
 
+/// Deterministic property tests with no regression files.
+#[cfg(test)]
+fn proptest_config() -> proptest::test_runner::Config {
+    proptest::test_runner::Config {
+        failure_persistence: None,
+        rng_seed: proptest::test_runner::RngSeed::Fixed(0),
+        ..proptest::test_runner::Config::default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use charter_core::{RulesetPlugin, ValidDocument};
