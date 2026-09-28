@@ -276,10 +276,16 @@ mod tests {
             text: &str,
             into: &charter_core::ValidDocument,
         ) -> Result<ImportedTiming, Box<dyn std::error::Error + Send + Sync>> {
-            if text != "good" {
+            if text != "good" && text != "three" {
                 return Err("bad timing".into());
             }
             let mut timing = into.document().timing.clone();
+            if text == "three" {
+                timing.anchors.push(charter_core::Anchor {
+                    tick: charter_core::Tick::new(100_000),
+                    seconds: charter_core::Origin::try_from(50.0)?,
+                });
+            }
             timing.events.push(charter_core::TimingEvent {
                 tick: charter_core::Tick::new(0),
                 kind: TimingKind::Other {
@@ -399,6 +405,14 @@ mod tests {
             harness.state().1.as_slice(),
             [Action::ImportTiming(_)]
         ));
+    }
+
+    #[test]
+    fn multiple_imported_tempo_changes_are_counted_in_the_preview() {
+        let mut harness = preview(true, PLUGINS);
+        harness.state_mut().0.text = "three".to_owned();
+        harness.run();
+        assert!(harness.query_by_label_contains("2 changes").is_some());
     }
 
     #[test]
