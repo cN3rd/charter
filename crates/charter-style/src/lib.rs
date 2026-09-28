@@ -531,4 +531,23 @@ mod tests {
         assert_eq!(text.first().map(String::as_str), Some("inter"));
         assert!(!fonts.families[&icons()].contains(&"cjk".to_owned()));
     }
+
+    #[test]
+    fn a_clock_rounds_across_minute_boundaries_and_keeps_negative_times() {
+        assert_eq!(clock(59.9995), "01:00.000");
+        assert_eq!(clock(-61.234), "-01:01.234");
+        assert_eq!(clock(0.0004), "00:00.000");
+    }
+
+    #[test]
+    fn empty_fields_show_the_placeholder_instead_of_a_value_grid() {
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            fields(ui, "empty", &[], "No values");
+        });
+        output.textures_delta.clear();
+        assert!(output.shapes.iter().any(|clipped| {
+            matches!(&clipped.shape, egui::Shape::Text(text) if text.galley.text() == "No values")
+        }));
+    }
 }
