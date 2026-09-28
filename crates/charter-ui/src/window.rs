@@ -84,6 +84,11 @@ pub enum Request {
     /// Ask the user to choose a picture for the open song's artwork, and pass it to
     /// [`Window::use_artwork`].
     ChooseArtwork,
+    /// Decode `bytes`, the artwork an autosave kept, and pass the picture to
+    /// [`Window::artwork_restored`].
+    DecodeArtwork {
+        bytes: Vec<u8>,
+    },
     /// Read and decode the picture at `file`, the song's artwork, and pass it to
     /// [`Window::artwork_read`].
     ReadArtwork {
@@ -209,6 +214,7 @@ struct Restoring {
     path: Option<PathBuf>,
     audio: Option<PathBuf>,
     song: Box<Song>,
+    artwork: Option<Vec<u8>>,
 }
 
 /// Where a save the user asked for goes.
@@ -544,6 +550,11 @@ pub struct Window {
     artwork: Option<Artwork>,
     /// The notes copied last, their ticks counted from the earliest's.
     clip: Vec<charter_core::Object>,
+    /// The artwork file the song named when it was last opened or saved, which a save may write
+    /// over; any other file there is someone else's.
+    artwork_on_disk: Option<PathBuf>,
+    /// The artwork an autosave kept, to decode once its song opens.
+    restored_artwork: Option<Vec<u8>>,
     /// Text to put on the system clipboard this frame.
     clipboard_out: Option<String>,
     /// The artwork the audio of the song being started holds, and which file, to take when the
@@ -632,6 +643,7 @@ impl Window {
                 if let Some(artwork) = &mut self.artwork {
                     artwork.saved();
                 }
+                self.artwork_on_disk = self.artwork_file();
                 self.failure = None;
                 if let Some(discard) = self.after_save.take() {
                     self.carry_on(discard);
@@ -650,11 +662,17 @@ impl Window {
     pub fn recover(&mut self, bytes: &[u8]) {
         self.autosave_kept = true;
         match recovery::read(bytes, self.plugins) {
-            Ok(recovery::Kept { path, audio, song }) => {
+            Ok(recovery::Kept {
+                path,
+                audio,
+                song,
+                artwork,
+            }) => {
                 self.restoring = Some(Restoring {
                     path,
                     audio,
                     song: Box::new(song),
+                    artwork,
                 });
             }
             Err(error) => {
@@ -1014,6 +1032,31 @@ impl Window {
         if bare && self.audio_file.as_deref() == Some(file) {
             self.take_artwork(format!("cover.{extension}"), picture);
         }
+    }
+
+    /// Takes the artwork an autosave kept, decoded, as the song's artwork still to be written
+    /// beside it.
+    pub fn artwork_restored(&mut self, picture: Option<Picture>) {
+        let named = self.song.as_ref().and_then(|song| {
+            let artwork = song.document().document().metadata.artwork.as_ref();
+            artwork.map(ToString::to_string)
+        });
+        if let (Some(name), Some(picture)) = (named, picture) {
+            self.artwork = Some(Artwork::taken(name, self.artwork_file(), picture));
+        }
+    }
+
+    /// Whether the save to `file` would write the song's artwork over a file the song did not
+    /// name when it was last opened or saved there.
+    #[must_use]
+    pub fn may_replace(&self, file: &Path) -> bool {
+        self.artwork_on_disk.as_deref() == Some(file)
+    }
+
+    /// Whether the song has changes a save would keep: its own, or artwork not yet beside it.
+    fn modified(&self) -> bool {
+        self.song.as_ref().is_some_and(Song::is_modified)
+            || self.artwork.as_ref().and_then(Artwork::unsaved).is_some()
     }
 
     /// Takes what the host read of `file`, the song's artwork, or that it could not.
@@ -1389,7 +1432,7 @@ impl Window {
         let Some(song) = &self.song else {
             return;
         };
-        if !song.is_modified() {
+        if !song.is_modified() && self.artwork.as_ref().and_then(Artwork::unsaved).is_none() {
             self.drop_autosave();
             return;
         }
@@ -1409,7 +1452,13 @@ impl Window {
         }
         self.autosave_due = None;
         let audio = self.audio_file.as_deref();
-        match recovery::write(self.path.as_deref(), audio, song.document().document()) {
+        let artwork = self.artwork.as_ref().and_then(Artwork::unsaved);
+        match recovery::write(
+            self.path.as_deref(),
+            audio,
+            song.document().document(),
+            artwork,
+        ) {
             Ok(bytes) => {
                 self.requests.push(Request::Autosave { bytes });
                 self.autosave_kept = true;
@@ -1425,12 +1474,14 @@ impl Window {
             path,
             audio,
             mut song,
+            artwork,
         }) = self.restoring.take()
         else {
             return;
         };
         if restore {
             song.mark_unsaved();
+            self.restored_artwork = artwork;
             self.after_asking(Discard::Open {
                 path,
                 song,
@@ -1448,7 +1499,7 @@ impl Window {
         let Some(song) = &self.song else {
             return "charter".to_owned();
         };
-        let star = if song.is_modified() { "*" } else { "" };
+        let star = if self.modified() { "*" } else { "" };
         format!("{star}{} - charter", self.file_name(song))
     }
 
@@ -1518,7 +1569,7 @@ impl Window {
     /// Does what would lose the open song's unsaved changes, once the user says what to do with
     /// them; at once when there are none.
     fn after_asking(&mut self, discard: Discard) {
-        if self.song.as_ref().is_some_and(Song::is_modified) {
+        if self.modified() {
             self.discard = Some(discard);
         } else {
             self.carry_on(discard);
@@ -1558,6 +1609,10 @@ impl Window {
                 self.artwork = None;
                 if std::mem::take(&mut self.playing) {
                     self.requests.push(Request::Pause);
+                }
+                self.artwork_on_disk = self.artwork_file();
+                if restored && let Some(bytes) = self.restored_artwork.take() {
+                    self.requests.push(Request::DecodeArtwork { bytes });
                 }
                 let embedded = self.embedded.take();
                 if let Some((file, extension, picture)) = embedded
@@ -1963,7 +2018,7 @@ impl Window {
         }
         if ui.input(|input| input.viewport().close_requested()) && self.leaving == Leaving::Staying
         {
-            if self.song.as_ref().is_some_and(Song::is_modified) {
+            if self.modified() {
                 ui.ctx()
                     .send_viewport_cmd(egui::ViewportCommand::CancelClose);
                 self.discard = Some(Discard::Close);
@@ -6878,6 +6933,63 @@ mod tests {
         harness.state_mut().saved(Saved::To(path));
         harness.run();
         assert_eq!(request(&mut harness), Request::DropAutosave);
+    }
+
+    #[test]
+    fn an_autosave_keeps_artwork_not_yet_beside_the_song_and_restores_it() {
+        let mut harness = created();
+        harness
+            .state_mut()
+            .use_artwork(Path::new("/pictures/art.png"), Some(picture(b"png")));
+        at_time(&mut harness, 100.0);
+        at_time(&mut harness, 131.0);
+        let requests = harness.state_mut().take_requests();
+        let Some(Request::Autosave { bytes }) = requests
+            .into_iter()
+            .find(|request| matches!(request, Request::Autosave { .. }))
+        else {
+            panic!("expected an autosave");
+        };
+        let mut restored = window(Window::new(GAMES));
+        restored.state_mut().recover(&bytes);
+        restored.run();
+        restored.get_by_label("Restore").click();
+        restored.run();
+        let requests = restored.state_mut().take_requests();
+        assert!(requests.contains(&Request::DecodeArtwork {
+            bytes: b"png".to_vec()
+        }));
+        restored.state_mut().artwork_restored(Some(picture(b"png")));
+        let path = Path::new("/songs/New/New.json");
+        assert_eq!(
+            restored.state().artwork_write_for(path),
+            Some((PathBuf::from("/songs/New/art.png"), b"png".to_vec()))
+        );
+    }
+
+    #[test]
+    fn a_picture_chosen_under_the_artwork_s_own_name_still_counts_as_unsaved() {
+        let mut song: serde_json::Value = serde_json::from_slice(&four_taps()).unwrap();
+        song["metadata"]["artwork"] = serde_json::json!("cover.jpg");
+        let mut app = Window::new(PLUGINS);
+        app.open(
+            Path::new("/songs/four.json"),
+            &serde_json::to_vec(&song).unwrap(),
+        );
+        let mut harness = window(app);
+        assert_eq!(harness.state().title(), "four.json - charter");
+        harness
+            .state_mut()
+            .use_artwork(Path::new("/downloads/cover.jpg"), Some(picture(b"new")));
+        harness.run();
+        assert_eq!(harness.state().title(), "*four.json - charter");
+        let file = Path::new("/songs/cover.jpg");
+        assert!(harness.state().may_replace(file));
+        assert!(
+            !harness
+                .state()
+                .may_replace(Path::new("/elsewhere/cover.jpg"))
+        );
     }
 
     #[test]

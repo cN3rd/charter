@@ -32,7 +32,9 @@ clearing the time takes the preview away. Its artwork is a PNG or JPEG named bes
 typed or chosen with the button beside the field or File › Choose artwork…, and a preview of it
 shows under the field. Audio chosen for a song without artwork brings the cover its tags hold, as
 `cover.jpg` or `cover.png`. A chosen or embedded picture is written beside the song when it is
-saved, and a song saved to a new folder takes its artwork along. Each change is one step, and the ruleset shows as it
+saved, and a song saved to a new folder takes its artwork along. A picture not yet beside the
+song counts as an unsaved change, is kept in the autosave, and a save never writes it over a
+different picture of the same name that the song did not name; it stops and says so instead. Each change is one step, and the ruleset shows as it
 is. Settings the song's game reads as text follow as fields of their own, such as Tap Tap
 Revenge's theme, and the open chart's under the chart list. The song panel's Timing section is laid out as osu!'s timing panel is.
 The song's offset comes first: where beat 0 falls in the audio, in milliseconds, stepped by 1 ms

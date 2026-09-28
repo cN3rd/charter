@@ -20,6 +20,10 @@ struct Autosave {
     #[serde(default)]
     audio: Option<String>,
     song: Value,
+    /// The song's artwork, when it is not beside the song yet. Autosaves from before it was kept
+    /// have none.
+    #[serde(default)]
+    artwork: Option<Vec<u8>>,
 }
 
 /// What an autosave keeps.
@@ -30,10 +34,12 @@ pub(crate) struct Kept {
     /// The audio file dropped on the song.
     pub(crate) audio: Option<PathBuf>,
     pub(crate) song: Song,
+    /// The song's artwork, as the file it names is to hold it once saved.
+    pub(crate) artwork: Option<Vec<u8>>,
 }
 
 /// The autosave file for `document`, which belongs to the file at `path` and plays the audio
-/// dropped on it at `audio`, if either is known.
+/// dropped on it at `audio`, if either is known, with the bytes of `artwork` not yet beside it.
 ///
 /// # Errors
 ///
@@ -42,12 +48,14 @@ pub(crate) fn write(
     path: Option<&Path>,
     audio: Option<&Path>,
     document: &Document,
+    artwork: Option<&[u8]>,
 ) -> Result<Vec<u8>, Error> {
     let text = |path: Option<&Path>| path.and_then(Path::to_str).map(str::to_owned);
     let autosave = Autosave {
         path: text(path),
         audio: text(audio),
         song: serde_json::to_value(document)?,
+        artwork: artwork.map(<[u8]>::to_vec),
     };
     Ok(serde_json::to_vec(&autosave)?)
 }
@@ -65,6 +73,7 @@ pub(crate) fn read(bytes: &[u8], plugins: &[&'static dyn RulesetPlugin]) -> Resu
         path: autosave.path.map(PathBuf::from),
         audio: autosave.audio.map(PathBuf::from),
         song,
+        artwork: autosave.artwork,
     })
 }
 
@@ -81,6 +90,7 @@ mod tests {
             Some(Path::new("songs/demo.json")),
             Some(Path::new("/music/demo.ogg")),
             song.document(),
+            None,
         )
         .unwrap();
         let kept = read(&bytes, &[]).unwrap();
@@ -98,8 +108,17 @@ mod tests {
     }
 
     #[test]
+    fn an_autosave_keeps_the_artwork_not_yet_beside_the_song() {
+        let bytes = write(None, None, demo::song().document(), Some(b"png")).unwrap();
+        assert_eq!(
+            read(&bytes, &[]).unwrap().artwork.as_deref(),
+            Some(&b"png"[..])
+        );
+    }
+
+    #[test]
     fn an_autosave_of_a_song_without_a_file_belongs_to_none() {
-        let bytes = write(None, None, demo::song().document()).unwrap();
+        let bytes = write(None, None, demo::song().document(), None).unwrap();
         assert_eq!(read(&bytes, &[]).unwrap().path, None);
     }
 
@@ -108,14 +127,14 @@ mod tests {
     fn a_file_name_that_is_not_text_is_left_out_rather_than_changed() {
         use std::os::unix::ffi::OsStrExt;
         let odd = Path::new(std::ffi::OsStr::from_bytes(b"songs/\xff.json"));
-        let bytes = write(Some(odd), None, demo::song().document()).unwrap();
+        let bytes = write(Some(odd), None, demo::song().document(), None).unwrap();
         assert_eq!(read(&bytes, &[]).unwrap().path, None);
     }
 
     #[test]
     fn an_autosave_with_fields_it_does_not_know_is_refused() {
         let song = demo::song();
-        let bytes = write(None, None, song.document()).unwrap();
+        let bytes = write(None, None, song.document(), None).unwrap();
         let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         value["later"] = serde_json::json!(true);
         assert!(read(&serde_json::to_vec(&value).unwrap(), &[]).is_err());

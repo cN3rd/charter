@@ -154,6 +154,10 @@ impl Host {
                     }
                 }
             }
+            Request::DecodeArtwork { bytes } => {
+                let found = picture(bytes);
+                self.window.artwork_restored(found);
+            }
             Request::ReadArtwork { file } => {
                 let found = self.disk.read(&file).ok().and_then(picture);
                 self.window.artwork_read(&file, found);
@@ -183,8 +187,7 @@ impl Host {
             None => Ok(()),
         };
         let copied = copied.and_then(|()| match self.window.artwork_write_for(&path) {
-            Some((to, bytes)) => disk::write_whole(self.disk.as_ref(), &to, &bytes)
-                .map_err(|error| format!("{}: {error}", to.display())),
+            Some((to, bytes)) => self.write_artwork(&to, &bytes),
             None => Ok(()),
         });
         let saved = match copied.and_then(|()| {
@@ -195,6 +198,26 @@ impl Host {
             Err(error) => Saved::Failed(error),
         };
         self.window.saved(saved);
+    }
+
+    /// Writes the song's artwork to `to`, unless a different picture the song did not name is
+    /// there already, which is left alone and says why.
+    fn write_artwork(&self, to: &Path, bytes: &[u8]) -> Result<(), String> {
+        let theirs = self.disk.exists(to)
+            && self.disk.read(to).map_or(true, |kept| kept != bytes)
+            && !self.window.may_replace(to);
+        if theirs {
+            let name = to
+                .file_name()
+                .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
+            return Err(format!(
+                "{} already holds another picture named {name}; give the artwork another name",
+                to.parent()
+                    .map_or_else(String::new, |folder| folder.display().to_string())
+            ));
+        }
+        disk::write_whole(self.disk.as_ref(), to, bytes)
+            .map_err(|error| format!("{}: {error}", to.display()))
     }
 
     /// Saves a song the user chose to save as `chosen` into a project folder named for it,
@@ -634,10 +657,8 @@ mod tests {
         assert!(picture(b"not a picture".to_vec()).is_none());
     }
 
-    #[test]
-    fn saving_writes_chosen_artwork_beside_the_song() {
-        let mut host = host(Memory::with(&[("/m/a.ogg", b"audio")]));
-        host.window = Window::new(PLUGINS);
+    /// An empty StepMania song the plugin accepts, as its file holds it.
+    fn sm_song() -> Vec<u8> {
         let metadata = charter_core::Metadata {
             title: "t".to_owned(),
             artist: "a".to_owned(),
@@ -647,7 +668,7 @@ mod tests {
             genre: None,
             ext: charter_core::Extensions::new(),
         };
-        let song = charter_stepmania::Plugin
+        charter_stepmania::Plugin
             .new_song(&charter_core::NewSong {
                 metadata,
                 layout: 0,
@@ -655,7 +676,14 @@ mod tests {
             })
             .unwrap()
             .to_json()
-            .unwrap();
+            .unwrap()
+    }
+
+    #[test]
+    fn saving_writes_chosen_artwork_beside_the_song() {
+        let mut host = host(Memory::with(&[("/m/a.ogg", b"audio")]));
+        host.window = Window::new(PLUGINS);
+        let song = sm_song();
         host.window.open(Path::new("/m/t.json"), &song);
         host.window
             .use_artwork(Path::new("/p/art.png"), picture(png(2, 2)));
@@ -675,24 +703,7 @@ mod tests {
     fn saving_writes_the_cover_new_audio_holds_into_the_song_folder() {
         let mut host = host(Memory::with(&[("/m/track.flac", b"audio")]));
         host.window = Window::new(PLUGINS);
-        let metadata = charter_core::Metadata {
-            title: "t".to_owned(),
-            artist: "a".to_owned(),
-            audio: charter_core::ResourcePath::new("a.ogg").unwrap(),
-            preview: None,
-            artwork: None,
-            genre: None,
-            ext: charter_core::Extensions::new(),
-        };
-        let song = charter_stepmania::Plugin
-            .new_song(&charter_core::NewSong {
-                metadata,
-                layout: 0,
-                charts: vec![charter_core::NewChart::named("Easy")],
-            })
-            .unwrap()
-            .to_json()
-            .unwrap();
+        let song = sm_song();
         host.window.open(Path::new("/s/Song/Song.json"), &song);
         let audio = Path::new("/m/track.flac");
         host.window.use_audio(audio);
@@ -710,6 +721,35 @@ mod tests {
             png(2, 2)
         );
         assert!(files(&host, "/s/Song/track.flac"));
+    }
+
+    #[test]
+    fn saving_leaves_another_picture_of_the_artwork_s_name_alone() {
+        let mut host = host(Memory::with(&[
+            ("/m/track.flac", b"audio"),
+            ("/s/Song/cover.png", b"theirs"),
+        ]));
+        host.window = Window::new(PLUGINS);
+        let song = sm_song();
+        host.window.open(Path::new("/s/Song/Song.json"), &song);
+        let audio = Path::new("/m/track.flac");
+        host.window.use_audio(audio);
+        host.window.take_requests();
+        host.window
+            .artwork_embedded(audio, "png", picture(png(2, 2)).unwrap());
+        host.handle_requests(vec![Request::Write {
+            path: PathBuf::from("/s/Song/Song.json"),
+            bytes: song,
+        }]);
+        assert_eq!(
+            host.disk.read(Path::new("/s/Song/cover.png")).unwrap(),
+            b"theirs"
+        );
+        assert!(
+            host.window
+                .message()
+                .is_some_and(|message| message.contains("another picture named cover.png"))
+        );
     }
 
     #[test]

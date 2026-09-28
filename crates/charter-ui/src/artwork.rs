@@ -89,6 +89,11 @@ impl Artwork {
         (self.unsaved || now != Some(to.as_path())).then(|| (to, bytes.clone()))
     }
 
+    /// The picture's bytes while they are still to be written beside the song.
+    pub fn unsaved(&self) -> Option<&[u8]> {
+        self.bytes.as_deref().filter(|_| self.unsaved)
+    }
+
     /// Takes that the song was saved, with the artwork beside it.
     pub fn saved(&mut self) {
         self.unsaved = false;
