@@ -1580,6 +1580,7 @@ dependencies = [
  "charter-editor",
  "charter-style",
  "egui",
+ "egui_kittest",
  "serde_json",
 ]
 

@@ -1583,10 +1583,488 @@ fn nudge_notches(events: &[egui::Event]) -> Option<(i32, bool)> {
 
 #[cfg(test)]
 mod tests {
-    use charter_core::ValidDocument;
+    use charter_core::{RulesetPlugin, ValidDocument};
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
     use serde_json::json;
 
     use super::*;
+
+    #[derive(Debug)]
+    struct TestRuleset;
+
+    impl RulesetPlugin for TestRuleset {
+        fn id(&self) -> &'static str {
+            "test"
+        }
+
+        fn check(&self, _: &ValidDocument) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            Ok(())
+        }
+    }
+
+    struct WindowTest {
+        song: Song,
+        window: TimingWindow,
+        commands: Vec<Command>,
+        onsets: Vec<Onset>,
+    }
+
+    impl WindowTest {
+        fn ui(&mut self, ui: &mut egui::Ui) {
+            show(
+                ui.ctx(),
+                Inputs {
+                    song: Some(&self.song),
+                    peaks: None,
+                    onsets: &self.onsets,
+                    playing: false,
+                    latency_ms: 0.0,
+                },
+                &mut self.window,
+                &mut self.commands,
+            );
+        }
+    }
+
+    fn timing_harness() -> Harness<'static, WindowTest> {
+        let value = json!({
+            "format_version": 1,
+            "ruleset": { "id": "test", "version": "1" },
+            "metadata": { "title": "t", "artist": "a", "audio": "a.ogg" },
+            "timing": {
+                "anchors": [
+                    { "tick": 0, "seconds": 0.0 },
+                    { "tick": 960, "seconds": 0.5 },
+                    { "tick": 1920, "seconds": 1.0 }
+                ],
+                "tempo": 120.0,
+                "events": []
+            }
+        });
+        let document = ValidDocument::from_json(&serde_json::to_vec(&value).unwrap()).unwrap();
+        let state = WindowTest {
+            song: Song::new(document, &[&TestRuleset]),
+            window: TimingWindow {
+                open: true,
+                layout: Layout::Bars,
+                ..TimingWindow::default()
+            },
+            commands: Vec::new(),
+            onsets: Vec::new(),
+        };
+        let mut harness = Harness::builder()
+            .with_size(vec2(1280.0, 800.0))
+            .build_ui_state(|ui, state: &mut WindowTest| state.ui(ui), state);
+        harness.run();
+        harness
+    }
+
+    fn row_point(harness: &Harness<'_, WindowTest>, tick: i32) -> Pos2 {
+        let rect = harness.get_by_label("Measure 0").rect();
+        let fraction = f64::from(tick) / 3840.0;
+        #[allow(clippy::cast_possible_truncation)] // a fraction of one row
+        let across = ((fraction + rows::LEAD_IN) / (1.0 + rows::LEAD_IN)) as f32;
+        egui::pos2(rect.left() + across * rect.width(), rect.top() + 30.0)
+    }
+
+    fn pointer(harness: &Harness<'_, WindowTest>, pos: Pos2, pressed: bool, modifiers: Modifiers) {
+        harness.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers,
+        });
+    }
+
+    fn click(harness: &mut Harness<'_, WindowTest>, pos: Pos2, modifiers: Modifiers) {
+        harness.hover_at(pos);
+        harness.event(egui::Event::ModifiersChanged(modifiers));
+        pointer(harness, pos, true, modifiers);
+        pointer(harness, pos, false, modifiers);
+        harness.event(egui::Event::ModifiersChanged(Modifiers::NONE));
+        harness.step();
+    }
+
+    fn drag(harness: &mut Harness<'_, WindowTest>, from: Pos2, to: Pos2, modifiers: Modifiers) {
+        harness.hover_at(from);
+        harness.event(egui::Event::ModifiersChanged(modifiers));
+        pointer(harness, from, true, modifiers);
+        for step in 1..=4 {
+            #[allow(clippy::cast_precision_loss)] // four pointer steps
+            harness.hover_at(from.lerp(to, step as f32 / 4.0));
+        }
+        pointer(harness, to, false, modifiers);
+        harness.event(egui::Event::ModifiersChanged(Modifiers::NONE));
+        harness.step();
+    }
+
+    #[test]
+    fn a_row_click_emits_a_sync_and_an_audition_before_the_new_anchor() {
+        let mut harness = timing_harness();
+        assert_eq!(harness.state().song.read_only(), None);
+        let pos = row_point(&harness, 2880);
+        click(&mut harness, pos, Modifiers::NONE);
+        let [
+            Command::Edit(Edit::Sync { tick, seconds }),
+            Command::Audition(from),
+        ] = harness.state().commands.as_slice()
+        else {
+            panic!("expected sync and audition: {:?}", harness.state().commands);
+        };
+        assert_eq!(*tick, Tick::new(2880));
+        assert!((seconds - 1.5).abs() < 1e-4);
+        assert!((from - 1.0).abs() < 1e-4);
+        assert_eq!(harness.state().window.gesture, Gesture::Idle);
+    }
+
+    #[test]
+    fn dragging_a_beat_emits_one_move_and_focuses_its_destination() {
+        let mut harness = timing_harness();
+        harness.state_mut().window.grid = Grid {
+            resolution: NonZeroU16::new(8).unwrap(),
+        };
+        harness.run();
+        let from = row_point(&harness, 960);
+        let to = row_point(&harness, 1440);
+        drag(&mut harness, from, to, Modifiers::NONE);
+        assert_eq!(
+            harness.state().commands,
+            [Command::Edit(Edit::MoveAnchors(vec![(
+                Tick::new(960),
+                Tick::new(1440)
+            )]))]
+        );
+        assert_eq!(harness.state().window.gesture, Gesture::Idle);
+    }
+
+    #[test]
+    fn ctrl_dragging_an_anchor_emits_an_audio_nudge_without_changing_its_beat() {
+        let mut harness = timing_harness();
+        let from = row_point(&harness, 960);
+        let to = row_point(&harness, 1200);
+        drag(&mut harness, from, to, Modifiers::COMMAND);
+        let [Command::Edit(Edit::Nudge { ticks, by, merge })] = harness.state().commands.as_slice()
+        else {
+            panic!("expected audio nudge: {:?}", harness.state().commands);
+        };
+        assert_eq!(ticks, &[Tick::new(960)]);
+        assert!((by - 0.125).abs() < 1e-4);
+        assert!(!merge);
+        assert_eq!(harness.state().window.focus, Some(Tick::new(960)));
+    }
+
+    #[test]
+    fn shift_click_selects_the_run_and_delete_emits_one_unsync() {
+        let mut harness = timing_harness();
+        let first = row_point(&harness, 0);
+        let last = row_point(&harness, 1920);
+        click(&mut harness, first, Modifiers::NONE);
+        click(&mut harness, last, Modifiers::SHIFT);
+        assert_eq!(
+            harness.state().window.selection,
+            [Tick::new(0), Tick::new(960), Tick::new(1920)]
+        );
+        harness.key_press(Key::Delete);
+        harness.run();
+        assert_eq!(
+            harness.state().commands,
+            [Command::Edit(Edit::Unsync(vec![
+                Tick::new(0),
+                Tick::new(960),
+                Tick::new(1920)
+            ]))]
+        );
+    }
+
+    #[test]
+    fn a_band_selects_only_the_anchors_between_its_endpoints() {
+        let mut harness = timing_harness();
+        let from = row_point(&harness, 400);
+        let to = row_point(&harness, 1500);
+        drag(&mut harness, from, to, Modifiers::NONE);
+        assert_eq!(harness.state().window.selection, [Tick::new(960)]);
+        assert_eq!(harness.state().commands, []);
+        assert_eq!(harness.state().window.gesture, Gesture::Idle);
+    }
+
+    #[test]
+    fn nudges_merge_for_the_same_selection_until_a_refusal_resets_them() {
+        let mut harness = timing_harness();
+        let at = row_point(&harness, 960);
+        click(&mut harness, at, Modifiers::NONE);
+        harness.key_press(Key::ArrowRight);
+        harness.step();
+        harness.key_press(Key::ArrowRight);
+        harness.step();
+        assert_eq!(
+            harness.state().commands,
+            [
+                Command::Edit(Edit::Nudge {
+                    ticks: vec![Tick::new(960)],
+                    by: 0.001,
+                    merge: false
+                }),
+                Command::Edit(Edit::Nudge {
+                    ticks: vec![Tick::new(960)],
+                    by: 0.001,
+                    merge: true
+                })
+            ]
+        );
+        let edit = Edit::Nudge {
+            ticks: vec![Tick::new(960)],
+            by: 0.001,
+            merge: true,
+        };
+        let state = harness.state_mut();
+        let timing = state.song.timing();
+        let now = state.window.last_nudge.as_ref().unwrap().1;
+        state
+            .window
+            .refused(&edit, &Refusal::Crosses(Tick::new(1920)), timing, now);
+        harness.key_press(Key::ArrowRight);
+        harness.step();
+        assert_eq!(
+            harness.state().commands.last(),
+            Some(&Command::Edit(Edit::Nudge {
+                ticks: vec![Tick::new(960)],
+                by: 0.001,
+                merge: false
+            }))
+        );
+        assert_eq!(harness.state().window.pulse, Some((Tick::new(1920), now)));
+        assert!(
+            harness
+                .query_by_label_contains("Would cross the anchor")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn dragging_into_a_neighbour_stops_short_and_pulses_that_anchor() {
+        let mut harness = timing_harness();
+        let from = row_point(&harness, 960);
+        let to = row_point(&harness, 2400);
+        drag(&mut harness, from, to, Modifiers::NONE);
+        assert_eq!(
+            harness.state().commands,
+            [Command::Edit(Edit::MoveAnchors(vec![(
+                Tick::new(960),
+                Tick::new(1919)
+            )]))]
+        );
+        assert!(matches!(
+            harness.state().window.pulse,
+            Some((tick, _)) if tick == Tick::new(1920)
+        ));
+    }
+
+    #[test]
+    fn escape_cancels_a_drag_before_clearing_the_selection() {
+        let mut harness = timing_harness();
+        let at = row_point(&harness, 960);
+        click(&mut harness, at, Modifiers::NONE);
+        harness.state_mut().window.gesture = Gesture::DragBeat {
+            from: Tick::new(960),
+            to: Tick::new(1440),
+            origin: 0.25,
+        };
+        harness.key_press(Key::Delete);
+        harness.run();
+        assert_eq!(harness.state().commands, []);
+        harness.key_press(Key::Escape);
+        harness.run();
+        assert_eq!(harness.state().window.gesture, Gesture::Idle);
+        assert_eq!(harness.state().window.selection, [Tick::new(960)]);
+        harness.key_press(Key::Escape);
+        harness.run();
+        assert_eq!(harness.state().window.selection, []);
+    }
+
+    #[test]
+    fn adding_an_anchor_snaps_to_an_onset_unless_shift_is_held() {
+        let mut snapped = timing_harness();
+        snapped.state_mut().onsets = vec![Onset {
+            seconds: 1.512,
+            strength: 1.0,
+        }];
+        snapped.run();
+        let at = row_point(&snapped, 2880);
+        click(&mut snapped, at, Modifiers::NONE);
+        let [Command::Edit(Edit::Sync { seconds, .. }), ..] = snapped.state().commands.as_slice()
+        else {
+            panic!("expected sync: {:?}", snapped.state().commands);
+        };
+        assert!((seconds - 1.512).abs() < 1e-9);
+
+        let mut plain = timing_harness();
+        plain.state_mut().onsets = vec![Onset {
+            seconds: 1.512,
+            strength: 1.0,
+        }];
+        plain.run();
+        let at = row_point(&plain, 2880);
+        click(&mut plain, at, Modifiers::SHIFT);
+        let [Command::Edit(Edit::Sync { seconds, .. }), ..] = plain.state().commands.as_slice()
+        else {
+            panic!("expected sync: {:?}", plain.state().commands);
+        };
+        assert!((seconds - 1.5).abs() < 1e-4);
+    }
+
+    #[test]
+    fn adding_too_near_an_anchor_refuses_and_identifies_the_blocker() {
+        let mut harness = timing_harness();
+        let at = row_point(&harness, 1030);
+        click(&mut harness, at, Modifiers::NONE);
+        assert_eq!(harness.state().commands, []);
+        assert!(matches!(
+            harness.state().window.pulse,
+            Some((tick, _)) if tick == Tick::new(960)
+        ));
+        assert!(
+            harness
+                .query_by_label_contains("Too close to the anchor")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn ctrl_dragging_past_a_neighbour_keeps_a_millisecond_between_them() {
+        let mut harness = timing_harness();
+        let from = row_point(&harness, 960);
+        let to = row_point(&harness, 2400);
+        drag(&mut harness, from, to, Modifiers::COMMAND);
+        let [Command::Edit(Edit::Nudge { ticks, by, merge })] = harness.state().commands.as_slice()
+        else {
+            panic!("expected constrained nudge: {:?}", harness.state().commands);
+        };
+        assert_eq!(ticks, &[Tick::new(960)]);
+        assert!((by - 0.499).abs() < 1e-5);
+        assert!(!merge);
+        assert!(matches!(
+            harness.state().window.pulse,
+            Some((tick, _)) if tick == Tick::new(1920)
+        ));
+    }
+
+    #[test]
+    fn selecting_two_anchors_loops_their_span_and_layout_switch_keeps_the_focus() {
+        let mut harness = timing_harness();
+        let first = row_point(&harness, 0);
+        let last = row_point(&harness, 1920);
+        click(&mut harness, first, Modifiers::NONE);
+        click(&mut harness, last, Modifiers::SHIFT);
+        harness.key_press_modifiers(Modifiers::SHIFT, Key::L);
+        harness.step();
+        assert_eq!(
+            harness.state().commands,
+            [Command::Loop {
+                from: Tick::new(0),
+                to: Tick::new(1920)
+            }]
+        );
+        harness.key_press(Key::V);
+        harness.step();
+        assert_eq!(harness.state().window.layout, Layout::Time);
+        assert_eq!(harness.state().window.scroll_to, None);
+        assert!(harness.query_by_label("Row at 0.0 s").is_some());
+    }
+
+    #[test]
+    fn dragging_one_of_several_selected_anchors_moves_the_whole_run() {
+        let mut harness = timing_harness();
+        harness.state_mut().window.grid = Grid {
+            resolution: NonZeroU16::new(8).unwrap(),
+        };
+        harness.run();
+        let first = row_point(&harness, 0);
+        let second = row_point(&harness, 960);
+        click(&mut harness, first, Modifiers::NONE);
+        click(&mut harness, second, Modifiers::SHIFT);
+        let to = row_point(&harness, 1440);
+        drag(&mut harness, second, to, Modifiers::NONE);
+        assert_eq!(
+            harness.state().commands,
+            [Command::Edit(Edit::MoveAnchors(vec![
+                (Tick::new(0), Tick::new(480)),
+                (Tick::new(960), Tick::new(1440))
+            ]))]
+        );
+    }
+
+    #[test]
+    fn a_key_after_clicking_outside_the_window_does_not_edit_the_song() {
+        let mut harness = timing_harness();
+        let at = row_point(&harness, 960);
+        click(&mut harness, at, Modifiers::NONE);
+        assert!(harness.state().window.has_keyboard());
+        click(&mut harness, egui::pos2(20.0, 20.0), Modifiers::NONE);
+        assert!(!harness.state().window.has_keyboard());
+        harness.key_press(Key::Delete);
+        harness.step();
+        assert_eq!(harness.state().commands, []);
+    }
+
+    #[test]
+    fn only_a_focused_existing_anchor_can_be_auditioned_with_enter() {
+        let mut harness = timing_harness();
+        harness.key_press(Key::Enter);
+        harness.step();
+        assert_eq!(harness.state().commands, []);
+        let at = row_point(&harness, 960);
+        click(&mut harness, at, Modifiers::NONE);
+        harness.key_press(Key::Enter);
+        harness.step();
+        assert_eq!(harness.state().commands, [Command::Audition(0.0)]);
+    }
+
+    #[test]
+    fn nudge_merge_expires_at_the_window_and_is_scoped_to_the_same_targets() {
+        let mut window = TimingWindow::default();
+        let mut commands = Vec::new();
+        window.focus = Some(Tick::new(960));
+        window.nudge(0.001, 1.0, &mut commands);
+        window.nudge(0.001, 1.8, &mut commands);
+        window.selection = vec![Tick::new(0), Tick::new(960)];
+        window.nudge(0.001, 1.9, &mut commands);
+        assert_eq!(
+            commands,
+            [
+                Command::Edit(Edit::Nudge {
+                    ticks: vec![Tick::new(960)],
+                    by: 0.001,
+                    merge: false
+                }),
+                Command::Edit(Edit::Nudge {
+                    ticks: vec![Tick::new(960)],
+                    by: 0.001,
+                    merge: false
+                }),
+                Command::Edit(Edit::Nudge {
+                    ticks: vec![Tick::new(0), Tick::new(960)],
+                    by: 0.001,
+                    merge: false
+                })
+            ]
+        );
+    }
+
+    #[test]
+    fn a_missing_onset_for_a_fit_explains_why_no_edit_was_made() {
+        let mut harness = timing_harness();
+        let at = row_point(&harness, 960);
+        click(&mut harness, at, Modifiers::NONE);
+        harness.key_press(Key::F);
+        harness.step();
+        assert_eq!(harness.state().commands, []);
+        assert!(
+            harness
+                .query_by_label_contains("No onsets to fit")
+                .is_some()
+        );
+    }
 
     #[test]
     fn timing_keys_fit_beside_the_inspector_and_leave_room_for_rows() {
