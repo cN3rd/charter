@@ -608,7 +608,13 @@ impl RulesetPlugin for Plugin {
             tick: object.tick,
             kind,
         };
-        note.to_object(lanes).ok()
+        // What else the note carries, such as another plugin's data, stays with it.
+        let changed = note.to_object(lanes).ok()?;
+        Some(Object {
+            sample: object.sample.clone(),
+            ext: object.ext.clone(),
+            ..changed
+        })
     }
 
     fn text_settings(&self) -> Vec<TextSetting> {
@@ -1559,6 +1565,14 @@ mod tests {
                 .change_note("nonsense", &tap(0), lanes.width())
                 .is_none()
         );
+        let mut carrying = tap(1);
+        carrying
+            .ext
+            .insert("swing.accent".parse().unwrap(), serde_json::json!(true));
+        let changed = Plugin
+            .change_note("arrow", &carrying, lanes.width())
+            .unwrap();
+        assert_eq!(changed.ext, carrying.ext);
     }
 
     #[test]

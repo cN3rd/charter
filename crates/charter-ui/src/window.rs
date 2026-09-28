@@ -557,6 +557,8 @@ pub struct Window {
     restored_artwork: Option<Vec<u8>>,
     /// Pictures chosen but not saved whose names an undo took away, until another song opens.
     parked: Vec<Artwork>,
+    /// Whether the audio playing was asked to keep its pitch.
+    played_pitch: bool,
     /// Text to put on the system clipboard this frame.
     clipboard_out: Option<String>,
     /// The artwork the audio of the song being started holds, and which file, to take when the
@@ -925,6 +927,7 @@ impl Window {
             looping,
             keep_pitch: self.settings.keep_pitch,
         });
+        self.played_pitch = self.settings.keep_pitch;
     }
 
     /// Switches between the usual speed and the alternate one.
@@ -980,8 +983,9 @@ impl Window {
 
     fn set_rate(&mut self, rate: Rate) {
         self.rate = rate;
-        // Audio that keeps its pitch is stretched for its speed, so a new speed plays it again.
-        if self.playing && self.settings.keep_pitch {
+        // Audio that keeps its pitch, or played keeping it, is stretched for its speed, so a new
+        // speed plays it again.
+        if self.playing && (self.settings.keep_pitch || self.played_pitch) {
             self.replay();
         } else if self.playing {
             self.requests.push(Request::Rate(rate.factor()));
@@ -2098,6 +2102,10 @@ impl Window {
                 panels::status_bar(ui, self.song.as_ref(), (&audio_state, self.playing));
             });
         self.follow_artwork();
+        // Keeping the pitch or not changes how the audio plays, so it plays again.
+        if self.playing && self.played_pitch != self.settings.keep_pitch {
+            self.replay();
+        }
         if let Some(text) = self.clipboard_out.take() {
             ui.ctx().copy_text(text);
         }
@@ -4946,6 +4954,33 @@ mod tests {
             panic!("expected playback again, got {requests:?}");
         };
         assert!((rate - 0.9).abs() < 1e-9, "{rate}");
+    }
+
+    #[test]
+    fn turning_keep_pitch_off_while_playing_plays_again_and_speeds_follow() {
+        let mut harness = playable();
+        harness.state_mut().set_rate(Rate::of(0.6));
+        space(&mut harness);
+        harness.state_mut().take_requests();
+        harness.state_mut().settings.keep_pitch = false;
+        harness.run();
+        let requests = harness.state_mut().take_requests();
+        assert!(
+            matches!(
+                requests.last(),
+                Some(Request::Play {
+                    keep_pitch: false,
+                    ..
+                })
+            ),
+            "{requests:?}"
+        );
+        harness.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::ArrowRight);
+        harness.run();
+        let Request::Rate(rate) = request(&mut harness) else {
+            panic!("expected a rate");
+        };
+        assert!((rate - 0.7).abs() < 1e-9, "{rate}");
     }
 
     #[test]
