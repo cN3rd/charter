@@ -174,4 +174,66 @@ mod tests {
         let unsaved = Artwork::named("art.png", None).shown(&ctx).err();
         assert_eq!(unsaved, Some("Shown once the song is saved"));
     }
+
+    #[test]
+    fn a_pending_picture_survives_a_stale_read_until_it_is_saved() {
+        let path = Path::new("/songs/song.json");
+        let file = Path::new("/songs/cover.png");
+        let mut artwork = Artwork::taken(
+            "cover.png".to_owned(),
+            Some(file.to_path_buf()),
+            picture(b"chosen"),
+        );
+        artwork.step = 3;
+        artwork.read(Some(picture(b"old file")));
+        assert_eq!(artwork.unsaved(), Some(b"chosen".as_slice()));
+        assert_eq!(artwork.step, 3);
+        assert_eq!(
+            artwork.write_for(path, Some(file)),
+            Some((file.to_path_buf(), b"chosen".to_vec()))
+        );
+        artwork.saved();
+        assert_eq!(artwork.unsaved(), None);
+        artwork.read(Some(picture(b"new file")));
+        assert_eq!(
+            artwork.write_for(Path::new("/elsewhere/song.json"), Some(file)),
+            Some((PathBuf::from("/elsewhere/cover.png"), b"new file".to_vec()))
+        );
+    }
+
+    #[test]
+    fn a_saved_picture_shows_one_texture_until_the_file_is_read_again() {
+        let ctx = egui::Context::default();
+        let mut artwork = Artwork::taken("cover.png".to_owned(), None, picture(b"chosen"));
+        artwork.saved();
+        let first = artwork.shown(&ctx).unwrap().id();
+        assert_eq!(artwork.shown(&ctx).unwrap().id(), first);
+        artwork.read(Some(picture(b"new file")));
+        let second = artwork.shown(&ctx).unwrap().id();
+        assert_ne!(first, second);
+        assert_eq!(artwork.shown(&ctx).unwrap().id(), second);
+    }
+
+    #[test]
+    fn a_missing_or_unreadable_file_cannot_be_copied_to_a_new_folder() {
+        let ctx = egui::Context::default();
+        let mut artwork = Artwork::named("cover.png", Some(Path::new("/old/cover.png")));
+        assert_eq!(artwork.shown(&ctx).err(), Some("Reading…"));
+        artwork.read(None);
+        assert_eq!(
+            artwork.shown(&ctx).err(),
+            Some("Not a picture beside the song")
+        );
+        assert_eq!(artwork.unsaved(), None);
+        assert_eq!(artwork.write_for(Path::new("/new/song.json"), None), None);
+        artwork.read(Some(picture(b"found")));
+        assert!(artwork.shown(&ctx).is_ok());
+        assert_eq!(
+            artwork.write_for(
+                Path::new("/new/song.json"),
+                Some(Path::new("/old/cover.png"))
+            ),
+            Some((PathBuf::from("/new/cover.png"), b"found".to_vec()))
+        );
+    }
 }

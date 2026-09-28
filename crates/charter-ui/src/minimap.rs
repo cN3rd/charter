@@ -145,26 +145,32 @@ pub fn show(
 
 #[cfg(test)]
 mod tests {
-    use charter_core::ValidDocument;
+    use charter_core::{Tick, ValidDocument};
     use egui::pos2;
+    use egui_kittest::Harness;
     use serde_json::json;
 
     use super::*;
 
-    fn song() -> Song {
-        let tap = |tick: i32| {
-            json!({ "tick": tick, "position": { "lane": { "index": 0 } },
-                    "kind": "tap", "shape": "instant" })
-        };
+    fn song_with(objects: &[serde_json::Value]) -> Song {
         let document = json!({
             "format_version": 1,
             "ruleset": { "id": "test", "version": "1" },
             "metadata": { "title": "t", "artist": "a", "audio": "a.ogg" },
             "timing": { "anchors": [ { "tick": 0, "seconds": 0.0 } ], "tempo": 120.0, "events": [] },
-            "charts": [ { "name": "Easy", "lanes": 4, "objects": [tap(0), tap(19_200)] } ]
+            "charts": [ { "name": "Easy", "lanes": 4, "objects": objects } ]
         });
         let document = ValidDocument::from_json(&serde_json::to_vec(&document).unwrap()).unwrap();
         Song::new(document, &[])
+    }
+
+    fn tap(tick: i32) -> serde_json::Value {
+        json!({ "tick": tick, "position": { "lane": { "index": 0 } },
+                "kind": "tap", "shape": "instant" })
+    }
+
+    fn song() -> Song {
+        song_with(&[tap(0), tap(19_200)])
     }
 
     fn rect() -> Rect {
@@ -189,5 +195,64 @@ mod tests {
         assert!((map.seconds_at(100.0) - 20.0).abs() < 1e-3);
         assert!((map.seconds_at(-50.0) - 20.0).abs() < 1e-3);
         assert!(map.seconds_at(900.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn an_empty_chart_still_maps_one_second_without_dividing_by_zero() {
+        let map = Map::of(&song_with(&[]), rect(), None, false);
+        assert!((map.y_of(0.0) - 100.0).abs() < 1e-3);
+        assert!((map.y_of(1.0) - 300.0).abs() < 1e-3);
+        assert!((map.seconds_at(200.0) - 0.5).abs() < 1e-9);
+        assert!((map.seconds_at(900.0) - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_note_before_tick_zero_is_visible_and_can_be_reached_in_both_directions() {
+        let song = song_with(&[tap(-1_920), tap(19_200)]);
+        let normal = Map::of(&song, rect(), None, false);
+        let reversed = Map::of(&song, rect(), None, true);
+        assert!((normal.y_of(-1.0) - 100.0).abs() < 1e-3);
+        assert!((normal.seconds_at(100.0) + 1.0).abs() < 1e-9);
+        assert!((reversed.y_of(-1.0) - 300.0).abs() < 1e-3);
+        assert!((reversed.seconds_at(300.0) + 1.0).abs() < 1e-9);
+        assert!((normal.y_of(10.0) - 300.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn dragging_outside_the_strip_jumps_only_as_far_as_the_chart_ends() {
+        let mut song = song();
+        song.jump_to(Tick::new(960));
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(200.0, 400.0))
+            .build_ui_state(
+                |ui, (song, actions): &mut (Song, Vec<Action>)| {
+                    show(ui, rect(), song, ((0.0, 2.0), None, false), actions);
+                },
+                (song, Vec::new()),
+            );
+        harness.run();
+        let at = pos2(20.0, 150.0);
+        harness.hover_at(at);
+        harness.event(egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+        harness.hover_at(pos2(20.0, 350.0));
+        harness.run();
+        assert!(
+            harness
+                .state()
+                .1
+                .contains(&Action::JumpTo(Tick::new(19_200)))
+        );
+        harness.hover_at(pos2(20.0, 50.0));
+        harness.run();
+        assert_eq!(
+            harness.state().1.last(),
+            Some(&Action::JumpTo(Tick::new(0)))
+        );
     }
 }

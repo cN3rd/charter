@@ -235,6 +235,7 @@ impl Canvas {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui::Color32;
 
     fn flip(direction: Direction) -> Flip {
         Flip {
@@ -295,5 +296,176 @@ mod tests {
         assert_eq!(flip(Direction::Down).align(below_left), Align2::LEFT_BOTTOM);
         assert_eq!(flip(Direction::Left).align(below_left), Align2::LEFT_TOP);
         assert_eq!(flip(Direction::Right).align(below_left), Align2::RIGHT_TOP);
+    }
+
+    #[test]
+    fn points_across_the_field_and_just_outside_it_round_trip_in_every_direction() {
+        for direction in Direction::ALL {
+            let flip = flip(direction);
+            let field = flip.field();
+            for x in [-10.0, 0.0, 0.25, 0.5, 0.75, 1.0, 1.1] {
+                for y in [-0.1, 0.0, 0.25, 0.5, 0.75, 1.0, 1.1] {
+                    let at = field.min + vec2(x * field.width(), y * field.height());
+                    let back = flip.back(flip.pos(at));
+                    assert!(
+                        (back - at).length() < 0.001,
+                        "{direction:?}: {at:?} → {back:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn turned_rectangles_keep_their_sides_and_their_centres() {
+        let rect = Rect::from_min_size(pos2(120.0, 90.0), vec2(45.0, 70.0));
+        for direction in Direction::ALL {
+            let flip = flip(direction);
+            let turned = flip.rect(rect);
+            let size = if direction.across() {
+                vec2(70.0, 45.0)
+            } else {
+                vec2(45.0, 70.0)
+            };
+            assert_eq!(turned.size(), size, "{direction:?}");
+            assert_eq!(turned.center(), flip.pos(rect.center()), "{direction:?}");
+        }
+    }
+
+    #[test]
+    fn text_alignment_turns_each_side_and_keeps_centred_axes_centred() {
+        let anchors = [Align::Min, Align::Center, Align::Max];
+        for direction in Direction::ALL {
+            let flip = flip(direction);
+            for x in anchors {
+                for y in anchors {
+                    let anchor = flip.align(Align2([x, y]));
+                    let offset = |align| match align {
+                        Align::Min => -1,
+                        Align::Center => 0,
+                        Align::Max => 1,
+                    };
+                    let (x, y) = (offset(x), offset(y));
+                    let expected = match direction {
+                        Direction::Up => (x, y),
+                        Direction::Down => (x, -y),
+                        Direction::Left => (y, x),
+                        Direction::Right => (-y, x),
+                    };
+                    assert_eq!(
+                        (offset(anchor.0[0]), offset(anchor.0[1])),
+                        expected,
+                        "{direction:?}: ({x}, {y})"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn image_corners_keep_their_texture_coordinates_when_the_field_turns() {
+        let rect = Rect::from_min_max(pos2(110.0, 60.0), pos2(130.0, 80.0));
+        let cases = [
+            (
+                Direction::Up,
+                [
+                    pos2(110.0, 60.0),
+                    pos2(130.0, 60.0),
+                    pos2(130.0, 80.0),
+                    pos2(110.0, 80.0),
+                ],
+            ),
+            (
+                Direction::Down,
+                [
+                    pos2(110.0, 340.0),
+                    pos2(130.0, 340.0),
+                    pos2(130.0, 320.0),
+                    pos2(110.0, 320.0),
+                ],
+            ),
+            (
+                Direction::Left,
+                [
+                    pos2(110.0, 60.0),
+                    pos2(110.0, 80.0),
+                    pos2(130.0, 80.0),
+                    pos2(130.0, 60.0),
+                ],
+            ),
+            (
+                Direction::Right,
+                [
+                    pos2(490.0, 60.0),
+                    pos2(490.0, 80.0),
+                    pos2(470.0, 80.0),
+                    pos2(470.0, 60.0),
+                ],
+            ),
+        ];
+        for (direction, positions) in cases {
+            let ctx = egui::Context::default();
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                Canvas::new(ui.painter().clone(), flip(direction))
+                    .image(egui::TextureId::User(1), rect);
+            });
+            output.textures_delta.clear();
+            let mesh = output
+                .shapes
+                .iter()
+                .find_map(|shape| {
+                    if let Shape::Mesh(mesh) = &shape.shape {
+                        Some(mesh)
+                    } else {
+                        None
+                    }
+                })
+                .expect("the image produces a textured mesh");
+            let uv = [
+                pos2(0.0, 0.0),
+                pos2(1.0, 0.0),
+                pos2(1.0, 1.0),
+                pos2(0.0, 1.0),
+            ];
+            for ((vertex, position), uv) in mesh.vertices.iter().zip(positions).zip(uv) {
+                assert_eq!(
+                    (vertex.pos, vertex.uv, vertex.color),
+                    (position, uv, Color32::WHITE),
+                    "{direction:?}"
+                );
+            }
+            assert_eq!(mesh.vertices.len(), 4);
+            assert_eq!(mesh.indices, [0, 1, 2, 0, 2, 3]);
+        }
+    }
+
+    #[test]
+    fn a_circle_moves_with_the_field_but_keeps_its_radius() {
+        let positions = [
+            (Direction::Up, pos2(130.0, 90.0)),
+            (Direction::Down, pos2(130.0, 310.0)),
+            (Direction::Left, pos2(140.0, 80.0)),
+            (Direction::Right, pos2(460.0, 80.0)),
+        ];
+        for (direction, expected) in positions {
+            let ctx = egui::Context::default();
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                Canvas::new(ui.painter().clone(), flip(direction)).circle_filled(
+                    pos2(130.0, 90.0),
+                    7.0,
+                    Color32::RED,
+                );
+            });
+            output.textures_delta.clear();
+            let circle = output.shapes.iter().find_map(|shape| match &shape.shape {
+                Shape::Circle(circle) => Some(circle),
+                _ => None,
+            });
+            let circle = circle.expect("the canvas paints a circle");
+            assert_eq!(
+                (circle.center, circle.radius, circle.fill),
+                (expected, 7.0, Color32::RED)
+            );
+        }
     }
 }
