@@ -26,8 +26,8 @@ enum Loaded {
     Onsets(Arc<[Onset]>),
 }
 
-/// The song's audio playing: as it is, at a speed that moves its pitch too, or stretched to keep
-/// its pitch at `rate` times its speed.
+/// The song's audio playing: as it is, sped like tape, or stretched so its speed changes while
+/// its pitch stays put.
 enum Playing {
     /// Playback whose pitch changes with speed.
     Plain(StaticSoundHandle),

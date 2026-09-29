@@ -1,8 +1,8 @@
 //! The log-mel spectrogram Beat This! listens to, computed as its reference front end computes
 //! it with torchaudio: 22 050 Hz audio, a 1024-sample periodic Hann window every 441 samples, so
 //! 50 frames a second, the signal reflected at either end so each frame is centred on its hop,
-//! magnitudes divided by the square root of the window's length, 128 Slaney mel bands from 30 Hz to 11 kHz without
-//! area normalisation, and `ln(1 + 1000 x)`.
+//! magnitudes divided by the square root of the window's length, 128 Slaney mel bands from 30 Hz
+//! to 11 kHz without area normalisation, and `ln(1 + 1000 x)`.
 
 use std::f64::consts::PI;
 

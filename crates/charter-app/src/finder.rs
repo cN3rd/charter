@@ -204,7 +204,6 @@ fn cleanup_partial_on_error<T>(
     result
 }
 
-/// Adds the failed stream operation without discarding the underlying I/O error.
 /// Copies a response body while reporting the share received, when its length is known.
 fn copy_weights(
     reader: &mut impl Read,

@@ -1,10 +1,11 @@
 //! A tempo map from a song's beats, the back end of automatic timing. The beats come from a beat
-//! tracker a frame apart at best, so each is first moved onto the strongest onset near it. The
-//! beats are then counted, a missed one as two, and split where the tempo changes into stretches
-//! whose beats fall on a straight line in time, found as the partition with the least squared
-//! error plus a cost for each stretch. Each stretch's tempo is fitted and snapped to a whole, half
-//! or third BPM when the grid stays within a few milliseconds of the beats, and its bars come
-//! from the tracker's downbeats. The stretches become the song's timing as sections.
+//! tracker a frame apart at best, so the song's median tracker lag is learned and each beat is
+//! moved onto the nearest onset near it. The beats are then counted, a missed one as two, and
+//! split where the tempo changes into stretches whose beats fall on a straight line in time, found
+//! as the partition with the least squared error plus a cost for each stretch. Each stretch's tempo
+//! is fitted and snapped to a whole, half or third BPM when the grid stays within a few milliseconds
+//! of the beats, and its bars come from the tracker's downbeats. The stretches become the song's
+//! timing as sections.
 //!
 //! The method follows the pipeline surveyed in the book's automatic timing chapter: change
 //! points on beat times, fitted and snapped a segment at a time.
