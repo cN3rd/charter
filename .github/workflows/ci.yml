@@ -148,12 +148,11 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ci-${{ github.run_number }}
-          target_commitish: ${{ github.sha }}
-          name: Development build ${{ github.run_number }}
-          body_path: notes.md
-          prerelease: true
-          files: dist/*
-          fail_on_unmatched_files: true
+      - run: >
+          gh release create "ci-$GITHUB_RUN_NUMBER" dist/*
+          --target "$GITHUB_SHA"
+          --title "Development build $GITHUB_RUN_NUMBER"
+          --notes-file notes.md
+          --prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
