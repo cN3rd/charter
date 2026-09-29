@@ -96,8 +96,12 @@ pub fn tags(bytes: Vec<u8>, extension: Option<&str>) -> Tags {
     for tag in every {
         let text = |text: &str| Some(text.trim().to_owned()).filter(|text| !text.is_empty());
         match &tag.std {
-            Some(StandardTag::TrackTitle(title)) => found.title = found.title.or(text(title)),
-            Some(StandardTag::Artist(artist)) => found.artist = found.artist.or(text(artist)),
+            Some(StandardTag::TrackTitle(title)) => {
+                found.title = found.title.or_else(|| text(title));
+            }
+            Some(StandardTag::Artist(artist)) => {
+                found.artist = found.artist.or_else(|| text(artist));
+            }
             _ => {}
         }
     }
@@ -160,7 +164,7 @@ mod tests {
         bytes.extend(block(0, false, &info));
         bytes.extend(block(4, pictures.is_empty(), &vorbis));
         for (at, body) in pictures.iter().enumerate() {
-            bytes.extend(block(6, at + 1 == pictures.len(), body));
+            bytes.extend(block(6, at.saturating_add(1) == pictures.len(), body));
         }
         bytes.extend(silent_frame());
         bytes
@@ -229,7 +233,7 @@ mod tests {
             (&b"front"[..], "jpg")
         );
         let only = tags_of(pictured(&[], &[back]));
-        assert_eq!(only.artwork.map(|artwork| artwork.extension), Some("png"));
+        assert_eq!(only.artwork.map(|image| image.extension), Some("png"));
         let unknown = tags_of(pictured(&[], &[picture(3, "image/x-weird", b"?")]));
         assert_eq!(unknown.artwork, None);
     }

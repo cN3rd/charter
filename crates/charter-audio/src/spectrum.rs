@@ -5,13 +5,15 @@
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex;
 
-use crate::Track;
+use crate::{Track, cast};
 
 /// Frames of the spectrum a second.
 const PER_SECOND: f64 = Spectrum::PER_SECOND;
 /// Samples each frame's window spans at 44.1 kHz, about 46 ms: enough to tell 30 Hz from 60.
 const WINDOW: usize = 2048;
+/// Lower pitch edge of the spectrum in hertz.
 const LOWEST: f64 = 30.0;
+/// Upper pitch edge of the spectrum in hertz.
 const HIGHEST: f64 = 16_000.0;
 /// How far below the track's loudest, in decibels, a band reads as silent.
 const RANGE: f64 = 80.0;
@@ -19,10 +21,10 @@ const RANGE: f64 = 80.0;
 const SILENT: f64 = -40.0;
 
 /// How loud each band of a track is over time.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Spectrum {
     /// Frames of `BANDS` levels each, from 0 for silent to 255 for the track's loudest.
-    levels: Vec<[u8; Spectrum::BANDS]>,
+    levels: Vec<[u8; Self::BANDS]>,
 }
 
 impl Spectrum {
@@ -49,8 +51,7 @@ impl Spectrum {
             .collect();
         let window: Vec<f32> = (0..WINDOW)
             .map(|n| {
-                #[allow(clippy::cast_precision_loss)] // a window's length
-                let phase = std::f32::consts::TAU * n as f32 / WINDOW as f32;
+                let phase = std::f32::consts::TAU * cast::usize_f32(n) / cast::usize_f32(WINDOW);
                 0.5 - 0.5 * phase.cos()
             })
             .collect();
@@ -58,22 +59,19 @@ impl Spectrum {
         let fft = FftPlanner::<f32>::new().plan_fft_forward(WINDOW);
         let mut buffer = vec![Complex::new(0.0, 0.0); WINDOW];
         let mut scratch = vec![Complex::new(0.0, 0.0); fft.get_inplace_scratch_len()];
-        #[allow(clippy::cast_precision_loss)] // a track's samples, far inside f64
-        let seconds = mono.len() as f64 / rate;
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // a frame count
-        let frames = (seconds * PER_SECOND).ceil() as usize;
+        let seconds = cast::usize_f64(mono.len()) / rate;
+        let frames = cast::f64_usize((seconds * PER_SECOND).ceil());
         let mut decibels: Vec<[f64; Self::BANDS]> = Vec::with_capacity(frames);
         for frame in 0..frames {
             // Centred on the sample nearest its time, rather than a rounded hop apart, which
             // drifts at rates 200 does not divide, such as 44.1 kHz. Silence before the track
             // and after it.
-            #[allow(clippy::cast_precision_loss)] // a frame index
-            let time = frame as f64 / PER_SECOND;
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // a sample index
-            let centre = (time * rate).round() as usize;
+            let time = cast::usize_f64(frame) / PER_SECOND;
+            let centre = cast::f64_usize((time * rate).round());
             for (at, (slot, weight)) in buffer.iter_mut().zip(&window).enumerate() {
-                let sample = (centre + at)
-                    .checked_sub(WINDOW / 2)
+                let sample = centre
+                    .checked_add(at)
+                    .and_then(|index| index.checked_sub(WINDOW.div_euclid(2)))
                     .and_then(|index| mono.get(index))
                     .copied()
                     .unwrap_or(0.0);
@@ -84,8 +82,7 @@ impl Spectrum {
             for (level, &(from, to)) in row.iter_mut().zip(&bands) {
                 let bins = buffer.get(from..to).unwrap_or_default();
                 let power: f64 = bins.iter().map(|bin| f64::from(bin.norm_sqr())).sum();
-                #[allow(clippy::cast_precision_loss)] // a few bins
-                let mean = power / bins.len().max(1) as f64;
+                let mean = power / cast::usize_f64(bins.len().max(1));
                 *level = 10.0 * (mean + 1e-12).log10();
             }
             decibels.push(row);
@@ -102,9 +99,7 @@ impl Spectrum {
             .map(|row| {
                 row.map(|level| {
                     let scaled = ((level - loudest + RANGE) / RANGE).clamp(0.0, 1.0) * 255.0;
-                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // 0 to 255
-                    let level = scaled.round() as u8;
-                    level
+                    cast::f64_u8(scaled.round())
                 })
             })
             .collect();
@@ -116,8 +111,7 @@ impl Spectrum {
     #[must_use]
     pub fn between(&self, from: f64, to: f64) -> Option<[u8; Self::BANDS]> {
         let frame = |seconds: f64| {
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // a frame
-            let frame = (seconds * PER_SECOND).round().max(0.0) as usize;
+            let frame = cast::f64_usize((seconds * PER_SECOND).round().max(0.0));
             frame
         };
         if to < 0.0 {
@@ -129,8 +123,8 @@ impl Spectrum {
             .get(first..=last.min(self.levels.len().checked_sub(1)?))?;
         let mut most = [0; Self::BANDS];
         for row in rows {
-            for (most, level) in most.iter_mut().zip(row) {
-                *most = (*most).max(*level);
+            for (peak, level) in most.iter_mut().zip(row) {
+                *peak = (*peak).max(*level);
             }
         }
         Some(most)
@@ -140,19 +134,17 @@ impl Spectrum {
 /// The FFT bins each band sums, as a range from its first to past its last, every band at least
 /// one bin wide.
 fn bands(rate: f64) -> Vec<(usize, usize)> {
-    #[allow(clippy::cast_precision_loss)] // a window's length
-    let per_bin = rate / WINDOW as f64;
-    let nyquist = WINDOW / 2;
+    let per_bin = rate / cast::usize_f64(WINDOW);
+    let nyquist = WINDOW.div_euclid(2);
     let ratio =
         (HIGHEST / LOWEST).powf(1.0 / f64::from(u16::try_from(Spectrum::BANDS).unwrap_or(1)));
     (0..Spectrum::BANDS)
         .map(|band| {
             let low = LOWEST * ratio.powi(i32::try_from(band).unwrap_or(0));
             let high = low * ratio;
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // bins of a window
-            let from = ((low / per_bin).floor() as usize).min(nyquist);
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-            let to = ((high / per_bin).ceil() as usize).clamp(from + 1, nyquist + 1);
+            let from = cast::f64_usize((low / per_bin).floor()).min(nyquist);
+            let to = cast::f64_usize((high / per_bin).ceil())
+                .clamp(from.saturating_add(1), nyquist.saturating_add(1));
             (from, to)
         })
         .collect()
@@ -165,13 +157,12 @@ mod tests {
     const RATE: u32 = 44_100;
 
     fn tone(hz: f64, seconds: f64) -> Track {
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let length = (seconds * f64::from(RATE)) as usize;
+        let length = cast::f64_usize(seconds * f64::from(RATE));
         let frames = (0..length)
             .map(|n| {
-                #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
-                let sample =
-                    (0.5 * (std::f64::consts::TAU * hz * n as f64 / f64::from(RATE)).sin()) as f32;
+                let sample = cast::f64_f32(
+                    0.5 * (std::f64::consts::TAU * hz * cast::usize_f64(n) / f64::from(RATE)).sin(),
+                );
                 [sample; 2]
             })
             .collect();
@@ -181,8 +172,7 @@ mod tests {
     /// The band `hz` falls in.
     fn band_of(hz: f64) -> usize {
         let ratio = (HIGHEST / LOWEST).powf(1.0 / 48.0);
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let band = ((hz / LOWEST).ln() / ratio.ln()).floor() as usize;
+        let band = cast::f64_usize(((hz / LOWEST).ln() / ratio.ln()).floor());
         band
     }
 

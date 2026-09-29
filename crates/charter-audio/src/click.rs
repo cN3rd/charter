@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::Track;
+use crate::{Track, cast};
 
 /// A short sound the editor mixes over the song.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -39,18 +39,18 @@ pub enum Tick {
 impl Tick {
     /// The tick at its own pitch.
     #[must_use]
-    pub fn tone(self) -> Tone {
+    pub const fn tone(self) -> Tone {
         self.pitched(0)
     }
 
     /// The tick `cents` hundredths of a semitone up, or down when negative.
     #[must_use]
-    pub fn pitched(self, cents: i16) -> Tone {
+    pub const fn pitched(self, cents: i16) -> Tone {
         Tone::Tick { sound: self, cents }
     }
 
     /// The hit sound's WAV file, for the ticks that are one.
-    fn wav(self) -> Option<&'static [u8]> {
+    const fn wav(self) -> Option<&'static [u8]> {
         macro_rules! hit {
             ($name:literal) => {
                 include_bytes!(concat!("../assets/hitsounds/", $name, ".wav"))
@@ -96,7 +96,7 @@ impl Kit {
     ];
 
     #[must_use]
-    pub fn name(self) -> &'static str {
+    pub const fn name(self) -> &'static str {
         match self {
             Self::ToneGate => "Tone gate",
             Self::SoftBuzz => "Soft buzz",
@@ -111,7 +111,7 @@ impl Kit {
     }
 
     /// The kit's accent and beat, as WAV files.
-    fn wavs(self) -> (&'static [u8], &'static [u8]) {
+    const fn wavs(self) -> (&'static [u8], &'static [u8]) {
         macro_rules! pair {
             ($name:literal) => {
                 (
@@ -144,7 +144,7 @@ impl Gain {
 
     /// The factor on the samples, from 0 to 1.
     #[must_use]
-    pub fn amplitude(self) -> f32 {
+    pub const fn amplitude(self) -> f32 {
         self.0
     }
 
@@ -248,17 +248,14 @@ fn tick(sound: Tick, rate: u32) -> Vec<[f32; 2]> {
         (1_000.0, 0.06, 0.4)
     };
     let rate = f64::from(rate.max(1));
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // a few thousand frames
-    let length = (seconds * rate).round() as usize;
+    let length = cast::f64_usize((seconds * rate).round());
     (0..length)
         .map(|frame| {
-            #[allow(clippy::cast_precision_loss)] // frames of a short tone stay exact
-            let at = frame as f64;
+            let at = cast::usize_f64(frame);
             let left = 1.0 - at / seconds / rate;
             let envelope = left * left;
             let wave = (std::f64::consts::TAU * hertz * at / rate).sin();
-            #[allow(clippy::cast_possible_truncation)] // a sample within -1 to 1
-            let sample = (wave * envelope * level) as f32;
+            let sample = cast::f64_f32(wave * envelope * level);
             [sample, sample]
         })
         .collect()
@@ -282,20 +279,19 @@ fn resample(frames: &[[f32; 2]], from: u32, to: u32) -> Vec<[f32; 2]> {
 
 /// `frames` read `step` frames apart, by straight lines between them.
 fn resample_by(frames: &[[f32; 2]], step: f64) -> Vec<[f32; 2]> {
-    #[allow(clippy::cast_precision_loss)] // a short sound's frames stay exact
-    let length = frames.len() as f64 / step;
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // a few thousand frames
-    let length = length.round() as usize;
+    let length = cast::usize_f64(frames.len()) / step;
+    let length = cast::f64_usize(length.round());
     (0..length)
         .map(|frame| {
-            #[allow(clippy::cast_precision_loss)] // as above
-            let at = frame as f64 * step;
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // within the sound
-            let before = at.floor() as usize;
-            #[allow(clippy::cast_possible_truncation)] // a weight between 0 and 1
-            let weight = (at - at.floor()) as f32;
+            let at = cast::usize_f64(frame) * step;
+            let before = cast::f64_usize(at.floor());
+            let weight = cast::f64_f32(at - at.floor());
             let a = frames.get(before).copied().unwrap_or_default();
-            let b = frames.get(before + 1).copied().unwrap_or(a);
+            let b = before
+                .checked_add(1)
+                .and_then(|next| frames.get(next))
+                .copied()
+                .unwrap_or(a);
             let ([a_left, a_right], [b_left, b_right]) = (a, b);
             [
                 a_left + (b_left - a_left) * weight,
@@ -305,9 +301,11 @@ fn resample_by(frames: &[[f32; 2]], step: f64) -> Vec<[f32; 2]> {
         .collect()
 }
 
-/// `track` at the music's volume in `volumes`, with each tone mixed in at its time, in seconds
-/// into the audio, at the volume `volumes` gives its kind, so turning one down leaves the rest.
-/// Tones past either end are left out.
+/// `track` with each tone in `clicks` mixed in.
+///
+/// The music plays at its volume in `volumes`, and each tone at its time, in seconds into the
+/// audio, at the volume `volumes` gives its kind, so turning one down leaves the rest. Tones past
+/// either end are left out.
 #[must_use]
 pub fn mix(track: &Track, clicks: &[(f64, Tone)], volumes: Volumes) -> Track {
     let rate = track.rate().get();
@@ -329,8 +327,7 @@ pub fn mix(track: &Track, clicks: &[(f64, Tone)], volumes: Volumes) -> Track {
         if !start.is_finite() || start < 0.0 {
             continue;
         }
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // checked above
-        let start = start.round() as usize;
+        let start = cast::f64_usize(start.round());
         let Some(under) = frames.get_mut(start..) else {
             continue;
         };
@@ -406,7 +403,7 @@ mod tests {
         let own = render(Tick::Clap.tone(), 44_100).len();
         let up = render(Tick::Clap.pitched(1200), 44_100).len();
         let down = render(Tick::Clap.pitched(-1200), 44_100).len();
-        assert!(up.abs_diff(own / 2) <= 1, "{up} of {own}");
+        assert!(up.abs_diff(own.div_euclid(2)) <= 1, "{up} of {own}");
         assert!(down.abs_diff(own * 2) <= 1, "{down} of {own}");
     }
 
@@ -428,6 +425,7 @@ mod tests {
             Volumes::default(),
         );
         let frames = mixed.frames();
+        assert!(frames.len() >= 4100);
         assert!(loudest(&frames[..4000]) < f32::EPSILON);
         assert!(loudest(&frames[4000..4100]) > 0.05);
     }
@@ -555,6 +553,7 @@ mod tests {
             Volumes::default(),
         );
         assert_eq!(mixed.frames().len(), 800);
+        assert_eq!(silent.frames().len(), 800);
         assert_eq!(&mixed.frames()[..798], &silent.frames()[..798]);
         assert!(mixed.frames()[799][0].abs() > 0.1);
     }

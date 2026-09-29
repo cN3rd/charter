@@ -3,6 +3,7 @@
 use std::io::Cursor;
 use std::num::NonZeroU32;
 
+use crate::cast;
 use symphonia::core::codecs::audio::AudioDecoderOptions;
 use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, TrackType};
@@ -77,7 +78,7 @@ impl Track {
                 Err(error) => return Err(unreadable(error)),
             };
             let spec = buffer.spec();
-            rate = rate.or(NonZeroU32::new(spec.rate()));
+            rate = rate.or_else(|| NonZeroU32::new(spec.rate()));
             let channels = spec.channels().count();
             buffer.copy_to_vec_interleaved(&mut samples);
             frames.extend(samples.chunks(channels.max(1)).map(|frame| match frame {
@@ -106,7 +107,7 @@ impl Track {
 
     /// Frames per second.
     #[must_use]
-    pub fn rate(&self) -> NonZeroU32 {
+    pub const fn rate(&self) -> NonZeroU32 {
         self.rate
     }
 
@@ -118,8 +119,7 @@ impl Track {
     /// How long the track plays at its own speed, in seconds.
     #[must_use]
     pub fn seconds(&self) -> f64 {
-        #[allow(clippy::cast_precision_loss)] // hours of audio stay exact in an f64
-        let frames = self.frames.len() as f64;
+        let frames = cast::usize_f64(self.frames.len());
         frames / f64::from(self.rate.get())
     }
 }
@@ -130,17 +130,17 @@ mod tests {
 
     /// A 16-bit PCM WAV file of `channels` interleaved channels at `rate` holding `samples`.
     fn wav(rate: u32, channels: u16, samples: &[i16]) -> Vec<u8> {
-        let data = u32::try_from(samples.len() * 2).unwrap();
-        let block = channels * 2;
+        let data = u32::try_from(samples.len().saturating_mul(2)).unwrap();
+        let block = channels.saturating_mul(2);
         let mut bytes = Vec::new();
         bytes.extend_from_slice(b"RIFF");
-        bytes.extend_from_slice(&(36 + data).to_le_bytes());
+        bytes.extend_from_slice(&36u32.saturating_add(data).to_le_bytes());
         bytes.extend_from_slice(b"WAVEfmt ");
         bytes.extend_from_slice(&16u32.to_le_bytes());
         bytes.extend_from_slice(&1u16.to_le_bytes());
         bytes.extend_from_slice(&channels.to_le_bytes());
         bytes.extend_from_slice(&rate.to_le_bytes());
-        bytes.extend_from_slice(&(rate * u32::from(block)).to_le_bytes());
+        bytes.extend_from_slice(&rate.saturating_mul(u32::from(block)).to_le_bytes());
         bytes.extend_from_slice(&block.to_le_bytes());
         bytes.extend_from_slice(&16u16.to_le_bytes());
         bytes.extend_from_slice(b"data");

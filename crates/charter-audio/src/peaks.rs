@@ -1,7 +1,7 @@
 //! A summary of a track for drawing its waveform: the lowest and highest sample over each block
 //! of frames, at resolutions from fine to coarse, so any stretch of time reads in a few steps.
 
-use crate::Track;
+use crate::{Track, cast};
 
 /// Frames a block holds at the finest resolution.
 const FINEST: usize = 64;
@@ -14,19 +14,21 @@ pub struct Extent {
 }
 
 impl Extent {
+    /// The zero-amplitude extent used when no frames contribute.
     const SILENT: Self = Self {
         low: 0.0,
         high: 0.0,
     };
 
     /// The extent covering both.
-    fn and(self, other: Self) -> Self {
+    const fn and(self, other: Self) -> Self {
         Self {
             low: self.low.min(other.low),
             high: self.high.max(other.high),
         }
     }
 
+    /// The minimum and maximum across both channels of `frames`, including zero.
     fn of(frames: &[[f32; 2]]) -> Self {
         let samples = frames.iter().flatten().copied();
         samples.fold(Self::SILENT, |extent, sample| Self {
@@ -93,11 +95,11 @@ impl Peaks {
     #[must_use]
     pub fn to_bytes(&self, source: u64) -> Vec<u8> {
         let finest = self.levels.first().map_or(&[][..], Vec::as_slice);
-        let mut bytes = Vec::with_capacity(HEADER + finest.len() * 8);
+        let mut bytes = Vec::with_capacity(HEADER.saturating_add(finest.len().saturating_mul(8)));
         bytes.extend_from_slice(MAGIC);
         bytes.extend_from_slice(&source.to_le_bytes());
         bytes.extend_from_slice(&self.rate.to_le_bytes());
-        bytes.extend_from_slice(&(self.frames as u64).to_le_bytes());
+        bytes.extend_from_slice(&cast::usize_u64(self.frames).to_le_bytes());
         for extent in finest {
             bytes.extend_from_slice(&extent.low.to_le_bytes());
             bytes.extend_from_slice(&extent.high.to_le_bytes());
@@ -112,13 +114,16 @@ impl Peaks {
     pub fn from_bytes(bytes: &[u8], source: u64) -> Option<Self> {
         let (header, body) = bytes.split_at_checked(HEADER)?;
         let (magic, header) = header.split_at(MAGIC.len());
-        let word = |at: usize| -> Option<[u8; 8]> { header.get(at..at + 8)?.try_into().ok() };
+        let word =
+            |at: usize| -> Option<[u8; 8]> { header.get(at..at.checked_add(8)?)?.try_into().ok() };
         if magic != MAGIC || u64::from_le_bytes(word(0)?) != source {
             return None;
         }
         let rate = f64::from_le_bytes(word(8)?);
         let frames = usize::try_from(u64::from_le_bytes(word(16)?)).ok()?;
-        if !(rate.is_finite() && rate > 0.0) || body.len() != frames.div_ceil(FINEST) * 8 {
+        if !(rate.is_finite() && rate > 0.0)
+            || Some(body.len()) != frames.div_ceil(FINEST).checked_mul(8)
+        {
             return None;
         }
         let (pairs, _) = body.as_chunks::<8>();
@@ -143,24 +148,32 @@ impl Peaks {
         if !(start.is_finite() && end.is_finite()) || end < 0.0 {
             return Extent::SILENT;
         }
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // clamped to the track
-        let frames = |at: f64| (at.max(0.0) as usize).min(self.frames);
+        let frames = |at: f64| cast::f64_usize(at.max(0.0)).min(self.frames);
         let (start, end) = (frames(start.floor()), frames(end.ceil()));
         if start >= self.frames {
             return Extent::SILENT;
         }
-        let end = end.max(start + 1);
+        let end = end.max(start.saturating_add(1));
         // The coarsest level that still gives the stretch a few blocks.
-        let span = end - start;
+        let span = end.saturating_sub(start);
         let level = (0..self.levels.len())
             .rev()
-            .find(|&level| span / (FINEST << level) >= 4)
+            .find(|&level| {
+                FINEST
+                    .checked_shl(u32::try_from(level).unwrap_or(u32::MAX))
+                    .is_some_and(|block| block != 0 && span.div_euclid(block) >= 4)
+            })
             .unwrap_or(0);
-        let block = FINEST << level;
+        let block = FINEST
+            .checked_shl(u32::try_from(level).unwrap_or(u32::MAX))
+            .unwrap_or(FINEST);
         let Some(blocks) = self.levels.get(level) else {
             return Extent::SILENT;
         };
-        let (first, last) = (start / block, end.div_ceil(block).min(blocks.len()));
+        let (first, last) = (
+            start.div_euclid(block),
+            end.div_ceil(block).min(blocks.len()),
+        );
         let covered = blocks.get(first..last).unwrap_or_default();
         covered
             .iter()

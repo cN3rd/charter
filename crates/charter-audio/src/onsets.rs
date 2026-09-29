@@ -11,7 +11,7 @@ use std::sync::Arc;
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex;
 
-use crate::Track;
+use crate::{Track, cast};
 
 /// Samples a frame holds, about 12 ms at 44.1 kHz: short enough that an onset's frame puts it
 /// within 5 ms, where the envelope finds it exactly.
@@ -60,8 +60,7 @@ pub fn onsets(track: &Track) -> Vec<Onset> {
         .collect();
     let flux = flux(&mono);
     let frames_per = |seconds: f64| {
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // a few hundred
-        let frames = (seconds * rate / HOP_SAMPLES).ceil() as usize;
+        let frames = cast::f64_usize((seconds * rate / HOP_SAMPLES).ceil());
         frames.max(1)
     };
     let (apart, before, after) = (frames_per(APART), frames_per(BEFORE), frames_per(AFTER));
@@ -72,7 +71,13 @@ pub fn onsets(track: &Track) -> Vec<Onset> {
     let mut peaks: Vec<(f64, f32)> = Vec::new();
     for (index, &value) in flux.iter().enumerate() {
         let near = flux
-            .get(index.saturating_sub(apart)..(index + apart + 1).min(flux.len()))
+            .get(
+                index.saturating_sub(apart)
+                    ..index
+                        .saturating_add(apart)
+                        .saturating_add(1)
+                        .min(flux.len()),
+            )
             .unwrap_or_default();
         // The first of equal highest values in reach is the peak.
         let highest = near.iter().copied().fold(0.0, f32::max);
@@ -84,15 +89,19 @@ pub fn onsets(track: &Track) -> Vec<Onset> {
             continue;
         }
         let around = flux
-            .get(index.saturating_sub(before)..(index + after + 1).min(flux.len()))
+            .get(
+                index.saturating_sub(before)
+                    ..index
+                        .saturating_add(after)
+                        .saturating_add(1)
+                        .min(flux.len()),
+            )
             .unwrap_or_default();
-        #[allow(clippy::cast_precision_loss)] // a few hundred values
-        let mean = around.iter().sum::<f32>() / around.len() as f32;
+        let mean = around.iter().sum::<f32>() / cast::usize_f32(around.len());
         if value < FLOOR || value < mean + DELTA * loudest {
             continue;
         }
-        #[allow(clippy::cast_precision_loss)] // a frame of a track, far below 2^52
-        let at = index as f64 + parabola(&flux, index);
+        let at = cast::usize_f64(index) + parabola(&flux, index);
         // The flux of a frame rises as a hit reaches the middle of the window, at its hop.
         let sample = at * HOP_SAMPLES - HOP_SAMPLES / 2.0;
         peaks.push((sample, value - mean));
@@ -119,25 +128,35 @@ pub fn onsets(track: &Track) -> Vec<Onset> {
 /// since the frame before, on compressed magnitudes.
 fn flux(mono: &[f32]) -> Vec<f32> {
     let fft = FftPlanner::<f32>::new().plan_fft_forward(FRAME);
-    #[allow(clippy::cast_precision_loss)] // 512 samples
     let window: Vec<f32> = (0..FRAME)
         .map(|n| {
-            let phase = std::f32::consts::TAU * n as f32 / FRAME as f32;
+            let phase = std::f32::consts::TAU * cast::usize_f32(n) / cast::usize_f32(FRAME);
             0.5 - 0.5 * phase.cos()
         })
         .collect();
-    let bins = FRAME / 2 + 1;
+    let bins = FRAME.div_euclid(2).saturating_add(1);
     let mut previous = vec![0.0f32; bins];
     let mut buffer = vec![Complex::new(0.0, 0.0); FRAME];
     let mut scratch = vec![Complex::new(0.0, 0.0); fft.get_inplace_scratch_len()];
     // Each frame is centred on its hop, with silence before the track, so a hit on the first
     // sample sits in the middle of a frame rather than at the edge of its window. None reaches
     // past the end, where the cut to silence would read as a hit.
-    let frames = mono.len().saturating_sub(FRAME / 2) / HOP + 1;
+    let frames = mono
+        .len()
+        .saturating_sub(FRAME.div_euclid(2))
+        .div_euclid(HOP)
+        .saturating_add(1);
     let mut values = Vec::with_capacity(frames);
     for frame in 0..frames {
-        let start = (frame * HOP).checked_sub(FRAME / 2);
-        let skip = start.map_or_else(|| FRAME / 2 - frame * HOP, |_| 0);
+        let start = frame.saturating_mul(HOP).checked_sub(FRAME.div_euclid(2));
+        let skip = start.map_or_else(
+            || {
+                FRAME
+                    .div_euclid(2)
+                    .saturating_sub(frame.saturating_mul(HOP))
+            },
+            |_| 0,
+        );
         let from = start.unwrap_or(0);
         buffer.fill(Complex::new(0.0, 0.0));
         let samples = mono.get(from..).unwrap_or_default().iter();
@@ -147,7 +166,7 @@ fn flux(mono: &[f32]) -> Vec<f32> {
         fft.process_with_scratch(&mut buffer, &mut scratch);
         let mut sum = 0.0;
         for (bin, old) in buffer.iter().take(bins).zip(previous.iter_mut()) {
-            let magnitude = (1.0 + COMPRESSION * bin.norm()).ln();
+            let magnitude = (COMPRESSION * bin.norm()).ln_1p();
             sum += (magnitude - *old).max(0.0);
             *old = magnitude;
         }
@@ -163,7 +182,7 @@ fn parabola(values: &[f32], index: usize) -> f64 {
     let (Some(&before), Some(&peak), Some(&after)) = (
         index.checked_sub(1).and_then(|at| values.get(at)),
         values.get(index),
-        values.get(index + 1),
+        index.checked_add(1).and_then(|next| values.get(next)),
     ) else {
         return 0.0;
     };
@@ -177,8 +196,7 @@ fn parabola(values: &[f32], index: usize) -> f64 {
 /// The loudness of `mono` up to each sample: its rectified samples averaged over the 5 ms before
 /// it, long enough to span a low note's cycle and not reaching ahead of what has sounded.
 fn envelope(mono: &[f32], rate: f64) -> Vec<f32> {
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // hundreds of samples
-    let span = ((rate * 0.005) as usize).max(1);
+    let span = cast::f64_usize(rate * 0.005).max(1);
     let running: Vec<f64> = std::iter::once(0.0)
         .chain(mono.iter().scan(0.0, |sum, sample| {
             *sum += f64::from(sample.abs());
@@ -187,13 +205,13 @@ fn envelope(mono: &[f32], rate: f64) -> Vec<f32> {
         .collect();
     (0..mono.len())
         .map(|at| {
-            let (from, to) = ((at + 1).saturating_sub(span), at + 1);
+            let to = at.saturating_add(1);
+            let from = to.saturating_sub(span);
             let sum = running
                 .get(to)
                 .zip(running.get(from))
                 .map_or(0.0, |(a, b)| a - b);
-            #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)] // a mean
-            let mean = (sum / (to - from) as f64) as f32;
+            let mean = cast::f64_f32(sum / cast::usize_f64(to.saturating_sub(from)));
             mean
         })
         .collect()
@@ -203,10 +221,9 @@ fn envelope(mono: &[f32], rate: f64) -> Vec<f32> {
 /// point before the loudest where `envelope` has climbed [`START`] of the way from the one to
 /// the other. None where it does not climb.
 fn attack_start(envelope: &[f32], (from, to): (f64, f64)) -> Option<f64> {
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // within the track
     let (from, to) = (
-        from.max(0.0) as usize,
-        (to.max(0.0) as usize).min(envelope.len()),
+        cast::f64_usize(from.max(0.0)),
+        cast::f64_usize(to.max(0.0)).min(envelope.len()),
     );
     let span = envelope.get(from..to)?;
     let (peak_at, &peak) = span.iter().enumerate().max_by(|a, b| a.1.total_cmp(b.1))?;
@@ -223,8 +240,7 @@ fn attack_start(envelope: &[f32], (from, to): (f64, f64)) -> Option<f64> {
         .get(quiet_at..=peak_at)?
         .iter()
         .position(|level| *level >= threshold)?;
-    #[allow(clippy::cast_precision_loss)] // a sample index
-    let start = (from + quiet_at + start) as f64;
+    let start = cast::usize_f64(from.saturating_add(quiet_at).saturating_add(start));
     Some(start)
 }
 
@@ -236,10 +252,10 @@ const MAGIC: &[u8; 8] = b"CHONSET3";
 /// [fingerprint](crate::fingerprint) is `source`.
 #[must_use]
 pub fn onsets_to_bytes(onsets: &[Onset], source: u64) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(24 + onsets.len() * 12);
+    let mut bytes = Vec::with_capacity(24usize.saturating_add(onsets.len().saturating_mul(12)));
     bytes.extend_from_slice(MAGIC);
     bytes.extend_from_slice(&source.to_le_bytes());
-    bytes.extend_from_slice(&(onsets.len() as u64).to_le_bytes());
+    bytes.extend_from_slice(&cast::usize_u64(onsets.len()).to_le_bytes());
     for onset in onsets {
         bytes.extend_from_slice(&onset.seconds.to_le_bytes());
         bytes.extend_from_slice(&onset.strength.to_le_bytes());
@@ -253,7 +269,8 @@ pub fn onsets_to_bytes(onsets: &[Onset], source: u64) -> Vec<u8> {
 pub fn onsets_from_bytes(bytes: &[u8], source: u64) -> Option<Arc<[Onset]>> {
     let (header, body) = bytes.split_at_checked(24)?;
     let (magic, header) = header.split_at(8);
-    let word = |at: usize| -> Option<[u8; 8]> { header.get(at..at + 8)?.try_into().ok() };
+    let word =
+        |at: usize| -> Option<[u8; 8]> { header.get(at..at.checked_add(8)?)?.try_into().ok() };
     if magic != MAGIC || u64::from_le_bytes(word(0)?) != source {
         return None;
     }
@@ -288,18 +305,14 @@ mod tests {
     /// Silence with a decaying 2 kHz click at each of `times`, each at its `level`.
     fn clicks(times: &[(f64, f32)], seconds: f64) -> Track {
         let rate = f64::from(RATE);
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let length = (seconds * rate) as usize;
+        let length = cast::f64_usize(seconds * rate);
         let mut frames = vec![[0.0f32; 2]; length];
         for &(at, level) in times {
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-            let start = (at * rate).round() as usize;
+            let start = cast::f64_usize((at * rate).round());
             for (offset, frame) in frames.iter_mut().skip(start).take(2000).enumerate() {
-                #[allow(clippy::cast_precision_loss)]
-                let t = offset as f64 / rate;
-                #[allow(clippy::cast_possible_truncation)]
+                let t = cast::usize_f64(offset) / rate;
                 let sample =
-                    ((std::f64::consts::TAU * 2000.0 * t).sin() * (-t / 0.008).exp()) as f32;
+                    cast::f64_f32((std::f64::consts::TAU * 2000.0 * t).sin() * (-t / 0.008).exp());
                 *frame = [sample * level; 2];
             }
         }
@@ -327,20 +340,16 @@ mod tests {
     /// the kind of hit whose waveform is still climbing well after it starts.
     fn kicks(times: &[f64], seconds: f64) -> Track {
         let rate = f64::from(RATE);
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let length = (seconds * rate) as usize;
+        let length = cast::f64_usize(seconds * rate);
         let mut frames = vec![[0.0f32; 2]; length];
         for &at in times {
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-            let start = (at * rate).round() as usize;
+            let start = cast::f64_usize((at * rate).round());
             for (offset, frame) in frames.iter_mut().skip(start).take(19_800).enumerate() {
-                #[allow(clippy::cast_precision_loss)]
-                let t = offset as f64 / rate;
+                let t = cast::usize_f64(offset) / rate;
                 let swell = (t / 0.015).min(1.0);
-                #[allow(clippy::cast_possible_truncation)]
-                let sample =
-                    ((std::f64::consts::TAU * 60.0 * t).sin() * swell * (-t / 0.050).exp() * 0.8)
-                        as f32;
+                let sample = cast::f64_f32(
+                    (std::f64::consts::TAU * 60.0 * t).sin() * swell * (-t / 0.050).exp() * 0.8,
+                );
                 *frame = [sample; 2];
             }
         }
@@ -382,8 +391,9 @@ mod tests {
     fn a_steady_tone_has_at_most_the_onset_where_it_begins() {
         let frames: Vec<[f32; 2]> = (0..88_200u32)
             .map(|n| {
-                #[allow(clippy::cast_precision_loss)] // two seconds of samples
-                let sample = (std::f32::consts::TAU * 440.0 * n as f32 / 44_100.0).sin() * 0.5;
+                let sample =
+                    (std::f32::consts::TAU * 440.0 * cast::f64_f32(f64::from(n)) / 44_100.0).sin()
+                        * 0.5;
                 [sample; 2]
             })
             .collect();
