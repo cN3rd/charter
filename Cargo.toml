@@ -68,6 +68,22 @@ egui_kittest = "0.36.2"
 # ponytail: std only; the fork and timeout features pull in a temp-file runner the sans-io tests
 # do not need.
 proptest = { version = "1.11.0", default-features = false, features = ["std"] }
+symphonia = { version = "0.6.1", default-features = false, features = [
+    "opt-simd",
+    "all-meta",
+    "aiff",
+    "caf",
+    "isomp4",
+    "ogg",
+    "wav",
+    "aac",
+    "adpcm",
+    "alac",
+    "mpa",
+    "flac",
+    "pcm",
+    "vorbis",
+] }
 
 # ponytail: correctness enforced by the compiler, not by review.
 # Loosen an individual lint at the call site with #[expect(.., reason = "..")], don't weaken it here.
@@ -140,8 +156,7 @@ strip = true
 lto = "fat"
 codegen-units = 1
 
-# Workspace optimizations to workspace to third-party dependencies
-# which are noticeably slow on debug builds
+# Optimize runtime-hot third-party dependencies that are noticeably slow in debug builds.
 [profile.dev.package.symphonia]
 opt-level = 3
 

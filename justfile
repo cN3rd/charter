@@ -32,7 +32,7 @@ test *args:
 
 # Lint everything
 clippy:
-    cargo clippy --workspace --all-targets
+    cargo clippy --workspace --all-targets -- -D warnings
 
 # Format everything
 fmt:

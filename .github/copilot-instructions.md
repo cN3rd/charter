@@ -4,7 +4,7 @@ A charting/editor app for rhythm games, serving several games rather than one. C
 ArrowVortex, Moonscraper, Editor on Fire, the StepMania editor, the osu! editor. Nothing
 game-specific belongs in the shared core.
 
-Rust Cargo workspace, edition 2024, `resolver = "3"` (needs Rust 1.85+; developed on 1.96).
+Rust Cargo workspace, edition 2024, `resolver = "3"` (MSRV 1.95; developed on 1.96).
 
 ## Commands
 
@@ -13,7 +13,7 @@ cargo check --workspace --all-targets   # fast feedback loop
 cargo test --workspace
 cargo test -p charter-core format_chapter  # single test: -p <crate> <substring of test path>
 cargo test -p charter-core -- --nocapture --exact json::tests::the_format_chapter_example_survives_a_round_trip
-cargo clippy --workspace --all-targets
+cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo run -p charter-app                 # the editor; add `-- path/to/song.json` to open a song
 cargo run -p charter-ui --example mock   # the static mock of the UI draft

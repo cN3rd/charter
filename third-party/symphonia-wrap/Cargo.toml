@@ -8,22 +8,5 @@ rust-version.workspace = true
 [lib]
 crate-type = ["dylib", "rlib"]
 
-[dependencies.symphonia]
-version = "0.6.1"
-default-features = false
-features = [
-	"opt-simd",
-	"all-meta",
-	"aiff",
-	"caf",
-	"isomp4",
-	"ogg",
-	"wav",
-	"aac",
-	"adpcm",
-	"alac",
-	"mpa",
-	"flac",
-	"pcm",
-	"vorbis",
-]
+[dependencies]
+symphonia.workspace = true

@@ -17,8 +17,9 @@ into one shared object built once instead of being statically re-linked into eve
 
 - Depend on `symphonia-wrap` from workspace crates, never on `symphonia` directly, so the feature
   set and the optimized artifact stay shared.
-- Codec and container support is selected in the `Cargo.toml` here, which sets
-  `default-features = false` and lists features explicitly: aac, alac, flac, mpa, vorbis, pcm,
-  adpcm, isomp4, ogg, wav, aiff, caf, all-meta, opt-simd. Add formats here, not at the call site.
+- Codec and container support is selected by the root `Cargo.toml` workspace dependency, which
+  sets `default-features = false` and lists features explicitly: aac, alac, flac, mpa,
+  vorbis, pcm, adpcm, isomp4, ogg, wav, aiff, caf, all-meta, opt-simd. Add formats
+  there, not at the call site.
 - A new third-party dependency that is hot at runtime gets its own
   `[profile.dev.package.*] opt-level = 3` entry in the root `Cargo.toml`.
