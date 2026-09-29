@@ -154,8 +154,8 @@ fn timing_of(
         .iter()
         .map(|[left, right]| (left + right) / 2.0)
         .collect();
-    let tracker =
-        charter_beatthis_burn::Tracker::from_checkpoint(weights).map_err(|why| why.to_string())?;
+    let tracker = charter_beatthis_burn::Tracker::from_checkpoint(weights)
+        .map_err(|why| format!("{}: {why}", weights.display()))?;
     let beats = tracker
         .track(&mono, track.rate().get())
         .map_err(|why| why.to_string())?;
@@ -171,7 +171,7 @@ fn timing_of(
 fn fetch(weights: &Path, progress: &Sender<Progress>) -> Result<(), String> {
     let partial = weights.with_extension("ckpt.partial");
     if let Some(folder) = weights.parent() {
-        std::fs::create_dir_all(folder).map_err(|why| why.to_string())?;
+        std::fs::create_dir_all(folder).map_err(|why| format!("{}: {why}", folder.display()))?;
     }
     let mut response = ureq::get(WEIGHTS_URL)
         .call()
@@ -179,12 +179,17 @@ fn fetch(weights: &Path, progress: &Sender<Progress>) -> Result<(), String> {
     let body = response.body_mut();
     let length = body.content_length();
     let mut reader = body.as_reader();
-    let mut file = std::fs::File::create(&partial).map_err(|why| why.to_string())?;
-    copy_weights(&mut reader, &mut file, length, progress)?;
-    file.sync_all().map_err(|why| why.to_string())?;
-    std::fs::rename(&partial, weights).map_err(|why| why.to_string())
+    let mut file =
+        std::fs::File::create(&partial).map_err(|why| format!("{}: {why}", partial.display()))?;
+    copy_weights(&mut reader, &mut file, length, progress)
+        .map_err(|why| format!("{}: {why}", partial.display()))?;
+    file.sync_all()
+        .map_err(|why| format!("{}: {why}", partial.display()))?;
+    std::fs::rename(&partial, weights)
+        .map_err(|why| format!("{} to {}: {why}", partial.display(), weights.display()))
 }
 
+/// Adds the failed stream operation without discarding the underlying I/O error.
 /// Copies a response body while reporting the share received, when its length is known.
 fn copy_weights(
     reader: &mut impl Read,
@@ -195,12 +200,14 @@ fn copy_weights(
     let mut buffer = vec![0; 1 << 16];
     let (mut read, mut told) = (0_u64, 0_u64);
     loop {
-        let count = reader.read(&mut buffer).map_err(|why| why.to_string())?;
+        let count = reader
+            .read(&mut buffer)
+            .map_err(|why| format!("reading the beat tracker: {why}"))?;
         if count == 0 {
             break;
         }
         file.write_all(buffer.get(..count).unwrap_or_default())
-            .map_err(|why| why.to_string())?;
+            .map_err(|why| format!("writing the beat tracker: {why}"))?;
         read = read.saturating_add(u64::try_from(count).unwrap_or(u64::MAX));
         if let Some(length) = length.filter(|length| *length > 0)
             && read.saturating_mul(100).div_euclid(length) > told
@@ -402,6 +409,7 @@ mod tests {
             &send,
         )
         .unwrap_err();
+        assert!(error.contains("writing the beat tracker"));
         assert!(error.contains("out of space"));
         assert!(receive.try_recv().is_err());
     }
@@ -417,6 +425,7 @@ mod tests {
         let (send, receive) = std::sync::mpsc::channel();
         let mut output = Vec::new();
         let error = copy_weights(&mut FailingReader, &mut output, Some(7), &send).unwrap_err();
+        assert!(error.contains("reading the beat tracker"));
         assert!(error.contains("stream broke"));
         assert!(output.is_empty());
         assert!(receive.try_recv().is_err());
