@@ -97,6 +97,12 @@ impl Key {
         &self.namespace
     }
 
+    /// Whether `namespace` owns this extension key.
+    #[must_use]
+    pub fn is_owned_by(&self, namespace: &str) -> bool {
+        self.namespace.as_str() == namespace
+    }
+
     /// Part of the key after the first dot.
     #[must_use]
     pub const fn name(&self) -> &Name {
@@ -158,6 +164,21 @@ macro_rules! vocabulary {
                 match self {
                     Self::Other(key) => Some(key.namespace()),
                     $(Self::$variant)|+ => None,
+                }
+            }
+
+            /// Whether this is a shared word or a word owned by `namespace`.
+            #[must_use]
+            pub fn is_shared_or_owned_by(&self, namespace: &str) -> bool {
+                self.namespace().is_none_or(|owner| owner.as_str() == namespace)
+            }
+
+            /// The plugin-owned key when `namespace` owns this word.
+            #[must_use]
+            pub fn key_owned_by(&self, namespace: &str) -> Option<&Key> {
+                match self {
+                    Self::Other(key) if key.is_owned_by(namespace) => Some(key),
+                    Self::Other(_) $(| Self::$variant)+ => None,
                 }
             }
         }
@@ -383,5 +404,48 @@ mod tests {
             ("arcaea", "timing.group")
         );
         assert_eq!(key.to_string(), "arcaea.timing.group");
+    }
+
+    #[test]
+    fn keys_tell_whether_a_namespace_owns_them() {
+        let key: Key = "sm.stop".parse().unwrap();
+        assert!(key.is_owned_by("sm"));
+        assert!(!key.is_owned_by("ttr"));
+    }
+
+    #[test]
+    fn vocabulary_words_tell_whether_a_ruleset_should_keep_them() {
+        assert!(
+            "bookmark"
+                .parse::<MarkerKind>()
+                .unwrap()
+                .is_shared_or_owned_by("sm")
+        );
+        assert!(
+            "sm.label"
+                .parse::<MarkerKind>()
+                .unwrap()
+                .is_shared_or_owned_by("sm")
+        );
+        assert!(
+            !"ttr.section"
+                .parse::<MarkerKind>()
+                .unwrap()
+                .is_shared_or_owned_by("sm")
+        );
+    }
+
+    #[test]
+    fn vocabulary_words_expose_their_key_only_for_the_owning_namespace() {
+        let label = "sm.label".parse::<MarkerKind>().unwrap();
+        assert_eq!(label.key_owned_by("sm").unwrap().name().as_str(), "label");
+        assert!(label.key_owned_by("ttr").is_none());
+        assert!(
+            "bookmark"
+                .parse::<MarkerKind>()
+                .unwrap()
+                .key_owned_by("sm")
+                .is_none()
+        );
     }
 }

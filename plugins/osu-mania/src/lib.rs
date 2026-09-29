@@ -14,9 +14,9 @@ use std::num::NonZeroU16;
 
 use charter_core::{
     Anchor, Bpm, Chart as CoreChart, Decimal, Document, Extensions, FORMAT_VERSION, InvalidValue,
-    Key, Kind, LaneCount, LaneIndex, Layout, Location, Marker, MarkerKind, Metadata, Name,
-    Namespace, NewSong, Object, Origin, Position, ResourcePath, Ruleset, RulesetPlugin, SampleId,
-    Settings, Shape, Stream, Tick, Ticks, TicksPerBeat, TimeSignature, Timing as CoreTiming,
+    Key, Kind, LaneCount, LaneIndex, Layout, Location, Marker, Metadata, Name, Namespace, NewSong,
+    Object, Origin, Position, ResourcePath, Ruleset, RulesetPlugin, SampleId, Settings, Shape,
+    Stream, Tick, Ticks, TicksPerBeat, TimeSignature, Timing as CoreTiming,
     TimingEvent as CoreEvent, TimingKind as CoreKind, ValidDocument,
 };
 use serde::{Deserialize, Serialize, de, de::IntoDeserializer};
@@ -311,10 +311,7 @@ impl Song {
         let own = markers
             .iter()
             .enumerate()
-            .find_map(|(m, marker)| match &marker.kind {
-                MarkerKind::Other(key) if key.namespace().as_str() == ID => Some((m, key)),
-                MarkerKind::Other(_) | MarkerKind::Section | MarkerKind::Bookmark => None,
-            });
+            .find_map(|(m, marker)| marker.kind.key_owned_by(ID).map(|key| (m, key)));
         if let Some((m, key)) = own {
             return Err(Error::UnknownKey {
                 at: Location::Marker(m),
@@ -587,7 +584,7 @@ impl TryFrom<&ValidDocument> for Song {
         let markers = doc
             .markers
             .iter()
-            .filter(|marker| marker.kind.namespace().is_none_or(|ns| ns.as_str() == ID))
+            .filter(|marker| marker.kind.is_shared_or_owned_by(ID))
             .cloned()
             .collect();
         let timing = read_timing(&doc.timing, Stream::Song)?;
@@ -801,14 +798,14 @@ fn read_timing(timing: &CoreTiming, stream: Stream) -> Result<Timing, Error> {
             CoreKind::Delay(_) => return Err(unsupported("delays")),
             CoreKind::Warp(_) => return Err(unsupported("warps")),
             CoreKind::Other { name, value }
-                if name.namespace().as_str() == ID && name.name().as_str() == SCROLL_SPEED =>
+                if name.is_owned_by(ID) && name.name().as_str() == SCROLL_SPEED =>
             {
                 TimingKind::ScrollSpeed(
                     ScrollSpeed::deserialize(value)
                         .map_err(|source| Error::Malformed { at, source })?,
                 )
             }
-            CoreKind::Other { name, .. } if name.namespace().as_str() == ID => {
+            CoreKind::Other { name, .. } if name.is_owned_by(ID) => {
                 return Err(Error::UnknownKey {
                     at,
                     key: name.clone(),
@@ -831,7 +828,7 @@ fn read_timing(timing: &CoreTiming, stream: Stream) -> Result<Timing, Error> {
 /// Fails on a key in this ruleset's namespace, which defines none; other plugins' keys are
 /// theirs to read.
 fn reject_own_keys(ext: &Extensions, at: Location) -> Result<(), Error> {
-    match ext.keys().find(|key| key.namespace().as_str() == ID) {
+    match ext.keys().find(|key| key.is_owned_by(ID)) {
         Some(key) => Err(Error::UnknownKey {
             at,
             key: key.clone(),

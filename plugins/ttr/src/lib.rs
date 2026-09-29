@@ -17,7 +17,7 @@ use serde_json::Value;
 use charter_core::{
     Anchor, Bpm, Chart as CoreChart, Difficulties, DifficultyPreset, Document, Extensions,
     FORMAT_VERSION, InvalidValue, Key, Kind, LaneCount, LaneIndex, Layout, Location, Marker,
-    MarkerKind, Metadata, Name, Namespace, NewSong, NoteChange, Object, Origin, Position, Ruleset,
+    Metadata, Name, Namespace, NewSong, NoteChange, Object, Origin, Position, Ruleset,
     RulesetPlugin, SettingScope, Settings, Shape, Stream, TextSetting, Tick, Ticks, TicksPerBeat,
     TimeSignature, Timing, TimingEvent, TimingKind, ValidDocument,
 };
@@ -344,10 +344,7 @@ impl Song {
         let own = markers
             .iter()
             .enumerate()
-            .find_map(|(m, marker)| match &marker.kind {
-                MarkerKind::Other(key) if key.namespace().as_str() == ID => Some((m, key)),
-                MarkerKind::Other(_) | MarkerKind::Section | MarkerKind::Bookmark => None,
-            });
+            .find_map(|(m, marker)| marker.kind.key_owned_by(ID).map(|key| (m, key)));
         if let Some((m, key)) = own {
             return Err(Error::UnknownKey {
                 at: Location::Marker(m),
@@ -655,7 +652,7 @@ impl TryFrom<&ValidDocument> for Song {
         let markers = doc
             .markers
             .iter()
-            .filter(|marker| marker.kind.namespace().is_none_or(|ns| ns.as_str() == ID))
+            .filter(|marker| marker.kind.is_shared_or_owned_by(ID))
             .cloned()
             .collect();
         let tempo = read_tempo(&doc.timing, Stream::Song)?;
@@ -924,18 +921,16 @@ fn read_note(object: &Object, lanes: Lanes) -> Option<NoteKind> {
         (Kind::Hold, &Shape::Sustain { duration }) => {
             single_lane.map(|lane| NoteKind::Hold { lane, duration })
         }
-        (Kind::Other(key), Shape::Instant) if key.namespace().as_str() == ID => {
-            match key.name().as_str() {
-                SHAKE => placed(&[
-                    NoteKind::Shake(Shake::Left),
-                    NoteKind::Shake(Shake::Right),
-                    NoteKind::Shake(Shake::Down),
-                ]),
-                SLICE => placed(&[NoteKind::Slice(Side::Left), NoteKind::Slice(Side::Right)]),
-                MEGA_TAP => placed(&[NoteKind::MegaTap]),
-                _ => None,
-            }
-        }
+        (Kind::Other(key), Shape::Instant) if key.is_owned_by(ID) => match key.name().as_str() {
+            SHAKE => placed(&[
+                NoteKind::Shake(Shake::Left),
+                NoteKind::Shake(Shake::Right),
+                NoteKind::Shake(Shake::Down),
+            ]),
+            SLICE => placed(&[NoteKind::Slice(Side::Left), NoteKind::Slice(Side::Right)]),
+            MEGA_TAP => placed(&[NoteKind::MegaTap]),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -952,7 +947,7 @@ fn read_tempo(timing: &Timing, stream: Stream) -> Result<Tempo, Error> {
             TimingKind::Stop(_) => return Err(unsupported("stops")),
             TimingKind::Delay(_) => return Err(unsupported("delays")),
             TimingKind::Warp(_) => return Err(unsupported("warps")),
-            TimingKind::Other { name, .. } if name.namespace().as_str() == ID => {
+            TimingKind::Other { name, .. } if name.is_owned_by(ID) => {
                 return Err(Error::UnknownKey {
                     at,
                     key: name.clone(),
@@ -1006,7 +1001,7 @@ fn reject_keys<'a>(mut keys: impl Iterator<Item = &'a String>, at: Location) -> 
 /// Fails on a key in this ruleset's namespace, which defines none; other plugins' keys are
 /// theirs to read.
 fn reject_own_keys(ext: &Extensions, at: Location) -> Result<(), Error> {
-    match ext.keys().find(|key| key.namespace().as_str() == ID) {
+    match ext.keys().find(|key| key.is_owned_by(ID)) {
         Some(key) => Err(Error::UnknownKey {
             at,
             key: key.clone(),
