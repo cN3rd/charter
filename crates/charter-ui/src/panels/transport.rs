@@ -4,7 +4,7 @@ use super::{
 
 /// Draws the playback and editing controls, sending their choices as `actions`.
 #[expect(clippy::too_many_lines, reason = "toolbar groups in display order")]
-pub fn transport_bar(
+pub(crate) fn transport_bar(
     ui: &mut Ui,
     song: Option<&Song>,
     (zoom, rate, playing, panel, grid): (Zoom, Rate, bool, bool, NonZeroU16),
@@ -250,7 +250,7 @@ fn readout(ui: &mut Ui, song: &Song) {
     clippy::non_ascii_literal,
     reason = "the status bar displays coloured circle and square markers"
 )]
-pub fn status_bar(
+pub(crate) fn status_bar(
     ui: &mut Ui,
     song: Option<&Song>,
     (audio, playing): (&str, bool),
@@ -312,7 +312,7 @@ pub fn status_bar(
 }
 
 /// A snap's name, such as `16th` or `32nd`.
-pub fn ordinal(n: NonZeroU16) -> String {
+pub(crate) fn ordinal(n: NonZeroU16) -> String {
     let n = n.get();
     let suffix = match (n % 10, n % 100) {
         (_, 11..=13) => "th",

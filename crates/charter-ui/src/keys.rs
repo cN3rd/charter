@@ -65,7 +65,7 @@ enum LaneKey {
 /// go down and up frames apart, and kept by where each key sits on the keyboard: Shift can turn
 /// the `1` a key went down as into the `!` it comes up as.
 #[derive(Debug, Default)]
-pub struct LaneKeys([LaneKey; LANE_KEYS.len()]);
+pub(crate) struct LaneKeys([LaneKey; LANE_KEYS.len()]);
 
 impl LaneKeys {
     /// Pushes what the lane key at `lane` going down or up asks for: alone it places or removes a
@@ -127,7 +127,11 @@ impl LaneKeys {
     clippy::wildcard_enum_match_arm,
     reason = "other egui events do not trigger actions"
 )]
-pub fn key_actions(input: &egui::InputState, lanes: u16, keys: &mut LaneKeys) -> Vec<Action> {
+pub(crate) fn key_actions(
+    input: &egui::InputState,
+    lanes: u16,
+    keys: &mut LaneKeys,
+) -> Vec<Action> {
     let mut actions = Vec::new();
     for event in &input.events {
         match event {

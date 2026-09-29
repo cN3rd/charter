@@ -11,7 +11,7 @@ use crate::window::Action;
 
 /// Whether the window shows, which format it reads, and what has been pasted into it.
 #[derive(Debug, Default)]
-pub struct Import {
+pub(crate) struct Import {
     /// Whether the import dialog is showing.
     open: bool,
     /// Which of the plugins that read timing reads it, by its place among them.
@@ -24,12 +24,12 @@ pub struct Import {
 
 impl Import {
     /// Whether the import dialog is showing.
-    pub const fn is_open(&self) -> bool {
+    pub(crate) const fn is_open(&self) -> bool {
         self.open
     }
 
     /// Shows or hides the import dialog.
-    pub const fn set_open(&mut self, open: bool) {
+    pub(crate) const fn set_open(&mut self, open: bool) {
         self.open = open;
     }
 

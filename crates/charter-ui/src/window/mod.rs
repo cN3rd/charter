@@ -190,7 +190,7 @@ struct Offer {
 
 /// How fast the audio plays, as a factor of its own speed. The chart is untouched by it.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Rate(f64);
+pub(crate) struct Rate(f64);
 
 impl Default for Rate {
     fn default() -> Self {
@@ -207,26 +207,26 @@ impl Rate {
     /// This rate changed by `step`, to the nearest percent, and kept between a tenth and four
     /// times the audio's speed, as ArrowVortex allows.
     #[must_use]
-    pub fn by(self, step: f64) -> Self {
+    pub(crate) fn by(self, step: f64) -> Self {
         Self::of(self.0 + step)
     }
 
     /// The nearest whole-percent speed to `factor`, between one tenth and four times normal.
     #[must_use]
-    pub fn of(factor: f64) -> Self {
+    pub(crate) fn of(factor: f64) -> Self {
         let percent = (factor * 100.0).round() / 100.0;
         Self(percent.clamp(Self::SLOWEST, Self::FASTEST))
     }
 
     /// The audio's current speed as a factor of its own speed.
     #[must_use]
-    pub const fn factor(self) -> f64 {
+    pub(crate) const fn factor(self) -> f64 {
         self.0
     }
 
     /// The audio's current speed as a whole percentage of its own speed.
     #[must_use]
-    pub fn percent(self) -> f64 {
+    pub(crate) fn percent(self) -> f64 {
         (self.0 * 100.0).round()
     }
 }
@@ -643,6 +643,8 @@ pub struct Window {
     failure: Option<String>,
     /// A drag across the notefield in progress.
     gesture: Option<notefield::Gesture>,
+    /// Cached visible-object paint order for the notefield.
+    object_order: notefield::ObjectOrder,
     /// What is being typed into the timing section of the song panel.
     timing_drafts: timing_panel::Drafts,
     /// What is being typed into the song panel's song fields.

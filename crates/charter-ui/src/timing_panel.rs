@@ -13,7 +13,7 @@ use crate::style::{self, icon, table};
 
 /// What is being typed into the section's fields, while one has the keyboard.
 #[derive(Debug, Default)]
-pub struct Drafts {
+pub(crate) struct Drafts {
     /// Tempo being typed, in beats per minute.
     bpm: Option<String>,
     /// Time signature being typed as `numerator/denominator`.
@@ -125,7 +125,7 @@ fn meter(typed: &str) -> Option<TimeSignature> {
 }
 
 /// The timing section of the song panel. Says why something typed into it is not a value.
-pub fn section(
+pub(crate) fn section(
     ui: &mut Ui,
     song: &Song,
     drafts: &mut Drafts,

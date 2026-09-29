@@ -9,7 +9,7 @@ use super::{
     clippy::non_ascii_literal,
     reason = "menu labels use ellipses for dialogs and a check mark for the selected option"
 )]
-pub fn menu_bar(
+pub(crate) fn menu_bar(
     ui: &mut Ui,
     (song, recent): (Option<&Song>, &[std::path::PathBuf]),
     (playing, importable, findable, colour_notes_by_layer): (bool, bool, bool, bool),

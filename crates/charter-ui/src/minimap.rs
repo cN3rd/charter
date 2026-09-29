@@ -11,7 +11,7 @@ use crate::notefield::{kind_colours, nearest_line};
 use crate::style;
 
 /// How wide the minimap is.
-pub const WIDTH: f32 = 44.0;
+pub(crate) const WIDTH: f32 = 44.0;
 /// The shortest a note draws, so a tap still shows.
 const NOTE_H: f32 = 1.5;
 
@@ -73,7 +73,7 @@ impl Map {
 
 /// Draws the minimap of `song` in `rect`, with a box over `visible`, the seconds the notefield
 /// shows, and asks to move the cursor to where it is clicked or dragged.
-pub fn show(
+pub(crate) fn show(
     ui: &Ui,
     rect: Rect,
     song: &Song,

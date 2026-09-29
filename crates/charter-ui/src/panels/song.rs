@@ -7,7 +7,7 @@ use super::{
 
 /// The song panel's Song and Charts sections. `artwork` is the song's artwork to preview, or why
 /// there is none to show, when the song names some.
-pub fn song_panel(
+pub(crate) fn song_panel(
     ui: &mut Ui,
     song: &Song,
     (drafts, artwork): (&mut SongDrafts, Option<Result<&egui::TextureHandle, &str>>),
@@ -66,7 +66,7 @@ pub fn song_panel(
 
 /// What is being typed into the song section's fields, while one has the keyboard.
 #[derive(Debug, Default)]
-pub struct SongDrafts {
+pub(crate) struct SongDrafts {
     /// Name being typed for a layer.
     pub(super) layer_name: Option<(usize, String)>,
     /// Layer whose notes need a deletion decision.
@@ -392,7 +392,7 @@ fn preview_rows(
 
 /// What is read more than changed while charting: the open chart's settings and the song's
 /// keysound bank, folded away until wanted.
-pub fn details(ui: &mut Ui, song: &Song) {
+pub(crate) fn details(ui: &mut Ui, song: &Song) {
     if let Some(chart) = song.chart() {
         egui::CollapsingHeader::new("Chart settings").show(ui, |ui| {
             let settings: Vec<_> = chart

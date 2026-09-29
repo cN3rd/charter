@@ -21,11 +21,11 @@ pub enum Direction {
 
 impl Direction {
     /// Directions offered in the display settings, in menu order.
-    pub const ALL: [Self; 4] = [Self::Up, Self::Down, Self::Left, Self::Right];
+    pub(crate) const ALL: [Self; 4] = [Self::Up, Self::Down, Self::Left, Self::Right];
 
     /// What the settings call it.
     #[must_use]
-    pub const fn name(self) -> &'static str {
+    pub(crate) const fn name(self) -> &'static str {
         match self {
             Self::Up => "Vertical, notes travel up",
             Self::Down => "Vertical, notes travel down",
@@ -43,18 +43,18 @@ impl Direction {
 /// Turns the notefield's own layout, lanes across and later notes lower, onto `area` of the
 /// screen, and back.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Flip {
+pub(crate) struct Flip {
     /// The screen area receiving the turned notefield.
-    pub area: Rect,
+    pub(crate) area: Rect,
     /// The direction in which notes travel on screen.
-    pub direction: Direction,
+    pub(crate) direction: Direction,
 }
 
 impl Flip {
     /// The area the notefield lays itself out in: `area`, turned a quarter when time runs
     /// across.
     #[must_use]
-    pub fn field(self) -> Rect {
+    pub(crate) fn field(self) -> Rect {
         let size = self.area.size();
         let size = if self.direction.across() {
             vec2(size.y, size.x)
@@ -66,7 +66,7 @@ impl Flip {
 
     /// Where `at`, in the notefield's layout, is on screen.
     #[must_use]
-    pub fn pos(self, at: Pos2) -> Pos2 {
+    pub(crate) fn pos(self, at: Pos2) -> Pos2 {
         let (min, max) = (self.area.min, self.area.max);
         let (across, along) = (at.x - min.x, at.y - min.y);
         match self.direction {
@@ -79,7 +79,7 @@ impl Flip {
 
     /// Where the point on screen at `at` is in the notefield's layout.
     #[must_use]
-    pub fn back(self, at: Pos2) -> Pos2 {
+    pub(crate) fn back(self, at: Pos2) -> Pos2 {
         let (min, max) = (self.area.min, self.area.max);
         match self.direction {
             Direction::Up => at,
@@ -91,14 +91,14 @@ impl Flip {
 
     /// The screen rectangle covered by `rect` of the notefield's layout.
     #[must_use]
-    pub fn rect(self, rect: Rect) -> Rect {
+    pub(crate) fn rect(self, rect: Rect) -> Rect {
         Rect::from_two_pos(self.pos(rect.min), self.pos(rect.max))
     }
 
     /// How text anchored `align` in the notefield's layout is anchored on screen, so it keeps
     /// the side of its point it had.
     #[must_use]
-    pub fn align(self, align: Align2) -> Align2 {
+    pub(crate) fn align(self, align: Align2) -> Align2 {
         let [x, y] = align.0;
         let flip = |edge: Align| match edge {
             Align::Min => Align::Max,
@@ -115,7 +115,7 @@ impl Flip {
 }
 
 /// A painter that takes the notefield's layout, and draws it turned onto the screen.
-pub struct Canvas {
+pub(crate) struct Canvas {
     /// The painter whose clip rectangle is in screen coordinates.
     painter: Painter,
     /// The transform from notefield coordinates to screen coordinates.
@@ -125,13 +125,13 @@ pub struct Canvas {
 impl Canvas {
     /// A painter for drawing through `flip` into the screen.
     #[must_use]
-    pub const fn new(painter: Painter, flip: Flip) -> Self {
+    pub(crate) const fn new(painter: Painter, flip: Flip) -> Self {
         Self { painter, flip }
     }
 
     /// This canvas, drawing only inside `rect`.
     #[must_use]
-    pub fn clipped(&self, rect: Rect) -> Self {
+    pub(crate) fn clipped(&self, rect: Rect) -> Self {
         Self {
             painter: self.painter.with_clip_rect(self.flip.rect(rect)),
             flip: self.flip,
@@ -140,7 +140,7 @@ impl Canvas {
 
     /// Draws `texture` over `rect` of the layout, its left edge on the rect's left and its top
     /// on the rect's top, turned with the rest of the notefield.
-    pub fn image(&self, texture: egui::TextureId, rect: Rect) {
+    pub(crate) fn image(&self, texture: egui::TextureId, rect: Rect) {
         let corners = [
             (rect.left_top(), pos2(0.0, 0.0)),
             (rect.right_top(), pos2(1.0, 0.0)),
@@ -161,26 +161,26 @@ impl Canvas {
     }
 
     /// Fills `rect` of the notefield's layout, after turning it onto the screen.
-    pub fn rect_filled(&self, rect: Rect, rounding: f32, fill: egui::Color32) {
+    pub(crate) fn rect_filled(&self, rect: Rect, rounding: f32, fill: egui::Color32) {
         self.painter
             .rect_filled(self.flip.rect(rect), rounding, fill);
     }
 
     /// A four-pixel stripe at the head's screen-left edge, independent of the scroll direction.
-    pub fn left_stripe(&self, rect: Rect, fill: egui::Color32) {
+    pub(crate) fn left_stripe(&self, rect: Rect, fill: egui::Color32) {
         let screen = self.flip.rect(rect);
         let stripe = Rect::from_min_size(screen.min, vec2(4.0, screen.height()));
         self.painter.rect_filled(stripe, 2.0, fill);
     }
 
     /// Strokes the transformed outline of `rect` in notefield coordinates.
-    pub fn rect_stroke(&self, rect: Rect, rounding: f32, stroke: Stroke, kind: StrokeKind) {
+    pub(crate) fn rect_stroke(&self, rect: Rect, rounding: f32, stroke: Stroke, kind: StrokeKind) {
         self.painter
             .rect_stroke(self.flip.rect(rect), rounding, stroke, kind);
     }
 
     /// Fills and strokes `rect` in notefield coordinates, turned onto the screen.
-    pub fn rect(
+    pub(crate) fn rect(
         &self,
         rect: Rect,
         rounding: f32,
@@ -193,17 +193,17 @@ impl Canvas {
     }
 
     /// A line across the lanes at `y`, from `x.min` to `x.max`.
-    pub fn hline(&self, x: egui::Rangef, y: f32, stroke: Stroke) {
+    pub(crate) fn hline(&self, x: egui::Rangef, y: f32, stroke: Stroke) {
         self.line(vec![pos2(x.min, y), pos2(x.max, y)], stroke);
     }
 
     /// A line along time at `x`, from `y.min` to `y.max`.
-    pub fn vline(&self, x: f32, y: egui::Rangef, stroke: Stroke) {
+    pub(crate) fn vline(&self, x: f32, y: egui::Rangef, stroke: Stroke) {
         self.line(vec![pos2(x, y.min), pos2(x, y.max)], stroke);
     }
 
     /// Draws a line through `points` of the notefield's layout.
-    pub fn line(&self, points: Vec<Pos2>, stroke: Stroke) {
+    pub(crate) fn line(&self, points: Vec<Pos2>, stroke: Stroke) {
         let points = points
             .into_iter()
             .map(|point| self.flip.pos(point))
@@ -212,7 +212,7 @@ impl Canvas {
     }
 
     /// Draws a filled polygon through `points` of the notefield's layout.
-    pub fn convex_polygon(&self, points: Vec<Pos2>, fill: egui::Color32, stroke: Stroke) {
+    pub(crate) fn convex_polygon(&self, points: Vec<Pos2>, fill: egui::Color32, stroke: Stroke) {
         let points = points
             .into_iter()
             .map(|point| self.flip.pos(point))
@@ -222,20 +222,20 @@ impl Canvas {
     }
 
     /// Fills a circle at `centre` in the notefield's layout, in screen pixels.
-    pub fn circle_filled(&self, centre: Pos2, radius: f32, fill: egui::Color32) {
+    pub(crate) fn circle_filled(&self, centre: Pos2, radius: f32, fill: egui::Color32) {
         self.painter
             .circle_filled(self.flip.pos(centre), radius, fill);
     }
 
     /// Strokes a circle at `centre` in the notefield's layout, in screen pixels.
-    pub fn circle_stroke(&self, centre: Pos2, radius: f32, stroke: Stroke) {
+    pub(crate) fn circle_stroke(&self, centre: Pos2, radius: f32, stroke: Stroke) {
         self.painter
             .circle_stroke(self.flip.pos(centre), radius, stroke);
     }
 
     /// Text upright on screen, at the point `at` of the layout and on the side of it `align`
     /// says.
-    pub fn text(
+    pub(crate) fn text(
         &self,
         at: Pos2,
         align: Align2,

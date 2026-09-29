@@ -16,7 +16,7 @@ const CLICKS: usize = 32;
 /// Lead-in before the first calibration click, in seconds.
 const LEAD: f64 = 1.0;
 /// How many taps make a measurement.
-pub const WANTED: usize = 16;
+pub(crate) const WANTED: usize = 16;
 /// How long the flash stays lit after each click is heard, in seconds.
 const FLASH: f64 = 0.08;
 /// The tempos the clicks fold into by doubling or halving, slow enough to tap each one and
@@ -27,7 +27,7 @@ const FASTEST: f64 = 180.0;
 
 /// The click track: seconds between clicks, and how many make a measure, its first accented.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Beat {
+pub(crate) struct Beat {
     /// Seconds from one calibration click to the next.
     spacing: f64,
     /// Number of clicks before the accent repeats, at least one.
@@ -36,12 +36,12 @@ pub struct Beat {
 
 impl Calibration {
     /// Whether the calibration dialog is showing.
-    pub const fn is_open(&self) -> bool {
+    pub(crate) const fn is_open(&self) -> bool {
         self.open
     }
 
     /// Shows or hides the calibration dialog.
-    pub const fn set_open(&mut self, open: bool) {
+    pub(crate) const fn set_open(&mut self, open: bool) {
         self.open = open;
     }
 }
@@ -49,7 +49,7 @@ impl Calibration {
 impl Beat {
     /// Clicks at `bpm`, doubled or halved into a tappable range, `per_measure` to a measure.
     #[must_use]
-    pub fn of(bpm: f64, per_measure: u16) -> Self {
+    pub(crate) fn of(bpm: f64, per_measure: u16) -> Self {
         let mut bpm = if bpm.is_finite() && bpm > 0.0 {
             bpm
         } else {
@@ -69,13 +69,13 @@ impl Beat {
 
     /// The tempo the clicks play at.
     #[must_use]
-    pub fn bpm(self) -> f64 {
+    pub(crate) fn bpm(self) -> f64 {
         60.0 / self.spacing
     }
 
     /// When each click plays, from the start.
     #[must_use]
-    pub fn clicks(self) -> Vec<f64> {
+    pub(crate) fn clicks(self) -> Vec<f64> {
         (0..CLICKS)
             .map(|at| {
                 let at = f64::from(u32::try_from(at).unwrap_or(u32::MAX));
@@ -86,7 +86,7 @@ impl Beat {
 
     /// Each click with its sound in `kit`, the first of each measure accented.
     #[must_use]
-    pub fn tones(self, kit: Kit) -> Vec<(f64, Tone)> {
+    pub(crate) fn tones(self, kit: Kit) -> Vec<(f64, Tone)> {
         let measure = usize::from(self.per_measure);
         self.clicks()
             .into_iter()
@@ -113,7 +113,7 @@ impl Default for Beat {
 /// enough taps near clicks `spacing` seconds apart: over half the taps within half a spacing of
 /// one.
 #[must_use]
-pub fn latency(taps: &[f64], clicks: &[f64], spacing: f64) -> Option<f64> {
+pub(crate) fn latency(taps: &[f64], clicks: &[f64], spacing: f64) -> Option<f64> {
     let mut offsets: Vec<f64> = taps
         .iter()
         .filter_map(|tap| {
@@ -139,7 +139,7 @@ pub fn latency(taps: &[f64], clicks: &[f64], spacing: f64) -> Option<f64> {
 /// Whether the flash is lit `elapsed` seconds from the start: just after a click of `clicks` is
 /// heard, `audio_ms` after it plays.
 #[must_use]
-pub fn flashing(elapsed: f64, audio_ms: f64, clicks: &[f64]) -> bool {
+pub(crate) fn flashing(elapsed: f64, audio_ms: f64, clicks: &[f64]) -> bool {
     let heard = elapsed - audio_ms / 1000.0;
     clicks
         .iter()
@@ -148,7 +148,7 @@ pub fn flashing(elapsed: f64, audio_ms: f64, clicks: &[f64]) -> bool {
 
 /// The calibration window's state.
 #[derive(Debug, Default)]
-pub struct Calibration {
+pub(crate) struct Calibration {
     /// Whether the calibration dialog is showing.
     open: bool,
     /// When the clicks started, on the frame clock, and at what beat.
@@ -164,7 +164,7 @@ pub struct Calibration {
     clippy::non_ascii_literal,
     reason = "the audio latency decrement button displays the minus sign"
 )]
-pub fn show(
+pub(crate) fn show(
     ctx: &egui::Context,
     calibration: &mut Calibration,
     (now, kit, beat): (f64, Kit, Beat),

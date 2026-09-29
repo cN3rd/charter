@@ -1,7 +1,7 @@
 use super::{egui, heading, style, table};
 
 /// The keyboard shortcuts, grouped, while `open` is set, showing those that match `filter`.
-pub fn shortcuts(ctx: &egui::Context, open: &mut bool, filter: &mut String) {
+pub(crate) fn shortcuts(ctx: &egui::Context, open: &mut bool, filter: &mut String) {
     let space = ctx.content_rect().size();
     let compact = space.x < 760.0;
     let width = (space.x - 24.0).max(260.0);

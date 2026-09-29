@@ -4,7 +4,12 @@ use super::{Action, MarkerKind, RichText, Song, Ui, egui, style, table};
 /// The song's markers, each of which jumps the cursor to it when clicked. In a song open for
 /// editing a name typed and entered names the section at the cursor, starting one there if
 /// there is none, and each marker can be removed.
-pub fn markers(ui: &mut Ui, song: &Song, draft: &mut Option<String>, actions: &mut Vec<Action>) {
+pub(crate) fn markers(
+    ui: &mut Ui,
+    song: &Song,
+    draft: &mut Option<String>,
+    actions: &mut Vec<Action>,
+) {
     style::section(ui, "Markers", |ui| markers_body(ui, song, draft, actions));
 }
 

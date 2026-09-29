@@ -218,7 +218,7 @@ impl Default for Settings {
 
 /// What the settings window asks of the window around it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Asked {
+pub(crate) enum Asked {
     /// Play a measure of this metronome sound.
     Preview(Kit),
     /// Open the latency calibration.
@@ -437,7 +437,7 @@ impl Page {
 /// The settings window, while `open` is set: a sidebar of pages and the page chosen. Choices
 /// take effect as they are made.
 /// Draws the settings window while `open`, and says which metronome to preview, if one.
-pub fn show(
+pub(crate) fn show(
     ctx: &egui::Context,
     settings: &mut Settings,
     open: &mut bool,

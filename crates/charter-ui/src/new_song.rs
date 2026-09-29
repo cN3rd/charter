@@ -11,11 +11,11 @@ use egui::{RichText, Ui};
 use crate::style;
 
 /// The audio a new song names until the user drops a file on it.
-pub const NO_AUDIO: &str = "no-audio-yet";
+pub(crate) const NO_AUDIO: &str = "no-audio-yet";
 /// What a new song is called, and by whom, until the user or its audio's tags say.
-pub const UNTITLED: &str = "Untitled";
+pub(crate) const UNTITLED: &str = "Untitled";
 /// Default artist until the user or audio tags supply one.
-pub const UNKNOWN_ARTIST: &str = "Unknown artist";
+pub(crate) const UNKNOWN_ARTIST: &str = "Unknown artist";
 
 /// Whether a new song gets a chart of one standard level, and what it is called.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,7 +30,7 @@ struct Pick {
 
 /// The dialog's fields as the user has left them.
 #[derive(Debug)]
-pub struct Draft {
+pub(crate) struct Draft {
     /// Which of the games that start songs, in plugin order.
     game: usize,
     /// Which of the game's layouts.
@@ -67,28 +67,28 @@ impl Default for Draft {
 
 impl Draft {
     /// The audio file chosen for the new song, if any.
-    pub fn audio(&self) -> Option<&std::path::Path> {
+    pub(crate) fn audio(&self) -> Option<&std::path::Path> {
         self.audio.as_deref()
     }
 
     /// Names the audio file chosen for the new song.
-    pub fn set_audio(&mut self, audio: Option<PathBuf>) {
+    pub(crate) fn set_audio(&mut self, audio: Option<PathBuf>) {
         self.audio = audio;
     }
 
     /// Whether the title and artist are both still to be written.
-    pub fn blank(&self) -> bool {
+    pub(crate) fn blank(&self) -> bool {
         self.title.trim().is_empty() && self.artist.trim().is_empty()
     }
 
     /// Whether `title` or `artist`, where given, differ from what the draft has.
-    pub fn differs(&self, title: Option<&str>, artist: Option<&str>) -> bool {
+    pub(crate) fn differs(&self, title: Option<&str>, artist: Option<&str>) -> bool {
         title.is_some_and(|title| title != self.title.trim())
             || artist.is_some_and(|artist| artist != self.artist.trim())
     }
 
     /// Takes the title and artist given.
-    pub fn fill(&mut self, title: Option<&str>, artist: Option<&str>) {
+    pub(crate) fn fill(&mut self, title: Option<&str>, artist: Option<&str>) {
         if let Some(title) = title {
             title.clone_into(&mut self.title);
         }
@@ -189,7 +189,7 @@ impl Draft {
 
 /// What the user did with the dialog.
 #[derive(Debug)]
-pub enum Answer {
+pub(crate) enum Answer {
     /// Make `song` with `plugin`.
     Create {
         /// The ruleset used to check the new song's charts.
@@ -215,7 +215,7 @@ fn games(plugins: &[&'static dyn RulesetPlugin]) -> Vec<&'static dyn RulesetPlug
 /// Shows the dialog over the window: the game, the layout every chart shares with a sketch of
 /// its lanes, the title and artist, the charts, and the audio still to come. Escape or a click
 /// outside cancels.
-pub fn show(
+pub(crate) fn show(
     ui: &Ui,
     plugins: &[&'static dyn RulesetPlugin],
     draft: &mut Draft,

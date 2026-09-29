@@ -6,19 +6,76 @@ use super::{
 };
 use egui::Align2;
 
-/// Draw lower rows first, preserving note order within each row.
-pub(super) fn ordered_objects(song: &Song, (first, last): (Tick, Tick)) -> Vec<Valid<'_, Object>> {
-    let Some(chart) = song.chart() else {
-        return Vec::new();
-    };
-    let mut reaching = reaching(&chart.objects, first, last).peekable();
-    let mut objects: Vec<_> = chart
-        .objects()
-        .enumerate()
-        .filter_map(|(index, object)| reaching.next_if_eq(&index).map(|_| object))
-        .collect();
-    objects.sort_by_key(|object| std::cmp::Reverse(chart.layer_index(object).unwrap_or(0)));
-    objects
+/// Cached order of the visible note objects, lower rows first.
+#[derive(Debug, Default)]
+pub(crate) struct ObjectOrder {
+    /// The song and viewport this order describes.
+    key: Option<ObjectOrderKey>,
+    /// Object indices in paint order.
+    indices: Vec<usize>,
+}
+
+/// The song and viewport facts that make an object order reusable.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ObjectOrderKey {
+    /// Song revision: changes when notes change.
+    revision: u64,
+    /// History position: catches layer edits and chart switches; cheap enough for now.
+    history_step: usize,
+    /// Open chart name.
+    chart: String,
+    /// First visible tick.
+    first: Tick,
+    /// Last visible tick.
+    last: Tick,
+    /// Current object count.
+    objects: usize,
+    /// Current layer count.
+    layers: usize,
+}
+
+impl ObjectOrder {
+    /// Draw lower rows first, preserving note order within each row.
+    pub(crate) fn indices(&mut self, song: &Song, (first, last): (Tick, Tick)) -> &[usize] {
+        let Some(chart) = song.chart() else {
+            self.key = None;
+            self.indices.clear();
+            return &self.indices;
+        };
+        let matches = self.key.as_ref().is_some_and(|key| {
+            key.revision == song.revision()
+                && key.history_step == song.history_step()
+                && key.chart == chart.name
+                && key.first == first
+                && key.last == last
+                && key.objects == chart.objects.len()
+                && key.layers == chart.layers.len()
+        });
+        if matches {
+            return &self.indices;
+        }
+        self.indices.clear();
+        self.indices.extend(reaching(&chart.objects, first, last));
+        self.indices.sort_by_key(|index| {
+            std::cmp::Reverse(
+                chart
+                    .objects
+                    .get(*index)
+                    .and_then(|object| chart.layer_index(object))
+                    .unwrap_or(0),
+            )
+        });
+        self.key = Some(ObjectOrderKey {
+            revision: song.revision(),
+            history_step: song.history_step(),
+            chart: chart.name.clone(),
+            first,
+            last,
+            objects: chart.objects.len(),
+            layers: chart.layers.len(),
+        });
+        &self.indices
+    }
 }
 
 /// Says whose timing the chart uses and numbers its lanes.
@@ -126,7 +183,7 @@ pub(super) fn waveform(
 
 /// The grids the notefield draws, by the note value of their finest lines: beats alone, then
 /// finer lines between the beats.
-pub const GRIDS: [u16; 7] = [4, 8, 12, 16, 24, 32, 48];
+pub(crate) const GRIDS: [u16; 7] = [4, 8, 12, 16, 24, 32, 48];
 
 /// A line of the grid inside a measure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -335,7 +392,7 @@ pub(super) fn draw_object(
     columns: &Columns,
     timing: Valid<'_, Timing>,
     view: View,
-    object: Valid<'_, Object>,
+    object: &Object,
     selected: bool,
     (layer_view, colour, tinted): (
         charter_core::LayerView,
@@ -347,7 +404,7 @@ pub(super) fn draw_object(
         return;
     };
     let start = view.y(timing.time_at(object.tick));
-    let end = view.y(timing.time_at(object.end()));
+    let end = view.y(timing.time_at(object.shape.end(object.tick).unwrap_or(object.tick)));
     let across = columns
         .span(index, width)
         .shrink((columns.lane_w * 0.12).max(2.0));
@@ -411,7 +468,7 @@ pub(super) fn draw_object(
             },
         );
     }
-    for child in object.children() {
+    for child in &object.children {
         if let Position::Lane {
             index: child_lane,
             width: child_width,
@@ -764,7 +821,7 @@ mod tests {
                     &field.columns,
                     chart.timing(),
                     field.view,
-                    object,
+                    &object,
                     false,
                     (
                         charter_core::LayerView::Shown,
@@ -819,6 +876,7 @@ mod tests {
                     },
                     &mut [0.0; 2],
                     &mut None,
+                    &mut ObjectOrder::default(),
                     &mut Vec::new(),
                 );
             });
@@ -875,14 +933,26 @@ mod tests {
         song.set_active_layer(0);
         song.toggle(Tick::new(1_000_000), LaneIndex::new(0), Kind::Tap)
             .unwrap();
-        let order = ordered_objects(&song, (Tick::new(0), Tick::new(1_000_000)));
+        let mut order = ObjectOrder::default();
+        let indices = order.indices(&song, (Tick::new(0), Tick::new(1_000_000)));
         let chart = song.chart().unwrap();
-        let layers: Vec<_> = order
+        let layers: Vec<_> = indices
             .iter()
-            .map(|object| chart.layer_index(object).unwrap())
+            .map(|index| chart.layer_index(&chart.objects[*index]).unwrap())
             .collect();
         assert_eq!(layers.first(), Some(&1));
         assert_eq!(layers.last(), Some(&0));
+    }
+
+    #[test]
+    fn cached_object_order_key_includes_layer_history() {
+        let mut song = Song::new(demo::song(), &[&charter_stepmania::Plugin]);
+        let mut order = ObjectOrder::default();
+        order.indices(&song, (Tick::new(0), Tick::new(1_000_000)));
+        let first = order.key.clone();
+        song.add_layer().unwrap();
+        order.indices(&song, (Tick::new(0), Tick::new(1_000_000)));
+        assert_ne!(order.key, first);
     }
 
     #[test]
@@ -1732,6 +1802,7 @@ mod tests {
                         },
                         &mut [0.0; 2],
                         &mut state.gesture,
+                        &mut ObjectOrder::default(),
                         &mut state.actions,
                     );
                 },

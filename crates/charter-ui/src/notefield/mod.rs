@@ -1,8 +1,4 @@
-#![expect(
-    clippy::mod_module_files,
-    clippy::pub_use,
-    reason = "requested directory re-export layout"
-)]
+#![expect(clippy::mod_module_files, reason = "requested directory layout")]
 //! The notefield view and interaction model.
 //!
 //! The module keeps the public surface (`show`, [`Zoom`], [`View`] and related helper types) at
@@ -36,18 +32,18 @@ mod wheel;
 
 use draw::{
     backdrop, draw_object, drop_guide, events, ghost, grid, header, hold_preview_rect, markers,
-    now_line, ordered_objects, waveform,
+    now_line, waveform,
 };
 use gesture::{anchored, grab, handle_at, pointer, snap_line};
 use menu::menu;
 use spectrum::frequencies;
 use wheel::measure_steps;
 
-pub use draw::GRIDS;
-pub(crate) use draw::kind_colours;
+pub(crate) use draw::GRIDS;
+pub(crate) use draw::{ObjectOrder, kind_colours};
 pub(crate) use gesture::Gesture;
-pub use spectrum::Tiles;
-pub use wheel::wheel_steps;
+pub(crate) use spectrum::Tiles;
+pub(crate) use wheel::wheel_steps;
 
 #[cfg(test)]
 use gesture::{hit, hit_on_layers, let_go, panned, started};
@@ -58,7 +54,7 @@ use spectrum::{COARSEST, TILE, heat, level_for, tile_image, tile_span};
 
 /// How tall a second of audio is on screen, in points.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Zoom(f32);
+pub(crate) struct Zoom(f32);
 
 impl Default for Zoom {
     /// Where a song opens: a 16th stream at 150 BPM sits about 25 points apart.
@@ -73,28 +69,28 @@ impl Zoom {
     /// Lowest permitted scale, in points per second.
     const FARTHEST: f32 = 30.0;
     /// How much one zoom step scales by.
-    pub const STEP: f32 = 1.25;
+    pub(crate) const STEP: f32 = 1.25;
 
     /// The vertical scale in screen points per audio second.
-    pub const fn points_per_second(self) -> f32 {
+    pub(crate) const fn points_per_second(self) -> f32 {
         self.0
     }
 
     /// How close the zoom is, against where a song opens.
-    pub fn percent(self) -> f32 {
+    pub(crate) fn percent(self) -> f32 {
         self.0 / Self::default().0 * 100.0
     }
 
     /// This zoom scaled by `factor`, as far as it goes either way.
     #[must_use]
-    pub fn by(self, factor: f32) -> Self {
+    pub(crate) fn by(self, factor: f32) -> Self {
         Self((self.0 * factor).clamp(Self::FARTHEST, Self::CLOSEST))
     }
 }
 
 /// Where audio times fall on screen in one frame: later times lower, the cursor on the now line.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct View {
+pub(crate) struct View {
     /// Screen height of the cursor's now line, in points.
     pub(crate) now_y: f32,
     /// Cursor position in audio seconds.
@@ -105,7 +101,7 @@ pub struct View {
 
 impl View {
     /// A timeline with `cursor` aligned to `now_y`.
-    pub const fn new(now_y: f32, cursor: ResolvedTime, zoom: Zoom) -> Self {
+    pub(crate) const fn new(now_y: f32, cursor: ResolvedTime, zoom: Zoom) -> Self {
         Self {
             now_y,
             cursor: cursor.seconds(),
@@ -114,25 +110,25 @@ impl View {
     }
 
     /// Where `at` is drawn.
-    pub fn y(self, at: ResolvedTime) -> f32 {
+    pub(crate) fn y(self, at: ResolvedTime) -> f32 {
         self.y_of(at.seconds())
     }
 
     /// Where audio `seconds` into the song is drawn.
-    pub fn y_of(self, seconds: f64) -> f32 {
+    pub(crate) fn y_of(self, seconds: f64) -> f32 {
         let below = (seconds - self.cursor) * f64::from(self.zoom.points_per_second());
         let below = crate::cast::f64_f32(below);
         self.now_y + below
     }
 
     /// The audio time drawn at height `y`.
-    pub fn seconds_at(self, y: f32) -> f64 {
+    pub(crate) fn seconds_at(self, y: f32) -> f64 {
         self.cursor + f64::from(y - self.now_y) / f64::from(self.zoom.points_per_second())
     }
 }
 
 /// The line of a grid `step` ticks apart from tick 0 that is drawn nearest to `seconds`.
-pub fn nearest_line(timing: Valid<'_, Timing>, seconds: f64, step: Ticks) -> Tick {
+pub(crate) fn nearest_line(timing: Valid<'_, Timing>, seconds: f64, step: Ticks) -> Tick {
     let latest = timing.latest_tick_by(seconds);
     let below = latest
         .next_on(step)
@@ -148,7 +144,7 @@ pub fn nearest_line(timing: Valid<'_, Timing>, seconds: f64, step: Ticks) -> Tic
 }
 
 /// The first tick an object on which is hit at or after `seconds`.
-pub fn earliest_tick_from(timing: Valid<'_, Timing>, seconds: f64) -> Tick {
+pub(crate) fn earliest_tick_from(timing: Valid<'_, Timing>, seconds: f64) -> Tick {
     let latest = timing.latest_tick_by(seconds);
     if timing.time_at(latest).seconds() >= seconds {
         return latest;
@@ -324,7 +320,7 @@ impl Field {
     clippy::too_many_lines,
     reason = "one pass over the frame in drawing order"
 )]
-pub fn show(
+pub(crate) fn show(
     ui: &mut Ui,
     song: &Song,
     Shown {
@@ -336,6 +332,7 @@ pub fn show(
     }: Shown<'_>,
     scrolled: &mut [f32; 2],
     gesture: &mut Option<Gesture>,
+    object_order: &mut ObjectOrder,
     actions: &mut Vec<Action>,
 ) -> Option<(f64, f64)> {
     let Some(chart) = song.chart() else {
@@ -450,12 +447,17 @@ pub fn show(
     events(&clipped, columns, song, view, rows, (first, last));
     let band = Rect::from_x_y_ranges(columns.timeline(), view.now_y - 12.0..=view.now_y + 12.0);
     clipped.rect_filled(band, 0.0, style::NOW_BAND);
-    for object in ordered_objects(song, (first, last)) {
-        let (layer_view, colour) = song.layer_look(&object);
+    // ponytail: cached by viewport ticks, so smooth scrolling still invalidates each tick range;
+    // move to a wider time bucket if profiling says this remains hot.
+    for &index in object_order.indices(song, (first, last)) {
+        let Some(object) = chart.objects.get(index) else {
+            continue;
+        };
+        let (layer_view, colour) = song.layer_look(object);
         if layer_view == charter_core::LayerView::Hidden {
             continue;
         }
-        let selected = song.is_selected(&object);
+        let selected = song.is_selected(object);
         draw_object(
             &clipped,
             columns,
@@ -570,7 +572,7 @@ pub fn show(
 /// How the notefield is shown: how close, which way it runs, and the waveform of the song's
 /// audio when there is one to draw.
 #[derive(Clone, Copy, Debug)]
-pub struct Shown<'a> {
+pub(crate) struct Shown<'a> {
     /// Vertical scale in screen points per audio second.
     pub zoom: Zoom,
     /// Whether later notes appear above or below the now line.

@@ -5,7 +5,7 @@ use super::{Action, Align, Layout, RichText, Ui, egui, style};
     clippy::non_ascii_literal,
     reason = "the empty-window Open song button displays an ellipsis"
 )]
-pub fn empty(
+pub(crate) fn empty(
     ui: &mut Ui,
     (no_drops, recent): (bool, &[std::path::PathBuf]),
     actions: &mut Vec<Action>,
@@ -68,7 +68,7 @@ pub fn empty(
     clippy::non_ascii_literal,
     reason = "the missing-audio chooser button displays an ellipsis"
 )]
-pub fn no_audio(ui: &mut Ui, no_drops: bool, actions: &mut Vec<Action>) {
+pub(crate) fn no_audio(ui: &mut Ui, no_drops: bool, actions: &mut Vec<Action>) {
     notice(ui, style::icon::MUSIC_NOTES, |ui| {
         if no_drops {
             ui.label("No audio yet (.ogg, .mp3, .wav, .flac).");

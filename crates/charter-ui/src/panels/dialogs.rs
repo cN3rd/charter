@@ -3,7 +3,7 @@ use super::{Align, Layout, RichText, Ui, egui, fields, icon, style};
 
 /// What to do with unsaved changes that are about to be lost.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Answer {
+pub(crate) enum Answer {
     /// Save the changes before leaving.
     Save,
     /// Leave without saving the changes.
@@ -14,7 +14,7 @@ pub enum Answer {
 
 /// Asks whether to save the changes to the song in `name` before they are lost. Escape or a
 /// click outside cancels.
-pub fn ask_to_save(ui: &Ui, name: &str) -> Option<Answer> {
+pub(crate) fn ask_to_save(ui: &Ui, name: &str) -> Option<Answer> {
     let mut answer = None;
     let modal = egui::Modal::new(egui::Id::new("save changes")).show(ui.ctx(), |ui| {
         ui.set_max_width(380.0);
@@ -43,7 +43,7 @@ pub fn ask_to_save(ui: &Ui, name: &str) -> Option<Answer> {
 
 /// Asks whether to take the title and artist an audio file's tags carry over the song's own:
 /// true to take them. Only an answer closes it.
-pub fn offer_tags(ui: &Ui, title: Option<&str>, artist: Option<&str>) -> Option<bool> {
+pub(crate) fn offer_tags(ui: &Ui, title: Option<&str>, artist: Option<&str>) -> Option<bool> {
     let mut answer = None;
     egui::Modal::new(egui::Id::new("offer tags")).show(ui.ctx(), |ui| {
         ui.set_max_width(380.0);
@@ -74,7 +74,7 @@ pub fn offer_tags(ui: &Ui, title: Option<&str>, artist: Option<&str>) -> Option<
 
 /// Asks whether to restore the unsaved changes to the song in `name` that an earlier run kept:
 /// true to restore them, false to throw them away. Only an answer closes it.
-pub fn ask_to_restore(ui: &Ui, name: &str) -> Option<bool> {
+pub(crate) fn ask_to_restore(ui: &Ui, name: &str) -> Option<bool> {
     let mut answer = None;
     egui::Modal::new(egui::Id::new("restore changes")).show(ui.ctx(), |ui| {
         ui.set_max_width(380.0);
@@ -96,7 +96,7 @@ pub fn ask_to_restore(ui: &Ui, name: &str) -> Option<bool> {
 }
 
 /// Whether to download the beat tracker's weights, which the user answers: true for Download.
-pub fn ask_to_download_weights(ui: &Ui) -> Option<bool> {
+pub(crate) fn ask_to_download_weights(ui: &Ui) -> Option<bool> {
     let mut answer = None;
     egui::Modal::new(egui::Id::new("download weights")).show(ui.ctx(), |ui| {
         ui.set_max_width(420.0);
@@ -123,7 +123,7 @@ pub fn ask_to_download_weights(ui: &Ui) -> Option<bool> {
 }
 
 /// Whether to reset the open chart's timing, which the user answers: true for Reset.
-pub fn ask_to_reset_timing(ui: &Ui) -> Option<bool> {
+pub(crate) fn ask_to_reset_timing(ui: &Ui) -> Option<bool> {
     let mut answer = None;
     egui::Modal::new(egui::Id::new("reset timing")).show(ui.ctx(), |ui| {
         ui.set_max_width(400.0);
@@ -154,7 +154,7 @@ pub fn ask_to_reset_timing(ui: &Ui) -> Option<bool> {
     clippy::arithmetic_side_effects,
     reason = "egui position offsets use vector subtraction"
 )]
-pub fn toast(ui: &Ui, message: &str) -> bool {
+pub(crate) fn toast(ui: &Ui, message: &str) -> bool {
     let area = ui.max_rect();
     let width = (area.width() - 32.0).clamp(160.0, 640.0);
     egui::Area::new(ui.id().with("toast"))
@@ -185,7 +185,7 @@ pub fn toast(ui: &Ui, message: &str) -> bool {
 }
 
 /// Why the open song cannot be edited.
-pub fn read_only(ui: &mut Ui, why: &str) {
+pub(crate) fn read_only(ui: &mut Ui, why: &str) {
     notice(ui, style::icon::LOCK_SIMPLE, |ui| {
         ui.label(format!("Read only: {why}"));
     });

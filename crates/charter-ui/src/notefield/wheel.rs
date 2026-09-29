@@ -3,7 +3,7 @@ use super::egui;
 /// Cursor steps the mouse wheel asks for in `events`, later first, keeping part-steps in
 /// `remainder`: a whole line of scrolling, one wheel notch, is one step, and touchpads and smooth
 /// wheels send fractions that add up.
-pub fn wheel_steps(events: &[egui::Event], remainder: &mut f32) -> i32 {
+pub(crate) fn wheel_steps(events: &[egui::Event], remainder: &mut f32) -> i32 {
     let mut steps = 0.0;
     for event in events {
         let egui::Event::MouseWheel {

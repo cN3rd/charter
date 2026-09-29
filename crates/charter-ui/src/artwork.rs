@@ -8,7 +8,7 @@ pub type Picture = (Vec<u8>, egui::ColorImage);
 
 /// The song's artwork, as it stands.
 #[derive(Debug)]
-pub struct Artwork {
+pub(crate) struct Artwork {
     /// The file the song names, beside the song.
     name: String,
     /// Where that file is, when the song has been saved: it is read again once this changes.
@@ -49,32 +49,32 @@ impl std::fmt::Debug for Preview {
 
 impl Artwork {
     /// The filename named in the song.
-    pub fn name(&self) -> &str {
+    pub(crate) fn name(&self) -> &str {
         &self.name
     }
 
     /// The artwork's path beside a saved song.
-    pub fn file(&self) -> Option<&Path> {
+    pub(crate) fn file(&self) -> Option<&Path> {
         self.file.as_deref()
     }
 
     /// The history step that named this artwork.
-    pub const fn step(&self) -> usize {
+    pub(crate) const fn step(&self) -> usize {
         self.step
     }
 
     /// Records the history step that named this artwork.
-    pub const fn set_step(&mut self, step: usize) {
+    pub(crate) const fn set_step(&mut self, step: usize) {
         self.step = step;
     }
 
     /// Records the path of this artwork beside the song.
-    pub fn set_file(&mut self, file: Option<PathBuf>) {
+    pub(crate) fn set_file(&mut self, file: Option<PathBuf>) {
         self.file = file;
     }
 
     /// Artwork named `name`, being read from `file`, or not until the song is saved without one.
-    pub fn named(name: &str, file: Option<&Path>) -> Self {
+    pub(crate) fn named(name: &str, file: Option<&Path>) -> Self {
         Self {
             name: name.to_owned(),
             file: file.map(Path::to_path_buf),
@@ -90,7 +90,7 @@ impl Artwork {
     }
 
     /// Artwork named `name` from `picture`, to be written beside the song when it is saved.
-    pub fn taken(name: String, file: Option<PathBuf>, (bytes, image): Picture) -> Self {
+    pub(crate) fn taken(name: String, file: Option<PathBuf>, (bytes, image): Picture) -> Self {
         Self {
             name,
             file,
@@ -102,7 +102,7 @@ impl Artwork {
     }
 
     /// Takes what the host read of the file, if it could read and decode it.
-    pub fn read(&mut self, read: Option<Picture>) {
+    pub(crate) fn read(&mut self, read: Option<Picture>) {
         if self.unsaved {
             return;
         }
@@ -117,19 +117,19 @@ impl Artwork {
 
     /// Where the artwork is written, and what, when the song is saved to `path` while the
     /// artwork is read from `now`: nothing when it is there already.
-    pub fn write_for(&self, path: &Path, now: Option<&Path>) -> Option<(PathBuf, Vec<u8>)> {
+    pub(crate) fn write_for(&self, path: &Path, now: Option<&Path>) -> Option<(PathBuf, Vec<u8>)> {
         let to = path.parent()?.join(&self.name);
         let bytes = self.bytes.as_ref()?;
         (self.unsaved || now != Some(to.as_path())).then(|| (to, bytes.clone()))
     }
 
     /// The picture's bytes while they are still to be written beside the song.
-    pub fn unsaved(&self) -> Option<&[u8]> {
+    pub(crate) fn unsaved(&self) -> Option<&[u8]> {
         self.bytes.as_deref().filter(|_| self.unsaved)
     }
 
     /// Takes that the song was saved, with the artwork beside it.
-    pub const fn saved(&mut self) {
+    pub(crate) const fn saved(&mut self) {
         self.unsaved = false;
     }
 
@@ -138,7 +138,10 @@ impl Artwork {
         clippy::non_ascii_literal,
         reason = "the artwork loading state uses an ellipsis in its UI label"
     )]
-    pub fn shown(&mut self, ctx: &egui::Context) -> Result<&egui::TextureHandle, &'static str> {
+    pub(crate) fn shown(
+        &mut self,
+        ctx: &egui::Context,
+    ) -> Result<&egui::TextureHandle, &'static str> {
         if let Preview::Decoded(image) = &self.preview {
             let texture = ctx.load_texture("artwork", image.clone(), egui::TextureOptions::LINEAR);
             self.preview = Preview::Shown(texture);

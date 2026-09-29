@@ -6,7 +6,7 @@ use super::{
 
 /// A drag across the notefield in progress.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Gesture {
+pub(crate) enum Gesture {
     /// A hold being drawn out of the tap Ctrl placed where the drag began.
     Hold {
         /// Lane where the initial tap was placed.

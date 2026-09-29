@@ -291,7 +291,11 @@ impl Window {
                         _ => None,
                     };
                     let reversed = self.settings.direction == Direction::Down;
-                    let (scrolled, gesture) = (&mut self.typing.scrolled, &mut self.gesture);
+                    let (scrolled, gesture, object_order) = (
+                        &mut self.typing.scrolled,
+                        &mut self.gesture,
+                        &mut self.object_order,
+                    );
                     style::stage().show(ui, |ui| {
                         ui.set_min_size(ui.available_size());
                         let whole = ui.available_rect_before_wrap();
@@ -309,6 +313,7 @@ impl Window {
                             shown,
                             scrolled,
                             gesture,
+                            object_order,
                             &mut actions,
                         );
                         if let (Some(beside), Some(visible)) = (beside, visible) {
