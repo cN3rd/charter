@@ -1,9 +1,9 @@
 //! Opening, saving, autosaving, snapshots and recent files.
 
 use super::{
-    Arc, Artwork, Autosave, Discard, Leaving, NO_AUDIO, Offer, Path, PathBuf, Peaks, RECENT,
-    Request, Restoring, Saved, Saving, Song, Spectrum, Window, Zoom, demo, file_name, new_song,
-    notefield, panels, recovery, refused, shown_strip,
+    Arc, Artwork, Autosave, Discard, EmbeddedArtwork, Leaving, NO_AUDIO, OfFile, Offer, Path,
+    PathBuf, Peaks, RECENT, Request, Restoring, Saved, Saving, Song, Spectrum, Window, Zoom, demo,
+    file_name, new_song, notefield, panels, recovery, refused, shown_strip,
 };
 
 impl Window {
@@ -162,21 +162,30 @@ impl Window {
     }
     /// Handles this window operation.
     pub fn waveform_ready(&mut self, file: &Path, peaks: Arc<Peaks>) {
-        self.analysis.waveform = Some((file.to_path_buf(), peaks));
+        self.analysis.waveform = Some(OfFile {
+            file: file.to_path_buf(),
+            value: peaks,
+        });
     }
     /// Handles this window operation.
     pub fn spectrum_ready(&mut self, file: &Path, spectrum: Arc<Spectrum>) {
-        self.analysis.spectrum = Some((file.to_path_buf(), notefield::Tiles::new(spectrum)));
+        self.analysis.spectrum = Some(OfFile {
+            file: file.to_path_buf(),
+            value: notefield::Tiles::new(spectrum),
+        });
     }
     /// Handles this window operation.
     pub fn onsets_ready(&mut self, file: &Path, onsets: Arc<[charter_audio::Onset]>) {
-        self.analysis.onsets = Some((file.to_path_buf(), onsets));
+        self.analysis.onsets = Some(OfFile {
+            file: file.to_path_buf(),
+            value: onsets,
+        });
     }
     /// Handles this window operation.
     pub fn onsets(&self) -> Option<&[charter_audio::Onset]> {
         let file = self.audio_file();
-        let (of, onsets) = self.analysis.onsets.as_ref()?;
-        (Some(of.as_path()) == file.as_deref()).then_some(onsets.as_ref())
+        let onsets = self.analysis.onsets.as_ref()?;
+        (Some(onsets.file.as_path()) == file.as_deref()).then_some(onsets.value.as_ref())
     }
     /// Handles this window operation.
     pub fn strip(&self) -> Option<notefield::Strip<'_>> {
@@ -211,7 +220,7 @@ impl Window {
             .playback
             .audio
             .as_ref()
-            .is_some_and(|(file, _)| Some(file) != wanted.as_ref())
+            .is_some_and(|status| Some(&status.file) != wanted.as_ref())
         {
             self.playback.audio = None;
             if std::mem::take(&mut self.playback.playing) {
@@ -570,7 +579,11 @@ impl Window {
                     self.requests.push(Request::DecodeArtwork { bytes });
                 }
                 let embedded = self.artwork.embedded.take();
-                if let Some((file, extension, picture)) = embedded
+                if let Some(EmbeddedArtwork {
+                    file,
+                    extension,
+                    picture,
+                }) = embedded
                     && self.artwork.audio_file.as_ref() == Some(&file)
                 {
                     self.artwork_embedded(&file, &extension, picture);
@@ -606,7 +619,7 @@ mod tests {
             Action::SetLayerView(0, charter_core::LayerView::Ghosted),
             Action::SetLayerLocked(0, true),
             Action::SoloLayer(0),
-            Action::MoveLayer(0, 1),
+            Action::MoveLayer { from: 0, to: 1 },
             Action::MergeLayer(0),
             Action::DeleteLayer(0, charter_editor::LayerNotes::Delete),
         ];

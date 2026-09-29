@@ -948,7 +948,12 @@ mod tests {
         harness.run();
         harness.drop_at(to);
         harness.run();
-        assert!(harness.state().2.contains(&Action::MoveLayer(1, 0)));
+        assert!(
+            harness
+                .state()
+                .2
+                .contains(&Action::MoveLayer { from: 1, to: 0 })
+        );
     }
 
     #[test]
@@ -988,7 +993,12 @@ mod tests {
         harness.run();
         harness.get_by_label("Copy to Hard").click();
         harness.run();
-        assert!(harness.state().2.contains(&Action::CopyLayerToChart(0, 1)));
+        assert!(
+            harness
+                .state()
+                .2
+                .contains(&Action::CopyLayerToChart { layer: 0, chart: 1 })
+        );
     }
 
     #[test]

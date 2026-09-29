@@ -1,6 +1,6 @@
 //! Artwork selection, restoration and save-side bookkeeping.
 
-use super::{Artwork, Path, PathBuf, Picture, Request, Song, Window, refused};
+use super::{Artwork, EmbeddedArtwork, Path, PathBuf, Picture, Request, Song, Window, refused};
 
 impl Window {
     /// Handles this window operation.
@@ -25,7 +25,11 @@ impl Window {
             .as_ref()
             .is_some_and(|draft| draft.audio() == Some(file))
         {
-            self.artwork.embedded = Some((file.to_path_buf(), extension.to_owned(), picture));
+            self.artwork.embedded = Some(EmbeddedArtwork {
+                file: file.to_path_buf(),
+                extension: extension.to_owned(),
+                picture,
+            });
             return;
         }
         let bare = self

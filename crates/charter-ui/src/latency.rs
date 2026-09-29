@@ -208,25 +208,26 @@ pub fn show(
             ui.label(RichText::new("Audio").strong());
             ui.weak("Move the audio latency until the flash lands on each click you hear.");
             ui.horizontal(|ui| {
-                let lit = elapsed
-                    .is_some_and(|elapsed| flashing(elapsed, settings.audio_latency_ms, &clicks));
+                let lit = elapsed.is_some_and(|elapsed| {
+                    flashing(elapsed, settings.audio_latency_ms.ms(), &clicks)
+                });
                 let (rect, _) =
                     ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
                 let colour = if lit { style::ACCENT } else { style::WAVE_BG };
                 ui.painter().circle_filled(rect.center(), 8.0, colour);
                 let caption = ui.label("Audio latency").id;
                 if ui.button("−").clicked() {
-                    settings.audio_latency_ms -= 5.0;
+                    settings.audio_latency_ms.0 -= 5.0;
                 }
                 ui.add(
-                    egui::DragValue::new(&mut settings.audio_latency_ms)
+                    egui::DragValue::new(&mut settings.audio_latency_ms.0)
                         .speed(1.0)
                         .range(-500.0..=500.0)
                         .suffix(" ms"),
                 )
                 .labelled_by(caption);
                 if ui.button("+").clicked() {
-                    settings.audio_latency_ms += 5.0;
+                    settings.audio_latency_ms.0 += 5.0;
                 }
             });
 
@@ -251,13 +252,13 @@ pub fn show(
             // Taps come the audio latency after the click plays, and the input latency after
             // that.
             let measured = latency(&calibration.taps, &clicks, playing.spacing)
-                .map(|ms| ms - settings.audio_latency_ms);
+                .map(|ms| ms - settings.audio_latency_ms.ms());
             match measured {
                 Some(ms) => {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(format!("Taps land {ms:+.0} ms late")).strong());
                         if ui.button("Keep it").clicked() {
-                            settings.input_latency_ms = ms;
+                            settings.input_latency_ms = crate::settings::LatencyMs(ms);
                             calibration.started = None;
                             calibration.taps.clear();
                         }
@@ -266,7 +267,7 @@ pub fn show(
                 None => {
                     ui.weak(format!(
                         "Input latency now: {:+.0} ms",
-                        settings.input_latency_ms
+                        settings.input_latency_ms.ms()
                     ));
                 }
             }
@@ -415,8 +416,8 @@ mod tests {
                     ..Calibration::default()
                 },
                 Settings {
-                    audio_latency_ms: 20.0,
-                    input_latency_ms: 8.0,
+                    audio_latency_ms: crate::settings::LatencyMs(20.0),
+                    input_latency_ms: crate::settings::LatencyMs(8.0),
                     ..Settings::default()
                 },
                 10.0,
@@ -442,7 +443,7 @@ mod tests {
         harness.get_by_label("Start").click();
         harness.step();
         assert!(harness.state().0.taps.is_empty());
-        assert!((harness.state().1.input_latency_ms - 8.0).abs() < 1e-9);
+        assert!((harness.state().1.input_latency_ms.ms() - 8.0).abs() < 1e-9);
     }
 
     #[test]
@@ -463,10 +464,10 @@ mod tests {
                 .query_by_label_contains("Taps land +30 ms late")
                 .is_some()
         );
-        assert!((harness.state().1.input_latency_ms - 8.0).abs() < 1e-9);
+        assert!((harness.state().1.input_latency_ms.ms() - 8.0).abs() < 1e-9);
         harness.get_by_label("Keep it").click();
         harness.step();
-        assert!((harness.state().1.input_latency_ms - 30.0).abs() < 1e-8);
+        assert!((harness.state().1.input_latency_ms.ms() - 30.0).abs() < 1e-8);
         assert!(harness.state().0.started.is_none());
         assert!(harness.state().0.taps.is_empty());
     }
@@ -492,10 +493,10 @@ mod tests {
         assert!(harness.query_by_label("Keep it").is_none());
         harness.get_by_label("+").click();
         harness.step();
-        assert!((harness.state().1.audio_latency_ms - 25.0).abs() < 1e-9);
+        assert!((harness.state().1.audio_latency_ms.ms() - 25.0).abs() < 1e-9);
         harness.get_by_label("−").click();
         harness.step();
-        assert!((harness.state().1.audio_latency_ms - 20.0).abs() < 1e-9);
-        assert!((harness.state().1.input_latency_ms - 8.0).abs() < 1e-9);
+        assert!((harness.state().1.audio_latency_ms.ms() - 20.0).abs() < 1e-9);
+        assert!((harness.state().1.input_latency_ms.ms() - 8.0).abs() < 1e-9);
     }
 }

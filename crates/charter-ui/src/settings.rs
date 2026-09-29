@@ -35,6 +35,26 @@ pub enum Sound {
     Finish,
 }
 
+/// A latency calibration value, in milliseconds.
+#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct LatencyMs(
+    /// Milliseconds, positive when the event arrives late.
+    pub f64,
+);
+
+impl LatencyMs {
+    /// This latency in milliseconds.
+    pub const fn ms(self) -> f64 {
+        self.0
+    }
+
+    /// This latency as seconds at `rate`.
+    pub fn seconds_at(self, rate: f64) -> f64 {
+        self.0 * rate / 1000.0
+    }
+}
+
 impl Sound {
     /// The note tick sounds offered in settings, in menu order.
     const ALL: [Self; 6] = [
@@ -150,12 +170,12 @@ pub struct Settings {
     pub keep_pitch: bool,
     /// How much later than it plays a sound is heard, in milliseconds, as the calibration's flash
     /// set it: the cursor takes it off the playhead to show what is heard.
-    pub audio_latency_ms: f64,
+    pub audio_latency_ms: LatencyMs,
     /// How much later than a sound is heard a tap along to it comes, in milliseconds: notes placed
     /// while playing go this much earlier than the cursor. Older versions kept the two latencies
     /// together here.
     #[serde(alias = "latency_ms")]
-    pub input_latency_ms: f64,
+    pub input_latency_ms: LatencyMs,
 }
 
 impl Default for Settings {
@@ -190,8 +210,8 @@ impl Default for Settings {
             metronome_grid: false,
             rate_b: 0.6,
             keep_pitch: true,
-            audio_latency_ms: 0.0,
-            input_latency_ms: 0.0,
+            audio_latency_ms: LatencyMs(0.0),
+            input_latency_ms: LatencyMs(0.0),
         }
     }
 }
@@ -829,7 +849,8 @@ fn metronome_sound(ui: &mut egui::Ui, settings: &mut Settings, asked: &mut Optio
 fn latency(ui: &mut egui::Ui, settings: &Settings, asked: &mut Option<Asked>) {
     let latency_about = format!(
         "Audio {:+.0} ms, input {:+.0} ms. Align the flash to the click, then tap along.",
-        settings.audio_latency_ms, settings.input_latency_ms
+        settings.audio_latency_ms.ms(),
+        settings.input_latency_ms.ms()
     );
     row(ui, "Latency", &latency_about, |ui, _| {
         if ui.button("Calibrate…").clicked() {
@@ -1213,14 +1234,14 @@ mod tests {
             metronome_grid: true,
             rate_b: 0.5,
             keep_pitch: false,
-            audio_latency_ms: 12.0,
-            input_latency_ms: 20.0,
+            audio_latency_ms: LatencyMs(12.0),
+            input_latency_ms: LatencyMs(20.0),
         };
         let stored = serde_json::to_string(&settings).unwrap();
         assert_eq!(serde_json::from_str::<Settings>(&stored).unwrap(), settings);
         let together: Settings = serde_json::from_str(r#"{ "latency_ms": 30.0 }"#).unwrap();
-        assert!((together.input_latency_ms - 30.0).abs() < f64::EPSILON);
-        assert!(together.audio_latency_ms.abs() < f64::EPSILON);
+        assert!((together.input_latency_ms.ms() - 30.0).abs() < f64::EPSILON);
+        assert!(together.audio_latency_ms.ms().abs() < f64::EPSILON);
         let older: Settings = serde_json::from_str(r#"{ "auto_jump": false }"#).unwrap();
         assert_eq!(
             older,
@@ -1229,6 +1250,18 @@ mod tests {
                 ..Settings::default()
             }
         );
+    }
+
+    #[test]
+    fn latency_newtypes_keep_the_old_settings_json_shape() {
+        let kept = r#"{ "audio_latency_ms": 12.5, "input_latency_ms": -8.25 }"#;
+        let settings = Settings::from_kept(kept);
+        assert_eq!(settings.audio_latency_ms, LatencyMs(12.5));
+        assert_eq!(settings.input_latency_ms, LatencyMs(-8.25));
+
+        let stored: Value = serde_json::from_str(&settings.to_kept()).unwrap();
+        assert_eq!(stored["audio_latency_ms"], 12.5);
+        assert_eq!(stored["input_latency_ms"], -8.25);
     }
 
     #[test]
@@ -1521,8 +1554,8 @@ mod tests {
             (
                 Settings {
                     zoom: 175.0,
-                    audio_latency_ms: 12.0,
-                    input_latency_ms: -8.0,
+                    audio_latency_ms: LatencyMs(12.0),
+                    input_latency_ms: LatencyMs(-8.0),
                     ..Settings::default()
                 },
                 true,
@@ -1532,8 +1565,8 @@ mod tests {
         harness.get_by_label("Restore defaults").click();
         harness.run();
         assert!((harness.state().0.zoom - 100.0).abs() < f32::EPSILON);
-        assert!((harness.state().0.audio_latency_ms - 12.0).abs() < f64::EPSILON);
-        assert!((harness.state().0.input_latency_ms + 8.0).abs() < f64::EPSILON);
+        assert!((harness.state().0.audio_latency_ms.ms() - 12.0).abs() < f64::EPSILON);
+        assert!((harness.state().0.input_latency_ms.ms() + 8.0).abs() < f64::EPSILON);
     }
 
     #[test]

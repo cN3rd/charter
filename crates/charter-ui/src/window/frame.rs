@@ -1,9 +1,9 @@
 //! Per-frame egui integration and drawing.
 
 use super::{
-    AUDIO, Action, Direction, Discard, Finding, Leaving, Loaded, NO_AUDIO, Request, Restoring,
-    Song, Sounds, Ui, Window, editable_lanes, file_name, import, keys, latency, minimap, new_song,
-    notefield, panels, settings, shown_grid, shown_strip, style, timing_panel,
+    AUDIO, Action, Direction, Discard, Finding, Leaving, Loaded, NO_AUDIO, PendingPaste, Request,
+    Restoring, Song, Sounds, Ui, Window, editable_lanes, file_name, import, keys, latency, minimap,
+    new_song, notefield, panels, settings, shown_grid, shown_strip, style, timing_panel,
 };
 
 impl Window {
@@ -211,12 +211,15 @@ impl Window {
         }
         // No text on the clipboard sends no paste, so the notes copied last go instead.
         match self.clipboard.pasting {
-            Some((tick, 0)) => {
+            Some(PendingPaste { tick, wait: 0 }) => {
                 self.clipboard.pasting = None;
                 self.apply(Action::Here(tick, Box::new(Action::Paste(None))));
             }
-            Some((tick, left)) => {
-                self.clipboard.pasting = Some((tick, left.saturating_sub(1)));
+            Some(PendingPaste { tick, wait }) => {
+                self.clipboard.pasting = Some(PendingPaste {
+                    tick,
+                    wait: wait.saturating_sub(1),
+                });
                 ui.ctx().request_repaint();
             }
             None => {}
@@ -389,20 +392,20 @@ impl Window {
                 .analysis
                 .waveform
                 .as_ref()
-                .filter(|(of, _)| Some(of.as_path()) == file.as_deref())
-                .map(|(_, peaks)| peaks.as_ref());
+                .filter(|analysis| Some(analysis.file.as_path()) == file.as_deref())
+                .map(|analysis| analysis.value.as_ref());
             let onsets = self
                 .analysis
                 .onsets
                 .as_ref()
-                .filter(|(of, _)| Some(of.as_path()) == file.as_deref())
-                .map_or(&[][..], |(_, onsets)| onsets.as_ref());
+                .filter(|analysis| Some(analysis.file.as_path()) == file.as_deref())
+                .map_or(&[][..], |analysis| analysis.value.as_ref());
             let inputs = charter_timing::Inputs {
                 song: self.song.as_ref(),
                 peaks,
                 onsets,
                 playing: self.playback.playing,
-                latency_ms: self.settings.audio_latency_ms,
+                latency_ms: self.settings.audio_latency_ms.ms(),
             };
             let mut commands = Vec::new();
             charter_timing::show(ui.ctx(), inputs, &mut self.sync, &mut commands);

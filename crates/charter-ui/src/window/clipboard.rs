@@ -103,7 +103,7 @@ mod tests {
         app.open_demo();
         app.apply(Action::AddLayer);
         let before = app.song.as_ref().unwrap().document().to_json().unwrap();
-        app.apply(Action::CopyLayerToChart(1, 1));
+        app.apply(Action::CopyLayerToChart { layer: 1, chart: 1 });
         assert_ne!(
             app.song.as_ref().unwrap().document().to_json().unwrap(),
             before

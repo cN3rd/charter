@@ -346,7 +346,12 @@ pub(crate) enum Action {
     /// Give this row a new name.
     RenameLayer(usize, String),
     /// Drag a row to a new position.
-    MoveLayer(usize, usize),
+    MoveLayer {
+        /// Row moved.
+        from: usize,
+        /// Row it moves to.
+        to: usize,
+    },
     /// Merge the active row into the next row.
     MergeActiveLayer,
     /// Merge this row into the next row.
@@ -354,7 +359,12 @@ pub(crate) enum Action {
     /// Remove the row, either discarding or moving its notes.
     DeleteLayer(usize, charter_editor::LayerNotes),
     /// Copy this row into another chart.
-    CopyLayerToChart(usize, usize),
+    CopyLayerToChart {
+        /// Row whose notes are copied.
+        layer: usize,
+        /// Chart receiving the copied notes.
+        chart: usize,
+    },
     /// Show or hide the active row.
     ToggleActiveLayerView,
     /// Switch between note-kind and layer-colour tinting.
@@ -407,12 +417,16 @@ pub(crate) enum Action {
         /// Signed distance to move across lanes.
         lanes: i32,
     },
-    /// Meets the selection with the notes starting within `ticks` on a lane within `lanes`.
+    /// Meets the selection with the notes starting inside this tick and lane rectangle.
     SelectBetween {
-        /// Inclusive range of ticks covered by the selection.
-        ticks: (Tick, Tick),
-        /// Inclusive range of lanes covered by the selection.
-        lanes: (LaneIndex, LaneIndex),
+        /// First tick covered by the selection.
+        from_tick: Tick,
+        /// Last tick covered by the selection.
+        to_tick: Tick,
+        /// First lane covered by the selection.
+        from_lane: LaneIndex,
+        /// Last lane covered by the selection.
+        to_lane: LaneIndex,
         /// Whether to replace, add to or remove from the existing selection.
         how: Selecting,
     },
@@ -660,6 +674,53 @@ pub struct Window {
     dialogs: Dialogs,
 }
 
+/// Playback that has been mixed by the host.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct PlayedAudio {
+    /// Volumes baked into the current playback.
+    volumes: charter_audio::Volumes,
+    /// Whether metronome or note clicks were mixed into the audio.
+    mixed_clicks: bool,
+}
+
+/// Host status for one audio file.
+#[derive(Debug, PartialEq)]
+struct AudioStatus {
+    /// File this status describes.
+    file: PathBuf,
+    /// Whether the host loaded it.
+    loaded: Loaded,
+}
+
+/// A delayed paste waiting for the platform clipboard.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PendingPaste {
+    /// Tick where the paste should land.
+    tick: Tick,
+    /// Frames left before falling back to the in-memory copy.
+    wait: u8,
+}
+
+/// Analysis data for one audio file.
+#[derive(Debug)]
+struct OfFile<T> {
+    /// File the analysis was made from.
+    file: PathBuf,
+    /// Analysis result.
+    value: T,
+}
+
+/// Cover artwork embedded in an audio file.
+#[derive(Debug)]
+struct EmbeddedArtwork {
+    /// Audio file that held this picture.
+    file: PathBuf,
+    /// Picture file extension to use when saving.
+    extension: String,
+    /// Decoded picture.
+    picture: Picture,
+}
+
 /// Playback state and audio host status.
 #[derive(Debug, Default)]
 struct Playback {
@@ -671,9 +732,9 @@ struct Playback {
     muted: bool,
     /// The volumes the playback under way plays at, and whether clicks are mixed into it, which
     /// bakes every volume in.
-    played: Option<(charter_audio::Volumes, bool)>,
+    played: Option<PlayedAudio>,
     /// The audio file the host last reported on, and how it went.
-    audio: Option<(PathBuf, Loaded)>,
+    audio: Option<AudioStatus>,
     /// Whether the audio is playing.
     playing: bool,
     /// Current playback speed relative to the audio's own speed.
@@ -710,7 +771,7 @@ struct Clipboard {
     /// The notes copied last, their ticks counted from the earliest's.
     clip: Vec<charter_core::Object>,
     /// Where the menu's paste goes, and how many frames are left to wait for the clipboard.
-    pasting: Option<(Tick, u8)>,
+    pasting: Option<PendingPaste>,
     /// Whether to ask the host for the clipboard's text this frame.
     request_paste: bool,
     /// Text to put on the system clipboard this frame.
@@ -721,11 +782,11 @@ struct Clipboard {
 #[derive(Debug, Default)]
 struct Analysis {
     /// The waveform of an audio file, once the host has summarized it.
-    waveform: Option<(PathBuf, Arc<Peaks>)>,
+    waveform: Option<OfFile<Arc<Peaks>>>,
     /// The frequencies of an audio file, once the host has analysed them.
-    spectrum: Option<(PathBuf, notefield::Tiles)>,
+    spectrum: Option<OfFile<notefield::Tiles>>,
     /// The onsets of an audio file the host found, and which file.
-    onsets: Option<(PathBuf, Arc<[charter_audio::Onset]>)>,
+    onsets: Option<OfFile<Arc<[charter_audio::Onset]>>>,
 }
 
 /// Artwork and dropped-audio state.
@@ -745,7 +806,7 @@ struct ArtworkState {
     parked: Vec<Artwork>,
     /// The artwork the audio of the song being started holds, and which file, to take when the
     /// song starts.
-    embedded: Option<(PathBuf, String, Picture)>,
+    embedded: Option<EmbeddedArtwork>,
 }
 
 /// Autosave and snapshot bookkeeping.
@@ -1148,18 +1209,19 @@ fn clicks(
 /// strip: its frequencies if they ask for those and they are ready, else its waveform.
 fn shown_strip<'a>(
     settings: &Settings,
-    waveform: Option<&'a (PathBuf, Arc<Peaks>)>,
-    spectrum: Option<&'a (PathBuf, notefield::Tiles)>,
+    waveform: Option<&'a OfFile<Arc<Peaks>>>,
+    spectrum: Option<&'a OfFile<notefield::Tiles>>,
     file: Option<&Path>,
 ) -> Option<notefield::Strip<'a>> {
-    let of_file = |of: &PathBuf| settings.waveform && Some(of.as_path()) == file;
     let frequencies = spectrum
-        .filter(|(of, _)| settings.frequencies && of_file(of))
-        .map(|(_, tiles)| notefield::Strip::Frequencies(tiles));
+        .filter(|analysis| {
+            settings.frequencies && settings.waveform && Some(analysis.file.as_path()) == file
+        })
+        .map(|analysis| notefield::Strip::Frequencies(&analysis.value));
     frequencies.or_else(|| {
         waveform
-            .filter(|(of, _)| of_file(of))
-            .map(|(_, peaks)| notefield::Strip::Waveform(peaks))
+            .filter(|analysis| settings.waveform && Some(analysis.file.as_path()) == file)
+            .map(|analysis| notefield::Strip::Waveform(&analysis.value))
     })
 }
 

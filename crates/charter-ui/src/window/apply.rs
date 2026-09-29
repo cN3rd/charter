@@ -1,8 +1,8 @@
 //! Action dispatch from panels, keys and gestures.
 
 use super::{
-    Action, KeepNotes, Note, PASTE_WAIT, Rate, Request, Saving, Selecting, Song, Step, Tick,
-    Toggled, Window, grow, nudge_bpm, pattern, placing_at, refused, retime, stretch,
+    Action, KeepNotes, Note, PASTE_WAIT, PendingPaste, Rate, Request, Saving, Selecting, Song,
+    Step, Tick, Toggled, Window, grow, nudge_bpm, pattern, placing_at, refused, retime, stretch,
 };
 
 impl Window {
@@ -86,12 +86,15 @@ impl Window {
         }
         if let Action::PasteHere(tick) = action {
             // The host answers with the clipboard's text as a paste, or nothing without any.
-            self.clipboard.pasting = Some((tick, PASTE_WAIT));
+            self.clipboard.pasting = Some(PendingPaste {
+                tick,
+                wait: PASTE_WAIT,
+            });
             self.clipboard.request_paste = true;
             return;
         }
         if let Action::Paste(Some(_)) = &action
-            && let Some((tick, _)) = self.clipboard.pasting.take()
+            && let Some(PendingPaste { tick, .. }) = self.clipboard.pasting.take()
         {
             self.apply(Action::Here(tick, Box::new(action)));
             return;
@@ -167,7 +170,7 @@ impl Window {
             Action::RenameLayer(index, name) => {
                 self.failure = song.rename_layer(*index, name).err().as_ref().map(refused);
             }
-            Action::MoveLayer(from, to) => {
+            Action::MoveLayer { from, to } => {
                 self.failure = song.move_layer(*from, *to).err().as_ref().map(refused);
             }
             Action::MergeActiveLayer => {
@@ -187,8 +190,8 @@ impl Window {
                     .as_ref()
                     .map(refused);
             }
-            Action::CopyLayerToChart(index, chart) => {
-                self.failure = match song.copy_layer_to_chart(*index, *chart) {
+            Action::CopyLayerToChart { layer, chart } => {
+                self.failure = match song.copy_layer_to_chart(*layer, *chart) {
                     Ok(0) => None,
                     Ok(skipped) => Some(format!("{skipped} overlapping notes skipped")),
                     Err(why) => Some(refused(&why)),
@@ -327,8 +330,14 @@ impl Window {
             return false;
         };
         match action {
-            Action::SelectBetween { ticks, lanes, how } => {
-                song.select_between(ticks.0..=ticks.1, lanes.0..=lanes.1, *how);
+            Action::SelectBetween {
+                from_tick,
+                to_tick,
+                from_lane,
+                to_lane,
+                how,
+            } => {
+                song.select_between(*from_tick..=*to_tick, *from_lane..=*to_lane, *how);
             }
             Action::SetBpmAt(..)
             | Action::MovePointTo(..)

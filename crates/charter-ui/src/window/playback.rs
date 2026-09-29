@@ -1,17 +1,24 @@
 //! Playback and audio-rate state changes.
 
 use super::{
-    Finding, Loaded, NO_AUDIO, Path, Rate, Request, Sounds, Tick, Ui, Window, clicks, grow, latency,
+    AudioStatus, Finding, Loaded, NO_AUDIO, Path, PlayedAudio, Rate, Request, Sounds, Tick, Ui,
+    Window, clicks, grow, latency,
 };
 
 impl Window {
     /// Handles this window operation.
     pub fn audio_ready(&mut self, file: &Path, seconds: f64) {
-        self.playback.audio = Some((file.to_path_buf(), Loaded::Ready(seconds)));
+        self.playback.audio = Some(AudioStatus {
+            file: file.to_path_buf(),
+            loaded: Loaded::Ready(seconds),
+        });
     }
     /// Handles this window operation.
     pub fn audio_failed(&mut self, file: &Path, why: &str) {
-        self.playback.audio = Some((file.to_path_buf(), Loaded::Failed));
+        self.playback.audio = Some(AudioStatus {
+            file: file.to_path_buf(),
+            loaded: Loaded::Failed,
+        });
         self.failure = Some(format!("{} cannot play: {why}", file.display()));
     }
     /// Handles this window operation.
@@ -20,8 +27,11 @@ impl Window {
             return;
         }
         // What plays now is heard a moment later: the cursor shows what is heard.
-        let seconds =
-            seconds - self.settings.audio_latency_ms * self.playback.rate.factor() / 1000.0;
+        let seconds = seconds
+            - self
+                .settings
+                .audio_latency_ms
+                .seconds_at(self.playback.rate.factor());
         let tapped = seconds - self.input_latency();
         if let Some(song) = &mut self.song {
             let tick = song.timing().latest_tick_by(seconds);
@@ -49,7 +59,9 @@ impl Window {
     }
     /// Handles this private window operation.
     pub(super) fn input_latency(&self) -> f64 {
-        self.settings.input_latency_ms * self.playback.rate.factor() / 1000.0
+        self.settings
+            .input_latency_ms
+            .seconds_at(self.playback.rate.factor())
     }
     /// Handles this private window operation.
     #[expect(
@@ -78,23 +90,26 @@ impl Window {
         self.playback
             .audio
             .as_ref()
-            .filter(|(file, _)| *file == wanted)
-            .map(|(_, loaded)| loaded)
+            .filter(|status| status.file == wanted)
+            .map(|status| &status.loaded)
     }
     /// Handles this private window operation.
     pub(super) fn follow_volumes(&mut self, ui: &Ui) {
-        let (Some((played, mixed)), true) = (self.playback.played, self.playback.playing) else {
+        let (Some(played), true) = (self.playback.played, self.playback.playing) else {
             return;
         };
         let wanted = self.settings.volumes;
-        if wanted == played {
+        if wanted == played.volumes {
             return;
         }
-        if !mixed {
-            if wanted.music != played.music {
+        if !played.mixed_clicks {
+            if wanted.music != played.volumes.music {
                 self.requests.push(Request::Volume(wanted.music));
             }
-            self.playback.played = Some((wanted, false));
+            self.playback.played = Some(PlayedAudio {
+                volumes: wanted,
+                mixed_clicks: false,
+            });
         } else if !ui.input(|input| input.pointer.any_down()) {
             self.toggle_play();
             self.toggle_play();
@@ -157,7 +172,10 @@ impl Window {
         );
         let volumes = self.settings.volumes;
         self.playback.playing = true;
-        self.playback.played = Some((volumes, !clicks.is_empty()));
+        self.playback.played = Some(PlayedAudio {
+            volumes,
+            mixed_clicks: !clicks.is_empty(),
+        });
         self.requests.push(Request::Play {
             from,
             rate: self.playback.rate.factor(),
@@ -228,7 +246,10 @@ impl Window {
         self.playback.rate = rate;
         // Audio that keeps its pitch, or played keeping it, is stretched for its speed, and so is
         // audio under clicks, which keep their own; a new speed plays it again.
-        let clicked = self.playback.played.is_some_and(|(_, mixed)| mixed);
+        let clicked = self
+            .playback
+            .played
+            .is_some_and(|played| played.mixed_clicks);
         if self.playback.playing
             && (self.settings.keep_pitch || self.playback.played_pitch || clicked)
         {
@@ -276,7 +297,7 @@ mod tests {
             metronome: true,
             tuned_lanes: true,
             zoom: 150.0,
-            input_latency_ms: 25.0,
+            input_latency_ms: crate::settings::LatencyMs(25.0),
             ..Settings::default()
         });
         app.open(Path::new("/songs/four.json"), &four_taps());
@@ -286,7 +307,7 @@ mod tests {
         harness.get_by_label("Restore defaults").click();
         harness.run();
         let calibrated = Settings {
-            input_latency_ms: 25.0,
+            input_latency_ms: crate::settings::LatencyMs(25.0),
             recent: vec![PathBuf::from("/songs/four.json")],
             ..Settings::default()
         };
@@ -394,7 +415,7 @@ mod tests {
     #[test]
     fn a_lane_key_while_playing_places_the_input_latency_before_the_cursor() {
         let mut harness = playable_with(Settings {
-            input_latency_ms: 250.0,
+            input_latency_ms: crate::settings::LatencyMs(250.0),
             ..Settings::default()
         });
         space(&mut harness);
@@ -827,7 +848,7 @@ mod tests {
     #[test]
     fn the_cursor_shows_what_is_heard_by_the_calibrated_latency() {
         let mut harness = playable_with(Settings {
-            audio_latency_ms: 250.0,
+            audio_latency_ms: crate::settings::LatencyMs(250.0),
             ..Settings::default()
         });
         space(&mut harness);
@@ -839,7 +860,7 @@ mod tests {
     #[test]
     fn the_cursor_scales_calibrated_latency_to_slowed_audio_time() {
         let mut harness = playable_with(Settings {
-            audio_latency_ms: 250.0,
+            audio_latency_ms: crate::settings::LatencyMs(250.0),
             ..Settings::default()
         });
         harness.state_mut().set_rate(Rate::of(0.5));

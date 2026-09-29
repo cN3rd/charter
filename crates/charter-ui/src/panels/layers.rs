@@ -235,7 +235,10 @@ pub(super) fn layers(ui: &mut Ui, song: &Song, drafts: &mut SongDrafts, actions:
         if let Some(from) = dropped
             && *from != index
         {
-            actions.push(Action::MoveLayer(*from, index));
+            actions.push(Action::MoveLayer {
+                from: *from,
+                to: index,
+            });
         }
     }
     if let Some(index) = drafts.deleting_layer {
@@ -404,7 +407,10 @@ pub(super) fn layer_menu(
             if chart != song.chart_index()
                 && ui.button(format!("Copy to {}", target.name)).clicked()
             {
-                actions.push(Action::CopyLayerToChart(index, chart));
+                actions.push(Action::CopyLayerToChart {
+                    layer: index,
+                    chart,
+                });
                 ui.close();
             }
         }

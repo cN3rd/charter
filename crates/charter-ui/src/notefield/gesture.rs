@@ -419,9 +419,17 @@ pub(super) fn let_go(
         }
         Gesture::MoveTiming { from } => line(pos).map(|to| Action::MoveTiming { from, to }),
         Gesture::MoveMarker { index } => line(pos).map(|to| Action::MoveMarker { index, to }),
-        Gesture::Marquee { how, x, seconds } => field
-            .boxed(timing, (x, seconds), pos)
-            .map(|(ticks, lanes)| Action::SelectBetween { ticks, lanes, how }),
+        Gesture::Marquee { how, x, seconds } => {
+            field
+                .boxed(timing, (x, seconds), pos)
+                .map(|(ticks, lanes)| Action::SelectBetween {
+                    from_tick: ticks.0,
+                    to_tick: ticks.1,
+                    from_lane: lanes.0,
+                    to_lane: lanes.1,
+                    how,
+                })
+        }
         Gesture::MoveNotes { .. } => {
             let (ticks, lanes) = gesture.moved_by(field, line(pos)?, pos, keep_time)?;
             Some(Action::MoveSelection { ticks, lanes })
