@@ -166,6 +166,13 @@ impl Canvas {
             .rect_filled(self.flip.rect(rect), rounding, fill);
     }
 
+    /// A four-pixel stripe at the head's screen-left edge, independent of the scroll direction.
+    pub fn left_stripe(&self, rect: Rect, fill: egui::Color32) {
+        let screen = self.flip.rect(rect);
+        let stripe = Rect::from_min_size(screen.min, vec2(4.0, screen.height()));
+        self.painter.rect_filled(stripe, 2.0, fill);
+    }
+
     /// Strokes the transformed outline of `rect` in notefield coordinates.
     pub fn rect_stroke(&self, rect: Rect, rounding: f32, stroke: Stroke, kind: StrokeKind) {
         self.painter

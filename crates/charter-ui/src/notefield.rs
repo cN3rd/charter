@@ -1822,11 +1822,9 @@ fn draw_object(
     if let Some(colour) = colour
         && !tinted
     {
-        let bar = Rect::from_x_y_ranges(across, rect.top()..=rect.top() + 2.0);
         let colour = style::layer_colour(colour);
-        painter.rect_filled(
-            bar,
-            0.0,
+        painter.left_stripe(
+            rect,
             if layer_view == charter_core::LayerView::Ghosted {
                 colour.gamma_multiply(0.35)
             } else {
@@ -2254,6 +2252,63 @@ mod tests {
     }
 
     #[test]
+    fn layer_stripe_fills_the_left_edge_of_the_head_in_every_scroll_direction() {
+        let mut song = Song::new(demo::song(), &[&charter_stepmania::Plugin]);
+        song.add_layer().unwrap();
+        let field = field(&song);
+        let chart = song.chart().unwrap();
+        let object = chart
+            .objects()
+            .find(|note| matches!(note.position, Position::Lane { .. }))
+            .unwrap();
+        for direction in Direction::ALL {
+            let area = Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 800.0));
+            let ctx = egui::Context::default();
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let canvas = Canvas::new(ui.painter_at(area), Flip { area, direction });
+                draw_object(
+                    &canvas,
+                    &field.columns,
+                    chart.timing(),
+                    field.view,
+                    object,
+                    false,
+                    (
+                        charter_core::LayerView::Shown,
+                        Some(charter_core::LayerColour::Blue),
+                        false,
+                    ),
+                );
+            });
+            let stripes: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|shape| {
+                    if let egui::Shape::Rect(rect) = &shape.shape
+                        && rect.fill == style::layer_colour(charter_core::LayerColour::Blue)
+                    {
+                        Some(rect.rect)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            output.textures_delta.clear();
+            assert!(
+                stripes.iter().any(|stripe| {
+                    (stripe.width() - 4.0).abs() < 0.01
+                        && stripes.iter().any(|head| {
+                            (head.height() - stripe.height()).abs() < 0.01
+                                && (head.left() - stripe.left()).abs() < 0.01
+                                && head.width() > stripe.width()
+                        })
+                }),
+                "{direction:?}: {stripes:?}"
+            );
+        }
+    }
+
+    #[test]
     fn hidden_layer_notes_disappear_from_the_rendered_notefield() {
         let mut song = Song::new(demo::song(), &[&charter_stepmania::Plugin]);
         let painted_taps = |drawing_song: &Song| {
@@ -2315,7 +2370,7 @@ mod tests {
         harness.run();
         harness.get_by_label("Move to layer").click();
         harness.run();
-        harness.get_by_label("Layer 2").click();
+        harness.get_by_label("Layer 1").click();
         harness.run();
         assert!(harness.state().1.contains(&Action::MoveSelectionToLayer(0)));
     }

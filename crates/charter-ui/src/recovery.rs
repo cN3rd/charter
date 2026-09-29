@@ -99,7 +99,11 @@ mod tests {
         let kept = read(&bytes, &[]).unwrap();
         assert_eq!(kept.path.as_deref(), Some(Path::new("songs/demo.json")));
         assert_eq!(kept.audio.as_deref(), Some(Path::new("/music/demo.ogg")));
-        assert_eq!(kept.song.document(), &song);
+        assert_eq!(kept.song.layers()[0].name, "Layer 0");
+        assert_eq!(
+            kept.song.document(),
+            charter_editor::Song::new(song, &[]).document()
+        );
     }
 
     #[test]

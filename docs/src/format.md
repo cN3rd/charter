@@ -465,8 +465,9 @@ layers are reference notes, and hidden layers are not drawn. Default `view` and 
 omitted when writing.
 
 An object may name its layer with `layer`. A note without `layer` is on the first layer.
-Without a `layers` list the editor shows one implicit *Notes* layer, and files written before layers
-still write neither field. A named layer not listed in the chart is an `UnknownLayer` violation at
+Files without layers remain valid for other tools. When charter opens one, it gives each such
+chart a shown, unlocked blue *Layer 0* and names that layer on every note. Opening is not an
+edit; saving writes the new layer and note names. A named layer not listed in the chart is an `UnknownLayer` violation at
 that object; a repeated layer name is a `DuplicateLayer` violation at the second layer.
 Children belong to their parent's layer and do not name their own.
 

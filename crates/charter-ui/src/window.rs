@@ -3579,7 +3579,7 @@ mod tests {
         harness.key_press_modifiers(egui::Modifiers::ALT, egui::Key::Num2);
         harness.run();
         assert_eq!(harness.state().song.as_ref().unwrap().active_layer(), 1);
-        assert!(harness.query_by_label("Active layer Notes").is_some());
+        assert!(harness.query_by_label("Layer 0").is_some());
         select_note(&mut harness, 3, 720);
         harness.key_press_modifiers(
             egui::Modifiers::ALT.plus(egui::Modifiers::SHIFT),
@@ -3654,6 +3654,10 @@ mod tests {
         let harness = editable_demo();
         assert!(harness.query_by_label("Editing").is_some());
         assert!(harness.query_by_label_contains("Read only").is_none());
+        let song = harness.state().song.as_ref().unwrap();
+        assert_eq!(song.layers()[0].name, "Layer 0");
+        assert!(!song.is_modified());
+        assert!(!song.can_undo());
     }
 
     #[test]
@@ -8873,6 +8877,9 @@ mod tests {
         assert_eq!(charts(&harness), [("Easy".to_owned(), lanes(4))]);
         let song = harness.state().song.as_ref().unwrap();
         assert_eq!(song.document().document().ruleset.id.as_str(), "sm");
+        assert_eq!(song.layers()[0].name, "Layer 0");
+        assert!(!song.is_modified());
+        assert!(!song.can_undo());
         assert!(song.read_only().is_none());
         assert_eq!(harness.state().title(), "Untitled.json - charter");
     }

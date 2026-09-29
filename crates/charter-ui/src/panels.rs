@@ -523,7 +523,24 @@ pub fn song_panel(
         });
     });
     if song.chart().is_some() {
-        style::section(ui, "Layers", |ui| layers(ui, song, drafts, actions));
+        style::section_with_actions(ui, "Layers", |ui, header| {
+            if header {
+                ui.menu_button(style::glyph(ui, icon::DOTS_THREE), |ui| {
+                    layer_menu(ui, song, song.active_layer(), drafts, actions);
+                })
+                .response
+                .widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Layer actions")
+                });
+                if style::quiet_icon(ui, icon::PLUS, "Add layer", "Add layer (Ctrl+Shift+N)")
+                    .clicked()
+                {
+                    actions.push(Action::AddLayer);
+                }
+            } else {
+                layers(ui, song, drafts, actions);
+            }
+        });
     }
     refused
 }
@@ -532,119 +549,228 @@ pub fn song_panel(
 #[expect(clippy::too_many_lines, reason = "one row and its deletion dialog")]
 fn layers(ui: &mut Ui, song: &Song, drafts: &mut SongDrafts, actions: &mut Vec<Action>) {
     let rows = song.layers();
-    ui.horizontal(|ui| {
-        if style::quiet_icon(ui, icon::PLUS, "Add layer", "Add layer (Ctrl+Shift+N)").clicked() {
-            actions.push(Action::AddLayer);
-        }
-        ui.menu_button(style::glyph(ui, icon::DOTS_THREE), |ui| {
-            layer_menu(ui, song, song.active_layer(), drafts, actions);
-        })
-        .response
-        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Layer actions"));
-    });
     for (index, row) in rows.iter().enumerate() {
-        let (drag, dropped) = ui.dnd_drop_zone::<usize, _>(egui::Frame::new(), |ui| {
-            ui.horizontal(|ui| {
-                let handle = ui.dnd_drag_source(ui.id().with(("layer", index)), index, |ui| {
-                    ui.label("⠿");
-                });
-                handle.response.widget_info(|| {
-                    egui::WidgetInfo::labeled(
-                        egui::WidgetType::Button,
-                        true,
-                        format!("Reorder {}", row.name),
-                    )
-                });
-                let (symbol, next) = match row.view {
-                    LayerView::Shown => (icon::EYE, LayerView::Ghosted),
-                    LayerView::Ghosted => (icon::EYE_SLASH, LayerView::Hidden),
-                    LayerView::Hidden => (icon::EYE_CLOSED, LayerView::Shown),
-                };
-                let view = style::quiet_icon(
-                    ui,
-                    symbol,
-                    &format!("Cycle visibility of {}", row.name),
-                    "Click to cycle; Alt+click to solo",
-                );
-                if view.clicked() {
-                    if click_modifier(ui, &view, |modifiers| modifiers.alt) {
-                        actions.push(Action::SoloLayer(index));
-                    } else {
-                        actions.push(Action::SetLayerView(index, next));
-                    }
-                }
-                let locked = if row.locked {
-                    icon::LOCK_SIMPLE
-                } else {
-                    icon::LOCK_SIMPLE_OPEN
-                };
-                if style::quiet_icon(
-                    ui,
-                    locked,
-                    &format!("Toggle lock of {}", row.name),
-                    "Lock or unlock layer",
-                )
-                .clicked()
-                {
-                    actions.push(Action::SetLayerLocked(index, !row.locked));
-                }
-                let swatch = egui::RichText::new("■").color(style::layer_colour(row.colour));
-                let palette = ui.menu_button(swatch, |ui| layer_palette(ui, index, actions));
-                palette.response.widget_info(|| {
-                    egui::WidgetInfo::labeled(
-                        egui::WidgetType::Button,
-                        true,
-                        format!("Colour of {}", row.name),
-                    )
-                });
-                if let Some((editing, name)) = drafts.layer_name.as_mut()
-                    && *editing == index
-                {
-                    let edit = ui.add(egui::TextEdit::singleline(name).desired_width(95.0));
-                    edit.widget_info(|| {
-                        egui::WidgetInfo::labeled(
-                            egui::WidgetType::TextEdit,
-                            true,
-                            format!("Rename {}", row.name),
-                        )
-                    });
-                    if ui.input(|state| state.key_pressed(egui::Key::Escape)) {
-                        drafts.layer_name = None;
-                    } else if ui.input(|state| state.key_pressed(egui::Key::Enter))
-                        || (edit.lost_focus() && !edit.has_focus())
-                    {
-                        actions.push(Action::RenameLayer(index, name.clone()));
-                        drafts.layer_name = None;
-                    } else {
-                    }
-                } else {
-                    let label = ui.selectable_label(song.active_layer() == index, &row.name);
-                    label.widget_info(|| {
-                        egui::WidgetInfo::labeled(
-                            egui::WidgetType::Button,
-                            true,
-                            format!("Layer {}", row.name),
-                        )
-                    });
-                    if label.double_clicked() {
-                        drafts.layer_name = Some((index, row.name.clone()));
-                    }
-                    if label.clicked() && !label.double_clicked() {
-                        if click_modifier(ui, &label, |modifiers| modifiers.command) {
-                            actions.push(Action::SelectLayer(index));
-                        } else {
-                            actions.push(Action::SetActiveLayer(index));
+        let hover_rect = egui::Rect::from_min_size(
+            ui.next_widget_position(),
+            egui::vec2(ui.available_width(), 25.0),
+        );
+        let row_response = ui.interact(
+            hover_rect,
+            ui.id().with(("layer row", index)),
+            egui::Sense::click(),
+        );
+        let hovered = ui.rect_contains_pointer(hover_rect);
+        let fill = if song.active_layer() == index {
+            style::ACCENT_FILL
+        } else if hovered {
+            egui::Color32::from_gray(40)
+        } else {
+            egui::Color32::TRANSPARENT
+        };
+        let mut handled = false;
+        let (drag, dropped) = ui
+            .scope(|ui| {
+                ui.visuals_mut().widgets.inactive.bg_fill = fill;
+                ui.dnd_drop_zone::<usize, _>(egui::Frame::new().corner_radius(4), |ui| {
+                    ui.set_min_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        let handle =
+                            ui.dnd_drag_source(ui.id().with(("layer", index)), index, |ui| {
+                                ui.label(
+                                    style::glyph(ui, icon::DOTS_SIX_VERTICAL)
+                                        .color(style::WEAK_TEXT),
+                                );
+                            });
+                        handled |= handle.response.clicked();
+                        handle
+                            .response
+                            .clone()
+                            .on_hover_cursor(egui::CursorIcon::Grab);
+                        handle.response.widget_info(|| {
+                            egui::WidgetInfo::labeled(
+                                egui::WidgetType::Button,
+                                true,
+                                format!("Reorder {}", row.name),
+                            )
+                        });
+                        let (symbol, next) = match row.view {
+                            LayerView::Shown => (icon::EYE, LayerView::Ghosted),
+                            LayerView::Ghosted => (icon::EYE, LayerView::Hidden),
+                            LayerView::Hidden => (icon::EYE_SLASH, LayerView::Shown),
+                        };
+                        let view_colour = match row.view {
+                            LayerView::Shown => style::TEXT,
+                            LayerView::Ghosted => style::TEXT.gamma_multiply(0.4),
+                            LayerView::Hidden => style::WEAK_TEXT,
+                        };
+                        let (state, next_state) = match row.view {
+                            LayerView::Shown => ("shown", "ghost"),
+                            LayerView::Ghosted => ("ghosted", "hide"),
+                            LayerView::Hidden => ("hidden", "show"),
+                        };
+                        let view = ui
+                            .add(
+                                egui::Button::new(style::glyph(ui, symbol).color(view_colour))
+                                    .frame_when_inactive(false),
+                            )
+                            .on_hover_text(format!(
+                                "{state}; click to {next_state}; Alt+click to solo"
+                            ));
+                        view.widget_info(|| {
+                            egui::WidgetInfo::labeled(
+                                egui::WidgetType::Button,
+                                true,
+                                format!("Cycle visibility of {}", row.name),
+                            )
+                        });
+                        if view.clicked() {
+                            handled = true;
+                            if click_modifier(ui, &view, |modifiers| modifiers.alt) {
+                                actions.push(Action::SoloLayer(index));
+                            } else {
+                                actions.push(Action::SetLayerView(index, next));
+                            }
                         }
-                    }
-                    label.context_menu(|menu_ui| layer_menu(menu_ui, song, index, drafts, actions));
-                }
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.weak(row.notes.to_string());
-                });
+                        let locked = if row.locked {
+                            icon::LOCK_SIMPLE
+                        } else {
+                            icon::LOCK_SIMPLE_OPEN
+                        };
+                        let lock_colour = if row.locked {
+                            style::WARN
+                        } else if hovered {
+                            style::TEXT
+                        } else {
+                            style::WEAK_TEXT.gamma_multiply(0.55)
+                        };
+                        let lock = ui
+                            .add(
+                                egui::Button::new(style::glyph(ui, locked).color(lock_colour))
+                                    .frame_when_inactive(false),
+                            )
+                            .on_hover_text(if row.locked {
+                                "locked; click to unlock"
+                            } else {
+                                "unlocked; click to lock"
+                            });
+                        lock.widget_info(|| {
+                            egui::WidgetInfo::labeled(
+                                egui::WidgetType::Button,
+                                true,
+                                format!("Toggle lock of {}", row.name),
+                            )
+                        });
+                        if lock.clicked() {
+                            handled = true;
+                            actions.push(Action::SetLayerLocked(index, !row.locked));
+                        }
+                        let palette =
+                            ui.menu_button(" ", |ui| layer_palette(ui, index, row.colour, actions));
+                        handled |= palette.response.clicked();
+                        paint_swatch(ui, palette.response.rect.center(), row.colour, false);
+                        palette.response.widget_info(|| {
+                            egui::WidgetInfo::labeled(
+                                egui::WidgetType::Button,
+                                true,
+                                format!("Colour of {}", row.name),
+                            )
+                        });
+                        if let Some((editing, name)) = drafts.layer_name.as_mut()
+                            && *editing == index
+                        {
+                            let edit = ui.add(egui::TextEdit::singleline(name).desired_width(95.0));
+                            edit.widget_info(|| {
+                                egui::WidgetInfo::labeled(
+                                    egui::WidgetType::TextEdit,
+                                    true,
+                                    format!("Rename {}", row.name),
+                                )
+                            });
+                            if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
+                                drafts.layer_name = None;
+                            } else if ui.input(|input| input.key_pressed(egui::Key::Enter))
+                                || (edit.lost_focus() && !edit.has_focus())
+                            {
+                                actions.push(Action::RenameLayer(index, name.clone()));
+                                drafts.layer_name = None;
+                            } else {
+                            }
+                        } else {
+                            let text =
+                                RichText::new(&row.name).color(if row.view == LayerView::Hidden {
+                                    style::WEAK_TEXT
+                                } else if row.view == LayerView::Ghosted {
+                                    style::TEXT.gamma_multiply(0.55)
+                                } else {
+                                    style::TEXT
+                                });
+                            let text = if row.view == LayerView::Ghosted {
+                                text.italics()
+                            } else {
+                                text
+                            };
+                            let label = ui.add(egui::Label::new(text).sense(egui::Sense::click()));
+                            label.widget_info(|| {
+                                egui::WidgetInfo::labeled(
+                                    egui::WidgetType::Button,
+                                    true,
+                                    format!("Layer {}", row.name),
+                                )
+                            });
+                            if label.double_clicked() {
+                                drafts.layer_name = Some((index, row.name.clone()));
+                            }
+                            if label.clicked() && !label.double_clicked() {
+                                handled = true;
+                                if click_modifier(ui, &label, |modifiers| modifiers.command) {
+                                    actions.push(Action::SelectLayer(index));
+                                } else {
+                                    actions.push(Action::SetActiveLayer(index));
+                                }
+                            }
+                            label.context_menu(|menu_ui| {
+                                layer_menu(menu_ui, song, index, drafts, actions);
+                            });
+                        }
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            ui.add_space(9.0);
+                            ui.weak(row.notes.to_string());
+                        });
+                    })
+                })
             })
+            .inner;
+        drag.response.widget_info(|| {
+            egui::WidgetInfo::labeled(
+                egui::WidgetType::Button,
+                true,
+                format!("Layer row {}", row.name),
+            )
         });
-        drag.response
-            .context_menu(|menu_ui| layer_menu(menu_ui, song, index, drafts, actions));
+        row_response.clone().on_hover_text(format!(
+            "{} · {} notes{}{}{}",
+            row.name,
+            row.notes,
+            match row.view {
+                LayerView::Shown => "",
+                LayerView::Ghosted => " · ghosted",
+                LayerView::Hidden => " · hidden",
+            },
+            if row.locked { " · locked" } else { "" },
+            if song.active_layer() == index {
+                " · active"
+            } else {
+                ""
+            },
+        ));
+        row_response.context_menu(|menu_ui| layer_menu(menu_ui, song, index, drafts, actions));
+        if row_response.clicked() && !handled {
+            if click_modifier(ui, &row_response, |modifiers| modifiers.command) {
+                actions.push(Action::SelectLayer(index));
+            } else {
+                actions.push(Action::SetActiveLayer(index));
+            }
+        }
         if let Some(from) = dropped
             && *from != index
         {
@@ -701,17 +827,47 @@ fn click_modifier(
 }
 
 /// Eight fixed choices shared by each layer's swatch and menu.
-fn layer_palette(ui: &mut Ui, index: usize, actions: &mut Vec<Action>) {
-    for colour in LayerColour::ALL {
-        let label = format!("{colour:?}");
-        if ui
-            .button(egui::RichText::new(&label).color(style::layer_colour(colour)))
-            .clicked()
-        {
-            actions.push(Action::RecolourLayer(index, colour));
-            ui.close();
-        }
+fn paint_swatch(ui: &Ui, centre: egui::Pos2, colour: LayerColour, selected: bool) {
+    let square = egui::Rect::from_center_size(centre, egui::vec2(12.0, 12.0));
+    ui.painter()
+        .rect_filled(square, 3.0, style::layer_colour(colour));
+    ui.painter().rect_stroke(
+        square,
+        3.0,
+        egui::Stroke::new(1.0, style::TEXT.gamma_multiply(0.55)),
+        egui::StrokeKind::Outside,
+    );
+    if selected {
+        ui.painter().rect_stroke(
+            square.expand(3.0),
+            5.0,
+            egui::Stroke::new(1.5, style::ACCENT),
+            egui::StrokeKind::Outside,
+        );
     }
+}
+
+/// Eight named swatches arranged in two rows.
+fn layer_palette(ui: &mut Ui, index: usize, current: LayerColour, actions: &mut Vec<Action>) {
+    egui::Grid::new(("layer palette", index))
+        .num_columns(4)
+        .show(ui, |ui| {
+            for (i, colour) in LayerColour::ALL.into_iter().enumerate() {
+                let name = format!("{colour:?}");
+                let response = ui.add(egui::Button::new(" ").min_size(egui::vec2(24.0, 24.0)));
+                paint_swatch(ui, response.rect.center(), colour, colour == current);
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &name)
+                });
+                if response.on_hover_text(&name).clicked() {
+                    actions.push(Action::RecolourLayer(index, colour));
+                    ui.close();
+                }
+                if i == 3 {
+                    ui.end_row();
+                }
+            }
+        });
 }
 
 /// Commands for one layer; the header menu addresses the active row.
@@ -724,13 +880,52 @@ fn layer_menu(
 ) {
     let rows = song.layers();
     let Some(row) = rows.get(index) else { return };
+    if ui.button("New layer above").clicked() {
+        actions.push(Action::SetActiveLayer(index));
+        actions.push(Action::AddLayer);
+        ui.close();
+    }
+    ui.separator();
     if ui.button("Rename").clicked() {
         drafts.layer_name = Some((index, row.name.clone()));
         ui.close();
     }
-    ui.menu_button("Colour", |ui| layer_palette(ui, index, actions));
+    ui.menu_button("Colour", |ui| layer_palette(ui, index, row.colour, actions));
+    ui.separator();
+    for (label, view) in [
+        ("Show", LayerView::Shown),
+        ("Ghost", LayerView::Ghosted),
+        ("Hide", LayerView::Hidden),
+    ] {
+        if ui.radio(row.view == view, label).clicked() {
+            actions.push(Action::SetLayerView(index, view));
+            ui.close();
+        }
+    }
+    if ui
+        .button(if row.locked { "Unlock" } else { "Lock" })
+        .clicked()
+    {
+        actions.push(Action::SetLayerLocked(index, !row.locked));
+        ui.close();
+    }
+    if ui.button("Solo").clicked() {
+        actions.push(Action::SoloLayer(index));
+        ui.close();
+    }
+    ui.separator();
     if ui.button("Select notes").clicked() {
         actions.push(Action::SelectLayer(index));
+        ui.close();
+    }
+    if ui
+        .add_enabled(
+            song.selection().next().is_some(),
+            egui::Button::new("Move selected notes here"),
+        )
+        .clicked()
+    {
+        actions.push(Action::MoveSelectionToLayer(index));
         ui.close();
     }
     if ui
@@ -753,6 +948,7 @@ fn layer_menu(
             }
         }
     });
+    ui.separator();
     if ui
         .add_enabled(rows.len() > 1, egui::Button::new("Delete"))
         .clicked()
@@ -1532,33 +1728,27 @@ pub fn status_bar(
         ui.label(state);
         ui.weak(audio);
         let layers = song.layers();
-        if layers.len() > 1 {
-            let active = song.active_layer();
-            if let Some(row) = layers.get(active) {
-                ui.separator();
-                let label = format!("Active layer {}", row.name);
-                let menu = ui.menu_button(
-                    (
-                        egui::RichText::new("■").color(style::layer_colour(row.colour)),
-                        label,
-                    ),
-                    |ui| {
-                        for (index, layer) in layers.iter().enumerate() {
-                            if ui.button(&layer.name).clicked() {
-                                actions.push(Action::SetActiveLayer(index));
-                                ui.close();
-                            }
+        if let Some(row) = layers.get(song.active_layer()) {
+            ui.separator();
+            let menu = ui.menu_button(
+                (
+                    egui::RichText::new("■").color(style::layer_colour(row.colour)),
+                    row.name.as_str(),
+                ),
+                |ui| {
+                    for (index, layer) in layers.iter().enumerate() {
+                        if ui.button(&layer.name).clicked() {
+                            actions.push(Action::SetActiveLayer(index));
+                            ui.close();
                         }
-                    },
-                );
-                menu.response.widget_info(|| {
-                    egui::WidgetInfo::labeled(
-                        egui::WidgetType::Button,
-                        true,
-                        format!("Active layer {}", row.name),
-                    )
+                    }
+                },
+            );
+            menu.response
+                .on_hover_text("Active layer; click to switch")
+                .widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::WidgetType::Button, true, row.name.as_str())
                 });
-            }
         }
         let selected = song.selection().count();
         if selected > 0 {
@@ -2149,12 +2339,152 @@ mod tests {
     }
 
     #[test]
+    fn clicking_the_full_layer_row_activates_it_and_ctrl_click_selects_notes() {
+        let mut harness = editable_panel();
+        harness.state_mut().0.add_layer().unwrap();
+        harness.run();
+        let rect = harness.get_by_label("Layer row Layer 0").rect();
+        let at = egui::pos2(rect.right() - 3.0, rect.center().y);
+        harness.hover_at(at);
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        harness.run();
+        assert!(harness.state().2.contains(&Action::SetActiveLayer(1)));
+        harness.state_mut().2.clear();
+        harness
+            .get_by_label("Layer row Layer 0")
+            .click_modifiers(egui::Modifiers::COMMAND);
+        harness.run();
+        assert!(harness.state().2.contains(&Action::SelectLayer(1)));
+        assert!(!harness.state().2.contains(&Action::SetActiveLayer(1)));
+    }
+
+    #[test]
+    fn clicking_a_layer_control_does_not_change_the_active_row() {
+        let mut harness = editable_panel();
+        harness.state_mut().0.add_layer().unwrap();
+        harness.run();
+        harness.get_by_label("Cycle visibility of Layer 0").click();
+        harness.run();
+        assert!(
+            !harness
+                .state()
+                .2
+                .iter()
+                .any(|action| matches!(action, Action::SetActiveLayer(_))),
+            "{:?}",
+            harness.state().2
+        );
+    }
+
+    #[test]
+    fn right_clicking_the_full_row_opens_visibility_and_lock_commands() {
+        let mut harness = editable_panel();
+        harness.state_mut().0.add_layer().unwrap();
+        harness.run();
+        let rect = harness.get_by_label("Layer row Layer 0").rect();
+        let at = egui::pos2(rect.right() - 3.0, rect.center().y);
+        harness.hover_at(at);
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        harness.run();
+        harness.get_by_label("Ghost").click();
+        harness.run();
+        assert!(
+            harness
+                .state()
+                .2
+                .contains(&Action::SetLayerView(1, LayerView::Ghosted))
+        );
+        harness.state_mut().2.clear();
+        harness.get_by_label("Layer row Layer 0").click_secondary();
+        harness.run();
+        harness.get_by_label("Lock").click();
+        harness.run();
+        assert!(harness.state().2.contains(&Action::SetLayerLocked(1, true)));
+    }
+
+    #[test]
+    fn layer_menu_visibility_uses_radio_items_for_show_ghost_and_hide() {
+        let mut harness = editable_panel();
+        harness.get_by_label("Layer row Layer 0").click_secondary();
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::RadioButton, "Hide")
+            .click();
+        harness.run();
+        assert!(
+            harness
+                .state()
+                .2
+                .contains(&Action::SetLayerView(0, LayerView::Hidden))
+        );
+        harness.state_mut().2.clear();
+        harness
+            .state_mut()
+            .0
+            .set_layer_view(0, LayerView::Hidden)
+            .unwrap();
+        harness.run();
+        harness.get_by_label("Layer row Layer 0").click_secondary();
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::RadioButton, "Show")
+            .click();
+        harness.run();
+        assert!(
+            harness
+                .state()
+                .2
+                .contains(&Action::SetLayerView(0, LayerView::Shown))
+        );
+    }
+
+    #[test]
+    fn layer_menu_offers_solo_new_above_and_moving_selected_notes() {
+        let mut harness = editable_panel();
+        harness.state_mut().0.add_layer().unwrap();
+        harness.state_mut().0.select_all();
+        harness.run();
+        harness.get_by_label("Layer row Layer 0").click_secondary();
+        harness.run();
+        harness.get_by_label("Move selected notes here").click();
+        harness.run();
+        assert!(harness.state().2.contains(&Action::MoveSelectionToLayer(1)));
+        harness.state_mut().2.clear();
+        harness.get_by_label("Layer row Layer 0").click_secondary();
+        harness.run();
+        harness.get_by_label("Solo").click();
+        harness.run();
+        assert!(harness.state().2.contains(&Action::SoloLayer(1)));
+        harness.state_mut().2.clear();
+        harness.get_by_label("Layer row Layer 0").click_secondary();
+        harness.run();
+        harness.get_by_label("New layer above").click();
+        harness.run();
+        assert!(harness.state().2.contains(&Action::SetActiveLayer(1)));
+        assert!(harness.state().2.contains(&Action::AddLayer));
+    }
+
+    #[test]
     fn layer_panel_add_and_visibility_buttons_dispatch_actions() {
         let mut harness = editable_panel();
         harness.get_by_label("Add layer").click();
         harness.run();
         assert!(harness.state().2.contains(&Action::AddLayer));
-        harness.get_by_label("Cycle visibility of Notes").click();
+        harness.get_by_label("Cycle visibility of Layer 0").click();
         harness.run();
         assert!(
             harness
@@ -2170,14 +2500,14 @@ mod tests {
         harness.state_mut().0.add_layer().unwrap();
         harness.run();
         harness
-            .get_by_label("Cycle visibility of Notes")
+            .get_by_label("Cycle visibility of Layer 0")
             .click_modifiers(egui::Modifiers::ALT);
         harness.run();
         assert!(harness.state().2.contains(&Action::SoloLayer(1)));
-        harness.get_by_label("Toggle lock of Notes").click();
+        harness.get_by_label("Toggle lock of Layer 0").click();
         harness.run();
         assert!(harness.state().2.contains(&Action::SetLayerLocked(1, true)));
-        harness.get_by_label("Colour of Notes").click();
+        harness.get_by_label("Colour of Layer 0").click();
         harness.run();
         harness.get_by_label("Pink").click();
         harness.run();
@@ -2195,7 +2525,7 @@ mod tests {
         harness.state_mut().0.add_layer().unwrap();
         harness.run();
         harness
-            .get_by_label("Layer Notes")
+            .get_by_label("Layer Layer 0")
             .click_modifiers(egui::Modifiers::COMMAND);
         harness.run();
         assert!(harness.state().2.contains(&Action::SelectLayer(1)));
@@ -2208,7 +2538,7 @@ mod tests {
         harness.state_mut().0.add_layer().unwrap();
         harness.state_mut().0.move_layer(1, 0).unwrap();
         harness.run();
-        harness.get_by_label("Layer Notes").click_secondary();
+        harness.get_by_label("Layer Layer 0").click_secondary();
         harness.run();
         harness.get_by_label("Delete").click();
         harness.run();
@@ -2239,14 +2569,14 @@ mod tests {
         let mut harness = editable_panel();
         harness.state_mut().0.add_layer().unwrap();
         harness.run();
-        harness.get_by_label("Layer Notes").click_secondary();
+        harness.get_by_label("Layer Layer 0").click_secondary();
         harness.run();
         harness.get_by_label("Delete").click();
         harness.run();
         harness.get_by_label("Cancel").click();
         harness.run();
         assert!(harness.state().2.is_empty());
-        harness.get_by_label("Layer Notes").click_secondary();
+        harness.get_by_label("Layer Layer 0").click_secondary();
         harness.run();
         harness.get_by_label("Delete").click();
         harness.run();
@@ -2265,8 +2595,8 @@ mod tests {
         let mut harness = editable_panel();
         harness.state_mut().0.add_layer().unwrap();
         harness.run();
-        let from = harness.get_by_label("Reorder Notes").rect().center();
-        let to = harness.get_by_label("Reorder Layer 2").rect().center();
+        let from = harness.get_by_label("Reorder Layer 0").rect().center();
+        let to = harness.get_by_label("Reorder Layer 1").rect().center();
         harness.drag_at(from);
         harness.run();
         harness.hover_at(to);
@@ -2282,12 +2612,12 @@ mod tests {
         harness
             .ctx
             .options_mut(|options| options.input_options.max_double_click_delay = 2.0);
-        harness.get_by_label("Layer Notes").click();
+        harness.get_by_label("Layer Layer 0").click();
         harness.step();
-        harness.get_by_label("Layer Notes").click();
+        harness.get_by_label("Layer Layer 0").click();
         harness.step();
         harness.run();
-        let name = harness.get_by_role_and_label(Role::TextInput, "Rename Notes");
+        let name = harness.get_by_role_and_label(Role::TextInput, "Rename Layer 0");
         name.click();
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
         harness.event(egui::Event::Text("Kick".into()));
@@ -2307,7 +2637,7 @@ mod tests {
         harness.state_mut().0.add_layer().unwrap();
         harness.state_mut().0.move_layer(1, 0).unwrap();
         harness.run();
-        harness.get_by_label("Layer Notes").click_secondary();
+        harness.get_by_label("Layer Layer 0").click_secondary();
         harness.run();
         harness.get_by_label_contains("Copy to chart").click();
         harness.run();
@@ -2327,11 +2657,25 @@ mod tests {
             (song, Vec::new()),
         );
         harness.run();
-        harness.get_by_label("Active layer Layer 2").click();
+        harness.get_by_label("Layer 1").click();
         harness.run();
-        harness.get_by_label("Notes").click();
+        harness.get_by_label("Layer 0").click();
         harness.run();
         assert!(harness.state().1.contains(&Action::SetActiveLayer(1)));
+    }
+
+    #[test]
+    fn status_bar_names_the_active_layer_even_in_a_single_layer_chart() {
+        let song = Song::new(charter_editor::demo::song(), &[&charter_stepmania::Plugin]);
+        let mut harness = Harness::builder().build_ui_state(
+            |ui, (song, actions): &mut (Song, Vec<Action>)| {
+                status_bar(ui, Some(song), ("Ready", false), actions);
+            },
+            (song, Vec::new()),
+        );
+        harness.run();
+        assert!(harness.query_by_label("Layer 0").is_some());
+        assert!(harness.query_by_label("Active layer Layer 0").is_none());
     }
 
     #[test]

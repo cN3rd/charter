@@ -214,6 +214,39 @@ struct Change {
     edit: Edit,
 }
 
+/// `document` with every chart that has no layers given one, "Layer 0", holding all its notes,
+/// as charter opens a song written before layers; unchanged if it cannot be.
+fn with_layers(document: ValidDocument) -> ValidDocument {
+    let unlayered = document
+        .document()
+        .charts
+        .iter()
+        .any(|chart| chart.layers.is_empty());
+    let Ok(name) = LayerName::new("Layer 0".to_owned()) else {
+        return document;
+    };
+    if !unlayered {
+        return document;
+    }
+    let mut migrated = document.document().clone();
+    for chart in migrated
+        .charts
+        .iter_mut()
+        .filter(|chart| chart.layers.is_empty())
+    {
+        chart.layers.push(Layer {
+            name: name.clone(),
+            colour: LayerColour::Blue,
+            view: LayerView::Shown,
+            locked: false,
+        });
+        for object in &mut chart.objects {
+            object.layer = Some(name.clone());
+        }
+    }
+    ValidDocument::new(migrated).unwrap_or(document)
+}
+
 impl Song {
     /// Reads a song from a document's bytes.
     ///
@@ -225,9 +258,11 @@ impl Song {
     }
 
     /// Opens `document` on its first chart, with the cursor on tick 0. It can be edited if one
-    /// of `plugins` is for its ruleset and accepts it.
+    /// of `plugins` is for its ruleset and accepts it. Charts without layers get "Layer 0",
+    /// holding all their notes, without that counting as an edit.
     #[must_use]
     pub fn new(document: ValidDocument, plugins: &[&'static dyn RulesetPlugin]) -> Self {
+        let document = with_layers(document);
         let charts = document.document().charts.len();
         let mut song = Self {
             rules: Rules::of(&document, plugins),
@@ -295,7 +330,7 @@ impl Song {
         }
     }
 
-    /// Rows of the open chart, including its implicit Notes layer.
+    /// Rows of the open chart.
     #[must_use]
     pub fn layers(&self) -> Vec<LayerRow> {
         let Some(chart) = self.document.document().charts.get(self.chart) else {
@@ -363,14 +398,14 @@ impl Song {
             })
     }
 
-    /// Make a layer above the active row, materialising the implicit Notes row if needed.
+    /// Make a layer above the active row.
     ///
     /// # Errors
     /// Refuses when the song is read-only or its plugin rejects the edit.
     pub fn add_layer(&mut self) -> Result<(), Refusal> {
         let active = self.active_layer();
         self.edit_layers(|layers, _| {
-            let mut n = 2_u32;
+            let mut n = 1_u32;
             let name = loop {
                 let name = format!("Layer {n}");
                 if !layers.iter().any(|layer| layer.name.as_str() == name) {
@@ -2786,21 +2821,89 @@ pub(crate) mod tests {
             "ruleset": { "id": "test", "version": "1" },
             "metadata": { "title": "t", "artist": "a", "audio": "song.ogg" },
             "timing": { "anchors": [ { "tick": 0, "seconds": 0.0 } ], "tempo": 120.0, "events": [] },
-            "charts": [ { "name": "Easy", "lanes": 4 }, { "name": "Hard", "lanes": 4 } ]
+            "charts": [ { "name": "Easy", "lanes": 4, "layers": [{"name":"Layer 0","colour":"blue"}] }, { "name": "Hard", "lanes": 4, "layers": [{"name":"Layer 0","colour":"blue"}] } ]
         });
         value["charts"][0]["objects"] = objects;
         ValidDocument::from_json(&serde_json::to_vec(&value).unwrap()).unwrap()
     }
 
     fn object(tick: i32, lane: u16, kind: &str) -> Value {
-        json!({ "tick": tick, "position": { "lane": { "index": lane } }, "kind": kind, "shape": "instant" })
+        json!({ "tick": tick, "position": { "lane": { "index": lane } }, "kind": kind, "shape": "instant", "layer": "Layer 0" })
+    }
+
+    #[test]
+    fn opening_legacy_charts_migrates_each_without_editing_history() {
+        let mut source =
+            serde_json::to_value(document(json!([object(0, 0, "tap")])).document()).unwrap();
+        for chart in source["charts"].as_array_mut().unwrap() {
+            chart.as_object_mut().unwrap().remove("layers");
+            if let Some(notes) = chart.get_mut("objects").and_then(Value::as_array_mut) {
+                for note in notes {
+                    note.as_object_mut().unwrap().remove("layer");
+                }
+            }
+        }
+        let mut song = Song::open(&serde_json::to_vec(&source).unwrap(), EDITABLE).unwrap();
+        for chart in &song.document().document().charts {
+            assert_eq!(chart.layers.len(), 1);
+            assert_eq!(chart.layers[0].name.as_str(), "Layer 0");
+            assert_eq!(chart.layers[0].colour, LayerColour::Blue);
+            assert_eq!(chart.layers[0].view, LayerView::Shown);
+            assert!(!chart.layers[0].locked);
+            assert!(chart.objects.iter().all(|note| {
+                note.layer
+                    .as_ref()
+                    .is_some_and(|layer| layer.as_str() == "Layer 0")
+            }));
+        }
+        assert!(!song.is_modified());
+        assert!(!song.can_undo());
+        assert!(!song.can_redo());
+        let saved: Value = serde_json::from_slice(&song.document().to_json().unwrap()).unwrap();
+        assert_eq!(saved["charts"][0]["layers"][0]["name"], "Layer 0");
+        assert_eq!(saved["charts"][0]["objects"][0]["layer"], "Layer 0");
+        song.add_layer().unwrap();
+        assert_eq!(song.layers()[0].name, "Layer 1");
+        song.rename_layer(0, "Other").unwrap();
+        song.add_layer().unwrap();
+        assert_eq!(song.layers()[0].name, "Layer 1");
+    }
+
+    #[test]
+    fn constructing_a_song_migrates_legacy_charts_without_affecting_existing_layers() {
+        let mut value =
+            serde_json::to_value(document(json!([object(0, 0, "tap")])).document()).unwrap();
+        value["charts"][0].as_object_mut().unwrap().remove("layers");
+        value["charts"][0]["objects"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("layer");
+        value["charts"][1]["layers"] = json!([{"name": "Existing", "colour": "red"}]);
+        value["charts"][1]["objects"] =
+            json!([{"tick":240,"position":{"lane":{"index":1}},"kind":"tap","shape":"instant"}]);
+        let valid = ValidDocument::from_json(&serde_json::to_vec(&value).unwrap()).unwrap();
+        let song = Song::new(valid, EDITABLE);
+        assert_eq!(
+            song.document().document().charts[0].layers[0].name.as_str(),
+            "Layer 0"
+        );
+        assert_eq!(
+            song.document().document().charts[1].layers[0].name.as_str(),
+            "Existing"
+        );
+        assert!(
+            song.document().document().charts[1].objects[0]
+                .layer
+                .is_none()
+        );
+        assert!(!song.is_modified());
     }
 
     #[test]
     fn layer_structure_is_one_undoable_edit_and_notes_keep_their_names_on_reorder() {
         let mut song = Song::new(document(json!([object(0, 0, "tap")])), EDITABLE);
         let original = song.document().document().clone();
-        assert_eq!(song.layers()[0].name, "Notes");
+        assert_eq!(song.layers()[0].name, "Layer 0");
         song.add_layer().unwrap();
         assert_eq!(song.layers().len(), 2);
         assert_eq!(song.active_layer(), 0);
@@ -2810,16 +2913,16 @@ pub(crate) mod tests {
                 .as_ref()
                 .unwrap()
                 .as_str(),
-            "Notes"
+            "Layer 0"
         );
         song.move_layer(1, 0).unwrap();
-        assert_eq!(song.layers()[0].name, "Notes");
+        assert_eq!(song.layers()[0].name, "Layer 0");
         song.undo().unwrap();
         song.undo().unwrap();
         assert_eq!(*song.document().document(), original);
         song.redo().unwrap();
         song.redo().unwrap();
-        assert_eq!(song.layers()[0].name, "Notes");
+        assert_eq!(song.layers()[0].name, "Layer 0");
     }
 
     #[test]
@@ -2876,6 +2979,10 @@ pub(crate) mod tests {
             serde_json::to_value(document(json!([object(240, 1, "tap")])).document()).unwrap();
         value["charts"][1]["layers"] = json!([{"name":"Other","colour":"green"}]);
         value["charts"][1]["objects"] = json!([object(0, 0, "tap")]);
+        value["charts"][1]["objects"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("layer");
         let valid = ValidDocument::from_json(&serde_json::to_vec(&value).unwrap()).unwrap();
         let mut song = Song::new(valid, EDITABLE);
         song.copy_layer_to_chart(0, 1).unwrap();
@@ -2950,19 +3057,19 @@ pub(crate) mod tests {
             (LayerView::Shown, None)
         );
         song.add_layer().unwrap();
-        assert_eq!(song.layers()[0].name, "Layer 2");
+        assert_eq!(song.layers()[0].name, "Layer 1");
         assert_eq!(song.layers()[0].colour, LayerColour::Red);
         assert_eq!(
             song.layer_look(&song.chart().unwrap().objects[0]),
             (LayerView::Shown, Some(LayerColour::Blue))
         );
         song.add_layer().unwrap();
-        assert_eq!(song.layers()[0].name, "Layer 3");
+        assert_eq!(song.layers()[0].name, "Layer 2");
         assert_eq!(song.layers()[0].colour, LayerColour::Orange);
         song.set_active_layer(999);
         assert_eq!(song.active_layer(), 2);
         assert!(matches!(
-            song.rename_layer(0, "Notes"),
+            song.rename_layer(0, "Layer 0"),
             Err(Refusal::LayerName(_))
         ));
         assert!(matches!(
@@ -3041,7 +3148,7 @@ pub(crate) mod tests {
         song.move_selection_to_layer(0).unwrap();
         song.select_all();
         song.move_selection_to_layer(0).unwrap();
-        song.rename_layer(0, "Notes").unwrap();
+        song.rename_layer(0, "Layer 0").unwrap();
         song.recolour_layer(0, LayerColour::Blue).unwrap();
         song.set_layer_view(0, LayerView::Shown).unwrap();
         song.set_layer_locked(0, false).unwrap();
@@ -3137,7 +3244,7 @@ pub(crate) mod tests {
         song.open_chart(0);
         assert_eq!(song.active_layer(), 1);
         let mut clip: Object = serde_json::from_value(object(0, 2, "tap")).unwrap();
-        clip.layer = Some(LayerName::new("Layer 2").unwrap());
+        clip.layer = Some(LayerName::new("Layer 1").unwrap());
         song.paste(&[clip], at(240)).unwrap();
         assert_eq!(
             song.document().document().charts[0].objects[1]
@@ -3145,7 +3252,7 @@ pub(crate) mod tests {
                 .as_ref()
                 .unwrap()
                 .as_str(),
-            "Notes"
+            "Layer 0"
         );
     }
 
@@ -3172,7 +3279,7 @@ pub(crate) mod tests {
                 .as_ref()
                 .unwrap()
                 .as_str(),
-            "Notes"
+            "Layer 0"
         );
     }
 
@@ -3195,15 +3302,15 @@ pub(crate) mod tests {
         song.add_layer().unwrap();
         let original = song.document().document().clone();
         assert!(
-            matches!(song.toggle(at(0), lane(0), Kind::Tap), Err(Refusal::OnLayer(name)) if name == "Notes")
+            matches!(song.toggle(at(0), lane(0), Kind::Tap), Err(Refusal::OnLayer(name)) if name == "Layer 0")
         );
         assert!(
-            matches!(song.add_taps([(at(240), lane(1))]), Err(Refusal::OnLayer(name)) if name == "Notes")
+            matches!(song.add_taps([(at(240), lane(1))]), Err(Refusal::OnLayer(name)) if name == "Layer 0")
         );
         song.select([note_at(0, 0)], Selecting::Replace);
         song.move_selection_to_layer(0).unwrap();
         assert!(
-            matches!(song.move_selection(240, 1), Err(Refusal::OnLayer(name)) if name == "Notes")
+            matches!(song.move_selection(240, 1), Err(Refusal::OnLayer(name)) if name == "Layer 0")
         );
         song.undo().unwrap();
         assert_eq!(*song.document().document(), original);
@@ -3215,6 +3322,10 @@ pub(crate) mod tests {
             serde_json::to_value(document(json!([object(0, 0, "tap")])).document()).unwrap();
         value["charts"][0]["layers"] =
             json!([{"name":"Kick","colour":"red"}, {"name":"Snare","colour":"blue"}]);
+        value["charts"][0]["objects"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("layer");
         let valid = ValidDocument::from_json(&serde_json::to_vec(&value).unwrap()).unwrap();
         let mut song = Song::new(valid, EDITABLE);
         assert_eq!(
@@ -3301,7 +3412,7 @@ pub(crate) mod tests {
 
     fn hold(tick: i32, lane: u16, duration: u32) -> Value {
         json!({ "tick": tick, "position": { "lane": { "index": lane } }, "kind": "hold",
-                "shape": { "sustain": { "duration": duration } } })
+                "shape": { "sustain": { "duration": duration } }, "layer": "Layer 0" })
     }
 
     #[test]
@@ -3636,7 +3747,7 @@ pub(crate) mod tests {
         select_everything(&mut song);
         song.change_selection("across").unwrap();
         let across = json!({ "tick": 0, "position": { "lane": { "index": 0, "width": 4 } },
-                             "kind": "tap", "shape": "instant" });
+                             "kind": "tap", "shape": "instant", "layer": "Layer 0" });
         assert_eq!(objects(&song), [across]);
         song.change_selection("unknown").unwrap();
         assert_eq!(objects(&song).len(), 1);
@@ -3987,7 +4098,9 @@ pub(crate) mod tests {
         let hold = |tick: i32, lane: u16| {
             json!({ "tick": tick, "position": { "lane": { "index": lane } }, "kind": "hold",
                     "shape": { "sustain": { "duration": 480 } },
-                    "children": [object(tick + 240, lane, "tap")] })
+                    "layer": "Layer 0", "children": [{
+                        "tick": tick + 240, "position": { "lane": { "index": lane } },
+                        "kind": "tap", "shape": "instant" }] })
         };
         let mut song = Song::new(document(json!([hold(0, 0)])), EDITABLE);
         song.select([note_at(0, 0)], Selecting::Replace);

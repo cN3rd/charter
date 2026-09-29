@@ -519,6 +519,26 @@ pub fn section(ui: &mut Ui, text: &str, body: impl FnOnce(&mut Ui)) {
     ui.add(egui::Separator::default().spacing(2.0));
 }
 
+/// A section whose header also holds controls at the trailing edge.
+pub fn section_with_actions(ui: &mut Ui, text: &str, mut contents: impl FnMut(&mut Ui, bool)) {
+    ui.add_space(6.0);
+    let id = ui.make_persistent_id(("section", text));
+    let title = title(ui, text);
+    egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
+        .show_header(ui, |ui| {
+            ui.label(title);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                contents(ui, true);
+            });
+        })
+        .body(|ui| {
+            ui.add_space(2.0);
+            contents(ui, false);
+            ui.add_space(6.0);
+        });
+    ui.add(egui::Separator::default().spacing(2.0));
+}
+
 /// The well the notefield sits in, the darkest surface, so the chart reads as the stage.
 pub fn stage() -> egui::Frame {
     egui::Frame::new()

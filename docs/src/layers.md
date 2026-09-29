@@ -26,15 +26,16 @@ that as the base and adds what charting difficulties needs from it.
 
 - **A layer belongs to one chart.** Each difficulty has its own, since an Easy chart thins the
   parts an Expert one has in full. Timing, markers, metadata and samples stay the song's.
-- **Every note is on exactly one layer.** A chart always has at least one; a chart that never had
-  layers shows one, *Notes*, holding everything, so nothing changes until a second is made.
+- **Every note is on exactly one layer.** When charter opens a chart without layers, it gives it
+  a shown, unlocked blue *Layer 0*, holding every note. This is not an edit or undo step.
 - **The chart is all its layers together.** The format's rules, the ruleset plugin's checks,
   saving and export see one chart, the layers merged. So layers never let a chart hold what it
   could not hold without them: two notes cannot cover one lane on one tick even on different
   layers, and placing onto a note of another layer is refused, naming the layer, hidden or not.
 - **A layer has a name and a colour.** Names are unique within the chart. Colours come from a
   fixed palette of eight, red, orange, yellow, green, teal, blue, purple and pink, the next unused
-  one given to each new layer, and chosen by clicking the swatch.
+  one given to each new layer, and chosen by clicking the swatch. New names use the smallest
+  unused *Layer N* for N of at least 1.
 - **The list runs top to bottom.** The first layer is the top row; *below* means the next one
   down.
 
@@ -137,10 +138,9 @@ named, and a note names its layer.
 }]
 ```
 
-- A note without `layer` is on the first layer, so a file written before layers, or by a tool
-  that does not know them, opens unchanged. Once a chart has layers, charter writes every note's
-  layer, so reordering the layers never moves a note from one to another. A chart without `layers` has the one *Notes* layer,
-  and saving it writes neither field.
+- A note without `layer` is on the first layer, so files without layers stay valid and readable
+  by other tools. Charter gives such charts *Layer 0* when opening them and writes the layer and
+  every note's layer on save. Reordering the layers never moves a note from one to another.
 - Validation adds two cross-field rules: a note's named layer must be in its chart, and layer
   names must be unique. A layer name must also be non-empty.
 - `view` and `locked` are left out when shown and unlocked.
