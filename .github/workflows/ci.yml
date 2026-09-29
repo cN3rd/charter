@@ -1,0 +1,131 @@
+# Tests every push and pull request; each push to main then ships a prerelease built here.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: Format, lint, test and book
+    runs-on: ubuntu-latest
+    env:
+      # Warnings fail CI, so the lint table in Cargo.toml stays the whole story.
+      RUSTFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,mdbook
+      # kira plays through ALSA; nothing else links a system library.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config
+      - run: just fmt-check
+      - run: cargo clippy --workspace --all-targets
+      - run: just test
+      - run: just docs
+      - run: just docs-check
+
+  # Slow, so beside the checks rather than after them; the crates linking burn are left out, as
+  # `just kani` explains.
+  kani:
+    name: Kani proofs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: model-checking/kani-github-action@v1
+        with:
+          kani-version: 0.68.0
+          args: --workspace --exclude charter-beatthis-burn --exclude charter-app
+
+  package:
+    name: Package ${{ matrix.os }}
+    needs: check
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [linux, windows]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.os == 'windows' && 'x86_64-pc-windows-msvc' || 'x86_64-unknown-linux-gnu' }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: dist-${{ matrix.os }}
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: ${{ matrix.os == 'windows' && 'just,cargo-xwin' || 'just' }}
+      # Windows cross-compiles as `just build-windows` does locally, with clang-cl and lld-link.
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config zip \
+            ${{ matrix.os == 'windows' && 'clang lld llvm' || '' }}
+      - run: just dist-${{ matrix.os }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: charter-${{ matrix.os }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
+
+  prerelease:
+    name: Prerelease
+    needs: [package, kani]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # The whole history and every tag, to find the last prerelease and list what came after.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: List the commits since the last prerelease
+        run: |
+          previous="$(git tag --list 'ci-*' --sort=-version:refname --merged HEAD | head -n 1)"
+          {
+            echo "Built by CI from ${GITHUB_SHA}. Not a release: it may be broken, and may"
+            echo "change the format without notice."
+            echo
+            if [ -n "$previous" ]; then
+              echo "## Changes since ${previous}"
+              range="${previous}..HEAD"
+            else
+              echo "## Changes"
+              range="HEAD"
+            fi
+            echo
+            git log --no-merges --format='- %s (%h)' "$range"
+          } > notes.md
+          cat notes.md
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ci-${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: Development build ${{ github.run_number }}
+          body_path: notes.md
+          prerelease: true
+          files: dist/*
+          fail_on_unmatched_files: true
