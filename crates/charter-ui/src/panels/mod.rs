@@ -1,0 +1,64 @@
+#![expect(
+    clippy::mod_module_files,
+    clippy::pub_use,
+    reason = "requested directory re-export layout"
+)]
+//! Panels around the notefield.
+//!
+//! The old single file is split by panel family: menus, shortcut help, song metadata and
+//! layers, markers, shared text entries, transport/status controls, empty-state notices and
+//! modal dialogs. Re-exports preserve the existing `crate::panels::...` paths.
+
+use std::num::NonZeroU16;
+
+use charter_core::{
+    LayerColour, LayerView, MarkerKind, Metadata, ResolvedTime, ResourcePath, SettingScope, Tick,
+};
+use charter_editor::{LayerNotes, Song, Step};
+use egui::{self, Align, Layout, RichText, Ui};
+use serde_json::Value;
+
+use crate::Action;
+use crate::keys::{HELP, NEW_SONG, OPEN, REDO, SAVE, SAVE_AS, SETTINGS, UNDO};
+use crate::notefield::Zoom;
+use crate::style::{self, fields, heading, icon, table};
+use crate::window::Rate;
+
+/// Modal questions, toasts and read-only notices.
+mod dialogs;
+/// Empty-song and missing-audio centre panels.
+mod empty;
+/// Shared editable text entry helpers.
+mod entry;
+/// Chart layer stack controls.
+mod layers;
+/// Marker list panel.
+mod markers;
+/// Main menu bar and recent-file menu.
+mod menu;
+/// Keyboard shortcut help window.
+mod shortcuts;
+/// Song metadata, chart settings and details panels.
+mod song;
+/// Transport controls, status bar and snap labels.
+mod transport;
+
+pub use dialogs::{
+    Answer, ask_to_download_weights, ask_to_reset_timing, ask_to_restore, ask_to_save, offer_tags,
+    read_only, toast,
+};
+pub use empty::{empty, no_audio};
+pub(crate) use entry::entry;
+#[expect(
+    unused_imports,
+    reason = "preserve crate::panels::entry_sized after split"
+)]
+pub(crate) use entry::entry_sized;
+pub use markers::markers;
+pub use menu::menu_bar;
+pub use shortcuts::shortcuts;
+pub use song::{SongDrafts, details, song_panel};
+pub use transport::{ordinal, status_bar, transport_bar};
+
+#[cfg(test)]
+use menu::open_recent;

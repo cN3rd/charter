@@ -1,702 +1,13 @@
-//! The notefield: a chart drawn down the screen against audio time, with the cursor on the now
-//! line.
-
-use std::num::NonZeroU16;
-
-use charter_core::{
-    Chart, Kind, LaneCount, LaneIndex, MarkerKind, Measure, Object, Position, ResolvedTime, Shape,
-    Tick, Ticks, TicksPerBeat, Timing, TimingKind, Valid,
+use super::{
+    Canvas, Columns, FontId, Kind, LaneCount, LaneIndex, MOST_BEATS, MarkerKind, Measure,
+    NonZeroU16, Object, Peaks, Position, Rangef, Rect, Shape, Song, Stroke, StrokeKind, Tick,
+    Ticks, TicksPerBeat, Timing, TimingKind, Valid, View, Visuals, egui, nearest_line, pos2, style,
+    vec2,
 };
-use egui::{
-    self, Align2, FontId, Pos2, Rangef, Rect, Sense, Stroke, StrokeKind, Ui, Visuals, pos2, vec2,
-};
-
-use charter_editor::{NoteAt, Selecting, Song, Step};
-
-use charter_audio::{Peaks, Spectrum};
-
-use crate::flip::{Canvas, Direction, Flip};
-use crate::style;
-use crate::{Action, Note};
-
-/// How tall a second of audio is on screen, in points.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Zoom(f32);
-
-impl Default for Zoom {
-    /// Where a song opens: a 16th stream at 150 BPM sits about 25 points apart.
-    fn default() -> Self {
-        Self(240.0)
-    }
-}
-
-impl Zoom {
-    /// Highest permitted scale, in points per second.
-    const CLOSEST: f32 = 3000.0;
-    /// Lowest permitted scale, in points per second.
-    const FARTHEST: f32 = 30.0;
-    /// How much one zoom step scales by.
-    pub const STEP: f32 = 1.25;
-
-    /// The vertical scale in screen points per audio second.
-    pub const fn points_per_second(self) -> f32 {
-        self.0
-    }
-
-    /// How close the zoom is, against where a song opens.
-    pub fn percent(self) -> f32 {
-        self.0 / Self::default().0 * 100.0
-    }
-
-    /// This zoom scaled by `factor`, as far as it goes either way.
-    #[must_use]
-    pub fn by(self, factor: f32) -> Self {
-        Self((self.0 * factor).clamp(Self::FARTHEST, Self::CLOSEST))
-    }
-}
-
-/// Where audio times fall on screen in one frame: later times lower, the cursor on the now line.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct View {
-    /// Screen height of the cursor's now line, in points.
-    pub(crate) now_y: f32,
-    /// Cursor position in audio seconds.
-    cursor: f64,
-    /// Vertical scale of the audio timeline.
-    zoom: Zoom,
-}
-
-impl View {
-    /// A timeline with `cursor` aligned to `now_y`.
-    pub const fn new(now_y: f32, cursor: ResolvedTime, zoom: Zoom) -> Self {
-        Self {
-            now_y,
-            cursor: cursor.seconds(),
-            zoom,
-        }
-    }
-
-    /// Where `at` is drawn.
-    pub fn y(self, at: ResolvedTime) -> f32 {
-        self.y_of(at.seconds())
-    }
-
-    /// Where audio `seconds` into the song is drawn.
-    pub fn y_of(self, seconds: f64) -> f32 {
-        let below = (seconds - self.cursor) * f64::from(self.zoom.points_per_second());
-        let below = crate::cast::f64_f32(below);
-        self.now_y + below
-    }
-
-    /// The audio time drawn at height `y`.
-    pub fn seconds_at(self, y: f32) -> f64 {
-        self.cursor + f64::from(y - self.now_y) / f64::from(self.zoom.points_per_second())
-    }
-}
-
-/// The line of a grid `step` ticks apart from tick 0 that is drawn nearest to `seconds`.
-pub fn nearest_line(timing: Valid<'_, Timing>, seconds: f64, step: Ticks) -> Tick {
-    let latest = timing.latest_tick_by(seconds);
-    let below = latest
-        .next_on(step)
-        .and_then(|next| next.previous_on(step))
-        .unwrap_or(latest);
-    let above = below.next_on(step).unwrap_or(below);
-    let off = |line: Tick| (timing.time_at(line).seconds() - seconds).abs();
-    if off(above) < off(below) {
-        above
-    } else {
-        below
-    }
-}
-
-/// The first tick an object on which is hit at or after `seconds`.
-pub fn earliest_tick_from(timing: Valid<'_, Timing>, seconds: f64) -> Tick {
-    let latest = timing.latest_tick_by(seconds);
-    if timing.time_at(latest).seconds() >= seconds {
-        return latest;
-    }
-    Ticks::new(1)
-        .and_then(|one| latest.checked_add(one))
-        .unwrap_or(latest)
-}
-
-/// Column widths: the ruler; the timing gutter at its widest and narrowest; a lane at its widest
-/// and narrowest.
-const RULER_W: f32 = 80.0;
-/// Preferred timing gutter width, in points.
-const TIMING_W: f32 = 160.0;
-/// Smallest timing gutter width, in points.
-const TIMING_MIN_W: f32 = 72.0;
-/// Preferred width of each note lane, in points.
-const LANE_W: f32 = 56.0;
-/// How wide the waveform strip is, when there is a waveform to show.
-const WAVE_W: f32 = 64.0;
-/// Smallest width of each note lane, in points.
-const LANE_MIN_W: f32 = 20.0;
-/// Space above the timeline for lane labels, in points.
-const HEADER_H: f32 = 26.0;
-/// How far down the notefield the now line sits.
-const NOW_AT: f32 = 0.2;
-/// How far past the edges of the notefield objects are still drawn, so a note half off screen
-/// shows its visible half.
-const MARGIN: f32 = 20.0;
-/// Most beat lines drawn in one measure, for meters with absurdly many beats.
-const MOST_BEATS: usize = 64;
-
-/// Where each notefield column sits across the window.
-pub(crate) struct Columns {
-    /// Screen range reserved for measure numbers and markers.
-    ruler: Rangef,
-    /// Screen range reserved for timing events.
-    timing: Rangef,
-    /// The waveform strip, empty when there is no waveform.
-    wave: Rangef,
-    /// Screen range spanning all note lanes.
-    lanes: Rangef,
-    /// Width of one lane after fitting the columns into the window, in points.
-    lane_w: f32,
-}
-
-impl Columns {
-    /// Centres the columns in `across`. Short of room, the timing gutter narrows first, then the
-    /// lanes, and past that the columns start at the left edge.
-    fn laid_out(across: Rangef, lanes: u16, wave: bool) -> Self {
-        let count = f32::from(lanes);
-        let wave_w = if wave { WAVE_W } else { 0.0 };
-        let room = across.span() - RULER_W - TIMING_MIN_W - wave_w;
-        let lane_w = if lanes == 0 {
-            0.0
-        } else {
-            (room / count).clamp(LANE_MIN_W, LANE_W)
-        };
-        let timing =
-            (across.span() - RULER_W - wave_w - lane_w * count).clamp(TIMING_MIN_W, TIMING_W);
-        let total = RULER_W + timing + wave_w + lane_w * count;
-        let left = (across.center() - total / 2.0).max(across.min);
-        let ruler = Rangef::new(left, left + RULER_W);
-        let timing = Rangef::new(ruler.max, ruler.max + timing);
-        let waveform = Rangef::new(timing.max, timing.max + wave_w);
-        Self {
-            ruler,
-            timing,
-            wave: waveform,
-            lanes: Rangef::new(waveform.max, waveform.max + lane_w * count),
-            lane_w,
-        }
-    }
-
-    /// The lanes a lane position covers.
-    pub(crate) fn span(&self, index: LaneIndex, width: LaneCount) -> Rangef {
-        let left = self.lanes.min + f32::from(u16::from(index)) * self.lane_w;
-        Rangef::new(left, left + f32::from(u16::from(width)) * self.lane_w)
-    }
-
-    /// The middle of the timing gutter, where its events are grabbed.
-    #[cfg(test)]
-    pub(crate) fn timing_x(&self) -> f32 {
-        self.timing.center()
-    }
-
-    /// The middle of the ruler, where markers are grabbed.
-    #[cfg(test)]
-    pub(crate) fn ruler_x(&self) -> f32 {
-        self.ruler.center()
-    }
-
-    /// The middle of the cursor's handle on the ruler.
-    pub(crate) fn handle_x(&self) -> f32 {
-        self.ruler.max - 5.0
-    }
-
-    /// Every column on the time axis.
-    fn timeline(&self) -> Rangef {
-        Rangef::new(self.ruler.min, self.lanes.max.max(self.timing.max))
-    }
-}
-
-/// A drag across the notefield in progress.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Gesture {
-    /// A hold being drawn out of the tap Ctrl placed where the drag began.
-    Hold {
-        /// Lane where the initial tap was placed.
-        lane: LaneIndex,
-        /// Tick where the hold begins.
-        from: Tick,
-    },
-    /// A box selecting the notes whose heads it covers, from a corner kept in audio time so the
-    /// box stays put if the chart scrolls under it.
-    Marquee {
-        /// Whether covered notes replace or extend the current selection.
-        how: Selecting,
-        /// Screen x of the fixed corner.
-        x: f32,
-        /// Audio seconds at the fixed corner.
-        seconds: f64,
-    },
-    /// The timing point being dragged to another line.
-    MoveTiming {
-        /// Tick shared by the events at this timing point.
-        from: Tick,
-    },
-    /// The song's marker being dragged to another line.
-    MoveMarker {
-        /// Index into the song's markers.
-        index: usize,
-    },
-    /// The cursor's handle, dragged from `y` on screen while the cursor was at `seconds`.
-    Scrub {
-        /// Cursor's audio time when the drag began, in seconds.
-        seconds: f64,
-        /// Screen height at the start of the drag, in points.
-        y: f32,
-    },
-    /// The chart, grabbed with the middle button from `y` on screen while the cursor was at
-    /// `seconds`, and dragged along as a page is.
-    Pan {
-        /// Cursor's audio time when the drag began, in seconds.
-        seconds: f64,
-        /// Screen height where the chart was grabbed, in points.
-        y: f32,
-    },
-    /// The selected notes, grabbed on the snap line `tick` over `lane`. They can move `room.0`
-    /// lanes left, a negative count, to `room.1` lanes right and stay on the lanes.
-    MoveNotes {
-        /// Snap line where the notes were grabbed.
-        tick: Tick,
-        /// Lane where the notes were grabbed.
-        lane: LaneIndex,
-        /// Permitted lane offsets to the left and right.
-        room: (i32, i32),
-    },
-}
-
-impl Gesture {
-    /// How far the selection grabbed in a [`Gesture::MoveNotes`] has been dragged to `pos`, in
-    /// ticks along the snap and lanes across: the snap line nearest `pos` from the one it was
-    /// grabbed on, and the lane under `pos`, kept within the lanes, from the one it was grabbed
-    /// over. With `keep_time`, as while Shift is held, the notes keep their ticks and only
-    /// change lanes.
-    fn moved_by(self, field: &Field, to: Tick, pos: Pos2, keep_time: bool) -> Option<(i32, i32)> {
-        let Self::MoveNotes { tick, lane, room } = self else {
-            return None;
-        };
-        let ticks = if keep_time {
-            0
-        } else {
-            i32::try_from(i64::from(to).checked_sub(i64::from(tick))?).ok()?
-        };
-        let inside = field.columns.lanes;
-        let over = field.lane_at(pos.x.clamp(inside.min, inside.max - 0.5))?;
-        let lanes = i32::from(u16::from(over)).saturating_sub(i32::from(u16::from(lane)));
-        Some((ticks, lanes.clamp(room.0, room.1.max(room.0))))
-    }
-}
-
-/// The notes a drag from `note` moves, the selection when `note` is in it and otherwise `note`
-/// alone, and how many lanes they have room to move left, a negative count, and right.
-fn room(chart: Valid<'_, Chart>, song: &Song, note: NoteAt, lanes: u16) -> (bool, (i32, i32)) {
-    let grabbed = |object: &Object| {
-        object.tick == note.tick
-            && matches!(object.position, Position::Lane { index, .. } if index == note.lane)
-    };
-    let selected = chart
-        .objects
-        .iter()
-        .any(|object| grabbed(object) && song.is_selected(object));
-    let spans = chart
-        .objects
-        .iter()
-        .filter(|object| {
-            if selected {
-                song.is_selected(object)
-            } else {
-                grabbed(object)
-            }
-        })
-        .filter_map(|object| match object.position {
-            Position::Lane { index, width } => Some((index, width)),
-            Position::Plane { .. } => None,
-        });
-    let (mut first, mut last) = (i32::MAX, i32::MIN);
-    for (index, width) in spans {
-        let from = i32::from(u16::from(index));
-        first = first.min(from);
-        last = last.max(
-            from.saturating_add(i32::from(u16::from(width)))
-                .saturating_sub(1),
-        );
-    }
-    (
-        selected,
-        (
-            first.saturating_neg(),
-            i32::from(lanes).saturating_sub(1).saturating_sub(last),
-        ),
-    )
-}
-
-/// The handle under `pos`, if one is: the cursor's on the ruler, a timing point (every event at one
-/// tick) in the gutter or a marker on the ruler, each within grabbing distance of its line. The song's first BPM
-/// change stays put, so the song keeps a tempo to start from. Only the cursor's handle moves in a
-/// song that cannot be edited.
-fn handle_at(song: &Song, field: &Field, pos: Pos2) -> Option<Gesture> {
-    let (columns, view) = (&field.columns, field.view);
-    let near = |y: f32| (y - pos.y).abs() <= GRAB;
-    let on_handle = Rangef::new(columns.handle_x() - 9.0, columns.handle_x() + 7.0);
-    if on_handle.contains(pos.x) && near(view.now_y) {
-        let seconds = view.seconds_at(view.now_y);
-        return Some(Gesture::Scrub { seconds, y: pos.y });
-    }
-    if song.read_only().is_some() {
-        return None;
-    }
-    let timing = song.timing();
-    let nearest = |ticks: &mut dyn Iterator<Item = (usize, Tick)>| {
-        ticks
-            .map(|(index, tick)| ((index, tick), (view.y(timing.time_at(tick)) - pos.y).abs()))
-            .filter(|(_, off)| *off <= GRAB)
-            .min_by(|a, b| a.1.total_cmp(&b.1))
-            .map(|(position, _)| position)
-    };
-    if columns.timing.contains(pos.x) {
-        let mut points = timing
-            .events
-            .chunk_by(|a, b| a.tick == b.tick)
-            .filter_map(|point| point.first().map(|event| event.tick))
-            .chain(timing.anchors.iter().map(|anchor| anchor.tick))
-            .enumerate();
-        return nearest(&mut points).map(|(_, from)| Gesture::MoveTiming { from });
-    }
-    if columns.ruler.contains(pos.x) {
-        let markers = &song.document().document().markers;
-        let mut ticks = markers
-            .iter()
-            .enumerate()
-            .map(|(index, marker)| (index, marker.tick));
-        return nearest(&mut ticks).map(|(index, _)| Gesture::MoveMarker { index });
-    }
-    None
-}
-
-/// Where the notefield draws things in one frame.
-pub(crate) struct Field {
-    /// Fitted horizontal positions of the notefield columns.
-    pub(crate) columns: Columns,
-    /// Vertical drawing range below the header, in points.
-    rows: Rangef,
-    /// Timeline placing the cursor at the now line.
-    pub(crate) view: View,
-    /// Number of lanes in the open chart.
-    lanes: u16,
-}
-
-impl Field {
-    /// The notefield filling `area` for a chart of `lanes` lanes, with the cursor at `now`.
-    pub(crate) fn new(area: Rect, lanes: u16, now: ResolvedTime, zoom: Zoom, wave: bool) -> Self {
-        let rows = Rangef::new(area.top() + HEADER_H, area.bottom());
-        Self {
-            columns: Columns::laid_out(area.x_range(), lanes, wave),
-            rows,
-            view: View::new(rows.min + rows.span() * NOW_AT, now, zoom),
-            lanes,
-        }
-    }
-
-    /// The lane under `x`, if the chart has one there.
-    fn lane_at(&self, x: f32) -> Option<LaneIndex> {
-        let lanes = self.columns.lanes;
-        if !lanes.contains(x) || self.lanes == 0 {
-            return None;
-        }
-        let across = ((x - lanes.min) / self.columns.lane_w).floor();
-        let lane = crate::cast::f32_u16(across).min(self.lanes.saturating_sub(1));
-        Some(LaneIndex::new(lane))
-    }
-
-    /// The ticks and lanes a box covers, from a corner at `x` and `seconds` to `pos`, if it
-    /// reaches a lane.
-    fn boxed(
-        &self,
-        timing: Valid<'_, Timing>,
-        (x, seconds): (f32, f64),
-        pos: Pos2,
-    ) -> Option<((Tick, Tick), (LaneIndex, LaneIndex))> {
-        let lanes = self.lanes_between(x.min(pos.x), x.max(pos.x))?;
-        let y = self.view.y_of(seconds);
-        let (top, bottom) = (y.min(pos.y), y.max(pos.y));
-        let ticks = (
-            earliest_tick_from(timing, self.view.seconds_at(top)),
-            timing.latest_tick_by(self.view.seconds_at(bottom)),
-        );
-        Some((ticks, lanes))
-    }
-
-    /// The first and last lanes a box spanning `left` to `right` reaches, if it reaches any.
-    fn lanes_between(&self, left: f32, right: f32) -> Option<(LaneIndex, LaneIndex)> {
-        let lanes = self.columns.lanes;
-        if self.lanes == 0 || right < lanes.min || left > lanes.max {
-            return None;
-        }
-        let inside = Rangef::new(lanes.min, lanes.max - 0.5);
-        let first = self.lane_at(left.clamp(inside.min, inside.max))?;
-        let last = self.lane_at(right.clamp(inside.min, inside.max))?;
-        Some((first, last))
-    }
-}
-
-/// Draws the open chart, and turns the wheel, zoom gestures, clicks and drags over it into
-/// actions. Gives the seconds of audio it shows, earliest first, when there is a chart.
-#[expect(
-    clippy::too_many_lines,
-    reason = "one pass over the frame in drawing order"
-)]
-pub fn show(
-    ui: &mut Ui,
-    song: &Song,
-    Shown {
-        zoom,
-        direction,
-        strip,
-        grid: finest,
-        colour_notes_by_layer,
-    }: Shown<'_>,
-    scrolled: &mut [f32; 2],
-    gesture: &mut Option<Gesture>,
-    actions: &mut Vec<Action>,
-) -> Option<(f64, f64)> {
-    let Some(chart) = song.chart() else {
-        ui.weak("This song has no charts yet.");
-        return None;
-    };
-    let lanes = chart.lanes.map_or(0, u16::from);
-    let across = ui.available_rect_before_wrap().x_range();
-    let indent = match direction {
-        Direction::Up | Direction::Down => {
-            Columns::laid_out(across, lanes, strip.is_some()).ruler.min
-        }
-        Direction::Left | Direction::Right => across.min,
-    };
-    let planar = chart
-        .objects()
-        .filter(|object| matches!(object.position, Position::Plane { .. }))
-        .count();
-    ui.horizontal(|ui| {
-        ui.add_space((indent - ui.cursor().left()).max(0.0));
-        ui.strong(chart.name.as_str());
-        ui.weak(
-            chart
-                .lanes
-                .map_or_else(|| "no lanes".to_owned(), |count| format!("{count} lanes")),
-        );
-        if planar > 0 {
-            let ruleset = &song.document().document().ruleset.id;
-            let (objects, need) = if planar == 1 {
-                ("object", "needs")
-            } else {
-                ("objects", "need")
-            };
-            ui.weak(format!(
-                "{planar} {objects} on the plane {need} the {ruleset} plugin to be drawn"
-            ));
-        }
-    });
-    // An id of its own, so a drag survives a message appearing above the notefield mid-drag.
-    let (_, allocated_area) = ui.allocate_space(ui.available_size());
-    let response = ui.interact(
-        allocated_area,
-        ui.id().with("notefield"),
-        Sense::click_and_drag(),
-    );
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Other, true, "Notefield"));
-    if response.hovered() {
-        let (steps, measures, zoom_delta) = ui.input(|input| {
-            let [steps_left, measures_left] = scrolled;
-            let steps = wheel_steps(&input.events, steps_left);
-            let measures = measure_steps(&input.events, measures_left);
-            (steps, measures, input.zoom_delta())
-        });
-        let way = |amount: i32| {
-            if amount > 0 {
-                Step::Later
-            } else {
-                Step::Earlier
-            }
-        };
-        actions.extend(std::iter::repeat_n(
-            Action::Move(way(steps)),
-            usize::try_from(steps.unsigned_abs()).unwrap_or(usize::MAX),
-        ));
-        actions.extend(std::iter::repeat_n(
-            Action::MoveMeasure(way(measures)),
-            usize::try_from(measures.unsigned_abs()).unwrap_or(usize::MAX),
-        ));
-        if (zoom_delta - 1.0).abs() > f32::EPSILON {
-            actions.push(Action::ZoomBy(zoom_delta));
-        }
-    }
-    let flip = Flip {
-        area: response.rect,
-        direction,
-    };
-    let painter = Canvas::new(ui.painter_at(response.rect), flip);
-    let area = flip.field();
-    let timing = chart.timing();
-    let field = Field::new(
-        area,
-        lanes,
-        timing.time_at(song.cursor()),
-        zoom,
-        strip.is_some(),
-    );
-    let (columns, rows, view) = (&field.columns, field.rows, field.view);
-    // ponytail: every visible item still resolves its time from tick 0, which is slow once a
-    // timing map holds thousands of events; walk the map once per frame when that shows.
-    let first = timing.latest_tick_by(view.seconds_at(rows.min - MARGIN));
-    let last = timing.latest_tick_by(view.seconds_at(rows.max + MARGIN));
-    let own_timing = chart.timing.is_some();
-    header(
-        &painter,
-        columns,
-        lanes,
-        own_timing,
-        Rangef::new(area.top(), rows.min),
-        ui.visuals(),
-    );
-    let clipped = painter.clipped(Rect::from_x_y_ranges(area.x_range(), rows));
-    backdrop(&clipped, columns, lanes, rows);
-    match strip {
-        Some(Strip::Waveform(peaks)) => waveform(&clipped, columns, view, rows, peaks),
-        Some(Strip::Frequencies(tiles)) => {
-            frequencies(&clipped, ui.ctx(), (columns, view, rows), tiles);
-        }
-        None => {}
-    }
-    grid(&clipped, columns, (song, finest), view, rows);
-    markers(&clipped, columns, song, view, rows, (first, last));
-    events(&clipped, columns, song, view, rows, (first, last));
-    let band = Rect::from_x_y_ranges(columns.timeline(), view.now_y - 12.0..=view.now_y + 12.0);
-    clipped.rect_filled(band, 0.0, style::NOW_BAND);
-    for object in ordered_objects(song, (first, last)) {
-        let (layer_view, colour) = song.layer_look(&object);
-        if layer_view == charter_core::LayerView::Hidden {
-            continue;
-        }
-        let selected = song.is_selected(&object);
-        draw_object(
-            &clipped,
-            columns,
-            timing,
-            view,
-            object,
-            selected,
-            (layer_view, colour, colour_notes_by_layer),
-        );
-    }
-
-    actions.extend(pointer(
-        ui,
-        &response,
-        song,
-        &field,
-        flip,
-        (first, last),
-        gesture,
-    ));
-    menu(ui, &response, song, (&field, flip, (first, last)), actions);
-    let latest = ui.input(|input| input.pointer.latest_pos().map(|at| flip.back(at)));
-    let line = |pos: Pos2| snap_line(song, view, pos);
-    if let Some(Gesture::Marquee { x, seconds, .. }) = *gesture
-        && let Some(latest) = latest
-    {
-        let corner = pos2(x, view.y_of(seconds));
-        clipped.rect(
-            Rect::from_two_pos(corner, latest),
-            0.0,
-            style::MARQUEE_FILL,
-            Stroke::new(1.0, style::MARQUEE),
-            StrokeKind::Inside,
-        );
-    }
-    if let Some(Gesture::Hold { lane, from }) = *gesture
-        && let Some(to) = latest.and_then(&line)
-        && let Some(rect) = hold_preview_rect(columns, timing, view, lane, from, to)
-    {
-        clipped.rect_filled(rect, 2.0, style::HOLD.gamma_multiply(0.7));
-        clipped.rect_stroke(
-            rect,
-            2.0,
-            Stroke::new(1.0, style::SELECTED),
-            StrokeKind::Outside,
-        );
-    }
-    if let Some(Gesture::MoveTiming { .. } | Gesture::MoveMarker { .. }) = *gesture
-        && let Some(latest) = latest
-    {
-        let free =
-            matches!(*gesture, Some(Gesture::MoveTiming { from }) if anchored(song.timing(), from));
-        drop_guide(&clipped, columns, (song, free), view, latest.y);
-    }
-    if let Some(moving @ Gesture::MoveNotes { .. }) = *gesture
-        && let Some(latest) = latest
-        && let Some(by) = line(latest).and_then(|to| {
-            let keep_time = ui.input(|input| input.modifiers.shift);
-            moving.moved_by(&field, to, latest, keep_time)
-        })
-    {
-        for object in chart
-            .objects
-            .iter()
-            .filter(|object| song.is_selected(object))
-        {
-            ghost(&clipped, (columns, timing, view), object, by, (first, last));
-        }
-    }
-    let (hovered, modifiers) = ui.input(|input| {
-        let hovered = input.pointer.hover_pos().map(|at| flip.back(at));
-        (hovered, input.modifiers)
-    });
-    if matches!(
-        *gesture,
-        Some(Gesture::MoveNotes { .. } | Gesture::Pan { .. })
-    ) {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
-    } else if gesture.is_none()
-        && response.hovered()
-        && hovered
-            .is_some_and(|at| grab(song, &field, at, (first, last), modifiers, &line).is_some())
-    {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
-    }
-    if gesture.is_some()
-        || hovered.is_some_and(|at| response.hovered() && handle_at(song, &field, at).is_some())
-    {
-        let horizontal = matches!(direction, Direction::Left | Direction::Right);
-        let icon = if horizontal {
-            egui::CursorIcon::ResizeHorizontal
-        } else {
-            egui::CursorIcon::ResizeVertical
-        };
-        if !matches!(
-            *gesture,
-            Some(
-                Gesture::Marquee { .. }
-                    | Gesture::Hold { .. }
-                    | Gesture::MoveNotes { .. }
-                    | Gesture::Pan { .. }
-            )
-        ) {
-            ui.ctx().set_cursor_icon(icon);
-        }
-    }
-    now_line(&clipped, columns, view.now_y);
-    let (top, bottom) = (view.seconds_at(rows.min), view.seconds_at(rows.max));
-    Some((top.min(bottom), top.max(bottom)))
-}
+use egui::Align2;
 
 /// Draw lower rows first, preserving note order within each row.
-fn ordered_objects(song: &Song, (first, last): (Tick, Tick)) -> Vec<Valid<'_, Object>> {
+pub(super) fn ordered_objects(song: &Song, (first, last): (Tick, Tick)) -> Vec<Valid<'_, Object>> {
     let Some(chart) = song.chart() else {
         return Vec::new();
     };
@@ -710,555 +21,8 @@ fn ordered_objects(song: &Song, (first, last): (Tick, Tick)) -> Vec<Valid<'_, Ob
     objects
 }
 
-/// The patterns the right-click menu places, by the lanes each step counts from the lane
-/// clicked, and the spacings it places them at, as how many to a beat.
-const PATTERNS: [(&str, &[u16]); 3] = [
-    ("1-1-1-1", &[0, 0, 0, 0]),
-    ("1-2-3-1-2-3", &[0, 1, 2, 0, 1, 2]),
-    ("1-2-1-2", &[0, 1, 0, 1]),
-];
-/// Note values offered for the spacing between pattern steps.
-const SPACINGS: [u16; 7] = [1, 2, 4, 8, 16, 32, 64];
-
-/// The right-click menu. A right click selects the note under the pointer unless it is selected
-/// already, and leaves the cursor alone; what the menu places goes on the snap line clicked, from
-/// the lane clicked.
-fn menu(
-    ui: &Ui,
-    response: &egui::Response,
-    song: &Song,
-    (field, flip, visible): (&Field, Flip, (Tick, Tick)),
-    actions: &mut Vec<Action>,
-) {
-    let spot_id = ui.id().with("menu spot");
-    if response.secondary_clicked()
-        && let Some(pos) = ui.input(|input| input.pointer.latest_pos().map(|at| flip.back(at)))
-    {
-        let tick = snap_line(song, field.view, pos);
-        if let Some(chart) = song.chart()
-            && let Some(note) = hit_on_layers(song, field, chart.timing(), pos, visible)
-            && !song.selection().any(|selected| selected == note)
-        {
-            actions.push(Action::Select(Some(note), Selecting::Replace));
-        }
-        let lane = field.lane_at(pos.x).unwrap_or(LaneIndex::new(0));
-        let tick = tick.unwrap_or_else(|| song.cursor());
-        ui.data_mut(|data| data.insert_temp(spot_id, (lane, tick)));
-    }
-    // Where it was clicked, since playback moves the cursor on while the menu is open.
-    let spot: (LaneIndex, Tick) = ui
-        .data(|data| data.get_temp(spot_id))
-        .unwrap_or_else(|| (LaneIndex::new(0), song.cursor()));
-    response.context_menu(|menu_ui| menu_items(menu_ui, song, spot, actions));
-}
-
-/// The right-click menu's items for `song`, with `lane` and `at` the lane and snap line clicked,
-/// where what it places goes.
-#[expect(clippy::too_many_lines, reason = "menu items in display order")]
-fn menu_items(ui: &mut Ui, song: &Song, (lane, at): (LaneIndex, Tick), actions: &mut Vec<Action>) {
-    let editable = song.read_only().is_none();
-    let selected = song.selection().next().is_some();
-    let (edits, chosen) = (editable, editable && selected);
-    item(ui, actions, ("Cut", "Ctrl+X", chosen), Action::Cut);
-    item(ui, actions, ("Copy", "Ctrl+C", selected), Action::Copy);
-    item(
-        ui,
-        actions,
-        ("Paste here", "Ctrl+V", edits),
-        Action::PasteHere(at),
-    );
-    item(
-        ui,
-        actions,
-        ("Duplicate", "Ctrl+D", chosen),
-        Action::Duplicate,
-    );
-    item(
-        ui,
-        actions,
-        ("Delete", "Delete", chosen),
-        Action::DeleteSelection,
-    );
-    if song.layers().len() > 1 {
-        ui.add_enabled_ui(chosen, |ui| {
-            ui.menu_button("Move to layer", |ui| {
-                for (index, row) in song.layers().iter().enumerate() {
-                    let already_there = song.chart().is_some_and(|chart| {
-                        chart
-                            .objects()
-                            .filter(|object| song.is_selected(object))
-                            .all(|object| chart.layer_index(&object) == Some(index))
-                    });
-                    if !already_there && ui.button(&row.name).clicked() {
-                        actions.push(Action::MoveSelectionToLayer(index));
-                        ui.close();
-                    }
-                }
-            });
-        });
-    }
-    ui.separator();
-    let move_left = Action::ShiftSelection {
-        snaps: 0,
-        lanes: -1,
-    };
-    let move_right = Action::ShiftSelection { snaps: 0, lanes: 1 };
-    item(
-        ui,
-        actions,
-        ("Move a lane left", "Ctrl+Left", chosen),
-        move_left,
-    );
-    item(
-        ui,
-        actions,
-        ("Move a lane right", "Ctrl+Right", chosen),
-        move_right,
-    );
-    item(
-        ui,
-        actions,
-        ("Mirror across the lanes", "Ctrl+M", chosen),
-        Action::Mirror,
-    );
-    item(
-        ui,
-        actions,
-        ("Snap to the grid", "Q", chosen),
-        Action::Quantize,
-    );
-    item(
-        ui,
-        actions,
-        ("Lengthen by the snap", "]", edits),
-        Action::ResizeNotes(Step::Later),
-    );
-    item(
-        ui,
-        actions,
-        ("Shorten by the snap", "[", edits),
-        Action::ResizeNotes(Step::Earlier),
-    );
-    let changes = song
-        .plugin()
-        .map(charter_core::RulesetPlugin::note_changes)
-        .unwrap_or_default();
-    if !changes.is_empty() {
-        ui.add_enabled_ui(chosen, |ui| {
-            ui.menu_button("Change to", |ui| {
-                for change in changes {
-                    let button = ui.button(&change.name).on_hover_text(&change.about);
-                    if button.clicked() {
-                        actions.push(Action::ChangeNotes(change.id));
-                    }
-                }
-            });
-        });
-    }
-    ui.separator();
-    ui.add_enabled_ui(edits, |ui| patterns(ui, (lane, at), actions));
-    let lane_name = format!("Select lane {}", u16::from(lane).saturating_add(1));
-    item(
-        ui,
-        actions,
-        (&lane_name, "", true),
-        Action::SelectLane(lane),
-    );
-    item(
-        ui,
-        actions,
-        ("Select all", "Ctrl+A", true),
-        Action::SelectAll,
-    );
-    item(
-        ui,
-        actions,
-        ("Select none", "Escape", selected),
-        Action::ClearSelection,
-    );
-    ui.separator();
-    item(
-        ui,
-        actions,
-        ("Add a timing point here", "", edits),
-        Action::Here(at, Box::new(Action::AddBpm)),
-    );
-    item(
-        ui,
-        actions,
-        ("Bookmark here", "Ctrl+B", edits),
-        Action::Here(at, Box::new(Action::ToggleBookmark)),
-    );
-}
-
-/// Where a pan the middle button grabbed at `y` with the cursor at `seconds` puts the cursor with
-/// the pointer at `pos`: the chart follows the pointer, so dragging it down goes back, onto the
-/// snap line there.
-fn panned(
-    field: &Field,
-    timing: Valid<'_, Timing>,
-    step: Option<Ticks>,
-    (seconds, y): (f64, f32),
-    pos: Pos2,
-) -> Tick {
-    let earlier = f64::from((pos.y - y) / field.view.zoom.points_per_second());
-    match step {
-        Some(step) => nearest_line(timing, seconds - earlier, step),
-        None => timing.latest_tick_by(seconds - earlier),
-    }
-}
-
-/// The right-click menu's patterns, each at every spacing, placed from `lane` on.
-fn patterns(ui: &mut Ui, (lane, at): (LaneIndex, Tick), actions: &mut Vec<Action>) {
-    ui.menu_button("Insert pattern here", |ui| {
-        for (name, steps) in PATTERNS {
-            ui.menu_button(name, |ui| {
-                for per_beat in SPACINGS {
-                    let label = if per_beat == 1 {
-                        "Every beat".to_owned()
-                    } else {
-                        format!("Every 1/{per_beat} beat")
-                    };
-                    if ui.button(label).clicked() {
-                        let pattern = Action::Pattern {
-                            steps,
-                            per_beat,
-                            lane,
-                        };
-                        actions.push(Action::Here(at, Box::new(pattern)));
-                    }
-                }
-            });
-        }
-    });
-}
-
-/// A menu item named `name`, showing `keys`, that asks for `action` when clicked.
-fn item(
-    ui: &mut Ui,
-    actions: &mut Vec<Action>,
-    (name, keys, enabled): (&str, &str, bool),
-    action: Action,
-) {
-    let button = egui::Button::new(name);
-    let button = if keys.is_empty() {
-        button
-    } else {
-        button.shortcut_text(keys)
-    };
-    if ui.add_enabled(enabled, button).clicked() {
-        actions.push(action);
-    }
-}
-
-/// What clicks and drags over the notefield ask for. With Ctrl they place notes, a tap or under
-/// Shift a mine, and a drag draws a hold; otherwise a click selects the note under the pointer,
-/// Shift adding it and Alt taking it away, and a drag selects with a box.
-#[expect(clippy::too_many_lines, reason = "one branch per gesture")]
-fn pointer(
-    ui: &Ui,
-    response: &egui::Response,
-    song: &Song,
-    field: &Field,
-    flip: Flip,
-    visible: (Tick, Tick),
-    gesture: &mut Option<Gesture>,
-) -> Vec<Action> {
-    let mut actions = Vec::new();
-    let Some(chart) = song.chart() else {
-        return actions;
-    };
-    let timing = chart.timing();
-    let (modifiers, origin, latest, escaped) = ui.input(|input| {
-        let pointer = &input.pointer;
-        let escaped = input.key_pressed(egui::Key::Escape);
-        (
-            input.modifiers,
-            pointer.press_origin().map(|at| flip.back(at)),
-            pointer.latest_pos().map(|at| flip.back(at)),
-            escaped,
-        )
-    });
-    // A gesture lasts as long as its drag, and Escape drops it.
-    if escaped || !(response.dragged() || response.drag_stopped()) {
-        *gesture = None;
-    }
-    let step = song
-        .document()
-        .document()
-        .ticks_per_beat
-        .note_length(song.snap());
-    let line =
-        |pos: Pos2| step.map(|step| nearest_line(timing, field.view.seconds_at(pos.y), step));
-    let editable = song.read_only().is_none();
-    let spot = |pos: Pos2| {
-        if !editable || !field.rows.contains(pos.y) {
-            return None;
-        }
-        Some((field.lane_at(pos.x)?, line(pos)?))
-    };
-    let how = selecting(modifiers);
-    if response.clicked()
-        && let Some(pos) = latest
-    {
-        if !modifiers.command {
-            actions.push(Action::Select(
-                hit_on_layers(song, field, timing, pos, visible),
-                how,
-            ));
-        } else if let Some((lane, tick)) = spot(pos) {
-            let note = if modifiers.shift {
-                Note::Mine
-            } else {
-                Note::Tap
-            };
-            actions.push(Action::Place { tick, lane, note });
-        }
-    }
-    let (middle, secondary) = ui.input(|input| {
-        let pointer = &input.pointer;
-        (
-            pointer.button_down(egui::PointerButton::Middle),
-            pointer.secondary_down(),
-        )
-    });
-    if response.drag_started()
-        && !escaped
-        && let Some(origin) = origin
-    {
-        *gesture = if middle {
-            let seconds = field.view.seconds_at(field.view.now_y);
-            Some(Gesture::Pan {
-                seconds,
-                y: origin.y,
-            })
-        } else if secondary {
-            None
-        } else {
-            started(song, field, (origin, modifiers), visible, &mut actions)
-        };
-    }
-    if response.dragged()
-        && let (Some(Gesture::Pan { seconds, y }), Some(pos)) = (*gesture, latest)
-    {
-        actions.push(Action::JumpTo(panned(
-            field,
-            timing,
-            step,
-            (seconds, y),
-            pos,
-        )));
-    }
-    if response.dragged()
-        && let (Some(Gesture::Scrub { seconds, y }), Some(pos)) = (*gesture, latest)
-        && let Some(step) = step
-    {
-        let later = f64::from((pos.y - y) / field.view.zoom.points_per_second());
-        let to = nearest_line(timing, seconds + later, step);
-        actions.push(Action::JumpTo(to));
-    }
-    if response.dragged()
-        && let (Some(Gesture::Hold { lane, from }), Some(pos)) = (*gesture, latest)
-        && let Some(to) = line(pos)
-    {
-        actions.push(Action::Stretch { lane, from, to });
-    }
-    if response.drag_stopped() {
-        let keep_time = modifiers.shift;
-        actions.extend(let_go(
-            gesture.take(),
-            (latest, keep_time),
-            field,
-            timing,
-            &line,
-        ));
-    }
-    actions
-}
-
-/// The gesture a drag from `origin` starts, and what it asks for at once: a handle's move, the
-/// selection's move from a note, a hold drawn with Ctrl, or else a box.
-fn started(
-    song: &Song,
-    field: &Field,
-    (origin, modifiers): (Pos2, egui::Modifiers),
-    visible: (Tick, Tick),
-    actions: &mut Vec<Action>,
-) -> Option<Gesture> {
-    let snapped = |pos: Pos2| snap_line(song, field.view, pos);
-    if let Some(handle) = handle_at(song, field, origin) {
-        Some(handle)
-    } else if let Some((unselected, moving)) =
-        grab(song, field, origin, visible, modifiers, &snapped)
-    {
-        if let Some(note) = unselected {
-            actions.push(Action::Select(Some(note), selecting(modifiers)));
-        }
-        Some(moving)
-    } else if modifiers.command {
-        if song.read_only().is_some() || !field.rows.contains(origin.y) {
-            return None;
-        }
-        let (lane, from) = (field.lane_at(origin.x)?, snapped(origin)?);
-        // A note already there is stretched as it is, rather than toggled away.
-        if !song.starts_at(from, lane) {
-            let note = Note::Tap;
-            actions.push(Action::Place {
-                tick: from,
-                lane,
-                note,
-            });
-        }
-        Some(Gesture::Hold { lane, from })
-    } else {
-        Some(Gesture::Marquee {
-            how: selecting(modifiers),
-            x: origin.x,
-            seconds: field.view.seconds_at(origin.y),
-        })
-    }
-}
-
-/// The gesture a plain drag, or one with Shift, from `origin` over a note starts in an editable
-/// song: moving the selection when the note is in it, and otherwise the note alone, returned to
-/// be selected first, or added to the selection under Shift.
-fn grab(
-    song: &Song,
-    field: &Field,
-    origin: Pos2,
-    visible: (Tick, Tick),
-    modifiers: egui::Modifiers,
-    line: &dyn Fn(Pos2) -> Option<Tick>,
-) -> Option<(Option<NoteAt>, Gesture)> {
-    // Shift keeps the notes' ticks as they move.
-    let plain = modifiers.is_none() || modifiers.shift_only();
-    if song.read_only().is_some() || !plain || !field.rows.contains(origin.y) {
-        return None;
-    }
-    let chart = song.chart()?;
-    let note = hit_on_layers(song, field, chart.timing(), origin, visible)?;
-    let (selected, room) = room(chart, song, note, field.lanes);
-    let gesture = Gesture::MoveNotes {
-        tick: line(origin)?,
-        lane: field.lane_at(origin.x)?,
-        room,
-    };
-    Some(((!selected).then_some(note), gesture))
-}
-
-/// Whether the timing point on `tick` is a tempo point, an anchor of the audio.
-fn anchored(timing: Valid<'_, Timing>, tick: Tick) -> bool {
-    timing.anchors.iter().any(|anchor| anchor.tick == tick)
-}
-
-/// What a drag asks for when it lets go at `latest`: the hold drawn to there, the handle
-/// dropped on the line there, or the notes the box covers selected.
-fn let_go(
-    gesture: Option<Gesture>,
-    (latest, keep_time): (Option<Pos2>, bool),
-    field: &Field,
-    timing: Valid<'_, Timing>,
-    line: &dyn Fn(Pos2) -> Option<Tick>,
-) -> Option<Action> {
-    let (pos, gesture) = (latest?, gesture?);
-    match gesture {
-        Gesture::Hold { lane, from } => line(pos).map(|to| Action::Stretch { lane, from, to }),
-        // A tempo point is a moment of the audio, so it goes where it is dropped; a point of
-        // meters and stops alone is a beat, so it goes to the line there.
-        Gesture::MoveTiming { from } if anchored(timing, from) => {
-            Some(Action::MovePointTo(from, field.view.seconds_at(pos.y)))
-        }
-        Gesture::MoveTiming { from } => line(pos).map(|to| Action::MoveTiming { from, to }),
-        Gesture::MoveMarker { index } => line(pos).map(|to| Action::MoveMarker { index, to }),
-        Gesture::Marquee { how, x, seconds } => field
-            .boxed(timing, (x, seconds), pos)
-            .map(|(ticks, lanes)| Action::SelectBetween { ticks, lanes, how }),
-        Gesture::MoveNotes { .. } => {
-            let (ticks, lanes) = gesture.moved_by(field, line(pos)?, pos, keep_time)?;
-            Some(Action::MoveSelection { ticks, lanes })
-        }
-        Gesture::Scrub { .. } | Gesture::Pan { .. } => None,
-    }
-}
-
-/// How a click or a box meets the selection: Shift adds to it and Alt takes from it.
-const fn selecting(modifiers: egui::Modifiers) -> Selecting {
-    if modifiers.alt {
-        Selecting::Subtract
-    } else if modifiers.shift {
-        Selecting::Add
-    } else {
-        Selecting::Replace
-    }
-}
-
-/// How far from a note, in points, a click still takes it.
-const GRAB: f32 = 6.0;
-
-/// The note drawn under `pos`, the one whose head is nearest when several are.
-#[cfg(test)]
-fn hit(
-    objects: &[Object],
-    field: &Field,
-    timing: Valid<'_, Timing>,
-    pos: Pos2,
-    (first, last): (Tick, Tick),
-) -> Option<NoteAt> {
-    hit_filtered(objects, field, timing, pos, (first, last), |_| true)
-}
-
-/// Only shown notes participate in pointer gestures or context-menu selection.
-fn hit_on_layers(
-    song: &Song,
-    field: &Field,
-    timing: Valid<'_, Timing>,
-    pos: Pos2,
-    visible: (Tick, Tick),
-) -> Option<NoteAt> {
-    let chart = song.chart()?;
-    hit_filtered(&chart.objects, field, timing, pos, visible, |object| {
-        song.layer_look(object).0 == charter_core::LayerView::Shown
-    })
-}
-
-/// The nearest note whose layer is eligible for selection.
-fn hit_filtered(
-    objects: &[Object],
-    field: &Field,
-    timing: Valid<'_, Timing>,
-    pos: Pos2,
-    (first, last): (Tick, Tick),
-    eligible: impl Fn(&Object) -> bool,
-) -> Option<NoteAt> {
-    let under = reaching(objects, first, last).filter_map(|index| {
-        let object = objects.get(index)?;
-        if !eligible(object) {
-            return None;
-        }
-        let Position::Lane {
-            index: lane_index,
-            width,
-        } = object.position
-        else {
-            return None;
-        };
-        let head = field.view.y(timing.time_at(object.tick));
-        let tail = field.view.y(timing.time_at(object.shape.end(object.tick)?));
-        let reach = Rangef::new(head.min(tail) - GRAB, head.max(tail) + GRAB);
-        let over = field.columns.span(lane_index, width).contains(pos.x) && reach.contains(pos.y);
-        let note = NoteAt {
-            tick: object.tick,
-            lane: lane_index,
-        };
-        over.then_some((note, (pos.y - head).abs()))
-    });
-    under
-        .min_by(|a, b| a.1.total_cmp(&b.1))
-        .map(|(note, _)| note)
-}
-
 /// Says whose timing the chart uses and numbers its lanes.
-fn header(
+pub(super) fn header(
     painter: &Canvas,
     columns: &Columns,
     lanes: u16,
@@ -1293,7 +57,7 @@ fn header(
 }
 
 /// Fills the timeline columns and draws the borders between lanes and gutters.
-fn backdrop(painter: &Canvas, columns: &Columns, lanes: u16, rows: Rangef) {
+pub(super) fn backdrop(painter: &Canvas, columns: &Columns, lanes: u16, rows: Rangef) {
     for column in [columns.ruler, columns.timing] {
         painter.rect_filled(Rect::from_x_y_ranges(column, rows), 0.0, style::COLUMN_BG);
     }
@@ -1324,202 +88,9 @@ fn backdrop(painter: &Canvas, columns: &Columns, lanes: u16, rows: Rangef) {
     }
 }
 
-/// How the notefield is shown: how close, which way it runs, and the waveform of the song's
-/// audio when there is one to draw.
-#[derive(Clone, Copy, Debug)]
-pub struct Shown<'a> {
-    /// Vertical scale in screen points per audio second.
-    pub zoom: Zoom,
-    /// Whether later notes appear above or below the now line.
-    pub direction: Direction,
-    /// What the strip beside the lanes shows of the song's audio, if anything.
-    pub strip: Option<Strip<'a>>,
-    /// The note value of the grid's finest lines: 4 draws beats alone, 16 sixteenths.
-    pub grid: NonZeroU16,
-    /// Tint whole notes by layer instead of marking their leading edge.
-    pub colour_notes_by_layer: bool,
-}
-
-/// What the audio strip beside the lanes draws.
-#[derive(Clone, Copy, Debug)]
-pub enum Strip<'a> {
-    /// Peak amplitude for each visible audio interval.
-    Waveform(&'a Peaks),
-    /// How loud each band of pitch is over time, low on the strip's left and high on its right.
-    Frequencies(&'a Tiles),
-}
-
-/// Spectrum frames each tile image holds a row of, at its level of detail.
-const TILE: usize = 1024;
-/// The coarsest level of detail: each of its rows holds the loudest of 2^8 frames, 1.28 s.
-const COARSEST: u32 = 8;
-
-/// A song's frequencies as images the GPU stretches over the strip, a band a column and a spectrum
-/// frame a row, in tiles of [`TILE`] rows. Each level of detail holds, in each row, the loudest of
-/// twice as many frames as the one before, so zoomed out a short sound still shows; the GPU's
-/// own shrinking would skip it. Tiles are made the first time they show.
-pub struct Tiles {
-    /// Frequency frames shared by tiles at every level of detail.
-    spectrum: std::sync::Arc<Spectrum>,
-    /// Each level's tiles, by index, once made.
-    made: std::cell::RefCell<Vec<Vec<Option<egui::TextureHandle>>>>,
-}
-
-impl Tiles {
-    /// Unrendered spectrum tiles, generated on demand as they come into view.
-    #[must_use]
-    pub const fn new(spectrum: std::sync::Arc<Spectrum>) -> Self {
-        Self {
-            spectrum,
-            made: std::cell::RefCell::new(Vec::new()),
-        }
-    }
-
-    /// Tile `index` of `level`, made now unless it was before, or none past the song's end.
-    fn tile(&self, ctx: &egui::Context, level: u32, index: usize) -> Option<egui::TextureId> {
-        let mut made = self.made.borrow_mut();
-        let level_at = usize::try_from(level).ok()?;
-        if made.len() <= level_at {
-            made.resize_with(level_at.saturating_add(1), Vec::new);
-        }
-        let tiles = made.get_mut(level_at)?;
-        if tiles.len() <= index {
-            tiles.resize_with(index.saturating_add(1), || None);
-        }
-        let slot = tiles.get_mut(index)?;
-        if slot.is_none() {
-            let image = tile_image(self.spectrum.frames(), level, index)?;
-            let name = format!("spectrum {level} {index}");
-            *slot = Some(ctx.load_texture(name, image, egui::TextureOptions::LINEAR));
-        }
-        slot.as_ref().map(egui::TextureHandle::id)
-    }
-}
-
-impl std::fmt::Debug for Tiles {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Tiles")
-            .field("frames", &self.spectrum.frames().len())
-            .finish_non_exhaustive()
-    }
-}
-
-/// The image of tile `index` at `level`: a row for each run of 2^`level` frames, holding each
-/// band's loudest over the run, or none past the last frame.
-fn tile_image(
-    frames: &[[u8; Spectrum::BANDS]],
-    level: u32,
-    index: usize,
-) -> Option<egui::ColorImage> {
-    let run = 1_usize.checked_shl(level)?;
-    let first = index.checked_mul(TILE)?.checked_mul(run)?;
-    let covered = frames.get(first..)?;
-    if covered.is_empty() {
-        return None;
-    }
-    let rows: Vec<[u8; Spectrum::BANDS]> = covered
-        .chunks(run)
-        .take(TILE)
-        .map(|chunk| {
-            let mut loudest = [0; Spectrum::BANDS];
-            for frame in chunk {
-                for (most, amplitude) in loudest.iter_mut().zip(frame) {
-                    *most = (*most).max(*amplitude);
-                }
-            }
-            loudest
-        })
-        .collect();
-    let pixels = rows
-        .iter()
-        .flatten()
-        .map(|amplitude| heat(*amplitude))
-        .collect();
-    Some(egui::ColorImage::new([Spectrum::BANDS, rows.len()], pixels))
-}
-
-/// The seconds tile `index` of `level` spans, `rows` rows tall: from the start of its first
-/// frame, each frame centred on its time, to the end of its last.
-fn tile_span(level: u32, index: usize, rows: usize) -> (f64, f64) {
-    let run = f64::from(1_u32 << level.min(COARSEST));
-    let (first, rows) = (
-        crate::cast::usize_f64(index) * crate::cast::usize_f64(TILE) * run,
-        crate::cast::usize_f64(rows),
-    );
-    let from = (first - 0.5) / Spectrum::PER_SECOND;
-    (from, from + rows * run / Spectrum::PER_SECOND)
-}
-
-/// The level of detail for `pixels_per_second` of screen: the finest whose rows are no closer
-/// than a pixel apart.
-fn level_for(pixels_per_second: f32) -> u32 {
-    let mut level = 0;
-    while level < COARSEST
-        && Spectrum::PER_SECOND / f64::from(1_u32 << level) > f64::from(pixels_per_second)
-    {
-        level = level.saturating_add(1);
-    }
-    level
-}
-
-/// The song's frequencies in the strip: the tiles the rows show, each band a column, lowest on
-/// the left.
-fn frequencies(
-    painter: &Canvas,
-    ctx: &egui::Context,
-    (columns, view, rows): (&Columns, View, Rangef),
-    tiles: &Tiles,
-) {
-    let strip = columns.wave.shrink(2.0);
-    let pixels = view.zoom.points_per_second() * ctx.pixels_per_point();
-    let level = level_for(pixels);
-    let (top, bottom) = (view.seconds_at(rows.min), view.seconds_at(rows.max));
-    let (from, to) = (top.min(bottom), top.max(bottom));
-    let seconds = crate::cast::usize_f64(TILE) * f64::from(1_u32 << level) / Spectrum::PER_SECOND;
-    let (first, last) = (
-        crate::cast::f64_usize((from / seconds).floor().max(0.0)),
-        crate::cast::f64_usize((to / seconds).floor().max(0.0)),
-    );
-    for index in first..=last {
-        let Some(texture) = tiles.tile(ctx, level, index) else {
-            break;
-        };
-        let rows_held = ctx
-            .tex_manager()
-            .read()
-            .meta(texture)
-            .map_or(TILE, |meta| meta.size[1]);
-        let (start, end) = tile_span(level, index, rows_held);
-        let rect = Rect::from_x_y_ranges(strip, view.y_of(start)..=view.y_of(end));
-        painter.image(texture, rect);
-    }
-}
-
-/// The colour of a band `level` loud, from silent at 0 to the track's loudest at 255: nothing
-/// until it is heard, fading in through the waveform's blue, and rising to the near-white of a
-/// selection at the loudest.
-fn heat(level: u8) -> egui::Color32 {
-    let t = f32::from(level) / 255.0;
-    let (low, high) = (style::WAVE.gamma_multiply(0.35), style::SELECTED);
-    let alpha = ((t - 0.06) / 0.19).clamp(0.0, 1.0);
-    egui::Color32::from_rgba_unmultiplied(
-        mix(low.r(), high.r(), t),
-        mix(low.g(), high.g(), t),
-        mix(low.b(), high.b(), t),
-        mix(0, 255, alpha),
-    )
-}
-
-/// A channel value between `low` and `high` at the clamped fraction `t`.
-fn mix(low: u8, high: u8, t: f32) -> u8 {
-    let value = f32::from(low) + (f32::from(high) - f32::from(low)) * t.clamp(0.0, 1.0);
-
-    crate::cast::f32_u8(value.round())
-}
-
 /// The audio under each row of `rows`, a point apart: the row, and the lowest and highest
 /// sample in the time it covers.
-fn wave_rows(peaks: &Peaks, view: View, rows: Rangef) -> Vec<(f32, f32, f32)> {
+pub(super) fn wave_rows(peaks: &Peaks, view: View, rows: Rangef) -> Vec<(f32, f32, f32)> {
     let mut drawn = Vec::new();
     let mut y = rows.min.floor();
     while y < rows.max {
@@ -1533,7 +104,13 @@ fn wave_rows(peaks: &Peaks, view: View, rows: Rangef) -> Vec<(f32, f32, f32)> {
 
 /// The song's audio in its strip, one line a row across the extent of the audio it covers, so
 /// it lines up with the notes whatever the tempo.
-fn waveform(painter: &Canvas, columns: &Columns, view: View, rows: Rangef, peaks: &Peaks) {
+pub(super) fn waveform(
+    painter: &Canvas,
+    columns: &Columns,
+    view: View,
+    rows: Rangef,
+    peaks: &Peaks,
+) {
     let (middle, half) = (columns.wave.center(), columns.wave.span() / 2.0 - 3.0);
     for (y, low, high) in wave_rows(peaks, view, rows) {
         if high - low < 0.004 {
@@ -1553,7 +130,7 @@ pub const GRIDS: [u16; 7] = [4, 8, 12, 16, 24, 32, 48];
 
 /// A line of the grid inside a measure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Line {
+pub(super) enum Line {
     /// A line coinciding with a quarter-note beat.
     Beat,
     /// A line of a finer grid between two beats.
@@ -1563,7 +140,11 @@ enum Line {
 /// The lines inside `measure`, after its start: one on every `grid`th note, each on a beat
 /// marked as one, so a measure of 4/4 on a grid of 16 has sixteen places with every fourth a
 /// beat. A grid the resolution does not hold in whole ticks draws the beats alone.
-fn lines_in(measure: &Measure, resolution: TicksPerBeat, grid: NonZeroU16) -> Vec<(Tick, Line)> {
+pub(super) fn lines_in(
+    measure: &Measure,
+    resolution: TicksPerBeat,
+    grid: NonZeroU16,
+) -> Vec<(Tick, Line)> {
     let beat = resolution.note_length(QUARTER);
     let step = resolution.note_length(grid).or(beat);
     let (Some(beat), Some(step), Some(end)) =
@@ -1600,7 +181,7 @@ fn lines_in(measure: &Measure, resolution: TicksPerBeat, grid: NonZeroU16) -> Ve
 
 /// Measure, beat and finer grid lines over the visible time, with measure numbers. On a grid
 /// finer than the beats, each beat's line draws brighter so the beats still read.
-fn grid(
+pub(super) fn grid(
     painter: &Canvas,
     columns: &Columns,
     (song, finest): (&Song, NonZeroU16),
@@ -1642,7 +223,7 @@ fn grid(
 const QUARTER: NonZeroU16 = NonZeroU16::new(4).unwrap();
 
 /// Sections, bookmarks and plugin markers as lines across the time axis, named in the ruler.
-fn markers(
+pub(super) fn markers(
     painter: &Canvas,
     columns: &Columns,
     song: &Song,
@@ -1673,7 +254,7 @@ fn markers(
 }
 
 /// The chart's timing events in the gutter, each named with its value.
-fn events(
+pub(super) fn events(
     painter: &Canvas,
     columns: &Columns,
     song: &Song,
@@ -1726,7 +307,7 @@ pub(crate) fn kind_colours(kind: &Kind) -> (egui::Color32, egui::Color32) {
 }
 
 /// Note-kind colours, optionally tinted by layer and dimmed for reference notes.
-fn object_colours(
+pub(super) fn object_colours(
     kind: &Kind,
     view: charter_core::LayerView,
     colour: Option<charter_core::LayerColour>,
@@ -1749,7 +330,7 @@ fn object_colours(
 }
 
 /// Draws a lane object's head and any sustained body, highlighting selected heads.
-fn draw_object(
+pub(super) fn draw_object(
     painter: &Canvas,
     columns: &Columns,
     timing: Valid<'_, Timing>,
@@ -1846,7 +427,7 @@ fn draw_object(
 }
 
 /// The body a hold would have if released on `to`, without covering its existing head.
-fn hold_preview_rect(
+pub(super) fn hold_preview_rect(
     columns: &Columns,
     timing: Valid<'_, Timing>,
     view: View,
@@ -1872,19 +453,9 @@ fn hold_preview_rect(
     ))
 }
 
-/// The snap line nearest `pos` on screen.
-fn snap_line(song: &Song, view: View, pos: Pos2) -> Option<Tick> {
-    let step = song
-        .document()
-        .document()
-        .ticks_per_beat
-        .note_length(song.snap())?;
-    Some(nearest_line(song.timing(), view.seconds_at(pos.y), step))
-}
-
 /// Where a dragged note will land, `by` ticks later and lanes across: its head outlined, and
 /// its tail when it lasts, when that shows between the ticks `first` and `last`.
-fn ghost(
+pub(super) fn ghost(
     painter: &Canvas,
     (columns, timing, view): (&Columns, Valid<'_, Timing>, View),
     object: &Object,
@@ -1932,7 +503,7 @@ fn ghost(
 
 /// Where a dragged handle will land, the snap line nearest `y`: a line across the time axis in
 /// the accent, with its position in the ruler.
-fn drop_guide(
+pub(super) fn drop_guide(
     painter: &Canvas,
     columns: &Columns,
     (song, free): (&Song, bool),
@@ -1968,7 +539,11 @@ fn drop_guide(
 }
 
 /// Where in `objects`, sorted by tick, are those whose spans reach into `first..=last`.
-fn reaching(objects: &[Object], first: Tick, last: Tick) -> impl Iterator<Item = usize> + '_ {
+pub(super) fn reaching(
+    objects: &[Object],
+    first: Tick,
+    last: Tick,
+) -> impl Iterator<Item = usize> + '_ {
     let until = objects.partition_point(|object| object.tick <= last);
     (0..until).filter(move |&index| {
         objects
@@ -1989,93 +564,12 @@ fn between<T>(items: &[T], tick: impl Fn(&T) -> Tick, first: Tick, last: Tick) -
     clippy::arithmetic_side_effects,
     reason = "egui positions are offset by vectors"
 )]
-fn now_line(painter: &Canvas, columns: &Columns, now_y: f32) {
+pub(super) fn now_line(painter: &Canvas, columns: &Columns, now_y: f32) {
     painter.hline(columns.timeline(), now_y, Stroke::new(2.0, style::NOW_LINE));
     let tip = pos2(columns.ruler.max, now_y);
     let handle = vec![tip + vec2(-11.0, -6.0), tip, tip + vec2(-11.0, 6.0)];
     painter.convex_polygon(handle, style::NOW_LINE, Stroke::NONE);
 }
-
-/// Cursor steps the mouse wheel asks for in `events`, later first, keeping part-steps in
-/// `remainder`: a whole line of scrolling, one wheel notch, is one step, and touchpads and smooth
-/// wheels send fractions that add up.
-pub fn wheel_steps(events: &[egui::Event], remainder: &mut f32) -> i32 {
-    let mut steps = 0.0;
-    for event in events {
-        let egui::Event::MouseWheel {
-            unit,
-            delta,
-            modifiers,
-            ..
-        } = event
-        else {
-            continue;
-        };
-        // Ctrl zooms, and Shift moves by a measure.
-        if modifiers.command || modifiers.ctrl || modifiers.shift {
-            continue;
-        }
-        let points = match unit {
-            egui::MouseWheelUnit::Point => -delta.y,
-            egui::MouseWheelUnit::Line | egui::MouseWheelUnit::Page => -delta.y * POINTS_PER_STEP,
-        };
-        *remainder += points;
-        let whole = (*remainder / POINTS_PER_STEP).trunc();
-        *remainder -= whole * POINTS_PER_STEP;
-        steps += whole;
-    }
-
-    crate::cast::f32_i32(steps)
-}
-
-/// How many measures the wheel turned under Shift this frame, later positive: a notch a measure,
-/// with what a touchpad turned short of a whole one kept in `remainder` for the next frame.
-/// Shift turns some wheels sideways, so either way counts.
-fn measure_steps(events: &[egui::Event], remainder: &mut f32) -> i32 {
-    let notches: f32 = events
-        .iter()
-        .filter_map(|event| match event {
-            egui::Event::MouseWheel {
-                unit,
-                delta,
-                modifiers,
-                ..
-            } if modifiers.shift && !modifiers.command && !modifiers.ctrl => {
-                let along = if delta.y == 0.0 { delta.x } else { delta.y };
-                Some(match unit {
-                    egui::MouseWheelUnit::Point => -along / POINTS_PER_STEP,
-                    egui::MouseWheelUnit::Line | egui::MouseWheelUnit::Page => -along,
-                })
-            }
-            egui::Event::Copy
-            | egui::Event::Cut
-            | egui::Event::Paste(_)
-            | egui::Event::Text(_)
-            | egui::Event::Key { .. }
-            | egui::Event::ModifiersChanged(_)
-            | egui::Event::PointerMoved(_)
-            | egui::Event::MouseMoved(_)
-            | egui::Event::PointerButton { .. }
-            | egui::Event::PointerGone
-            | egui::Event::Zoom(_)
-            | egui::Event::Rotate(_)
-            | egui::Event::Ime(_)
-            | egui::Event::Touch { .. }
-            | egui::Event::MouseWheel { .. }
-            | egui::Event::WindowFocused(_)
-            | egui::Event::AccessKitActionRequest(_)
-            | egui::Event::Screenshot { .. } => None,
-        })
-        .sum();
-    *remainder += notches;
-    let whole = remainder.trunc();
-    *remainder -= whole;
-
-    crate::cast::f32_i32(whole)
-}
-
-/// Points of touchpad scrolling that make one cursor step.
-const POINTS_PER_STEP: f32 = 40.0;
 
 #[cfg(test)]
 mod tests {
@@ -2084,6 +578,7 @@ mod tests {
     use egui_kittest::Harness;
     use egui_kittest::kittest::{NodeT, Queryable};
 
+    use super::super::*;
     use super::*;
     use charter_audio::Track;
     use charter_editor::demo;
