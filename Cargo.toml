@@ -92,6 +92,8 @@ overflow-checks = true
 [profile.dist]
 inherits = "release"
 strip = true
+lto = "fat"
+codegen-units = 1
 
 # Workspace optimizations to workspace to third-party dependencies
 # which are noticeably slow on debug builds
