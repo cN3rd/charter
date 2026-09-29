@@ -149,11 +149,7 @@ fn timing_of(
     let bytes = std::fs::read(file).map_err(|why| format!("{}: {why}", file.display()))?;
     let extension = file.extension().and_then(|extension| extension.to_str());
     let track = Track::decode(bytes, extension).map_err(|why| why.to_string())?;
-    let mono: Vec<f32> = track
-        .frames()
-        .iter()
-        .map(|[left, right]| (left + right) / 2.0)
-        .collect();
+    let mono = track.to_mono();
     let tracker = charter_beatthis_burn::Tracker::from_checkpoint(weights)
         .map_err(|why| format!("{}: {why}", weights.display()))?;
     let beats = tracker

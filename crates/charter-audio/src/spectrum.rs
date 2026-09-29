@@ -44,11 +44,7 @@ impl Spectrum {
     #[must_use]
     pub fn of(track: &Track) -> Self {
         let rate = f64::from(track.rate().get());
-        let mono: Vec<f32> = track
-            .frames()
-            .iter()
-            .map(|[left, right]| (left + right) / 2.0)
-            .collect();
+        let mono = track.to_mono();
         let window: Vec<f32> = (0..WINDOW)
             .map(|n| {
                 let phase = std::f32::consts::TAU * cast::usize_f32(n) / cast::usize_f32(WINDOW);

@@ -57,11 +57,7 @@ pub struct Onset {
 #[must_use]
 pub fn onsets(track: &Track) -> Vec<Onset> {
     let rate = f64::from(track.rate().get());
-    let mono: Vec<f32> = track
-        .frames()
-        .iter()
-        .map(|[left, right]| (left + right) / 2.0)
-        .collect();
+    let mono = track.to_mono();
     let flux = flux(&mono);
     let frames_per = |seconds: f64| {
         let frames = cast::f64_usize((seconds * rate / HOP_SAMPLES).ceil());

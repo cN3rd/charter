@@ -128,6 +128,15 @@ impl Track {
         &self.frames
     }
 
+    /// Stereo frames mixed to mono by averaging left and right.
+    #[must_use]
+    pub fn to_mono(&self) -> Vec<f32> {
+        self.frames
+            .iter()
+            .map(|[left, right]| (left + right) / 2.0)
+            .collect()
+    }
+
     /// How long the track plays at its own speed, in seconds.
     #[must_use]
     pub fn seconds(&self) -> f64 {
@@ -195,6 +204,12 @@ mod tests {
     fn a_track_lasts_its_frames_over_its_rate() {
         let track = Track::decode(wav(4000, 1, &[0; 1000]), Some("wav")).unwrap();
         assert!((track.seconds() - 0.25).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_track_mixes_to_mono_by_averaging_each_stereo_frame() {
+        let track = Track::from_frames(1000, vec![[1.0, -0.5], [0.25, 0.75]]);
+        assert_eq!(track.to_mono(), [0.25, 0.5]);
     }
 
     #[test]
