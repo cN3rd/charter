@@ -422,6 +422,90 @@ impl Position {
             Self::Plane { .. } => None,
         }
     }
+
+    /// Whether this position fits a chart with `lanes`, with plane positions fitting any chart.
+    #[must_use]
+    pub fn fits_in(self, lanes: Option<LaneCount>) -> bool {
+        match self {
+            Self::Lane { index, width } => {
+                lanes.is_some_and(|lanes| LaneSpan::new(index, width).fits(lanes))
+            }
+            Self::Plane { .. } => true,
+        }
+    }
+
+    /// This position shifted by `lanes` lane indexes, if it stays representable.
+    #[must_use]
+    pub fn shifted_by_lanes(self, lanes: i32) -> Option<Self> {
+        match self {
+            Self::Lane { index, width } => {
+                let index =
+                    u16::try_from(i32::from(u16::from(index)).saturating_add(lanes)).ok()?;
+                Some(Self::Lane {
+                    index: LaneIndex::new(index),
+                    width,
+                })
+            }
+            Self::Plane { .. } => Some(self),
+        }
+    }
+}
+
+impl Object {
+    /// This object with every tick and position it owns mapped by `tick` and `position`.
+    #[must_use]
+    pub fn map_ticks_positions(
+        &self,
+        mut tick: impl FnMut(Tick) -> Option<Tick>,
+        mut position: impl FnMut(Position) -> Option<Position>,
+    ) -> Option<Self> {
+        let mut moved = self.clone();
+        moved.tick = tick(self.tick)?;
+        moved.position = position(self.position)?;
+        moved.shape = map_shape_ticks_positions(&self.shape, &mut tick, &mut position)?;
+        for (child, was) in moved.children.iter_mut().zip(&self.children) {
+            child.tick = tick(was.tick)?;
+            child.position = position(was.position)?;
+            child.shape = map_shape_ticks_positions(&was.shape, &mut tick, &mut position)?;
+        }
+        Some(moved)
+    }
+
+    /// This object moved `ticks` later and `lanes` to the right, with negative values moving it
+    /// earlier or left, if all moved ticks and lanes stay representable.
+    #[must_use]
+    pub fn shifted_by(&self, ticks: i32, lanes: i32) -> Option<Self> {
+        let tick = |tick: Tick| {
+            i32::try_from(i64::from(tick).saturating_add(i64::from(ticks)))
+                .ok()
+                .map(Tick::new)
+        };
+        self.map_ticks_positions(tick, |position| position.shifted_by_lanes(lanes))
+    }
+}
+
+/// `shape` with its path's ticks and positions mapped.
+fn map_shape_ticks_positions(
+    shape: &Shape,
+    tick: &mut impl FnMut(Tick) -> Option<Tick>,
+    position: &mut impl FnMut(Position) -> Option<Position>,
+) -> Option<Shape> {
+    let Shape::Path { points } = shape else {
+        return Some(shape.clone());
+    };
+    let points = points
+        .as_slice()
+        .iter()
+        .map(|point| {
+            let mut point = point.clone();
+            point.tick = tick(point.tick)?;
+            point.position = position(point.position)?;
+            Some(point)
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(Shape::Path {
+        points: Points::new(points).ok()?,
+    })
 }
 
 /// Whether a note is instantaneous, sustained or follows a path.
@@ -794,6 +878,87 @@ mod tests {
             y: Decimal::try_from(0.5).unwrap(),
         };
         assert_eq!(point.lanes(), None);
+    }
+
+    #[test]
+    fn lane_positions_fit_only_when_their_whole_span_is_inside_the_chart() {
+        let lanes = LaneCount::new(4).unwrap();
+        let wide = Position::Lane {
+            index: LaneIndex::new(2),
+            width: LaneCount::new(2).unwrap(),
+        };
+        let too_wide = Position::Lane {
+            index: LaneIndex::new(3),
+            width: LaneCount::new(2).unwrap(),
+        };
+        let point = Position::Plane {
+            x: Decimal::try_from(0.0).unwrap(),
+            y: Decimal::try_from(0.0).unwrap(),
+        };
+
+        assert!(wide.fits_in(Some(lanes)));
+        assert!(!too_wide.fits_in(Some(lanes)));
+        assert!(!wide.fits_in(None));
+        assert!(point.fits_in(None));
+    }
+
+    #[test]
+    fn shifting_an_object_moves_every_tick_and_lane_position_it_owns() {
+        let object = Object {
+            tick: Tick::new(10),
+            position: Position::Lane {
+                index: LaneIndex::new(1),
+                width: LaneCount::ONE,
+            },
+            kind: Kind::Tap,
+            shape: Shape::Path {
+                points: Points::new(vec![PathPoint {
+                    tick: Tick::new(20),
+                    position: Position::Lane {
+                        index: LaneIndex::new(2),
+                        width: LaneCount::ONE,
+                    },
+                    ease: Ease::Linear,
+                    ext: Extensions::new(),
+                }])
+                .unwrap(),
+            },
+            layer: None,
+            sample: None,
+            children: vec![Child {
+                tick: Tick::new(15),
+                position: Position::Lane {
+                    index: LaneIndex::new(3),
+                    width: LaneCount::ONE,
+                },
+                kind: Kind::Tap,
+                shape: Shape::Instant,
+                sample: None,
+                ext: Extensions::new(),
+            }],
+            ext: Extensions::new(),
+        };
+
+        let shifted = object.shifted_by(5, -1).unwrap();
+
+        assert_eq!(shifted.tick, Tick::new(15));
+        assert_eq!(
+            shifted.position.lanes(),
+            Some(LaneSpan::new(LaneIndex::new(0), LaneCount::ONE))
+        );
+        assert_eq!(shifted.children[0].tick, Tick::new(20));
+        assert_eq!(
+            shifted.children[0].position.lanes(),
+            Some(LaneSpan::new(LaneIndex::new(2), LaneCount::ONE))
+        );
+        let Shape::Path { points } = shifted.shape else {
+            panic!("shape stays a path");
+        };
+        assert_eq!(points.last().tick, Tick::new(25));
+        assert_eq!(
+            points.last().position.lanes(),
+            Some(LaneSpan::new(LaneIndex::new(1), LaneCount::ONE))
+        );
     }
 
     #[test]

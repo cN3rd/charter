@@ -188,8 +188,12 @@ impl Song {
         }
         let width = self.lane_count();
         self.replace_selection(&|object| {
-            let moved = shifted(object, ticks, lanes).ok_or(Refusal::OffTheChart)?;
-            fits(&moved, width)
+            let moved = object
+                .shifted_by(ticks, lanes)
+                .ok_or(Refusal::OffTheChart)?;
+            moved
+                .position
+                .fits_in(width)
                 .then_some(moved)
                 .ok_or(Refusal::OffTheChart)
         })
@@ -214,7 +218,7 @@ impl Song {
                 .saturating_mul(step);
             let by = i32::try_from(nearest.saturating_sub(tick))
                 .map_err(|_out_of_range| Refusal::OffTheChart)?;
-            shifted(object, by, 0).ok_or(Refusal::OffTheChart)
+            object.shifted_by(by, 0).ok_or(Refusal::OffTheChart)
         })
     }
 
@@ -229,14 +233,19 @@ impl Song {
         let flip = |position: Position| match position {
             Position::Lane { index, width: span } => {
                 let right = u16::from(index).saturating_add(u16::from(span));
+                let width = width?;
                 Some(Position::Lane {
-                    index: LaneIndex::new(width.checked_sub(right)?),
+                    index: LaneIndex::new(u16::from(width).checked_sub(right)?),
                     width: span,
                 })
             }
             Position::Plane { .. } => Some(position),
         };
-        self.replace_selection(&|object| mapped(object, &Some, &flip).ok_or(Refusal::OffTheChart))
+        self.replace_selection(&|object| {
+            object
+                .map_ticks_positions(Some, flip)
+                .ok_or(Refusal::OffTheChart)
+        })
     }
 
     /// Makes every selected note what the song's game makes it by its change `change`, such as
@@ -346,10 +355,8 @@ impl Song {
     }
 
     /// The open chart's lanes, or none without a chart.
-    fn lane_count(&self) -> u16 {
-        self.chart()
-            .and_then(|chart| chart.lanes)
-            .map_or(0, u16::from)
+    fn lane_count(&self) -> Option<LaneCount> {
+        self.chart()?.lanes
     }
 
     /// Adds `objects` as one step and selects them, leaving out those past the lanes, where a
@@ -374,7 +381,7 @@ impl Song {
         let mut ops = Vec::new();
         let mut selection = BTreeSet::new();
         for object in &objects {
-            if !fits(object, width) {
+            if !object.position.fits_in(width) {
                 continue;
             }
             if let Some(blocker) = blocking(&all, object) {
@@ -501,17 +508,6 @@ pub(super) fn blocking<'a, T: std::borrow::Borrow<Object>>(
         })
 }
 
-/// Whether `object` sits within `lanes` lanes, as a note on the plane always does.
-pub(super) fn fits(object: &Object, lanes: u16) -> bool {
-    match object.position {
-        Position::Lane { index, width } => {
-            u32::from(u16::from(index)).saturating_add(u32::from(u16::from(width)))
-                <= u32::from(lanes)
-        }
-        Position::Plane { .. } => true,
-    }
-}
-
 /// The note an object is, when it sits on lanes.
 pub(super) const fn note_at(object: &Object) -> Option<NoteAt> {
     match object.position {
@@ -521,70 +517,6 @@ pub(super) const fn note_at(object: &Object) -> Option<NoteAt> {
         }),
         Position::Plane { .. } => None,
     }
-}
-
-/// `object` moved `ticks` later and `lanes` across, with its children and path, unless that
-/// leaves the ticks or the lanes.
-pub(super) fn shifted(object: &Object, ticks: i32, lanes: i32) -> Option<Object> {
-    let tick = |tick: Tick| {
-        i32::try_from(i64::from(tick).saturating_add(i64::from(ticks)))
-            .ok()
-            .map(Tick::new)
-    };
-    let position = |position: Position| match position {
-        Position::Lane { index, width } => {
-            let index = u16::try_from(i32::from(u16::from(index)).saturating_add(lanes)).ok()?;
-            Some(Position::Lane {
-                index: LaneIndex::new(index),
-                width,
-            })
-        }
-        Position::Plane { .. } => Some(position),
-    };
-    mapped(object, &tick, &position)
-}
-
-/// `object` with every tick through `tick` and every position through `position`: its own, its
-/// children's and its path's, unless one leaves the ticks or the lanes.
-pub(super) fn mapped(
-    object: &Object,
-    tick: &dyn Fn(Tick) -> Option<Tick>,
-    position: &dyn Fn(Position) -> Option<Position>,
-) -> Option<Object> {
-    let mut moved = object.clone();
-    moved.tick = tick(object.tick)?;
-    moved.position = position(object.position)?;
-    moved.shape = mapped_shape(&object.shape, tick, position)?;
-    for child in &mut moved.children {
-        child.tick = tick(child.tick)?;
-        child.position = position(child.position)?;
-        child.shape = mapped_shape(&child.shape, tick, position)?;
-    }
-    Some(moved)
-}
-
-/// `shape` with its path's ticks and positions through `tick` and `position`.
-pub(super) fn mapped_shape(
-    shape: &Shape,
-    tick: &dyn Fn(Tick) -> Option<Tick>,
-    position: &dyn Fn(Position) -> Option<Position>,
-) -> Option<Shape> {
-    let Shape::Path { points } = shape else {
-        return Some(shape.clone());
-    };
-    let points = points
-        .as_slice()
-        .iter()
-        .map(|point| {
-            let mut point = point.clone();
-            point.tick = tick(point.tick)?;
-            point.position = position(point.position)?;
-            Some(point)
-        })
-        .collect::<Option<Vec<_>>>()?;
-    Some(Shape::Path {
-        points: charter_core::Points::new(points).ok()?,
-    })
 }
 
 /// The floating-point tick span used in tempo interpolation.
@@ -1177,7 +1109,8 @@ mod proofs {
             ..object
         };
         assert!(
-            fits(&object, lanes) == (u32::from(index) + u32::from(width.get()) <= u32::from(lanes))
+            object.position.fits_in(LaneCount::new(lanes))
+                == (u32::from(index) + u32::from(width.get()) <= u32::from(lanes))
         );
     }
 }

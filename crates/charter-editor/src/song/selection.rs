@@ -117,7 +117,7 @@ impl Song {
 
 #[cfg(test)]
 mod tests {
-    use super::super::notes::{fits, note};
+    use super::super::notes::note;
     use super::*;
     use crate::song::tests::*;
     use serde_json::json;
@@ -175,7 +175,7 @@ mod tests {
     #[test]
     fn a_note_past_the_last_representable_lane_does_not_fit() {
         let object = note(Tick::new(0), LaneIndex::new(u16::MAX), Kind::Tap);
-        assert!(!fits(&object, u16::MAX));
+        assert!(!object.position.fits_in(LaneCount::new(u16::MAX)));
     }
 
     #[test]
