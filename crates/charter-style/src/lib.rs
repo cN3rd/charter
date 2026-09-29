@@ -299,8 +299,8 @@ pub fn primary(text: &str) -> egui::Button<'_> {
 
 /// Names `response`, a button, `name` for screen readers and tests.
 fn named(ui: &Ui, response: egui::Response, name: &str) -> egui::Response {
-    let (name, enabled) = (name.to_owned(), ui.is_enabled());
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, &name));
+    let enabled = ui.is_enabled();
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, name));
     response
 }
 
@@ -344,10 +344,10 @@ pub fn switch(ui: &mut Ui, on: &mut bool, name: &str) -> egui::Response {
         *on = !*on;
         response.mark_changed();
     }
-    let (state, name) = (*on, name.to_owned());
+    let state = *on;
     let enabled = ui.is_enabled();
     response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, enabled, state, &name)
+        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, enabled, state, name)
     });
     if ui.is_rect_visible(rect) {
         let lit = ui.ctx().animate_bool_responsive(response.id, *on);
@@ -424,9 +424,9 @@ pub fn check(ui: &mut Ui, on: &mut bool, text: &str) -> egui::Response {
         *on = !*on;
         response.mark_changed();
     }
-    let (state, name, enabled) = (*on, text.to_owned(), ui.is_enabled());
+    let (state, enabled) = (*on, ui.is_enabled());
     response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, enabled, state, &name)
+        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, enabled, state, text)
     });
     if ui.is_rect_visible(rect) {
         let square = egui::Rect::from_min_size(

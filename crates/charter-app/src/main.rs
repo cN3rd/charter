@@ -246,7 +246,7 @@ impl Host {
             } else {
                 None
             };
-            Some((to.clone(), old))
+            Some((to, old))
         } else {
             None
         };
@@ -264,8 +264,8 @@ impl Host {
                 if wrote_artwork && let Some((to, old)) = before {
                     // Best effort: the save says it failed either way.
                     drop(match old {
-                        Some(old) => disk::write_whole(self.disk.as_ref(), &to, &old),
-                        None => self.disk.remove(&to),
+                        Some(old) => disk::write_whole(self.disk.as_ref(), to, &old),
+                        None => self.disk.remove(to),
                     });
                 }
                 Saved::Failed(error)

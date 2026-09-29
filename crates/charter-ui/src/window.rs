@@ -1046,13 +1046,15 @@ impl Window {
             self.requests.push(Request::Pause);
         }
         let from = from.max(0.0);
-        let settings = Settings {
-            metronome: (self.settings.metronome || metronome) && !self.muted,
-            ..self.settings.clone()
-        };
         let until = looping.map_or(seconds, |(_, end)| end.min(seconds));
         // From the song's start, so a seek back while playing still ticks.
-        let clicks = clicks(song, &settings, (0.0, until), self.sync.grid);
+        let clicks = clicks(
+            song,
+            &self.settings,
+            (self.settings.metronome || metronome) && !self.muted,
+            (0.0, until),
+            self.sync.grid,
+        );
         let volumes = self.settings.volumes;
         self.playing = true;
         self.played = Some((volumes, !clicks.is_empty()));
@@ -1335,26 +1337,27 @@ impl Window {
             return;
         }
         let clipped = Clipped {
-            charter_notes: copied.clone(),
+            charter_notes: copied,
         };
         self.clipboard_out = serde_json::to_string(&clipped).ok();
-        self.clip = copied;
+        self.clip = clipped.charter_notes;
     }
 
     /// Pastes at the cursor the notes `text` holds, the system clipboard's, or with no text those
     /// copied last. Text that holds no notes pastes nothing and says so. Notes pasted over others
     /// are left out, which it says when none could go.
     fn paste(&mut self, text: Option<&str>) {
-        let clip = if let Some(text) = text {
+        let external = if let Some(text) = text {
             let Ok(clipped) = serde_json::from_str::<Clipped>(text) else {
                 self.failure =
                     Some("The clipboard holds no notes: copy some first (Ctrl+C).".to_owned());
                 return;
             };
-            clipped.charter_notes
+            Some(clipped.charter_notes)
         } else {
-            self.clip.clone()
+            None
         };
+        let clip = external.as_deref().unwrap_or(&self.clip);
         let Some(song) = &mut self.song else {
             return;
         };
@@ -1362,7 +1365,7 @@ impl Window {
             self.failure = Some("Nothing to paste: copy some notes first (Ctrl+C).".to_owned());
             return;
         }
-        match song.paste(&clip, song.cursor()) {
+        match song.paste(clip, song.cursor()) {
             Ok(0) => self.failure = Some("Nothing pasted: every place is taken.".to_owned()),
             Ok(_) => {}
             Err(why) => self.failure = Some(refused(&why)),
@@ -1815,16 +1818,23 @@ impl Window {
             return;
         }
         self.snapshot_due = None;
-        let name = self.file_name(song);
-        let name = name.strip_suffix(".json").unwrap_or(&name).to_owned();
+        let mut name = self.file_name(song);
+        if let Some(bare) = name.strip_suffix(".json") {
+            name.truncate(bare.len());
+        }
         let mut folders = Vec::new();
         if self.settings.snapshots_in_folder {
             let global = self
                 .settings
                 .snapshot_folder
-                .clone()
-                .or_else(|| self.data_folder.as_ref().map(|data| data.join("snapshots")));
-            folders.extend(global.map(|folder| folder.join(&name)));
+                .as_ref()
+                .map(|folder| folder.join(&name))
+                .or_else(|| {
+                    self.data_folder
+                        .as_ref()
+                        .map(|data| data.join("snapshots").join(&name))
+                });
+            folders.extend(global);
         }
         if self.settings.snapshots_beside_song {
             folders.extend(self.song_folder().map(|folder| folder.join("autosaves")));
@@ -2313,6 +2323,7 @@ impl Window {
     /// Opens every song dropped on the window this frame, in order, so the last one that opens
     /// wins, and gives the open song the audio file dropped on it.
     fn open_dropped(&mut self, ui: &Ui) {
+        // Taken out of the input first, so no song is parsed while egui's context is locked.
         let dropped = ui.input(|input| input.raw.dropped_files.clone());
         for file in dropped {
             let path = file.path();
@@ -2341,17 +2352,13 @@ impl Window {
                 None => {}
             }
         }
-        if let Some(Offer {
-            draft,
-            title,
-            artist,
-        }) = &self.offer
-            && let Some(take) = panels::offer_tags(ui, title.as_deref(), artist.as_deref())
+        if let Some(offered) = &self.offer
+            && let Some(take) =
+                panels::offer_tags(ui, offered.title.as_deref(), offered.artist.as_deref())
         {
-            let (draft, title, artist) = (*draft, title.clone(), artist.clone());
-            self.offer = None;
-            if take {
-                self.take_tags(draft, title.as_deref(), artist.as_deref());
+            let taken = self.offer.take();
+            if let (true, Some(taken)) = (take, taken) {
+                self.take_tags(taken.draft, taken.title.as_deref(), taken.artist.as_deref());
             }
         }
         if let Some(Restoring { path, song, .. }) = &self.restoring
@@ -2620,12 +2627,11 @@ impl Window {
                     panels::empty(ui, (self.no_drops, recent), &mut actions);
                 }
             });
-        let data_folder = self.data_folder.clone();
         let asked = settings::show(
             ui.ctx(),
             &mut self.settings,
             &mut self.settings_open,
-            data_folder.as_deref(),
+            self.data_folder.as_deref(),
         );
         if asked == Some(settings::Asked::ChooseSnapshotFolder) {
             self.requests.push(Request::ChooseSnapshotFolder);
@@ -2751,9 +2757,9 @@ impl Window {
         self.snapshot(ui.ctx());
         let title = self.title();
         if title != self.shown_title {
+            self.shown_title.clone_from(&title);
             ui.ctx()
-                .send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
-            self.shown_title = title;
+                .send_viewport_cmd(egui::ViewportCommand::Title(title));
         }
     }
 }
@@ -2980,6 +2986,7 @@ fn lane_cents(position: charter_core::Position, lanes: u16) -> i16 {
 fn clicks(
     song: &Song,
     settings: &Settings,
+    metronome: bool,
     (from, until): (f64, f64),
     grid: charter_timing::grid::Grid,
 ) -> Vec<(f64, charter_audio::Tone)> {
@@ -3000,7 +3007,7 @@ fn clicks(
         });
         clicks.extend(heads.filter(|(at, _)| (from..=until).contains(at)));
     }
-    if settings.metronome {
+    if metronome {
         let kit = settings.metronome_sound;
         // On the beats, or on every line of the timing window's grid.
         let grid = if settings.metronome_grid {

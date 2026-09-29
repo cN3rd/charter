@@ -411,7 +411,15 @@ impl Song {
     ///
     /// Returns [`Error::Theme`] for a theme without a name.
     pub fn with_theme(mut self, theme: Option<String>) -> Result<Self, Error> {
-        self.theme = named(theme.map(Value::String).as_ref(), Location::Settings)?;
+        self.theme = match theme {
+            Some(name) if name.trim().is_empty() => {
+                return Err(Error::Theme {
+                    at: Location::Settings,
+                    found: Value::String(name).to_string(),
+                });
+            }
+            other => other,
+        };
         Ok(self)
     }
 
@@ -1536,11 +1544,12 @@ mod tests {
 
     fn preset(name: &str) -> Vec<(usize, String)> {
         let difficulties = Plugin.difficulties().unwrap();
-        let found = difficulties
+        difficulties
             .presets
-            .iter()
-            .find(|preset| preset.name == name);
-        found.unwrap().charts.clone()
+            .into_iter()
+            .find(|preset| preset.name == name)
+            .unwrap()
+            .charts
     }
 
     fn named(charts: &[(usize, &str)]) -> Vec<(usize, String)> {

@@ -363,13 +363,12 @@ fn least_squares(rows: &[(Vec<(usize, f64)>, f64)], current: &[f64]) -> Option<V
         if lead.abs() < 1e-18 {
             return None;
         }
-        let pivot_row = matrix[column].clone();
-        for (index, row) in matrix.iter_mut().enumerate() {
-            if index != column {
-                let factor = row[column] / lead;
-                for (value, above) in row.iter_mut().zip(&pivot_row).skip(column) {
-                    *value -= factor * above;
-                }
+        let (before, from_pivot) = matrix.split_at_mut(column);
+        let (pivot_row, after) = from_pivot.split_first_mut()?;
+        for row in before.iter_mut().chain(after.iter_mut()) {
+            let factor = row[column] / lead;
+            for (value, above) in row.iter_mut().zip(pivot_row.iter()).skip(column) {
+                *value -= factor * above;
             }
         }
     }

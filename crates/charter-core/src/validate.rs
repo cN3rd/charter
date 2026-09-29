@@ -379,7 +379,7 @@ mod tests {
         reason = "test fixture always has valid JSON structure"
     )]
     fn check(value: &Value) -> Result<(), Violation> {
-        validate(&serde_json::from_value(value.clone()).unwrap())
+        validate(&serde::Deserialize::deserialize(value).unwrap())
     }
 
     fn plane(x: f64, y: f64) -> Value {

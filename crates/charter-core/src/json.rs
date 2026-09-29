@@ -307,8 +307,7 @@ fn span_end(tick: Tick, shape: &Shape) -> Tick {
 fn migrate_v0(mut value: serde_json::Value) -> Result<serde_json::Value, Error> {
     let ticks_per_beat = value
         .get("ticks_per_beat")
-        .cloned()
-        .map(serde_json::from_value)
+        .map(TicksPerBeat::deserialize)
         .transpose()?
         .unwrap_or_default();
     let Some(object) = value.as_object_mut() else {
@@ -399,36 +398,40 @@ impl V0Timing {
     /// The timing with an anchor on every BPM change's tick at the time it resolved to, to the
     /// microsecond, and the last BPM as the tempo after them. Refuses a BPM change whose time
     /// does not resolve, or does not fit a time, rather than leaving its anchor out.
-    fn migrate(&self, ticks_per_beat: TicksPerBeat) -> Result<Timing, String> {
+    fn migrate(self, ticks_per_beat: TicksPerBeat) -> Result<Timing, String> {
         let mut tempo = None;
         let mut anchors = Vec::new();
-        let mut events = Vec::with_capacity(self.events.len());
         for event in &self.events {
-            match &event.kind {
-                V0TimingKind::Bpm(bpm) => {
-                    tempo = Some(*bpm);
-                    let seconds = self
-                        .seconds_at(ticks_per_beat, event.tick)
-                        .ok_or_else(|| format!("tick {} has no time", event.tick))?;
-                    let seconds = Origin::try_from((seconds * 1e6).round() / 1e6)
-                        .map_err(|why| format!("tick {}: {why}", event.tick))?;
-                    anchors.push(Anchor {
-                        tick: event.tick,
-                        seconds,
-                    });
-                }
+            if let V0TimingKind::Bpm(bpm) = event.kind {
+                tempo = Some(bpm);
+                let seconds = self
+                    .seconds_at(ticks_per_beat, event.tick)
+                    .ok_or_else(|| format!("tick {} has no time", event.tick))?;
+                let seconds = Origin::try_from((seconds * 1e6).round() / 1e6)
+                    .map_err(|why| format!("tick {}: {why}", event.tick))?;
+                anchors.push(Anchor {
+                    tick: event.tick,
+                    seconds,
+                });
+            }
+        }
+        let tempo = tempo.ok_or("it has no bpm event")?;
+        let events = self
+            .events
+            .into_iter()
+            .filter_map(|event| match event.kind {
+                V0TimingKind::Bpm(_) => None,
                 kind @ (V0TimingKind::Stop(_)
                 | V0TimingKind::Delay(_)
                 | V0TimingKind::Warp(_)
                 | V0TimingKind::TimeSignature(_)
-                | V0TimingKind::Other { .. }) => events.push(TimingEvent {
+                | V0TimingKind::Other { .. }) => Some(TimingEvent {
                     tick: event.tick,
-                    kind: kind.clone().into(),
-                    ext: event.ext.clone(),
+                    kind: kind.into(),
+                    ext: event.ext,
                 }),
-            }
-        }
-        let tempo = tempo.ok_or("it has no bpm event")?;
+            })
+            .collect();
         Ok(Timing {
             anchors,
             tempo,

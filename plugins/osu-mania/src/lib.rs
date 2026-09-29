@@ -19,7 +19,7 @@ use charter_core::{
     Settings, Shape, Stream, Tick, Ticks, TicksPerBeat, TimeSignature, Timing as CoreTiming,
     TimingEvent as CoreEvent, TimingKind as CoreKind, ValidDocument,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de, de::IntoDeserializer};
 use serde_json::Value;
 
 mod import;
@@ -712,12 +712,16 @@ fn read_chart(chart: &CoreChart, c: usize) -> Result<Chart, Error> {
         at: Location::Chart(c),
         found: chart.lanes,
     })?;
-    let settings = Value::Object(chart.settings.clone().into_iter().collect());
-    let settings: ChartSettings =
-        serde_json::from_value(settings).map_err(|source| Error::Malformed {
-            at: Location::ChartSettings(c),
-            source,
-        })?;
+    let settings = de::value::MapDeserializer::<_, serde_json::Error>::new(
+        chart
+            .settings
+            .iter()
+            .map(|(key, value)| (key.as_str().into_deserializer(), value)),
+    );
+    let settings = ChartSettings::deserialize(settings).map_err(|source| Error::Malformed {
+        at: Location::ChartSettings(c),
+        source,
+    })?;
     let notes = chart
         .objects
         .iter()

@@ -1194,7 +1194,7 @@ fn header(
     row: Rangef,
     visuals: &Visuals,
 ) {
-    let caption = |x: f32, text: String| {
+    let caption = |x: f32, text: &str| {
         painter.text(
             pos2(x, row.center()),
             Align2::CENTER_CENTER,
@@ -1209,15 +1209,14 @@ fn header(
             "chart timing"
         } else {
             "song timing"
-        }
-        .to_owned(),
+        },
     );
     if columns.wave.span() > 0.0 {
-        caption(columns.wave.center(), "audio".to_owned());
+        caption(columns.wave.center(), "audio");
     }
     for lane in 0..lanes {
         let span = columns.span(LaneIndex::new(lane), LaneCount::ONE);
-        caption(span.center(), lane.saturating_add(1).to_string());
+        caption(span.center(), &lane.saturating_add(1).to_string());
     }
 }
 

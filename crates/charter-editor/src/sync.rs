@@ -228,6 +228,7 @@ impl Song {
         for event in &mut base.events {
             event.tick = mapped(event.tick)?;
         }
+        let last = pins.last().map(|pin| pin.tick);
         let pins = pins
             .iter()
             .map(|pin| {
@@ -237,7 +238,6 @@ impl Song {
                 })
             })
             .collect::<Result<Vec<_>, Refusal>>()?;
-        let last = self.anchors().last().map(|pin| pin.tick);
         let tail = if last.is_some_and(|last| ticks.contains(&last)) {
             let scaled = f64::from(tail) * if double { 2.0 } else { 0.5 };
             micro(scaled)

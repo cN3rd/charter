@@ -690,7 +690,7 @@ fn setting_rows(
         .filter(|setting| setting.scope == scope)
     {
         let name = match scope {
-            SettingScope::Song => setting.name.clone(),
+            SettingScope::Song => setting.name,
             SettingScope::Chart => format!("Chart {}", setting.name.to_lowercase()),
         };
         let caption = ui.weak(&name).on_hover_text(&setting.about);

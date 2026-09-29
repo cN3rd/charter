@@ -19,7 +19,7 @@ use charter_core::{
     Seconds, Settings, Shape, Stream, Tick, Ticks, TicksPerBeat, TimeSignature,
     Timing as CoreTiming, TimingEvent as CoreEvent, TimingKind as CoreKind, ValidDocument,
 };
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de, de::IntoDeserializer};
 use serde_json::Value;
 
 /// The ruleset namespace.
@@ -749,12 +749,16 @@ impl RulesetPlugin for Plugin {
 /// Reads chart `c`, checking that its settings agree with its lane count.
 fn read_chart(chart: &CoreChart, c: usize) -> Result<Chart, Error> {
     reject_own_keys(&chart.ext, Location::ChartExt(c))?;
-    let settings = Value::Object(chart.settings.clone().into_iter().collect());
-    let settings: ChartSettings =
-        serde_json::from_value(settings).map_err(|source| Error::Malformed {
-            at: Location::ChartSettings(c),
-            source,
-        })?;
+    let settings = de::value::MapDeserializer::<_, serde_json::Error>::new(
+        chart
+            .settings
+            .iter()
+            .map(|(key, value)| (key.as_str().into_deserializer(), value)),
+    );
+    let settings = ChartSettings::deserialize(settings).map_err(|source| Error::Malformed {
+        at: Location::ChartSettings(c),
+        source,
+    })?;
     if chart.lanes != Some(settings.style.lanes()) {
         return Err(Error::Lanes {
             at: Location::Chart(c),

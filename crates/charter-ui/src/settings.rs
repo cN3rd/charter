@@ -572,13 +572,12 @@ fn sidebar(ui: &mut egui::Ui, page: &mut Page) {
                     .frame_when_inactive(chosen)
                     .min_size(egui::vec2(130.0, 30.0));
                     let response = ui.add(item);
-                    let name = name.to_owned();
                     response.widget_info(|| {
                         egui::WidgetInfo::selected(
                             egui::WidgetType::SelectableLabel,
                             true,
                             chosen,
-                            &name,
+                            name,
                         )
                     });
                     if response.clicked() {

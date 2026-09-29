@@ -228,7 +228,7 @@ impl Default for TimingWindow {
 }
 
 /// What a press or drag in the rows is doing, as the specification's state machine has it.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum Gesture {
     /// No press or drag is active.
     Idle,
@@ -347,10 +347,11 @@ impl TimingWindow {
             | Refusal::OffTheChart) => {
                 let first = other.to_string();
                 let mut letters = first.chars();
-                letters.next().map_or_else(
-                    || first.clone(),
-                    |letter| letter.to_uppercase().chain(letters).collect(),
-                )
+                if let Some(letter) = letters.next() {
+                    letter.to_uppercase().chain(letters).collect()
+                } else {
+                    first
+                }
             }
         };
         if matches!(edit, Edit::Nudge { .. }) {
@@ -367,20 +368,22 @@ impl TimingWindow {
             self.status = Some("Focus or select anchors to fit".to_owned());
             return;
         };
+        let at_tail = range.end().saturating_add(1) == frame.pins.len();
+        let count = range.end().saturating_sub(*range.start()).saturating_add(1);
         let fitted = accuracy::fit(
             frame.timing,
             (&frame.pins, frame.tail),
-            range.clone(),
+            range,
             frame.residuals,
             half_bpm,
         );
         match fitted {
             Some(fitted) => {
                 let before = frame.tail;
-                let about = if range.end().saturating_add(1) == frame.pins.len() {
+                let about = if at_tail {
                     format!("Tail {before} → {} BPM", fitted.tail)
                 } else {
-                    format!("{} anchors fitted", range.count())
+                    format!("{count} anchors fitted")
                 };
                 self.preview = Some((fitted, about));
                 self.status = None;
@@ -1079,6 +1082,20 @@ fn moving(window: &TimingWindow, tick: Tick) -> Vec<Tick> {
     }
 }
 
+/// The endpoints of the anchors moving with `tick`, without copying the selection.
+fn moving_bounds(window: &TimingWindow, tick: Tick) -> (Tick, Tick) {
+    if window.selection.contains(&tick) {
+        window
+            .selection
+            .first()
+            .copied()
+            .zip(window.selection.last().copied())
+            .unwrap_or((tick, tick))
+    } else {
+        (tick, tick)
+    }
+}
+
 /// The anchor in `row` within grabbing distance of `x`, the nearest if several.
 fn anchor_near(frame: &Frame<'_>, row: &Row, x: f32) -> Option<Tick> {
     frame
@@ -1222,7 +1239,7 @@ fn row_input(
 /// both finely and unsnapped with Shift, and neither past the anchors beside what moves; running
 /// into one pulses it and stops there.
 fn drag(window: &mut TimingWindow, frame: &Frame<'_>, row: &Row, pos: Pos2, shift: bool) {
-    match window.gesture.clone() {
+    match window.gesture {
         Gesture::DragBeat { from, origin, .. } => {
             let pointer = row.position_at(pos.x);
             let bar = if shift {
@@ -1270,10 +1287,7 @@ fn drag(window: &mut TimingWindow, frame: &Frame<'_>, row: &Row, pos: Pos2, shif
 /// `to`, or the nearest beat to it that the anchors moving with the one on `from` can reach
 /// without meeting a neighbour, which then pulses.
 fn clamp_beat(window: &mut TimingWindow, frame: &Frame<'_>, from: Tick, to: Tick) -> Tick {
-    let moving = moving(window, from);
-    let (Some(&first), Some(&last)) = (moving.first(), moving.last()) else {
-        return to;
-    };
+    let (first, last) = moving_bounds(window, from);
     let delta = i64::from(to).saturating_sub(i64::from(from));
     let before = frame.pins.iter().rev().find(|pin| pin.tick < first);
     let after = frame.pins.iter().find(|pin| pin.tick > last);
@@ -1309,10 +1323,7 @@ fn clamp_audio(
     to: f64,
 ) -> f64 {
     const MARGIN: f64 = 0.001;
-    let moving = moving(window, tick);
-    let (Some(&first), Some(&last)) = (moving.first(), moving.last()) else {
-        return to;
-    };
+    let (first, last) = moving_bounds(window, tick);
     let seconds = |at: Tick| {
         frame
             .pins

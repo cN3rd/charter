@@ -316,6 +316,9 @@ impl Song {
     /// Refuses on a read-only song.
     pub fn set_audio(&mut self, audio: ResourcePath) -> Result<(), Refusal> {
         let old = &self.document.document().metadata;
+        if old.audio == audio {
+            return Ok(());
+        }
         self.set_metadata(Metadata {
             audio,
             ..old.clone()
@@ -352,6 +355,13 @@ impl Song {
                 (Some(self.chart), &chart.settings)
             }
         };
+        match value.as_deref() {
+            Some(value) if old.get(key).and_then(serde_json::Value::as_str) == Some(value) => {
+                return Ok(());
+            }
+            None if !old.contains_key(key) => return Ok(()),
+            _ => {}
+        }
         let mut new = old.clone();
         match value {
             Some(value) => new.insert(key.to_owned(), serde_json::Value::String(value)),
@@ -714,10 +724,11 @@ impl Song {
     ///
     /// Refuses on a read-only song, and when a marker of its kind is already at `to`.
     pub fn move_marker(&mut self, index: usize, to: Tick) -> Result<(), Refusal> {
-        let mut new = self.document.document().markers.clone();
-        if new.get(index).is_none_or(|marker| marker.tick == to) {
+        let markers = &self.document.document().markers;
+        if markers.get(index).is_none_or(|marker| marker.tick == to) {
             return Ok(());
         }
+        let mut new = markers.clone();
         let mut moved_marker = new.remove(index);
         moved_marker.tick = to;
         let at = new.partition_point(|marker| marker.tick <= to);
@@ -732,6 +743,9 @@ impl Song {
     /// Refuses on a read-only song.
     pub fn set_song_facts(&mut self, title: &str, artist: &str) -> Result<(), Refusal> {
         let old = &self.document.document().metadata;
+        if old.title == title && old.artist == artist {
+            return Ok(());
+        }
         self.set_metadata(Metadata {
             title: title.to_owned(),
             artist: artist.to_owned(),
@@ -771,10 +785,10 @@ impl Song {
         new: charter_core::Timing,
     ) -> Result<(), Refusal> {
         let (_, old) = self.edited_timing();
-        let edit = Edit(vec![Op::Timing {
+        let mut edit = Edit(vec![Op::Timing {
             own,
             old: Box::new(old.clone()),
-            new: Box::new(new.clone()),
+            new: Box::new(new),
         }]);
         let document = self.edited(self.chart, &edit)?;
         let joins = self.done == self.history.len()
@@ -792,8 +806,9 @@ impl Song {
             edit: Edit(ops), ..
         }) = self.history.last_mut()
             && let [Op::Timing { new: kept, .. }] = ops.as_mut_slice()
+            && let [Op::Timing { new: incoming, .. }] = edit.0.as_mut_slice()
         {
-            **kept = new;
+            std::mem::swap(kept, incoming);
         }
         self.document = document;
         self.revision = self.revision.saturating_add(1);
@@ -882,10 +897,11 @@ impl Song {
         if self.read_only().is_some() {
             return Err(Refusal::ReadOnly);
         }
-        let mut new = self.document.document().markers.clone();
-        if index >= new.len() {
+        let markers = &self.document.document().markers;
+        if index >= markers.len() {
             return Ok(());
         }
+        let mut new = markers.clone();
         new.remove(index);
         self.remark(new)
     }
@@ -1384,17 +1400,20 @@ impl Song {
         };
         let width = self.lane_count();
         objects.sort_by_key(|object| object.tick);
-        let mut all: Vec<Object> = chart.objects.clone();
+        let mut all: Vec<&Object> = chart.objects.iter().collect();
         let mut ops = Vec::new();
         let mut selection = BTreeSet::new();
-        for object in objects {
-            if !fits(&object, width) || taken(&all, &object) {
+        for object in &objects {
+            if !fits(object, width) || taken(&all, object) {
                 continue;
             }
             let index = all.partition_point(|other| other.tick <= object.tick);
-            selection.extend(note_at(&object));
-            all.insert(index, object.clone());
-            ops.push(Op::Insert { index, object });
+            selection.extend(note_at(object));
+            all.insert(index, object);
+            ops.push(Op::Insert {
+                index,
+                object: object.clone(),
+            });
         }
         let added = ops.len();
         if added == 0 {
@@ -1441,27 +1460,30 @@ impl Song {
         if same {
             return Ok(());
         }
-        let mut objects: Vec<Object> = chart
+        let mut objects: Vec<&Object> = chart
             .objects
             .iter()
             .filter(|object| !self.is_selected(object))
-            .cloned()
             .collect();
         changed.reverse();
         let mut selection = BTreeSet::new();
-        let mut placed: Vec<Object> = Vec::new();
-        for object in changed {
-            if placed.contains(&object) {
+        for object in &changed {
+            if ops
+                .iter()
+                .any(|op| matches!(op, Op::Insert { object: placed, .. } if placed == object))
+            {
                 continue;
             }
-            if taken(&objects, &object) {
+            if taken(&objects, object) {
                 return Err(Refusal::Occupied);
             }
             let index = objects.partition_point(|other| other.tick <= object.tick);
-            selection.extend(note_at(&object));
-            objects.insert(index, object.clone());
-            placed.push(object.clone());
-            ops.push(Op::Insert { index, object });
+            selection.extend(note_at(object));
+            objects.insert(index, object);
+            ops.push(Op::Insert {
+                index,
+                object: object.clone(),
+            });
         }
         let edit = Edit(ops);
         self.document = self.edited(self.chart, &edit)?;
@@ -1640,9 +1662,9 @@ impl Song {
 
 /// Whether a note starts at `object`'s tick on a lane it covers, among `objects`.
 /// Whether another object starts at `object`'s tick on one of its lanes.
-fn taken(objects: &[Object], object: &Object) -> bool {
-    let from = objects.partition_point(|other| other.tick < object.tick);
-    let to = objects.partition_point(|other| other.tick <= object.tick);
+fn taken<T: std::borrow::Borrow<Object>>(objects: &[T], object: &Object) -> bool {
+    let from = objects.partition_point(|other| other.borrow().tick < object.tick);
+    let to = objects.partition_point(|other| other.borrow().tick <= object.tick);
     let span = object.position.lanes();
     objects
         .get(from..to)
@@ -1650,6 +1672,7 @@ fn taken(objects: &[Object], object: &Object) -> bool {
         .iter()
         .any(|other| {
             other
+                .borrow()
                 .position
                 .lanes()
                 .zip(span)
