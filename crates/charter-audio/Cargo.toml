@@ -13,3 +13,6 @@ rustfft.workspace = true
 symphonia-wrap.workspace = true
 serde.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

@@ -131,6 +131,7 @@ impl Track {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     /// A 16-bit PCM WAV file of `channels` interleaved channels at `rate` holding `samples`.
     #[expect(
@@ -219,6 +220,15 @@ mod tests {
                 Track::decode(bytes[..end].to_vec(), Some("wav")).is_err(),
                 "truncation at {end}"
             );
+        }
+    }
+
+    proptest! {
+        #![proptest_config(crate::proptest_config())]
+
+        #[test]
+        fn arbitrary_audio_bytes_never_panic(bytes in proptest::collection::vec(any::<u8>(), 0..512)) {
+            drop(Track::decode(bytes, Some("wav")));
         }
     }
 }

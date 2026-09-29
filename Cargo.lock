@@ -1494,6 +1494,7 @@ dependencies = [
 name = "charter-audio"
 version = "0.0.0"
 dependencies = [
+ "proptest",
  "rustfft",
  "serde",
  "symphonia-wrap",

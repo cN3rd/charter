@@ -194,6 +194,7 @@ impl Peaks {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     /// A track at 1000 frames a second: silence, then a second of a square wave at `amplitude`,
     /// then silence, each a second long.
@@ -282,6 +283,15 @@ mod tests {
         let peaks = Peaks::of(&burst(0.5));
         let brief = peaks.between(1.5, 1.5001);
         assert!(near(brief.high, 0.5), "{brief:?}");
+    }
+
+    proptest! {
+        #![proptest_config(crate::proptest_config())]
+
+        #[test]
+        fn arbitrary_saved_peak_bytes_never_panic(bytes in proptest::collection::vec(any::<u8>(), 0..512)) {
+            drop(Peaks::from_bytes(&bytes, 7));
+        }
     }
 }
 

@@ -114,6 +114,7 @@ pub fn tags(bytes: Vec<u8>, extension: Option<&str>) -> Tags {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     /// A FLAC metadata block of `kind` holding `body`, the last one when `last` is set.
     #[expect(
@@ -269,5 +270,14 @@ mod tests {
     fn blank_tags_count_as_none() {
         let tags = tags(tagged(&["TITLE=  "]), Some("flac"));
         assert_eq!(tags.title, None);
+    }
+
+    proptest! {
+        #![proptest_config(crate::proptest_config())]
+
+        #[test]
+        fn arbitrary_tag_bytes_never_panic(bytes in proptest::collection::vec(any::<u8>(), 0..512)) {
+            drop(tags(bytes, Some("flac")));
+        }
     }
 }

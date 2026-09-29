@@ -8,6 +8,18 @@ mod spectrum;
 mod tags;
 mod track;
 
+/// Property tests run from a fixed seed and keep no regression files, so they repeat exactly
+/// and touch no files.
+#[cfg(test)]
+fn proptest_config() -> proptest::test_runner::Config {
+    proptest::test_runner::Config {
+        cases: 64,
+        failure_persistence: None,
+        rng_seed: proptest::test_runner::RngSeed::Fixed(0),
+        ..proptest::test_runner::Config::default()
+    }
+}
+
 /// Centralised numeric conversions used at DSP and storage boundaries.
 mod cast {
     /// Audio buffer length as a floating-point sample count.

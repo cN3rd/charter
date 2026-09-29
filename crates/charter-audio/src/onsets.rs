@@ -311,6 +311,7 @@ pub fn onsets_from_bytes(bytes: &[u8], source: u64) -> Option<Arc<[Onset]>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     const RATE: u32 = 44_100;
 
@@ -441,6 +442,15 @@ mod tests {
             9,
         );
         assert_eq!(onsets_from_bytes(&bytes, 9), None);
+    }
+
+    proptest! {
+        #![proptest_config(crate::proptest_config())]
+
+        #[test]
+        fn arbitrary_kept_onset_bytes_never_panic(bytes in proptest::collection::vec(any::<u8>(), 0..512)) {
+            drop(onsets_from_bytes(&bytes, 9));
+        }
     }
 }
 
