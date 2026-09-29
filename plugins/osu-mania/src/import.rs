@@ -16,7 +16,7 @@ use charter_core::{
 use crate::{ID, SCROLL_SPEED};
 
 /// Why pasted text holds no timing.
-#[derive(Debug, thiserror::Error, PartialEq)]
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ImportError {
     #[error("line {line}: {why}")]
     Line { line: usize, why: String },
@@ -90,13 +90,13 @@ pub(crate) fn import(text: &str, into: &ValidDocument) -> Result<ImportedTiming,
     } = made.timing;
     let mut greens: Vec<Point> = points.iter().copied().filter(|p| !p.uninherited).collect();
     greens.sort_by(|a, b| a.time.total_cmp(&b.time));
-    if into.document().ruleset.id.as_str() == ID {
-        events.extend(scroll_speeds(&placed, &greens, ticks_per_beat)?);
-    } else if !greens.is_empty() {
-        left_out.push(format!(
+    match (into.document().ruleset.id.as_str() == ID, greens.is_empty()) {
+        (true, _) => events.extend(scroll_speeds(&placed, &greens, ticks_per_beat)?),
+        (false, false) => left_out.push(format!(
             "{} scroll speed changes, which only osu!mania songs keep",
             greens.len()
-        ));
+        )),
+        (false, true) => {}
     }
     left_out.push("volumes, hit sounds and kiai time, which are not timing".to_owned());
     events.sort_by_key(|event| event.tick);
@@ -124,7 +124,7 @@ fn scroll_speeds(
                 .iter()
                 .rev()
                 .find(|(red, _)| red.at <= green.time + 0.5)
-                .or(placed.first())
+                .or_else(|| placed.first())
                 .map_or(
                     Placed {
                         tick: 0,
@@ -151,9 +151,12 @@ fn scroll_speeds(
             .filter(|(_, time, _)| *time < red.at)
             .max_by(|left, right| left.1.total_cmp(&right.1))
             .map_or(1.0, |(_, _, ratio)| *ratio);
-        #[allow(clippy::float_cmp)] // identical source timestamps mean the green belongs to the red
+        #[expect(
+            clippy::float_cmp,
+            reason = "identical source timestamps assign green to red"
+        )]
         let own = changes.iter().any(|(_, time, _)| *time == red.at);
-        #[allow(clippy::float_cmp)] // osu!'s own 1x, exactly
+        #[expect(clippy::float_cmp, reason = "osu!'s own 1x is exact")]
         if !own && before != 1.0 {
             resets.push((red.tick, red.at, 1.0));
         }
@@ -200,7 +203,7 @@ fn points(text: &str) -> Result<Vec<Point>, ImportError> {
     if section.is_none() && lines.iter().any(|(_, line)| line.trim().starts_with('[')) {
         return Ok(Vec::new());
     }
-    let from = section.map_or(0, |at| at + 1);
+    let from = section.map_or(0, |at| at.saturating_add(1));
     let mut points = Vec::new();
     for &(number, line) in lines.get(from..).unwrap_or_default() {
         let line = line.trim();
@@ -247,9 +250,8 @@ fn point(line: &str) -> Result<Point, String> {
         ));
     }
     // osu! reads a meter of 0 as 4.
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // range checked
     let meter = if (1.0..=f64::from(u16::MAX)).contains(&meter) && meter.fract() == 0.0 {
-        NonZeroU16::new(meter as u16)
+        NonZeroU16::new(meter_u16(meter))
     } else if meter == 0.0 {
         NonZeroU16::new(4)
     } else {
@@ -267,16 +269,33 @@ fn point(line: &str) -> Result<Point, String> {
     })
 }
 
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "caller checks finite integral meter in the u16 range"
+)]
+/// Meter already checked as a whole number within the `u16` range.
+fn meter_u16(meter: f64) -> u16 {
+    meter as u16
+}
+
 /// Whole ticks nearest `milliseconds` at a beat of `beat_length` milliseconds.
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    reason = "float-to-integer conversion saturates until event checks the i32 range"
+)]
 fn ticks(milliseconds: f64, beat_length: f64, ticks_per_beat: f64) -> i64 {
-    #[allow(clippy::cast_possible_truncation)] // a song's worth of ticks
     let ticks = (milliseconds / beat_length * ticks_per_beat).round() as i64;
     ticks
 }
 
+/// A format event at `tick`, rejecting ticks outside the chart's `i32` range.
 fn event(tick: i64, kind: TimingKind) -> Result<TimingEvent, ImportError> {
-    let tick = i32::try_from(tick)
-        .map_err(|_| ImportError::OutOfRange(format!("tick {tick} is past the song's end")))?;
+    let tick = i32::try_from(tick).map_err(|_out_of_range| {
+        ImportError::OutOfRange(format!("tick {tick} is past the song's end"))
+    })?;
     Ok(TimingEvent {
         tick: Tick::new(tick),
         kind,
@@ -356,7 +375,7 @@ mod tests {
             timing: imported.timing,
             ..song(ID).document().clone()
         });
-        assert!(timing.is_ok());
+        timing.unwrap();
     }
 
     #[test]
@@ -416,7 +435,10 @@ mod tests {
             .iter()
             .filter_map(|e| match &e.kind {
                 TimingKind::Other { value, .. } => Some((json!(e.tick), value.clone())),
-                _ => None,
+                TimingKind::Stop(_)
+                | TimingKind::Delay(_)
+                | TimingKind::Warp(_)
+                | TimingKind::TimeSignature(_) => None,
             })
             .collect();
         assert_eq!(
@@ -424,10 +446,13 @@ mod tests {
             [(json!(1920), json!(2.0)), (json!(7680), json!(1.0))]
         );
         let again = format!("{text}\n6000,500,4,1,0,100,1,0");
-        let imported = import(&again, &song(ID)).unwrap();
-        let speeds = imported.timing.events.iter();
-        let speeds = speeds.filter(|e| matches!(e.kind, TimingKind::Other { .. }));
-        assert_eq!(speeds.count(), 2);
+        let second_import = import(&again, &song(ID)).unwrap();
+        let reset_speeds = second_import
+            .timing
+            .events
+            .iter()
+            .filter(|e| matches!(e.kind, TimingKind::Other { .. }));
+        assert_eq!(reset_speeds.count(), 2);
     }
 
     #[test]
@@ -440,7 +465,10 @@ mod tests {
             .iter()
             .filter_map(|event| match &event.kind {
                 TimingKind::Other { value, .. } => Some((event.tick, value.clone())),
-                _ => None,
+                TimingKind::Stop(_)
+                | TimingKind::Delay(_)
+                | TimingKind::Warp(_)
+                | TimingKind::TimeSignature(_) => None,
             })
             .collect();
         assert_eq!(speeds, [(Tick::new(480), json!(1.0))]);
@@ -567,7 +595,7 @@ mod tests {
             timing: imported.timing,
             ..song(ID).document().clone()
         });
-        assert!(timing.is_ok());
+        timing.unwrap();
     }
 
     #[test]
@@ -612,7 +640,7 @@ mod tests {
         runner
             .run(&proptest::collection::vec(any::<char>(), 0..256), |text| {
                 let text: String = text.into_iter().collect();
-                let _ = import(&text, &song(ID));
+                drop(import(&text, &song(ID)));
                 Ok(())
             })
             .unwrap();

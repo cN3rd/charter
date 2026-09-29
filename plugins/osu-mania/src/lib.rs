@@ -32,30 +32,36 @@ pub const ID: &str = "osu_mania";
 
 /// A song, checked against this ruleset and every document rule when built, and unchangeable
 /// after.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Song {
+    /// Header values shared by all the song's beatmaps.
     metadata: Metadata,
+    /// Number of ticks per quarter-note beat.
     ticks_per_beat: TicksPerBeat,
+    /// Keysounds available to notes in every beatmap.
     samples: BTreeMap<SampleId, ResourcePath>,
+    /// Song-wide timing, used unless a beatmap overrides it.
     timing: Timing,
+    /// Song-wide section and bookmark positions.
     markers: Vec<Marker>,
+    /// Beatmaps checked against this ruleset.
     charts: Vec<Chart>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Timing {
     pub anchors: Vec<Anchor>,
     pub tempo: Bpm,
     pub events: Vec<TimingEvent>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TimingEvent {
     pub tick: Tick,
     pub kind: TimingKind,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TimingKind {
     /// Beats per measure. osu! meters are always in quarter notes.
     Meter(NonZeroU16),
@@ -64,7 +70,7 @@ pub enum TimingKind {
 }
 
 /// One difficulty, which osu! calls a beatmap's version.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Chart {
     pub name: String,
     pub keys: Keys,
@@ -147,6 +153,10 @@ impl Keys {
 
 /// `n` lanes, for the key counts this ruleset names.
 const fn lanes(n: u16) -> LaneCount {
+    #[expect(
+        clippy::unreachable,
+        reason = "only positive constant key counts call this"
+    )]
     match LaneCount::new(n) {
         Some(lanes) => lanes,
         None => unreachable!(),
@@ -188,13 +198,18 @@ impl TryFrom<Decimal> for ScrollSpeed {
 
 /// `n` as a decimal constant.
 const fn whole(n: i64) -> Decimal {
-    match Decimal::from_millionths(n * 1_000_000) {
+    #[expect(
+        clippy::unreachable,
+        reason = "only small constant difficulties call this"
+    )]
+    match Decimal::from_millionths(n.saturating_mul(1_000_000)) {
         Some(value) => value,
         None => unreachable!(),
     }
 }
 
-fn default_difficulty() -> Difficulty {
+/// osu!'s difficulty value when a beatmap omits `hp` or `od`.
+const fn default_difficulty() -> Difficulty {
     Difficulty::DEFAULT
 }
 
@@ -257,7 +272,7 @@ impl Song {
             .enumerate()
             .find_map(|(m, marker)| match &marker.kind {
                 MarkerKind::Other(key) if key.namespace().as_str() == ID => Some((m, key)),
-                _ => None,
+                MarkerKind::Other(_) | MarkerKind::Section | MarkerKind::Bookmark => None,
             });
         if let Some((m, key)) = own {
             return Err(Error::UnknownKey {
@@ -283,27 +298,31 @@ impl Song {
         Ok(song)
     }
 
+    /// Header values shared by all beatmaps.
     #[must_use]
-    pub fn metadata(&self) -> &Metadata {
+    pub const fn metadata(&self) -> &Metadata {
         &self.metadata
     }
 
+    /// Number of ticks per quarter-note beat.
     #[must_use]
-    pub fn ticks_per_beat(&self) -> TicksPerBeat {
+    pub const fn ticks_per_beat(&self) -> TicksPerBeat {
         self.ticks_per_beat
     }
 
     /// Keysounds.
     #[must_use]
-    pub fn samples(&self) -> &BTreeMap<SampleId, ResourcePath> {
+    pub const fn samples(&self) -> &BTreeMap<SampleId, ResourcePath> {
         &self.samples
     }
 
+    /// Song-wide timing, before beatmap overrides.
     #[must_use]
-    pub fn timing(&self) -> &Timing {
+    pub const fn timing(&self) -> &Timing {
         &self.timing
     }
 
+    /// Beatmaps in this song.
     #[must_use]
     pub fn charts(&self) -> &[Chart] {
         &self.charts
@@ -321,11 +340,12 @@ impl Song {
     ///
     /// Never: [`Song::new`] checked the same document, and a song cannot change.
     #[must_use]
-    #[allow(clippy::expect_used)] // see Panics
+    #[expect(clippy::expect_used, reason = "Song::new checked the immutable song")]
     pub fn to_document(&self) -> ValidDocument {
         self.build().expect("a song was checked when built")
     }
 
+    /// Validates and writes this song using only osu!mania data.
     fn build(&self) -> Result<ValidDocument, Error> {
         let charts = self
             .charts
@@ -386,7 +406,11 @@ impl Chart {
         })?;
         let settings = match settings {
             Value::Object(map) => map.into_iter().collect(),
-            _ => Settings::new(),
+            Value::Null
+            | Value::Bool(_)
+            | Value::Number(_)
+            | Value::String(_)
+            | Value::Array(_) => Settings::new(),
         };
         Ok(CoreChart {
             name: self.name.clone(),
@@ -420,6 +444,10 @@ impl Note {
     }
 }
 
+#[expect(
+    clippy::error_impl_error,
+    reason = "public error type is part of the plugin API"
+)]
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("ruleset is \"{0}\", not {ID:?}")]
@@ -743,8 +771,13 @@ mod tests {
         json!({ "tick": tick, "position": { "lane": { "index": column } }, "kind": "tap", "shape": "instant" })
     }
 
+    #[expect(
+        clippy::unwrap_in_result,
+        reason = "test fixture bytes always form a valid core document"
+    )]
     fn read(value: &Value) -> Result<Song, Error> {
-        Song::try_from(&ValidDocument::from_json(&serde_json::to_vec(value).unwrap()).unwrap())
+        let valid = ValidDocument::from_json(&serde_json::to_vec(value).unwrap()).unwrap();
+        Song::try_from(&valid)
     }
 
     #[test]
@@ -783,7 +816,7 @@ mod tests {
             |value: &Value| ValidDocument::from_json(&serde_json::to_vec(value).unwrap()).unwrap();
         assert_eq!(Plugin.id(), ID);
         let song = valid(&document(json!([tap(0, 3)])));
-        assert!(Plugin.check(&song).is_ok());
+        Plugin.check(&song).unwrap();
         let plane = json!([{ "tick": 0, "position": { "plane": { "x": 0.5, "y": 0.5 } },
                              "kind": "tap", "shape": "instant" }]);
         let not_a_song = valid(&document(plane));
@@ -856,13 +889,13 @@ mod tests {
             json!({ "tick": 0, "kind": { "time_signature": [3, 4] } }),
             json!({ "tick": 2880, "kind": { "other": { "name": "osu_mania.scroll_speed", "value": 0.5 } } }),
         ]);
-        let mut value = value;
-        value["timing"]["anchors"]
+        let mut chart_value = value;
+        chart_value["timing"]["anchors"]
             .as_array_mut()
             .unwrap()
             .push(json!({ "tick": 3840, "seconds": 2.0 }));
-        value["timing"]["tempo"] = json!(70.0);
-        let song = read(&value).unwrap();
+        chart_value["timing"]["tempo"] = json!(70.0);
+        let song = read(&chart_value).unwrap();
         let kinds: Vec<TimingKind> = song
             .timing()
             .events
@@ -1187,11 +1220,9 @@ mod tests {
 
     #[test]
     fn a_new_song_refuses_a_key_count_it_does_not_have() {
-        assert!(
-            Plugin
-                .new_song(&new_song(Keys::ALL.len(), &["Easy"]))
-                .is_err()
-        );
+        Plugin
+            .new_song(&new_song(Keys::ALL.len(), &["Easy"]))
+            .unwrap_err();
     }
 
     #[test]
