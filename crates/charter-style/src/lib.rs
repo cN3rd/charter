@@ -133,13 +133,13 @@ fn fonts(fallbacks: &[(String, Arc<egui::FontData>)]) -> egui::FontDefinitions {
     proportional.retain(|font| font != "phosphor");
     proportional.insert(0, "inter".to_owned());
     for (name, data) in fallbacks {
-        fonts.font_data.insert(name.clone(), data.clone());
+        fonts.font_data.insert(name.clone(), Arc::clone(data));
     }
     let names = fallbacks.iter().map(|(name, _)| name.clone());
-    let proportional = fonts.families.entry(FontFamily::Proportional).or_default();
-    proportional.extend(names.clone());
+    let text_families = fonts.families.entry(FontFamily::Proportional).or_default();
+    text_families.extend(names.clone());
     let mut titles = vec!["inter-semibold".to_owned()];
-    titles.extend(proportional.iter().skip(1).cloned());
+    titles.extend(text_families.iter().skip(1).cloned());
     fonts.families.insert(semibold(), titles);
     fonts
         .families
@@ -149,8 +149,9 @@ fn fonts(fallbacks: &[(String, Arc<egui::FontData>)]) -> egui::FontDefinitions {
     fonts
 }
 
-/// Dark whatever the system prefers, since charting means long sessions against a game's dark
-/// playfield, and with text bright enough to read at small sizes. Ctrl+Plus and Ctrl+Minus zoom
+/// Dark whatever the system prefers, with text bright enough to read at small sizes.
+///
+/// Charting means long sessions against a game's dark playfield. Ctrl+Plus and Ctrl+Minus zoom
 /// the notefield, so egui's own use of them to scale the whole window is off. Runs until it has
 /// taken. `fallbacks` are fonts for what the bundled ones cannot draw.
 pub fn apply(ctx: &egui::Context, fallbacks: &[(String, Arc<egui::FontData>)]) {
@@ -217,7 +218,7 @@ fn look(style: &mut egui::Style) {
     let widgets = &mut visuals.widgets;
     widgets.noninteractive.fg_stroke.color = TEXT;
     widgets.noninteractive.bg_stroke = Stroke::new(1.0, EDGE);
-    for (state, fill, text) in [
+    for (state, fill, foreground) in [
         (&mut widgets.inactive, 40, 214),
         (&mut widgets.hovered, 50, 240),
         (&mut widgets.active, 60, 250),
@@ -226,7 +227,7 @@ fn look(style: &mut egui::Style) {
         state.bg_fill = Color32::from_gray(fill);
         state.weak_bg_fill = Color32::from_gray(fill);
         state.bg_stroke = Stroke::NONE;
-        state.fg_stroke.color = Color32::from_gray(text);
+        state.fg_stroke.color = Color32::from_gray(foreground);
         state.corner_radius = radius;
         state.expansion = 0.0;
     }
@@ -278,7 +279,7 @@ fn named(ui: &Ui, response: egui::Response, name: &str) -> egui::Response {
 /// A button showing `symbol` before `text`, named `text` alone.
 pub fn icon_button(ui: &mut Ui, symbol: &str, text: &str, primary_look: bool) -> egui::Response {
     let button = if primary_look {
-        let white = |text: RichText| text.color(Color32::WHITE);
+        let white = |label: RichText| label.color(Color32::WHITE);
         egui::Button::new((white(glyph(ui, symbol)), white(RichText::new(text)))).fill(ACCENT_FILL)
     } else {
         egui::Button::new((glyph(ui, symbol), RichText::new(text)))
@@ -355,14 +356,24 @@ pub fn switch(ui: &mut Ui, on: &mut bool, name: &str) -> egui::Response {
 #[must_use]
 pub fn clock(seconds: f64) -> String {
     let sign = if seconds < 0.0 { "-" } else { "" };
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // whole, positive, small
-    let millis = (seconds.abs() * 1000.0).round() as u64;
+    let millis = milliseconds(seconds);
     format!(
         "{sign}{:02}:{:02}.{:03}",
-        millis / 60_000,
-        millis / 1000 % 60,
-        millis % 1000
+        millis.div_euclid(60_000),
+        millis.div_euclid(1000).rem_euclid(60),
+        millis.rem_euclid(1000)
     )
+}
+
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "rounded positive display time saturates on overflow"
+)]
+/// Absolute `seconds` rounded to whole milliseconds, saturating if out of range.
+fn milliseconds(seconds: f64) -> u64 {
+    (seconds.abs() * 1000.0).round() as u64
 }
 
 /// A checkbox before `text`, both one target: a sunken square with an edge when off, filled in
@@ -403,6 +414,10 @@ pub fn check(ui: &mut Ui, on: &mut bool, text: &str) -> egui::Response {
                 ACCENT_FILL
             };
             painter.rect_filled(square, 3.0, fill);
+            #[expect(
+                clippy::arithmetic_side_effects,
+                reason = "egui position and vector arithmetic is floating-point"
+            )]
             let at = |x: f32, y: f32| square.min + vec2(x, y) * square_w;
             painter.line(
                 vec![at(0.24, 0.52), at(0.43, 0.7), at(0.76, 0.32)],
