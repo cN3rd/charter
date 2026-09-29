@@ -436,5 +436,6 @@ and the notes over a waveform that stays put.
 - C-mod as the default, or a default per ruleset
 - Tempora's plain drag of an anchor's musical position, and its multi-select, in the timing window
 - Test play, which osu! and Quaver have and this draft leaves out
+- Layers within a chart, drafted in [Layers](layers.md)
 - Two charts side by side, which the column layout would allow
 - Plugin timing keys too long for the gutter, such as `osu_mania.scroll_speed`

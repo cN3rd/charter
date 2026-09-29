@@ -67,5 +67,6 @@
 - [Chart format draft](./format.md)
 - [Ruleset plugins](./rulesets.md)
 - [User interface draft](./ui.md)
+  - [Layers](./layers.md)
 - [Automatic timing](./autotiming.md)
 - [Packaging](./packaging.md)
