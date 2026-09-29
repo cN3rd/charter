@@ -196,9 +196,42 @@ pub struct Song {
 #[derive(Clone, Debug, Default)]
 struct ChartState {
     /// Active row of the chart, clamped whenever the chart's layers change.
-    active_layer: usize,
+    active_layer: LayerIndex,
     /// Views to restore after soloing, kept outside undo and the document.
-    solo: Option<(usize, Vec<LayerView>)>,
+    solo: Option<SoloLayer>,
+}
+
+/// A row in a chart's layer list.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct LayerIndex(usize);
+
+impl LayerIndex {
+    /// The first layer row.
+    const ZERO: Self = Self(0);
+
+    /// Wraps a raw layer row index at public API boundaries.
+    const fn new(index: usize) -> Self {
+        Self(index)
+    }
+
+    /// Raw index for collection access and public API returns.
+    const fn get(self) -> usize {
+        self.0
+    }
+
+    /// Clamps a caller-provided index to the last row that exists.
+    fn clamped(index: usize, len: usize) -> Self {
+        Self(index.min(len.saturating_sub(1)))
+    }
+}
+
+/// Views remembered while one layer is soloed.
+#[derive(Clone, Debug)]
+struct SoloLayer {
+    /// The row that is currently soloed.
+    layer: LayerIndex,
+    /// Views to restore when the same row is unsoloed.
+    views: Vec<LayerView>,
 }
 
 /// Whether the song's game can check edits to it.

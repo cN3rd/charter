@@ -9,6 +9,35 @@
 )]
 use super::*;
 
+/// A position in the undo history.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) struct HistoryStep(usize);
+
+impl HistoryStep {
+    /// The first history position.
+    const ZERO: Self = Self(0);
+
+    /// Wraps a raw step at public API boundaries.
+    pub(super) const fn new(step: usize) -> Self {
+        Self(step)
+    }
+
+    /// Raw index for collection access and public API returns.
+    pub(super) const fn get(self) -> usize {
+        self.0
+    }
+
+    /// Previous step, when one exists.
+    fn previous(self) -> Option<Self> {
+        self.0.checked_sub(1).map(Self)
+    }
+
+    /// One step later, saturating at `usize::MAX`.
+    const fn next(self) -> Self {
+        Self(self.0.saturating_add(1))
+    }
+}
+
 /// An edit and where it was made, which undo and redo return to.
 #[derive(Clone, Debug)]
 pub(super) struct Change {
@@ -26,10 +55,10 @@ pub(super) struct History {
     /// Every edit, oldest first. The first `done` are in effect; the rest were undone.
     changes: Vec<Change>,
     /// Number of history entries currently applied.
-    done: usize,
+    done: HistoryStep,
     /// How many edits were in effect when the song was opened or last saved, unless no undo or
     /// redo can bring that state back.
-    saved: Option<usize>,
+    saved: Option<HistoryStep>,
     /// How many times edits, undos and redos have changed the notes view.
     revision: u64,
 }
@@ -39,8 +68,8 @@ impl History {
     pub(super) const fn new() -> Self {
         Self {
             changes: Vec::new(),
-            done: 0,
-            saved: Some(0),
+            done: HistoryStep::ZERO,
+            saved: Some(HistoryStep::ZERO),
             revision: 0,
         }
     }
@@ -48,7 +77,7 @@ impl History {
     /// Records `edit`, merging with the last step when the edit type allows it.
     pub(super) fn record(&mut self, chart: usize, cursor: Tick, edit: Edit) {
         self.touch_revision();
-        self.changes.truncate(self.done);
+        self.changes.truncate(self.done.get());
         if self.saved.is_some_and(|saved| saved > self.done) {
             self.saved = None;
         }
@@ -66,33 +95,33 @@ impl History {
             cursor,
             edit,
         });
-        self.done = self.changes.len();
+        self.done = HistoryStep::new(self.changes.len());
     }
 
     /// Newest applied edit, cloned so validation can fail without moving history.
-    pub(super) fn undo_candidate(&self) -> Option<(usize, Change)> {
-        let last = self.done.checked_sub(1)?;
-        Some((last, self.changes.get(last)?.clone()))
+    pub(super) fn undo_candidate(&self) -> Option<(HistoryStep, Change)> {
+        let last = self.done.previous()?;
+        Some((last, self.changes.get(last.get())?.clone()))
     }
 
     /// Marks an undo candidate as no longer applied.
-    pub(super) const fn finish_undo(&mut self, done: usize) {
+    pub(super) const fn finish_undo(&mut self, done: HistoryStep) {
         self.done = done;
     }
 
     /// Oldest undone edit, cloned so validation can fail without moving history.
     pub(super) fn redo_candidate(&self) -> Option<Change> {
-        self.changes.get(self.done).cloned()
+        self.changes.get(self.done.get()).cloned()
     }
 
     /// Marks a redo candidate as applied.
     pub(super) const fn finish_redo(&mut self) {
-        self.done = self.done.saturating_add(1);
+        self.done = self.done.next();
     }
 
     /// Whether the last timing edit can absorb another timing nudge.
     pub(super) fn can_merge_timing(&self, chart: usize, own: bool) -> bool {
-        self.done == self.changes.len()
+        self.done.get() == self.changes.len()
             && self.saved != Some(self.done)
             && self.changes.last().is_some_and(|last| {
                 last.chart == chart
@@ -114,7 +143,7 @@ impl History {
 
     /// Whether the current document differs from the saved step.
     pub(super) const fn is_modified(&self) -> bool {
-        !matches!(self.saved, Some(saved) if saved == self.done)
+        !matches!(self.saved, Some(saved) if saved.get() == self.done.get())
     }
 
     /// Marks the current step saved.
@@ -138,8 +167,10 @@ impl History {
     }
 
     /// Folds every done step since `step` into one step when they share a chart.
-    pub(super) fn merge_since(&mut self, step: usize) {
-        let Some(steps) = self.changes.get(step..self.done) else {
+    pub(super) fn merge_since(&mut self, step: HistoryStep) {
+        let step = step.get();
+        let done = self.done.get();
+        let Some(steps) = self.changes.get(step..done) else {
             return;
         };
         let chart = steps.first().map(|change| change.chart);
@@ -147,7 +178,7 @@ impl History {
             return;
         }
         let merged = steps.len();
-        let mut drained = self.changes.drain(step..self.done);
+        let mut drained = self.changes.drain(step..done);
         let first = drained.next();
         let Some(first) = first else {
             return;
@@ -162,29 +193,29 @@ impl History {
                 edit: Edit(ops),
             },
         );
-        self.done = self.done.saturating_sub(merged.saturating_sub(1));
+        self.done = HistoryStep::new(done.saturating_sub(merged.saturating_sub(1)));
         self.saved = match self.saved {
-            Some(saved) if saved <= step => Some(saved),
-            Some(saved) if saved >= step.saturating_add(merged) => {
-                Some(saved.saturating_sub(merged.saturating_sub(1)))
-            }
+            Some(saved) if saved.get() <= step => Some(saved),
+            Some(saved) if saved.get() >= step.saturating_add(merged) => Some(HistoryStep::new(
+                saved.get().saturating_sub(merged.saturating_sub(1)),
+            )),
             _ => None,
         };
     }
 
     /// Number of applied history steps.
-    pub(super) const fn step(&self) -> usize {
+    pub(super) const fn step(&self) -> HistoryStep {
         self.done
     }
 
     /// Whether an edit can be undone.
     pub(super) const fn can_undo(&self) -> bool {
-        self.done > 0
+        self.done.get() > 0
     }
 
     /// Whether an edit can be redone.
     pub(super) const fn can_redo(&self) -> bool {
-        self.done < self.changes.len()
+        self.done.get() < self.changes.len()
     }
 }
 
@@ -302,14 +333,14 @@ impl Song {
     /// redo together: for a chord of lane keys and the holds it grows while playing. Does nothing
     /// unless the steps are two or more, all on one chart.
     pub fn merge_since(&mut self, step: usize) {
-        self.history.merge_since(step);
+        self.history.merge_since(HistoryStep::new(step));
     }
 
     /// How many steps of the history are done: where undo and redo have left the song, so
     /// state kept beside it, such as a picture not yet saved, can follow them.
     #[must_use]
     pub const fn history_step(&self) -> usize {
-        self.history.step()
+        self.history.step().get()
     }
 
     /// Whether there is an edit left to undo.

@@ -10,6 +10,44 @@ use super::notes::{note_at as object_note_at, taken as note_taken};
 )]
 use super::*;
 
+/// A chart in the document's chart list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ChartIndex(usize);
+
+impl ChartIndex {
+    /// Wraps a raw chart index at public API boundaries.
+    const fn new(index: usize) -> Self {
+        Self(index)
+    }
+
+    /// Raw index for collection access and edit records.
+    const fn get(self) -> usize {
+        self.0
+    }
+}
+
+/// Lock state requested for a layer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LayerLock {
+    /// Notes on the layer cannot be edited.
+    Locked,
+    /// Notes on the layer can be edited when the layer is shown.
+    Unlocked,
+}
+
+impl LayerLock {
+    /// Stored boolean representation in the chart format.
+    const fn is_locked(self) -> bool {
+        matches!(self, Self::Locked)
+    }
+}
+
+impl From<bool> for LayerLock {
+    fn from(locked: bool) -> Self {
+        if locked { Self::Locked } else { Self::Unlocked }
+    }
+}
+
 /// Adds a default layer to legacy charts that were saved before layers existed.
 pub(super) fn with_layers(document: ValidDocument) -> ValidDocument {
     let unlayered = document
@@ -81,15 +119,16 @@ impl Song {
     pub fn active_layer(&self) -> usize {
         self.chart_state
             .get(self.chart)
-            .map_or(0, |state| state.active_layer)
+            .map_or(LayerIndex::ZERO, |state| state.active_layer)
+            .get()
             .min(self.layers().len().saturating_sub(1))
     }
 
     /// Choose the row where subsequently placed notes go; out-of-range indices clamp.
     pub fn set_active_layer(&mut self, index: usize) {
-        let last = self.layers().len().saturating_sub(1);
+        let len = self.layers().len();
         if let Some(state) = self.chart_state.get_mut(self.chart) {
-            state.active_layer = index.min(last);
+            state.active_layer = LayerIndex::clamped(index, len);
         }
     }
 
@@ -228,6 +267,13 @@ impl Song {
     /// # Errors
     /// Refuses a missing row, read-only song or plugin rejection.
     pub fn set_layer_locked(&mut self, index: usize, locked: bool) -> Result<(), Refusal> {
+        self.set_layer_lock(LayerIndex::new(index), LayerLock::from(locked))
+    }
+
+    /// Lock or unlock a row through typed internals.
+    fn set_layer_lock(&mut self, index: LayerIndex, lock: LayerLock) -> Result<(), Refusal> {
+        let index = index.get();
+        let locked = lock.is_locked();
         if self
             .layers()
             .get(index)
@@ -342,13 +388,13 @@ impl Song {
             .get(self.chart)
             .and_then(|state| state.solo.clone());
         let views: Vec<_> = self.layers().iter().map(|row| row.view).collect();
-        let restoring = previous.as_ref().filter(|(solo, _)| *solo == index);
+        let restoring = previous.as_ref().filter(|solo| solo.layer.get() == index);
         self.edit_layers(|layers, _| {
             if index >= layers.len() {
                 return Err(Refusal::LayerName("no such layer".into()));
             }
-            if let Some((_, remembered)) = restoring {
-                for (layer, view) in layers.iter_mut().zip(remembered) {
+            if let Some(solo) = restoring {
+                for (layer, view) in layers.iter_mut().zip(&solo.views) {
                     layer.view = *view;
                 }
             } else {
@@ -366,7 +412,10 @@ impl Song {
             state.solo = if restoring.is_some() {
                 None
             } else {
-                Some((index, views))
+                Some(SoloLayer {
+                    layer: LayerIndex::new(index),
+                    views,
+                })
             };
         }
         Ok(())
@@ -431,6 +480,17 @@ impl Song {
     /// # Errors
     /// Refuses missing charts or rows, read-only songs and plugin rejections.
     pub fn copy_layer_to_chart(&mut self, index: usize, chart: usize) -> Result<usize, Refusal> {
+        self.copy_layer_to_chart_typed(LayerIndex::new(index), ChartIndex::new(chart))
+    }
+
+    /// Copy one typed source layer into one typed target chart.
+    fn copy_layer_to_chart_typed(
+        &mut self,
+        index: LayerIndex,
+        chart: ChartIndex,
+    ) -> Result<usize, Refusal> {
+        let index = index.get();
+        let chart = chart.get();
         if self.plugin().is_none() {
             return Err(Refusal::ReadOnly);
         }
