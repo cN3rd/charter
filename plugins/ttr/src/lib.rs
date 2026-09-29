@@ -27,12 +27,17 @@ pub const ID: &str = "ttr";
 
 /// A song, checked against this ruleset and every document rule when built, and unchangeable
 /// after.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Song {
+    /// Header values shared by all the song's charts.
     metadata: Metadata,
+    /// Number of ticks in one quarter-note beat.
     ticks_per_beat: TicksPerBeat,
+    /// Tempo used by charts without their own map.
     tempo: Tempo,
+    /// Song-wide section and bookmark positions.
     markers: Vec<Marker>,
+    /// Levels checked against this ruleset.
     charts: Vec<Chart>,
     /// The theme every level plays in unless it names its own.
     theme: Option<String>,
@@ -46,26 +51,26 @@ pub enum Lanes {
 }
 
 /// A song's tempo map.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Tempo {
     pub anchors: Vec<Anchor>,
     pub tempo: Bpm,
     pub changes: Vec<TempoChange>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TempoChange {
     pub tick: Tick,
     pub kind: TempoKind,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TempoKind {
     TimeSignature(TimeSignature),
 }
 
 /// One difficulty.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Chart {
     /// How many lanes the chart has, which the game calls its columns.
     pub lanes: Lanes,
@@ -91,7 +96,18 @@ pub enum Difficulty {
 }
 
 impl Difficulty {
+    /// Standard levels in ascending order.
     pub const ALL: [Self; 4] = [Self::Easy, Self::Medium, Self::Hard, Self::Extreme];
+
+    /// Zero-based place in the standard level order.
+    const fn index(self) -> usize {
+        match self {
+            Self::Easy => 0,
+            Self::Medium => 1,
+            Self::Hard => 2,
+            Self::Extreme => 3,
+        }
+    }
 
     /// The level's standard name, as Tap Tap Revenge shows it.
     #[must_use]
@@ -162,7 +178,7 @@ const PRESETS: [(&str, &[(Difficulty, &str)]); 4] = [
     ),
 ];
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Note {
     pub tick: Tick,
     pub kind: NoteKind,
@@ -201,6 +217,10 @@ pub enum Shake {
 /// Written as the ruleset version.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+#[expect(
+    clippy::error_impl_error,
+    reason = "public error type is part of the plugin API"
+)]
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("ruleset is \"{0}\", not {ID:?}")]
@@ -250,7 +270,7 @@ impl Song {
             .enumerate()
             .find_map(|(m, marker)| match &marker.kind {
                 MarkerKind::Other(key) if key.namespace().as_str() == ID => Some((m, key)),
-                _ => None,
+                MarkerKind::Other(_) | MarkerKind::Section | MarkerKind::Bookmark => None,
             });
         if let Some((m, key)) = own {
             return Err(Error::UnknownKey {
@@ -279,21 +299,25 @@ impl Song {
         Ok(song)
     }
 
+    /// Header values shared by all charts.
     #[must_use]
-    pub fn metadata(&self) -> &Metadata {
+    pub const fn metadata(&self) -> &Metadata {
         &self.metadata
     }
 
+    /// Number of ticks in one quarter-note beat.
     #[must_use]
-    pub fn ticks_per_beat(&self) -> TicksPerBeat {
+    pub const fn ticks_per_beat(&self) -> TicksPerBeat {
         self.ticks_per_beat
     }
 
+    /// Song-wide tempo map, before chart overrides.
     #[must_use]
-    pub fn tempo(&self) -> &Tempo {
+    pub const fn tempo(&self) -> &Tempo {
         &self.tempo
     }
 
+    /// Levels in this song.
     #[must_use]
     pub fn charts(&self) -> &[Chart] {
         &self.charts
@@ -327,11 +351,12 @@ impl Song {
     ///
     /// Never: [`Song::new`] checked the same document, and a song cannot change.
     #[must_use]
-    #[allow(clippy::expect_used)] // see Panics
+    #[expect(clippy::expect_used, reason = "Song::new checked the immutable song")]
     pub fn to_document(&self) -> ValidDocument {
         self.build().expect("a song was checked when built")
     }
 
+    /// Validates and writes this song using only Tap Tap Revenge data.
     fn build(&self) -> Result<ValidDocument, Error> {
         let charts = self
             .charts
@@ -375,7 +400,7 @@ impl Lanes {
     /// Where a note of `kind` sits. A shake or slice takes the lane of its direction; a down
     /// shake takes the middle lane, or both middle lanes of four. A mega tap covers every lane.
     #[must_use]
-    pub fn position(self, kind: NoteKind) -> Position {
+    pub const fn position(self, kind: NoteKind) -> Position {
         let width = self.width();
         match kind {
             NoteKind::Tap { lane } | NoteKind::Hold { lane, .. } => one_lane(lane),
@@ -400,6 +425,10 @@ impl Lanes {
 
 /// `n` lanes, for the counts this ruleset names.
 const fn lanes(n: u16) -> LaneCount {
+    #[expect(
+        clippy::unreachable,
+        reason = "only positive constant lane counts call this"
+    )]
     match LaneCount::new(n) {
         Some(lanes) => lanes,
         None => unreachable!(),
@@ -421,7 +450,8 @@ fn own(name: &str) -> Result<Kind, InvalidValue> {
     Ok(Kind::Other(Key::new(Namespace::new(ID)?, Name::new(name)?)))
 }
 
-fn one_lane(index: LaneIndex) -> Position {
+/// One-lane position starting at `index`.
+const fn one_lane(index: LaneIndex) -> Position {
     Position::Lane {
         index,
         width: LaneCount::ONE,
@@ -594,10 +624,10 @@ impl RulesetPlugin for Plugin {
             return None;
         };
         let (lane, width) = (u16::from(index), u16::from(lanes.width()));
-        let left = 2 * lane < width;
+        let left = lane.saturating_mul(2) < width;
         let kind = match id {
             CHANGE_ARROW if lane == 0 => NoteKind::Shake(Shake::Left),
-            CHANGE_ARROW if lane + 1 == width => NoteKind::Shake(Shake::Right),
+            CHANGE_ARROW if lane.saturating_add(1) == width => NoteKind::Shake(Shake::Right),
             CHANGE_ARROW => NoteKind::Shake(Shake::Down),
             CHANGE_SLICE => NoteKind::Slice(if left { Side::Left } else { Side::Right }),
             CHANGE_BIG_TAP => NoteKind::MegaTap,
@@ -643,7 +673,7 @@ impl RulesetPlugin for Plugin {
                 name: (*name).to_owned(),
                 charts: charts
                     .iter()
-                    .map(|&(level, chart)| (level as usize, chart.to_owned()))
+                    .map(|&(level, chart)| (level.index(), chart.to_owned()))
                     .collect(),
             })
             .collect();
@@ -742,15 +772,16 @@ fn read_chart(c: usize, chart: &CoreChart) -> Result<Chart, Error> {
         .iter()
         .enumerate()
         .map(|(j, object)| {
-            let at = Location::Object { chart: c, index: j };
-            reject_own_keys(&object.ext, at)?;
+            let object_at = Location::Object { chart: c, index: j };
+            reject_own_keys(&object.ext, object_at)?;
             if !object.children.is_empty() {
                 return Err(Error::Unsupported {
-                    at,
+                    at: object_at,
                     what: "child objects",
                 });
             }
-            let kind = read_note(object, lanes).ok_or(Error::UnsupportedObject { at })?;
+            let kind =
+                read_note(object, lanes).ok_or(Error::UnsupportedObject { at: object_at })?;
             Ok(Note {
                 tick: object.tick,
                 kind,
@@ -901,8 +932,13 @@ mod tests {
                 "kind": kind, "shape": "instant" })
     }
 
+    #[expect(
+        clippy::unwrap_in_result,
+        reason = "test fixture bytes always form a valid core document"
+    )]
     fn read(value: &Value) -> Result<Song, Error> {
-        Song::try_from(&ValidDocument::from_json(&serde_json::to_vec(value).unwrap()).unwrap())
+        let valid = ValidDocument::from_json(&serde_json::to_vec(value).unwrap()).unwrap();
+        Song::try_from(&valid)
     }
 
     #[test]
@@ -945,7 +981,7 @@ mod tests {
             |value: &Value| ValidDocument::from_json(&serde_json::to_vec(value).unwrap()).unwrap();
         assert_eq!(Plugin.id(), ID);
         let song = valid(&document(json!([lane_object(0, 1, 1, "tap")])));
-        assert!(Plugin.check(&song).is_ok());
+        Plugin.check(&song).unwrap();
         let plane = json!([{ "tick": 0, "position": { "plane": { "x": 0.5, "y": 0.5 } },
                              "kind": "tap", "shape": "instant" }]);
         let not_a_song = valid(&document(plane));
@@ -1207,14 +1243,14 @@ mod tests {
             json!({ "delay": 1.0 }),
             json!({ "warp": 960 }),
         ] {
-            let mut value = document(json!([]));
-            value["timing"]["events"]
+            let mut gimmick_value = document(json!([]));
+            gimmick_value["timing"]["events"]
                 .as_array_mut()
                 .unwrap()
                 .push(event(960, gimmick));
             assert!(
-                matches!(read(&value), Err(Error::Unsupported { .. })),
-                "{value}"
+                matches!(read(&gimmick_value), Err(Error::Unsupported { .. })),
+                "{gimmick_value}"
             );
         }
     }
@@ -1227,7 +1263,7 @@ mod tests {
             "events": []
         });
         let mut value = document(json!([]));
-        value["charts"][0]["timing"] = own.clone();
+        value["charts"][0]["timing"] = own;
         let song = read(&value).unwrap();
         let tempo = song.charts()[0].tempo.as_ref().unwrap();
         assert_eq!(tempo.anchors[0].seconds, Origin::try_from(0.5).unwrap());
@@ -1512,15 +1548,18 @@ mod tests {
             let mut value = document(json!([]));
             value["settings"] = json!({ "theme": bad });
             assert!(matches!(read(&value), Err(Error::Theme { .. })), "{bad}");
-            let mut value = document(json!([]));
-            value["charts"][0]["settings"] = json!({ "theme": bad });
-            assert!(matches!(read(&value), Err(Error::Theme { .. })), "{bad}");
+            let mut chart_value = document(json!([]));
+            chart_value["charts"][0]["settings"] = json!({ "theme": bad });
+            assert!(
+                matches!(read(&chart_value), Err(Error::Theme { .. })),
+                "{bad}"
+            );
         }
     }
 
     #[test]
     fn a_level_the_game_does_not_have_is_refused() {
-        assert!(Plugin.new_song(&levelled(&[("Beyond", 4)])).is_err());
+        Plugin.new_song(&levelled(&[("Beyond", 4)])).unwrap_err();
         let mut value = document(json!([]));
         value["charts"][0]["settings"] = json!({ "difficulty": "insane" });
         assert!(matches!(read(&value), Err(Error::Difficulty { .. })));
@@ -1569,10 +1608,10 @@ mod tests {
         carrying
             .ext
             .insert("swing.accent".parse().unwrap(), serde_json::json!(true));
-        let changed = Plugin
+        let carrying_change = Plugin
             .change_note("arrow", &carrying, lanes.width())
             .unwrap();
-        assert_eq!(changed.ext, carrying.ext);
+        assert_eq!(carrying_change.ext, carrying.ext);
     }
 
     #[test]
@@ -1600,8 +1639,8 @@ mod tests {
 
     #[test]
     fn a_new_song_refuses_a_lane_count_it_does_not_have_or_no_charts() {
-        assert!(Plugin.new_song(&new_song(3, &["Easy"])).is_err());
-        assert!(Plugin.new_song(&new_song(0, &[])).is_err());
+        Plugin.new_song(&new_song(3, &["Easy"])).unwrap_err();
+        Plugin.new_song(&new_song(0, &[])).unwrap_err();
     }
 }
 
