@@ -193,25 +193,29 @@ pub(crate) fn inspector(
     commands: &mut Vec<Command>,
 ) {
     egui::ScrollArea::vertical().show(ui, |ui| {
-        if let Some((fitted, about)) = window.preview.clone() {
+        if let Some((fitted, about)) = &window.preview {
             ui.label(RichText::new("FIT PREVIEW").small().strong());
             ui.label(about);
             ui.label(format!(
                 "error {:.1} → {:.1} ms",
                 fitted.before_ms, fitted.after_ms
             ));
-            ui.horizontal(|ui| {
-                if frame.editable && ui.add(style::primary("Apply")).clicked() {
-                    commands.push(Command::Edit(Edit::Repin {
-                        pins: fitted.pins.clone(),
-                        tail: fitted.tail,
-                    }));
-                    window.preview = None;
-                }
-                if ui.button("Discard").clicked() {
-                    window.preview = None;
-                }
-            });
+            let (apply, discard) = ui
+                .horizontal(|ui| {
+                    let apply = frame.editable && ui.add(style::primary("Apply")).clicked();
+                    let discard = ui.button("Discard").clicked();
+                    (apply, discard)
+                })
+                .inner;
+            if apply && let Some((accepted, _)) = window.preview.take() {
+                commands.push(Command::Edit(Edit::Repin {
+                    pins: accepted.pins,
+                    tail: accepted.tail,
+                }));
+            }
+            if discard {
+                window.preview = None;
+            }
             ui.separator();
         }
         let index = window
@@ -396,12 +400,13 @@ fn selection(ui: &mut Ui, window: &TimingWindow, frame: &Frame<'_>) {
             .small()
             .strong(),
     );
-    let chosen: Vec<Pin> = frame
+    let chosen = frame
         .pins
-        .iter()
-        .filter(|pin| pin.tick >= first && pin.tick <= last)
-        .copied()
-        .collect();
+        .get(
+            frame.pins.partition_point(|pin| pin.tick < first)
+                ..frame.pins.partition_point(|pin| pin.tick <= last),
+        )
+        .unwrap_or_default();
     let tempos: Vec<f64> = chosen
         .windows(2)
         .filter_map(|pair| match pair {

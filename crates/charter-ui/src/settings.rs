@@ -278,17 +278,17 @@ impl Settings {
         ) else {
             return "{}".to_owned();
         };
+        let note_ticks = mine.get("note_ticks").cloned();
         let mut changed: serde_json::Map<String, Value> = mine
-            .clone()
             .into_iter()
             .filter(|(key, value)| defaults.get(key) != Some(value))
             .collect();
         // A tick sound kept alone reads as the ticks on, as older versions kept them, so the
         // switch is kept with it.
         if changed.contains_key("tick_sound")
-            && let Some(on) = mine.get("note_ticks")
+            && let Some(on) = note_ticks
         {
-            changed.insert("note_ticks".to_owned(), on.clone());
+            changed.insert("note_ticks".to_owned(), on);
         }
         Value::Object(changed).to_string()
     }

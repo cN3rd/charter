@@ -194,13 +194,12 @@ impl Song {
             selection: BTreeSet::new(),
             revision: 0,
         };
-        let snaps: Vec<_> = song.snaps().collect();
-        song.snap = snaps
-            .iter()
-            .copied()
+        let snap = song
+            .snaps()
             .find(|snap| snap.get() == DEFAULT_SNAP)
-            .or_else(|| snaps.first().copied())
+            .or_else(|| song.snaps().next())
             .unwrap_or(NonZeroU16::MIN);
+        song.snap = snap;
         song
     }
 
@@ -1312,21 +1311,21 @@ impl Song {
         let Some(chart) = self.chart() else {
             return Vec::new();
         };
-        let selected: Vec<&Object> = chart
+        let mut selected = chart
             .objects
             .iter()
-            .filter(|object| self.is_selected(object))
-            .collect();
-        let Some(first) = selected.first().map(|object| i64::from(object.tick)) else {
+            .filter(|object| self.is_selected(object));
+        let Some(first) = selected.next() else {
             return Vec::new();
         };
+        let origin = i64::from(first.tick);
         let back = |tick: Tick| {
-            i32::try_from(i64::from(tick).saturating_sub(first))
+            i32::try_from(i64::from(tick).saturating_sub(origin))
                 .map(Tick::new)
                 .map_err(|_out_of_range| Refusal::NotWhole)
         };
-        selected
-            .into_iter()
+        std::iter::once(first)
+            .chain(selected)
             .filter_map(|object| shifted_at(object, &back).ok())
             .collect()
     }
@@ -1518,15 +1517,14 @@ impl Song {
         if steps.len() < 2 || steps.iter().any(|change| Some(change.chart) != chart) {
             return;
         }
-        let ops = steps
-            .iter()
-            .flat_map(|change| change.edit.0.iter().cloned())
-            .collect();
         let merged = steps.len();
-        let first = self.history.splice(step..self.done, []).next();
+        let mut drained = self.history.drain(step..self.done);
+        let first = drained.next();
         let Some(first) = first else {
             return;
         };
+        let mut ops = first.edit.0;
+        ops.extend(drained.flat_map(|change| change.edit.0));
         self.history.insert(
             step,
             Change {

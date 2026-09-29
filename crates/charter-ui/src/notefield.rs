@@ -356,21 +356,19 @@ fn handle_at(song: &Song, field: &Field, pos: Pos2) -> Option<Gesture> {
     let timing = song.timing();
     let nearest = |ticks: &mut dyn Iterator<Item = (usize, Tick)>| {
         ticks
-            .map(|(index, tick)| (index, (view.y(timing.time_at(tick)) - pos.y).abs()))
+            .map(|(index, tick)| ((index, tick), (view.y(timing.time_at(tick)) - pos.y).abs()))
             .filter(|(_, off)| *off <= GRAB)
             .min_by(|a, b| a.1.total_cmp(&b.1))
-            .map(|(index, _)| index)
+            .map(|(position, _)| position)
     };
     if columns.timing.contains(pos.x) {
-        let points: Vec<Tick> = timing
+        let mut points = timing
             .events
             .chunk_by(|a, b| a.tick == b.tick)
             .filter_map(|point| point.first().map(|event| event.tick))
             .chain(timing.anchors.iter().map(|anchor| anchor.tick))
-            .collect();
-        return nearest(&mut points.iter().copied().enumerate())
-            .and_then(|index| points.get(index).copied())
-            .map(|from| Gesture::MoveTiming { from });
+            .enumerate();
+        return nearest(&mut points).map(|(_, from)| Gesture::MoveTiming { from });
     }
     if columns.ruler.contains(pos.x) {
         let markers = &song.document().document().markers;
@@ -378,7 +376,7 @@ fn handle_at(song: &Song, field: &Field, pos: Pos2) -> Option<Gesture> {
             .iter()
             .enumerate()
             .map(|(index, marker)| (index, marker.tick));
-        return nearest(&mut ticks).map(|index| Gesture::MoveMarker { index });
+        return nearest(&mut ticks).map(|(index, _)| Gesture::MoveMarker { index });
     }
     None
 }

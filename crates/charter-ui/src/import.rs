@@ -198,12 +198,7 @@ fn body(
 /// What `imported` holds, and what its format had that it leaves out.
 fn summary(ui: &mut Ui, imported: &ImportedTiming) {
     let events = &imported.timing.events;
-    let tempos: Vec<_> = imported
-        .timing
-        .anchors
-        .iter()
-        .map(|_| imported.timing.tempo)
-        .collect();
+    let tempo_points = imported.timing.anchors.len();
     let meters = events
         .iter()
         .filter(|event| matches!(event.kind, TimingKind::TimeSignature(_)))
@@ -219,8 +214,12 @@ fn summary(ui: &mut Ui, imported: &ImportedTiming) {
         ui.label(format!("{} ms", trimmed(offset)));
         ui.end_row();
         ui.weak("Tempo");
-        let first = tempos.first().map_or_else(String::new, ToString::to_string);
-        let changes = match tempos.len() {
+        let first = if tempo_points == 0 {
+            String::new()
+        } else {
+            imported.timing.tempo.to_string()
+        };
+        let changes = match tempo_points {
             0 | 1 => "no changes".to_owned(),
             2 => "1 change".to_owned(),
             count => format!("{} changes", count.saturating_sub(1)),

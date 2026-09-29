@@ -72,6 +72,7 @@ pub fn log_mel(samples: &[f32]) -> Vec<[f32; BINS]> {
     let fft = FftPlanner::<f64>::new().plan_fft_forward(WINDOW);
     let frames = samples.len().div_euclid(HOP).saturating_add(1);
     let mut buffer = vec![Complex::new(0.0, 0.0); WINDOW];
+    let mut magnitudes = vec![0.0; WINDOW.div_euclid(2).saturating_add(1)];
     let mut spect = Vec::with_capacity(frames);
     for frame in 0..frames {
         let start = frame.saturating_mul(HOP);
@@ -85,12 +86,9 @@ pub fn log_mel(samples: &[f32]) -> Vec<[f32; BINS]> {
             *slot = Complex::new(f64::from(*sample) * weight, 0.0);
         }
         fft.process(&mut buffer);
-        let magnitudes: Vec<f64> = buffer
-            .get(..=WINDOW.div_euclid(2))
-            .unwrap_or_default()
-            .iter()
-            .map(|bin| bin.norm() / energy)
-            .collect();
+        for (magnitude, bin) in magnitudes.iter_mut().zip(&buffer) {
+            *magnitude = bin.norm() / energy;
+        }
         let mut row = [0.0; BINS];
         for (value, band) in row.iter_mut().zip(&bank) {
             let power: f64 = band.iter().zip(&magnitudes).map(|(w, m)| w * m).sum();

@@ -109,7 +109,7 @@ impl Decoder for Stretched {
 
     fn decode(&mut self) -> Result<Vec<Frame>, Infallible> {
         self.feed();
-        let mut out = vec![0.0; CHUNK.saturating_mul(2)];
+        let mut out = [0.0; CHUNK * 2];
         self.engine.processor.process(&mut out);
         let (frames, _) = out.as_chunks::<2>();
         Ok(frames

@@ -1310,35 +1310,31 @@ fn clamp_audio(
 ) -> f64 {
     const MARGIN: f64 = 0.001;
     let moving = moving(window, tick);
-    let times: Vec<(Tick, f64)> = frame
-        .pins
-        .iter()
-        .map(|pin| (pin.tick, pin.seconds))
-        .collect();
     let (Some(&first), Some(&last)) = (moving.first(), moving.last()) else {
         return to;
     };
     let seconds = |at: Tick| {
-        times
+        frame
+            .pins
             .iter()
-            .find(|(candidate, _)| *candidate == at)
-            .map(|(_, s)| *s)
+            .find(|pin| pin.tick == at)
+            .map(|pin| pin.seconds)
     };
     let (Some(first_at), Some(last_at)) = (seconds(first), seconds(last)) else {
         return to;
     };
     let mut delta = to - from;
-    if let Some(&(before, at)) = times.iter().rev().find(|(t, _)| *t < first)
-        && first_at + delta < at + MARGIN
+    if let Some(before) = frame.pins.iter().rev().find(|pin| pin.tick < first)
+        && first_at + delta < before.seconds + MARGIN
     {
-        delta = at + MARGIN - first_at;
-        window.pulse = Some((before, frame.now));
+        delta = before.seconds + MARGIN - first_at;
+        window.pulse = Some((before.tick, frame.now));
     }
-    if let Some(&(after, at)) = times.iter().find(|(t, _)| *t > last)
-        && last_at + delta > at - MARGIN
+    if let Some(after) = frame.pins.iter().find(|pin| pin.tick > last)
+        && last_at + delta > after.seconds - MARGIN
     {
-        delta = at - MARGIN - last_at;
-        window.pulse = Some((after, frame.now));
+        delta = after.seconds - MARGIN - last_at;
+        window.pulse = Some((after.tick, frame.now));
     }
     from + delta
 }
