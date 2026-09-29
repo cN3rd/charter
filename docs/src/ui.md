@@ -413,6 +413,18 @@ and the notes over a waveform that stays put.
   song comes back unsaved, for the file it belongs to. Saves write beside the song and move over it,
   without forcing the write to disk, since some filesystems refuse that; the autosave is the cover
   for a crash.
+- Charter's data folder, `~/.local/share/charter` on Linux and `%APPDATA%\charter\data` on
+  Windows, holds the recovery file, `recovery.json`, and the settings, in eframe's `app.ron`, only
+  those changed from their defaults; the Autosave page says where it is.
+- Snapshots are separate from the recovery file: every few minutes, 5 unless the Autosave page
+  says otherwise, a changed song is copied, dated in UTC as `Song 2026-09-29 05.40.12 UTC.json`, into
+  a snapshots folder, `snapshots/<song>` in the data folder or a folder chosen there, and into an
+  `autosaves` folder beside a saved song's file, each switched on its own and both off to start.
+  A song unchanged since its last copy is not copied again, and each folder keeps the newest 20
+  copies of a song unless the page says otherwise, removing only that song's dated copies.
+- File › Open recent lists the last ten songs opened or saved, the latest first, and clears them;
+  a song that no longer opens leaves the list, and Restore defaults keeps it. Settings… sits at the
+  bottom of Edit, and the demo song in Help.
 
 ## Open for the next pass
 

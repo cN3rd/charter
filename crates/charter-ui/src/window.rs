@@ -36,6 +36,23 @@ pub enum Request {
     },
     /// Ask for a song to open.
     Open,
+    /// Read the song at `path` and pass it to [`Window::open`], or say why with
+    /// [`Window::refuse`]: a song opened before.
+    OpenPath {
+        path: PathBuf,
+    },
+    /// Write `bytes`, the song as its file holds it, as a dated copy named after `name` into each
+    /// of `folders`, keeping the newest `kept` copies of it there; say what fails with
+    /// [`Window::snapshot_failed`].
+    Snapshot {
+        name: String,
+        bytes: Vec<u8>,
+        folders: Vec<PathBuf>,
+        kept: u32,
+    },
+    /// Ask the user for a folder to keep snapshots in, and pass it to
+    /// [`Window::use_snapshot_folder`].
+    ChooseSnapshotFolder,
     /// Keep `bytes`, the song's unsaved changes, where the next run finds them, in place of any
     /// kept before. The host passes them to [`Window::recover`] when it starts, and says through
     /// [`Window::autosave_failed`] if they could not be kept.
@@ -340,6 +357,10 @@ pub(crate) enum Action {
     PasteHere(Tick),
     /// Asks the host for a song to open.
     Open,
+    /// Opens a song opened before.
+    OpenRecent(PathBuf),
+    /// Forgets the songs opened before.
+    ClearRecent,
     /// Saves the song to its file, or asks where when it has none.
     Save,
     /// Asks where to save the song.
@@ -563,6 +584,12 @@ pub struct Window {
     restored_artwork: Option<Vec<u8>>,
     /// Pictures chosen but not saved whose names an undo took away, until another song opens.
     parked: Vec<Artwork>,
+    /// Charter's data folder, where snapshots go by default, when the host has one.
+    data_folder: Option<PathBuf>,
+    /// When the next snapshot of the changed song is due, on the frame clock.
+    snapshot_due: Option<f64>,
+    /// The revision of the song last copied, or opened, so an unchanged song is not copied.
+    snapshotted: Option<u64>,
     /// Whether the audio playing was asked to keep its pitch.
     played_pitch: bool,
     /// Where the menu's paste goes, and how many frames are left to wait for the clipboard.
@@ -657,6 +684,7 @@ impl Window {
                     song.mark_saved();
                 }
                 self.audio_file = None;
+                self.remember(&path);
                 self.path = Some(path);
                 if let Some(artwork) = &mut self.artwork {
                     artwork.saved();
@@ -1629,6 +1657,88 @@ impl Window {
     /// Says that the file at `path` did not open, and why.
     pub fn refuse(&mut self, path: &Path, why: &dyn std::fmt::Display) {
         self.failure = Some(format!("{} did not open: {why}", path.display()));
+        // A song that no longer opens leaves the recent list.
+        self.settings.recent.retain(|recent| recent != path);
+    }
+
+    /// Takes the folder the user chose for snapshots.
+    pub fn use_snapshot_folder(&mut self, folder: &Path) {
+        self.settings.snapshot_folder = Some(folder.to_path_buf());
+        self.settings.snapshots_in_folder = true;
+    }
+
+    /// Takes why a snapshot could not be written.
+    pub fn snapshot_failed(&mut self, why: &str) {
+        self.failure = Some(format!("Snapshot failed: {why}"));
+    }
+
+    /// This window keeping what the host works out, such as the default snapshot folder, in
+    /// `folder`, charter's data folder, which the settings name.
+    #[must_use]
+    pub fn with_data_folder(self, folder: PathBuf) -> Self {
+        Self {
+            data_folder: Some(folder),
+            ..self
+        }
+    }
+
+    /// Puts `path` first among the songs opened before, keeping the latest [`RECENT`].
+    fn remember(&mut self, path: &Path) {
+        let recent = &mut self.settings.recent;
+        recent.retain(|recent| recent != path);
+        recent.insert(0, path.to_path_buf());
+        recent.truncate(RECENT);
+    }
+
+    /// Asks the host for a dated copy of the open song once it has changed for the snapshot wait
+    /// since the last copy, into each folder the settings name: the snapshot folder, in a folder
+    /// named for the song, and an `autosaves` folder beside a saved song's file.
+    fn snapshot(&mut self, ctx: &egui::Context) {
+        let Some(song) = &self.song else {
+            return;
+        };
+        let revision = song.revision();
+        let Some(after) = self.settings.snapshot_after() else {
+            self.snapshot_due = None;
+            return;
+        };
+        if self.snapshotted == Some(revision) {
+            return;
+        }
+        let now = ctx.input(|input| input.time);
+        let due = *self.snapshot_due.get_or_insert(now + after);
+        if now < due {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(due - now));
+            return;
+        }
+        self.snapshot_due = None;
+        self.snapshotted = Some(revision);
+        let name = self.file_name(song);
+        let name = name.strip_suffix(".json").unwrap_or(&name).to_owned();
+        let mut folders = Vec::new();
+        if self.settings.snapshots_in_folder {
+            let global = self
+                .settings
+                .snapshot_folder
+                .clone()
+                .or_else(|| self.data_folder.as_ref().map(|data| data.join("snapshots")));
+            folders.extend(global.map(|folder| folder.join(&name)));
+        }
+        if self.settings.snapshots_beside_song {
+            folders.extend(self.song_folder().map(|folder| folder.join("autosaves")));
+        }
+        if folders.is_empty() {
+            return;
+        }
+        match song.document().to_json() {
+            Ok(bytes) => self.requests.push(Request::Snapshot {
+                name,
+                bytes,
+                folders,
+                kept: self.settings.snapshots_kept(),
+            }),
+            Err(error) => self.failure = Some(format!("Snapshot failed: {error}")),
+        }
     }
 
     /// Opens the demo song, first asking whether to save unsaved changes to the song open.
@@ -1675,7 +1785,13 @@ impl Window {
                 self.new_song = None;
                 self.song = Some(*song);
                 self.import.invalidate();
+                if let Some(path) = &path {
+                    self.remember(path);
+                }
                 self.path = path;
+                // A song opened is not copied until it changes.
+                self.snapshotted = self.song.as_ref().map(Song::revision);
+                self.snapshot_due = None;
                 self.zoom = Zoom::START.by(self.settings.zoom / 100.0);
                 self.failure = None;
                 self.placed = false;
@@ -1723,6 +1839,10 @@ impl Window {
         match *action {
             Action::OpenDemo => self.open_demo(),
             Action::Open => self.requests.push(Request::Open),
+            Action::OpenRecent(ref path) => {
+                self.requests.push(Request::OpenPath { path: path.clone() });
+            }
+            Action::ClearRecent => self.settings.recent.clear(),
             Action::Save => self.saving = Some(Saving::InPlace),
             Action::SaveAs => self.saving = Some(Saving::Elsewhere),
             Action::Settings => self.settings_open = !self.settings_open,
@@ -1914,6 +2034,8 @@ impl Window {
             | Action::ChooseArtwork
             | Action::Here(..)
             | Action::PasteHere(_)
+            | Action::OpenRecent(_)
+            | Action::ClearRecent
             | Action::NudgeRate(_)
             | Action::SetRate(_)
             | Action::SetVolumes(_)
@@ -2155,7 +2277,13 @@ impl Window {
             .show(ui, |ui| {
                 let importable = import::offered(self.plugins);
                 let findable = self.audio_file().is_some() && self.finding == Finding::Idle;
-                panels::menu_bar(ui, song, (playing, importable, findable), &mut actions);
+                let recent = &self.settings.recent;
+                panels::menu_bar(
+                    ui,
+                    (song, recent),
+                    (playing, importable, findable),
+                    &mut actions,
+                );
             });
         let sounds = (
             self.settings.metronome,
@@ -2303,7 +2431,16 @@ impl Window {
                     None => panels::empty(ui, self.no_drops, &mut actions),
                 }
             });
-        let asked = settings::show(ui.ctx(), &mut self.settings, &mut self.settings_open);
+        let data_folder = self.data_folder.clone();
+        let asked = settings::show(
+            ui.ctx(),
+            &mut self.settings,
+            &mut self.settings_open,
+            data_folder.as_deref(),
+        );
+        if asked == Some(settings::Asked::ChooseSnapshotFolder) {
+            self.requests.push(Request::ChooseSnapshotFolder);
+        }
         if asked == Some(settings::Asked::Calibrate) {
             self.calibration.open = true;
         }
@@ -2419,6 +2556,7 @@ impl Window {
             self.save(saving);
         }
         self.autosave(ui.ctx());
+        self.snapshot(ui.ctx());
         let title = self.title();
         if title != self.shown_title {
             ui.ctx()
@@ -2510,6 +2648,9 @@ fn stretch(song: &mut Song, holding: &[(LaneIndex, Tick)]) -> Option<String> {
 // click from the next play; schedule them live if that gets in the way of recording.
 /// The tones `settings` ask for over the open chart of `song`, playing from `from` seconds to
 /// `until`: a tick on each note, and the metronome on each beat.
+/// How many songs opened before the File menu offers.
+const RECENT: usize = 10;
+
 /// Frames the menu's paste waits for the clipboard's text before pasting the notes copied last.
 const PASTE_WAIT: u8 = 3;
 
@@ -4277,7 +4418,7 @@ mod tests {
     #[test]
     fn a_save_that_fails_leaves_everything_as_it_was() {
         let mut harness = edited_four_taps();
-        harness.get_by_label("File").click();
+        harness.get_by_label("Help").click();
         harness.run();
         harness.get_by_label("Open the demo song").click();
         harness.run();
@@ -4337,9 +4478,9 @@ mod tests {
     }
 
     #[test]
-    fn the_settings_window_opens_from_the_file_menu_and_with_ctrl_comma() {
+    fn the_settings_window_opens_from_the_edit_menu_and_with_ctrl_comma() {
         let mut harness = editable_demo();
-        harness.get_by_label("File").click();
+        harness.get_by_label("Edit").click();
         harness.run();
         harness.get_by_label_contains("Settings…").click();
         harness.run();
@@ -4392,7 +4533,7 @@ mod tests {
     }
 
     #[test]
-    fn restore_defaults_puts_every_setting_back_but_the_calibration() {
+    fn restore_defaults_puts_every_setting_back_but_the_calibration_and_recent_songs() {
         let mut app = Window::new(PLUGINS).with_settings(Settings {
             metronome: true,
             tuned_lanes: true,
@@ -4408,6 +4549,7 @@ mod tests {
         harness.run();
         let calibrated = Settings {
             input_latency_ms: 25.0,
+            recent: vec![PathBuf::from("/songs/four.json")],
             ..Settings::default()
         };
         assert_eq!(harness.state().settings(), &calibrated);
@@ -7187,6 +7329,102 @@ mod tests {
         let mut app = Window::new(PLUGINS).with_settings(settings);
         app.open(Path::new("four.json"), &four_taps());
         window(app)
+    }
+
+    fn snapshots(harness: &mut Harness<'_, Window>) -> Vec<(String, Vec<PathBuf>)> {
+        let requests = harness.state_mut().take_requests();
+        requests
+            .into_iter()
+            .filter_map(|request| match request {
+                Request::Snapshot { name, folders, .. } => Some((name, folders)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_changed_song_is_copied_each_wait_into_both_folders_and_not_again_unchanged() {
+        let mut app = Window::new(PLUGINS)
+            .with_settings(Settings {
+                snapshots_in_folder: true,
+                snapshots_beside_song: true,
+                snapshot_minutes: 2,
+                ..Settings::default()
+            })
+            .with_data_folder(PathBuf::from("/data"));
+        app.open(Path::new("/songs/Four/Four.json"), &four_taps());
+        let mut harness = window(app);
+        at_time(&mut harness, 0.0);
+        at_time(&mut harness, 500.0);
+        assert_eq!(
+            snapshots(&mut harness),
+            [],
+            "an unchanged song is not copied"
+        );
+        harness.key_press(egui::Key::Num4);
+        at_time(&mut harness, 501.0);
+        at_time(&mut harness, 600.0);
+        assert_eq!(snapshots(&mut harness), [], "two minutes have not passed");
+        at_time(&mut harness, 622.0);
+        let folders = vec![
+            PathBuf::from("/data/snapshots/Four"),
+            PathBuf::from("/songs/Four/autosaves"),
+        ];
+        assert_eq!(snapshots(&mut harness), [("Four".to_owned(), folders)]);
+        at_time(&mut harness, 900.0);
+        assert_eq!(snapshots(&mut harness), [], "nothing changed since");
+    }
+
+    #[test]
+    fn a_chosen_snapshot_folder_is_used_and_an_unsaved_song_has_no_folder_beside_it() {
+        let mut harness = created();
+        harness
+            .state_mut()
+            .use_snapshot_folder(Path::new("/backups"));
+        harness.state_mut().settings.snapshots_beside_song = true;
+        at_time(&mut harness, 100.0);
+        harness.key_press(egui::Key::Num1);
+        at_time(&mut harness, 101.0);
+        at_time(&mut harness, 500.0);
+        let taken = snapshots(&mut harness);
+        let [(name, folders)] = taken.as_slice() else {
+            panic!("one snapshot, got {taken:?}");
+        };
+        assert_eq!(folders, &[PathBuf::from("/backups").join(name)]);
+    }
+
+    #[test]
+    fn songs_opened_and_saved_are_remembered_latest_first_and_open_again() {
+        let mut harness = four_taps_at("/songs/a.json");
+        harness
+            .state_mut()
+            .open(Path::new("/songs/b.json"), &four_taps());
+        harness.run();
+        harness
+            .state_mut()
+            .saved(Saved::To(PathBuf::from("/songs/c.json")));
+        harness.run();
+        let recent = |harness: &Harness<'_, Window>| harness.state().settings().recent.clone();
+        let paths = ["/songs/c.json", "/songs/b.json", "/songs/a.json"].map(PathBuf::from);
+        assert_eq!(recent(&harness), paths);
+        harness.get_by_label("File").click();
+        harness.run();
+        harness.get_by_label_contains("Open recent").click();
+        harness.run();
+        harness.get_by_label_contains("b.json").click();
+        harness.run();
+        assert_eq!(
+            harness.state_mut().take_requests(),
+            [Request::OpenPath {
+                path: PathBuf::from("/songs/b.json")
+            }]
+        );
+        harness
+            .state_mut()
+            .refuse(Path::new("/songs/a.json"), &"it is not there");
+        assert_eq!(recent(&harness).len(), 2);
+        harness.state_mut().apply(Action::ClearRecent);
+        assert_eq!(recent(&harness), Vec::<PathBuf>::new());
     }
 
     #[test]

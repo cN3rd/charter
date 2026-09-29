@@ -101,6 +101,20 @@ pub struct Settings {
     pub autosave: bool,
     /// How long unsaved changes wait before they are autosaved, in seconds.
     pub autosave_seconds: u32,
+    /// Whether a timestamped copy of a changed song is kept in the snapshot folder.
+    pub snapshots_in_folder: bool,
+    /// Where those copies go, each song in a folder of its own; none for `snapshots` in charter's
+    /// data folder.
+    pub snapshot_folder: Option<std::path::PathBuf>,
+    /// Whether a timestamped copy of a changed song is kept in an `autosaves` folder beside it,
+    /// once it has been saved.
+    pub snapshots_beside_song: bool,
+    /// How often a changed song is copied, in minutes.
+    pub snapshot_minutes: u32,
+    /// How many copies of a song each folder keeps, the oldest going first.
+    pub snapshots_kept: u32,
+    /// The songs opened or saved last, the latest first.
+    pub recent: Vec<std::path::PathBuf>,
     /// Whether the song panel shows beside the notefield.
     pub song_panel: bool,
     /// Whether the notefield draws the audio's waveform beside the lanes.
@@ -148,6 +162,12 @@ impl Default for Settings {
             volumes: Volumes::default(),
             autosave: true,
             autosave_seconds: 30,
+            snapshots_in_folder: false,
+            snapshot_folder: None,
+            snapshots_beside_song: false,
+            snapshot_minutes: 5,
+            snapshots_kept: 20,
+            recent: Vec::new(),
             song_panel: true,
             waveform: true,
             frequencies: false,
@@ -169,6 +189,8 @@ pub enum Asked {
     Preview(Kit),
     /// Open the latency calibration.
     Calibrate,
+    /// Ask the user for a folder to keep snapshots in.
+    ChooseSnapshotFolder,
 }
 
 /// The grid of beats alone.
@@ -220,6 +242,10 @@ fn on_or_sound<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<bool
         Kept::Sound(sound) => sound != "off",
     })
 }
+
+/// The shortest and longest waits between snapshots, in minutes, and the most copies kept.
+const SNAPSHOT_MINUTES: (u32, u32) = (1, 120);
+const SNAPSHOTS_KEPT: (u32, u32) = (1, 500);
 
 /// The shortest and longest autosave waits, in seconds.
 const AUTOSAVE_SECONDS: (u32, u32) = (5, 600);
@@ -278,6 +304,23 @@ impl Settings {
             }
         }
         serde_json::from_value(Value::Object(taken)).unwrap_or_default()
+    }
+
+    /// How long a changed song waits between snapshots, in seconds, kept to a range; none when
+    /// neither snapshot is on.
+    pub(crate) fn snapshot_after(&self) -> Option<f64> {
+        (self.snapshots_in_folder || self.snapshots_beside_song).then(|| {
+            f64::from(
+                self.snapshot_minutes
+                    .clamp(SNAPSHOT_MINUTES.0, SNAPSHOT_MINUTES.1),
+            ) * 60.0
+        })
+    }
+
+    /// How many snapshots of a song each folder keeps, kept to a range.
+    pub(crate) fn snapshots_kept(&self) -> u32 {
+        self.snapshots_kept
+            .clamp(SNAPSHOTS_KEPT.0, SNAPSHOTS_KEPT.1)
     }
 
     /// How long unsaved changes wait before they are autosaved, in seconds, kept to a range
@@ -353,7 +396,12 @@ impl Page {
 /// The settings window, while `open` is set: a sidebar of pages and the page chosen. Choices
 /// take effect as they are made.
 /// Draws the settings window while `open`, and says which metronome to preview, if one.
-pub fn show(ctx: &egui::Context, settings: &mut Settings, open: &mut bool) -> Option<Asked> {
+pub fn show(
+    ctx: &egui::Context,
+    settings: &mut Settings,
+    open: &mut bool,
+    data_folder: Option<&std::path::Path>,
+) -> Option<Asked> {
     let page_id = egui::Id::new("settings page");
     let mut page: Page = ctx.data(|data| data.get_temp(page_id)).unwrap_or_default();
     if !*open {
@@ -427,7 +475,9 @@ pub fn show(ctx: &egui::Context, settings: &mut Settings, open: &mut bool) -> Op
                                     Page::Editing => editing(ui, settings),
                                     Page::Display => display(ui, settings),
                                     Page::Sounds => *preview = sounds(ui, settings),
-                                    Page::Autosave => autosave(ui, settings),
+                                    Page::Autosave => {
+                                        *preview = autosave(ui, settings, data_folder);
+                                    }
                                 });
                         });
                     });
@@ -455,9 +505,11 @@ fn header_buttons(ui: &mut egui::Ui, settings: &mut Settings, open: &mut bool) {
     let tip = "Every setting on every page back to how charter starts, but the latency \
         calibration, which measures this computer";
     if quiet_icon(ui, icon::ARROW_COUNTER_CLOCKWISE, "Restore defaults", tip).clicked() {
+        // The calibration measures this computer, and the recent songs are history, not choices.
         *settings = Settings {
             audio_latency_ms: settings.audio_latency_ms,
             input_latency_ms: settings.input_latency_ms,
+            recent: std::mem::take(&mut settings.recent),
             ..Settings::default()
         };
     }
@@ -774,7 +826,13 @@ pub(crate) fn volume(ui: &mut egui::Ui, gain: &mut Gain) -> egui::Response {
     response
 }
 
-fn autosave(ui: &mut egui::Ui, settings: &mut Settings) {
+/// The autosave page: the crash-recovery file, then snapshots. Says when the user asked to choose
+/// the snapshot folder. `data_folder` is charter's own, when the host has one.
+fn autosave(
+    ui: &mut egui::Ui,
+    settings: &mut Settings,
+    data_folder: Option<&std::path::Path>,
+) -> Option<Asked> {
     let name = "Autosave unsaved changes";
     row(
         ui,
@@ -795,6 +853,80 @@ fn autosave(ui: &mut egui::Ui, settings: &mut Settings) {
             ui.add_enabled(settings.autosave, wait).labelled_by(caption);
         },
     );
+    if let Some(folder) = data_folder {
+        ui.weak(format!(
+            "The recovery file and these settings are kept in {}.",
+            folder.display()
+        ));
+    }
+    ui.add_space(10.0);
+    snapshots(ui, settings, data_folder)
+}
+
+/// The autosave page's snapshot rows: where timestamped copies of a changed song go, how often,
+/// and how many are kept. Says when the user asked to choose the folder.
+fn snapshots(
+    ui: &mut egui::Ui,
+    settings: &mut Settings,
+    data_folder: Option<&std::path::Path>,
+) -> Option<Asked> {
+    let mut asked = None;
+    let name = "Snapshots in a folder";
+    let about =
+        "Every few minutes, a dated copy of a changed song, each song in a folder of its own.";
+    row(ui, name, about, |ui, _| {
+        switch(ui, &mut settings.snapshots_in_folder, name);
+    });
+    let shown = settings.snapshot_folder.as_deref().map_or_else(
+        || {
+            data_folder.map_or_else(
+                || "charter's data folder".to_owned(),
+                |data| data.join("snapshots").display().to_string(),
+            )
+        },
+        |folder| folder.display().to_string(),
+    );
+    row(ui, "Snapshot folder", &shown, |ui, _| {
+        let chooser = ui.add_enabled(settings.snapshots_in_folder, egui::Button::new("Choose…"));
+        if chooser.clicked() {
+            asked = Some(Asked::ChooseSnapshotFolder);
+        }
+        let custom = settings.snapshot_folder.is_some();
+        if ui
+            .add_enabled(custom, egui::Button::new("Default"))
+            .clicked()
+        {
+            settings.snapshot_folder = None;
+        }
+    });
+    let name = "Snapshots beside the song";
+    let about = "The same copies in an autosaves folder beside the song's file, once it is saved.";
+    row(ui, name, about, |ui, _| {
+        switch(ui, &mut settings.snapshots_beside_song, name);
+    });
+    let on = settings.snapshots_in_folder || settings.snapshots_beside_song;
+    row(
+        ui,
+        "Snapshot every",
+        "A song unchanged since its last copy is not copied again.",
+        |ui, caption| {
+            let every = egui::DragValue::new(&mut settings.snapshot_minutes)
+                .range(SNAPSHOT_MINUTES.0..=SNAPSHOT_MINUTES.1)
+                .suffix(" min");
+            ui.add_enabled(on, every).labelled_by(caption);
+        },
+    );
+    row(
+        ui,
+        "Snapshots kept",
+        "Each folder keeps this many of a song, the oldest going first.",
+        |ui, caption| {
+            let kept = egui::DragValue::new(&mut settings.snapshots_kept)
+                .range(SNAPSHOTS_KEPT.0..=SNAPSHOTS_KEPT.1);
+            ui.add_enabled(on, kept).labelled_by(caption);
+        },
+    );
+    asked
 }
 
 /// A drop-down of the grids the notefield draws.
@@ -826,7 +958,7 @@ mod tests {
             .with_size(egui::vec2(400.0, 300.0))
             .build_ui_state(
                 |ui, (settings, open): &mut (Settings, bool)| {
-                    show(ui.ctx(), settings, open);
+                    show(ui.ctx(), settings, open, None);
                 },
                 (Settings::default(), true),
             );
@@ -941,6 +1073,12 @@ mod tests {
             },
             autosave: false,
             autosave_seconds: 90,
+            snapshots_in_folder: true,
+            snapshot_folder: Some("/snapshots".into()),
+            snapshots_beside_song: true,
+            snapshot_minutes: 10,
+            snapshots_kept: 5,
+            recent: vec!["/songs/a.json".into()],
             song_panel: false,
             waveform: false,
             frequencies: true,
@@ -1079,7 +1217,7 @@ mod tests {
     fn settings_window() -> Harness<'static, (Settings, bool)> {
         let mut harness = Harness::builder().build_ui_state(
             |ui, (settings, open): &mut (Settings, bool)| {
-                show(ui.ctx(), settings, open);
+                show(ui.ctx(), settings, open, None);
             },
             (Settings::default(), true),
         );
@@ -1195,7 +1333,7 @@ mod tests {
     fn sound_preview_and_calibration_buttons_ask_for_their_distinct_actions() {
         let mut harness = Harness::builder().build_ui_state(
             |ui, (settings, open, asked): &mut (Settings, bool, Option<Asked>)| {
-                *asked = show(ui.ctx(), settings, open).or(*asked);
+                *asked = show(ui.ctx(), settings, open, None).or(*asked);
             },
             (Settings::default(), true, None),
         );
@@ -1222,7 +1360,7 @@ mod tests {
     fn restoring_defaults_keeps_the_two_calibrations() {
         let mut harness = Harness::builder().build_ui_state(
             |ui, (settings, open): &mut (Settings, bool)| {
-                show(ui.ctx(), settings, open);
+                show(ui.ctx(), settings, open, None);
             },
             (
                 Settings {

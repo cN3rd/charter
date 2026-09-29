@@ -15,10 +15,11 @@ use crate::notefield::Zoom;
 use crate::style::{self, fields, heading, icon, table};
 use crate::window::Rate;
 
-#[allow(clippy::too_many_lines)] // the menus in the order they show
+/// The menu bar. `recent` is the songs opened before, the latest first.
+#[allow(clippy::too_many_lines)] // one menu after another, as they read left to right
 pub fn menu_bar(
     ui: &mut Ui,
-    song: Option<&Song>,
+    (song, recent): (Option<&Song>, &[std::path::PathBuf]),
     (playing, importable, findable): (bool, bool, bool),
     actions: &mut Vec<Action>,
 ) {
@@ -26,20 +27,26 @@ pub fn menu_bar(
     let editable = song.is_some_and(|song| song.read_only().is_none());
     egui::MenuBar::new().ui(ui, |ui| {
         ui.menu_button("File", |ui| {
-            let items = [
-                ("New song…", NEW_SONG, true, Action::NewSong),
-                ("Open…", OPEN, true, Action::Open),
-                ("Save", SAVE, song_open, Action::Save),
-                ("Save as…", SAVE_AS, song_open, Action::SaveAs),
-            ];
-            let choose = egui::Button::new("Choose audio…");
-            for (label, shortcut, enabled, action) in items {
+            let item = |ui: &mut Ui, label, shortcut, enabled| {
                 let item =
                     egui::Button::new(label).shortcut_text(ui.ctx().format_shortcut(&shortcut));
-                if ui.add_enabled(enabled, item).clicked() {
-                    actions.push(action);
-                }
+                ui.add_enabled(enabled, item).clicked()
+            };
+            if item(ui, "New song…", NEW_SONG, true) {
+                actions.push(Action::NewSong);
             }
+            if item(ui, "Open…", OPEN, true) {
+                actions.push(Action::Open);
+            }
+            open_recent(ui, recent, actions);
+            if item(ui, "Save", SAVE, song_open) {
+                actions.push(Action::Save);
+            }
+            if item(ui, "Save as…", SAVE_AS, song_open) {
+                actions.push(Action::SaveAs);
+            }
+            ui.separator();
+            let choose = egui::Button::new("Choose audio…");
             if ui.add_enabled(editable, choose).clicked() {
                 actions.push(Action::ChooseAudio);
             }
@@ -48,16 +55,6 @@ pub fn menu_bar(
                 .clicked()
             {
                 actions.push(Action::ChooseArtwork);
-            }
-            ui.separator();
-            if ui.button("Open the demo song").clicked() {
-                actions.push(Action::OpenDemo);
-            }
-            ui.separator();
-            let item =
-                egui::Button::new("Settings…").shortcut_text(ui.ctx().format_shortcut(&SETTINGS));
-            if ui.add(item).clicked() {
-                actions.push(Action::Settings);
             }
         });
         ui.menu_button("Edit", |ui| {
@@ -123,6 +120,12 @@ pub fn menu_bar(
                     ),
                 ],
             );
+            ui.separator();
+            let item =
+                egui::Button::new("Settings…").shortcut_text(ui.ctx().format_shortcut(&SETTINGS));
+            if ui.add(item).clicked() {
+                actions.push(Action::Settings);
+            }
         });
         ui.menu_button("Timing", |ui| {
             menu_items(
@@ -235,6 +238,37 @@ pub fn menu_bar(
                 .shortcut_text(ui.ctx().format_shortcut(&HELP));
             if ui.add(item).clicked() {
                 actions.push(Action::Help);
+            }
+            if ui.button("Open the demo song").clicked() {
+                actions.push(Action::OpenDemo);
+            }
+        });
+    });
+}
+
+/// File's Open recent submenu: the songs opened before, each by its file's name with its folder
+/// beside it, and a way to forget them.
+fn open_recent(ui: &mut Ui, recent: &[std::path::PathBuf], actions: &mut Vec<Action>) {
+    ui.add_enabled_ui(!recent.is_empty(), |ui| {
+        ui.menu_button("Open recent", |ui| {
+            for path in recent {
+                let name = path.file_name().map_or_else(
+                    || path.display().to_string(),
+                    |name| name.to_string_lossy().into_owned(),
+                );
+                let folder = path.parent().map(|folder| folder.display().to_string());
+                let item = egui::Button::new(name).shortcut_text(folder.unwrap_or_default());
+                if ui
+                    .add(item)
+                    .on_hover_text(path.display().to_string())
+                    .clicked()
+                {
+                    actions.push(Action::OpenRecent(path.clone()));
+                }
+            }
+            ui.separator();
+            if ui.button("Clear recent songs").clicked() {
+                actions.push(Action::ClearRecent);
             }
         });
     });
@@ -1893,7 +1927,7 @@ mod tests {
             .unwrap();
             let mut harness = Harness::builder().build_ui_state(
                 |ui, (song, actions): &mut (Song, Vec<Action>)| {
-                    menu_bar(ui, Some(song), (false, true, true), actions);
+                    menu_bar(ui, (Some(song), &[]), (false, true, true), actions);
                 },
                 (song, Vec::new()),
             );

@@ -25,6 +25,11 @@ pub trait Disk {
     /// Whatever keeps the folder from being made.
     fn make_folder(&self, path: &Path) -> io::Result<()>;
     fn exists(&self, path: &Path) -> bool;
+    /// The files directly in `folder`, in no particular order.
+    ///
+    /// # Errors
+    /// Whatever keeps the folder from being read, such as it not being there.
+    fn list(&self, folder: &Path) -> io::Result<Vec<PathBuf>>;
 }
 
 /// The computer's own files.
@@ -58,6 +63,17 @@ impl Disk for Real {
 
     fn exists(&self, path: &Path) -> bool {
         path.exists()
+    }
+
+    fn list(&self, folder: &Path) -> io::Result<Vec<PathBuf>> {
+        let mut files = Vec::new();
+        for entry in std::fs::read_dir(folder)? {
+            let entry = entry?;
+            if entry.file_type()?.is_file() {
+                files.push(entry.path());
+            }
+        }
+        Ok(files)
     }
 }
 
@@ -221,6 +237,16 @@ pub mod memory {
 
         fn exists(&self, path: &Path) -> bool {
             self.files.borrow().contains_key(path)
+        }
+
+        fn list(&self, folder: &Path) -> io::Result<Vec<PathBuf>> {
+            Ok(self
+                .files
+                .borrow()
+                .keys()
+                .filter(|path| path.parent() == Some(folder))
+                .cloned()
+                .collect())
         }
     }
 }

@@ -79,6 +79,11 @@ impl Host {
                             self.read(&path);
                         }
                     }
+                    Request::ChooseSnapshotFolder => {
+                        if let Some(folder) = rfd::FileDialog::new().pick_folder() {
+                            self.window.use_snapshot_folder(&folder);
+                        }
+                    }
                     Request::ChooseTimingFile => {
                         let file = rfd::FileDialog::new()
                             .add_filter("osu! beatmap", &["osu"])
@@ -162,6 +167,18 @@ impl Host {
                 let found = self.disk.read(&file).ok().and_then(picture);
                 self.window.artwork_read(&file, found);
             }
+            Request::OpenPath { path } => self.read(&path),
+            Request::Snapshot {
+                name,
+                bytes,
+                folders,
+                kept,
+            } => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |since| since.as_secs());
+                self.snapshot(&name, &bytes, (&folders, kept), now);
+            }
             Request::DropAutosave => {
                 if let Some(recovery) = &self.recovery {
                     // Nothing to remove is fine, and a file left over is offered, then
@@ -227,6 +244,42 @@ impl Host {
             }
         };
         self.window.saved(saved);
+    }
+
+    /// Writes `bytes` as a copy of the song `name` into each of `folders`, named for `now`, seconds
+    /// since 1970, and removes the oldest copies of it there past `kept`. Says what fails.
+    fn snapshot(&mut self, name: &str, bytes: &[u8], (folders, kept): (&[PathBuf], u32), now: u64) {
+        let file = format!("{name} {}.json", stamp(now));
+        for folder in folders {
+            let written = self
+                .disk
+                .make_folder(folder)
+                .and_then(|()| disk::write_whole(self.disk.as_ref(), &folder.join(&file), bytes));
+            if let Err(error) = written {
+                self.window
+                    .snapshot_failed(&format!("{}: {error}", folder.display()));
+                continue;
+            }
+            // Copies of this song alone, which a date sorts oldest first.
+            let mut copies: Vec<PathBuf> = self
+                .disk
+                .list(folder)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|path| {
+                    let file = path.file_name().and_then(|file| file.to_str());
+                    file.is_some_and(|file| is_copy_of(file, name))
+                })
+                .collect();
+            copies.sort();
+            let extra = copies
+                .len()
+                .saturating_sub(usize::try_from(kept).unwrap_or(usize::MAX));
+            for old in copies.iter().take(extra) {
+                // A copy left over is only a little disk.
+                let _ = self.disk.remove(old);
+            }
+        }
     }
 
     /// Writes the song's artwork to `to`, unless a different picture the song did not name is
@@ -387,9 +440,12 @@ fn main() -> eframe::Result {
             let settings = creation
                 .storage
                 .map_or_else(Settings::default, kept_settings);
-            let window = Window::new(PLUGINS)
-                .with_settings(settings)
-                .with_fallback_fonts(cjk_fonts());
+            let window = Window::new(PLUGINS).with_settings(settings);
+            let window = match eframe::storage_dir(APP) {
+                Some(folder) => window.with_data_folder(folder),
+                None => window,
+            };
+            let window = window.with_fallback_fonts(cjk_fonts());
             let window = if on_wayland() {
                 window.without_file_drops()
             } else {
@@ -440,6 +496,47 @@ fn kept_settings(storage: &dyn eframe::Storage) -> Settings {
     let old: Option<OldTicks> = eframe::get_value(storage, OLD_SETTINGS);
     settings.note_ticks = old.is_some_and(|old| !matches!(old.tick_sound, OldSound::Off));
     settings
+}
+
+/// `secs`, seconds since 1970, as a date and time in UTC that sorts as it reads:
+/// `2026-09-29 05.40.12 UTC`.
+fn stamp(secs: u64) -> String {
+    let days = i64::try_from(secs / 86_400).unwrap_or(i64::MAX);
+    let seconds = secs % 86_400;
+    // Days to a civil date, after Howard Hinnant's `civil_from_days`.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let day_of_era = z.rem_euclid(146_097);
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let shifted_month = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * shifted_month + 2) / 5 + 1;
+    let month = if shifted_month < 10 {
+        shifted_month + 3
+    } else {
+        shifted_month - 9
+    };
+    let year = year_of_era + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02} {:02}.{:02}.{:02} UTC",
+        seconds / 3600,
+        seconds / 60 % 60,
+        seconds % 60
+    )
+}
+
+/// Whether `file` is a snapshot of the song `name`: its name, a date and time, `.json`.
+fn is_copy_of(file: &str, name: &str) -> bool {
+    file.strip_prefix(name)
+        .and_then(|rest| rest.strip_prefix(' '))
+        .and_then(|rest| rest.strip_suffix(" UTC.json"))
+        .is_some_and(|date| {
+            date.len() == 19
+                && date
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || b" -.".contains(&b))
+        })
 }
 
 /// The picture `bytes` encode, with a preview of it no larger than a song panel needs, unless
@@ -894,6 +991,83 @@ mod tests {
             .use_artwork(Path::new("/p/new.png"), picture(png(2, 2)));
         host.write(PathBuf::from("/s/Song/Song.json"), &song);
         assert!(!files(&host, "/s/Song/new.png"));
+    }
+
+    #[test]
+    fn a_stamp_reads_as_the_date_and_time_in_utc() {
+        assert_eq!(stamp(0), "1970-01-01 00.00.00 UTC");
+        assert_eq!(stamp(951_782_400), "2000-02-29 00.00.00 UTC");
+        assert_eq!(stamp(1_790_142_012), "2026-09-23 05.40.12 UTC");
+        assert!(is_copy_of("Song 2026-09-23 05.40.12 UTC.json", "Song"));
+        assert!(!is_copy_of("Song B 2026-09-23 05.40.12 UTC.json", "Song"));
+        assert!(!is_copy_of("Song.json", "Song"));
+    }
+
+    #[test]
+    fn snapshots_go_into_each_folder_and_keep_only_the_newest() {
+        let mut host = host(Memory::with(&[
+            ("/snaps/Song/Song 2026-01-01 00.00.00 UTC.json", b"oldest"),
+            ("/snaps/Song/Song 2026-01-02 00.00.00 UTC.json", b"older"),
+            (
+                "/snaps/Song/Other 2020-01-01 00.00.00 UTC.json",
+                b"another song",
+            ),
+            ("/snaps/Song/notes.txt", b"theirs"),
+        ]));
+        let folders = [
+            PathBuf::from("/snaps/Song"),
+            PathBuf::from("/s/Song/autosaves"),
+        ];
+        host.snapshot("Song", b"now", (&folders, 2), 1_790_142_012);
+        let copy = "Song 2026-09-23 05.40.12 UTC.json";
+        assert_eq!(host.disk.read(&folders[0].join(copy)).unwrap(), b"now");
+        assert_eq!(host.disk.read(&folders[1].join(copy)).unwrap(), b"now");
+        assert!(!files(
+            &host,
+            "/snaps/Song/Song 2026-01-01 00.00.00 UTC.json"
+        ));
+        assert!(files(
+            &host,
+            "/snaps/Song/Song 2026-01-02 00.00.00 UTC.json"
+        ));
+        assert!(files(
+            &host,
+            "/snaps/Song/Other 2020-01-01 00.00.00 UTC.json"
+        ));
+        assert!(files(&host, "/snaps/Song/notes.txt"));
+        assert_eq!(host.window.message(), None);
+    }
+
+    #[test]
+    fn a_snapshot_that_cannot_be_written_says_where() {
+        let copy = "/snaps/Song/Song 1970-01-01 00.00.00 UTC.json.partial";
+        let mut host = host(Memory {
+            unwritable: vec![PathBuf::from(copy)],
+            ..Memory::default()
+        });
+        host.snapshot("Song", b"now", (&[PathBuf::from("/snaps/Song")], 20), 0);
+        assert!(
+            host.window
+                .message()
+                .is_some_and(|message| message.contains("/snaps/Song"))
+        );
+    }
+
+    #[test]
+    fn a_recent_song_opens_through_the_host_and_one_gone_leaves_the_list() {
+        let mut host = host(Memory::with(&[("/s/song.json", SONG)]));
+        host.answer(Request::OpenPath {
+            path: PathBuf::from("/s/song.json"),
+        });
+        assert_eq!(host.window.title(), "song.json - charter");
+        assert_eq!(
+            host.window.settings().recent,
+            [PathBuf::from("/s/song.json")]
+        );
+        host.answer(Request::OpenPath {
+            path: PathBuf::from("/s/gone.json"),
+        });
+        assert!(host.window.message().unwrap().contains("did not open"));
     }
 
     #[test]
