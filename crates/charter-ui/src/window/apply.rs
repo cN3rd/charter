@@ -7,7 +7,10 @@ use super::{
 
 impl Window {
     /// Handles this private window operation.
-    #[expect(clippy::too_many_lines, reason = "one match arm per window command")]
+    #[expect(
+        clippy::wildcard_enum_match_arm,
+        reason = "this dispatcher handles only window-global actions; song actions are ignored here"
+    )]
     pub(super) fn apply_to_window(&mut self, action: &Action) {
         match *action {
             Action::ToggleLayerColours => {
@@ -55,79 +58,10 @@ impl Window {
             Action::NewSong => {
                 self.dialogs.new_song.get_or_insert_default();
             }
-            Action::OpenChart(_)
-            | Action::AddLayer
-            | Action::SetActiveLayer(_)
-            | Action::StepLayer(_)
-            | Action::MoveSelectionToLayer(_)
-            | Action::SelectLayer(_)
-            | Action::SetLayerView(..)
-            | Action::SoloLayer(_)
-            | Action::SetLayerLocked(..)
-            | Action::RecolourLayer(..)
-            | Action::RenameLayer(..)
-            | Action::MoveLayer(..)
-            | Action::MergeActiveLayer
-            | Action::MergeLayer(_)
-            | Action::DeleteLayer(..)
-            | Action::CopyLayerToChart(..)
-            | Action::ToggleActiveLayerView
-            | Action::Move(_)
-            | Action::MoveMeasure(_)
-            | Action::FinerSnap
-            | Action::CoarserSnap
-            | Action::ZoomBy(_)
-            | Action::Toggle(..)
-            | Action::LaneUp(_)
-            | Action::LanesReleased
-            | Action::Place { .. }
-            | Action::Stretch { .. }
-            | Action::Select(..)
-            | Action::MoveSelection { .. }
-            | Action::SelectBetween { .. }
-            | Action::Undo
-            | Action::Redo
-            | Action::SelectAll
-            | Action::ClearSelection
-            | Action::DeleteSelection
-            | Action::ResizeNotes(_)
-            | Action::Copy
-            | Action::Cut
-            | Action::Paste(_)
-            | Action::Duplicate
-            | Action::ShiftSelection { .. }
-            | Action::Mirror
-            | Action::Quantize
-            | Action::ChangeNotes(_)
-            | Action::Pattern { .. }
-            | Action::SelectLane(_)
-            | Action::Here(..)
-            | Action::PasteHere(_)
-            | Action::SetBpmAt(..)
-            | Action::SetMetadata(_)
-            | Action::SetSetting { .. }
-            | Action::MovePointTo(..)
-            | Action::SetMeterAt(..)
-            | Action::RemoveTimingAt(_)
-            | Action::SetOffset(_)
-            | Action::AddBpm
-            | Action::NudgeOffset(_)
-            | Action::ImportTiming(_)
-            | Action::JumpTo(_)
-            | Action::SetSection(_)
-            | Action::RemoveMarker(_)
-            | Action::JumpEnd
-            | Action::Timing(_)
-            | Action::ResetTiming
-            | Action::MoveTiming { .. }
-            | Action::MoveMarker { .. }
-            | Action::JumpSection(_)
-            | Action::ToggleBookmark
-            | Action::NudgeBpm(_) => {}
+            _ => {}
         }
     }
     /// Handles this private window operation.
-    #[expect(clippy::too_many_lines, reason = "one arm per action")]
     pub(super) fn apply(&mut self, action: Action) {
         // A chord's notes undo as one, but anything else done while it is held is its own step.
         let chord = matches!(
@@ -172,9 +106,25 @@ impl Window {
         } else {
             KeepNotes::OnBeats
         });
+        let _: bool = self.apply_layer_action(&action)
+            || self.apply_cursor_action(&action, input_latency)
+            || self.apply_timing_action(&action)
+            || self.apply_marker_action(&action)
+            || self.apply_selection_action(&action);
+    }
+
+    /// Applies a layer-stack action, returning whether it matched.
+    #[expect(
+        clippy::wildcard_enum_match_arm,
+        reason = "this helper handles only layer actions and lets the next helper try the rest"
+    )]
+    fn apply_layer_action(&mut self, action: &Action) -> bool {
+        let Some(song) = &mut self.song else {
+            return false;
+        };
         match action {
             Action::AddLayer => self.failure = song.add_layer().err().as_ref().map(refused),
-            Action::SetActiveLayer(index) => song.set_active_layer(index),
+            Action::SetActiveLayer(index) => song.set_active_layer(*index),
             Action::StepLayer(step) => {
                 let active = song.active_layer();
                 song.set_active_layer(match step {
@@ -184,37 +134,41 @@ impl Window {
             }
             Action::MoveSelectionToLayer(index) => {
                 self.failure = song
-                    .move_selection_to_layer(index)
+                    .move_selection_to_layer(*index)
                     .err()
                     .as_ref()
                     .map(refused);
             }
-            Action::SelectLayer(index) => song.select_layer(index),
+            Action::SelectLayer(index) => song.select_layer(*index),
             Action::SetLayerView(index, view) => {
-                self.failure = song.set_layer_view(index, view).err().as_ref().map(refused);
+                self.failure = song
+                    .set_layer_view(*index, *view)
+                    .err()
+                    .as_ref()
+                    .map(refused);
             }
             Action::SoloLayer(index) => {
-                self.failure = song.solo_layer(index).err().as_ref().map(refused);
+                self.failure = song.solo_layer(*index).err().as_ref().map(refused);
             }
             Action::SetLayerLocked(index, locked) => {
                 self.failure = song
-                    .set_layer_locked(index, locked)
+                    .set_layer_locked(*index, *locked)
                     .err()
                     .as_ref()
                     .map(refused);
             }
             Action::RecolourLayer(index, colour) => {
                 self.failure = song
-                    .recolour_layer(index, colour)
+                    .recolour_layer(*index, *colour)
                     .err()
                     .as_ref()
                     .map(refused);
             }
             Action::RenameLayer(index, name) => {
-                self.failure = song.rename_layer(index, &name).err().as_ref().map(refused);
+                self.failure = song.rename_layer(*index, name).err().as_ref().map(refused);
             }
             Action::MoveLayer(from, to) => {
-                self.failure = song.move_layer(from, to).err().as_ref().map(refused);
+                self.failure = song.move_layer(*from, *to).err().as_ref().map(refused);
             }
             Action::MergeActiveLayer => {
                 self.failure = song
@@ -224,13 +178,17 @@ impl Window {
                     .map(refused);
             }
             Action::MergeLayer(index) => {
-                self.failure = song.merge_layer_down(index).err().as_ref().map(refused);
+                self.failure = song.merge_layer_down(*index).err().as_ref().map(refused);
             }
             Action::DeleteLayer(index, notes) => {
-                self.failure = song.delete_layer(index, notes).err().as_ref().map(refused);
+                self.failure = song
+                    .delete_layer(*index, *notes)
+                    .err()
+                    .as_ref()
+                    .map(refused);
             }
             Action::CopyLayerToChart(index, chart) => {
-                self.failure = match song.copy_layer_to_chart(index, chart) {
+                self.failure = match song.copy_layer_to_chart(*index, *chart) {
                     Ok(0) => None,
                     Ok(skipped) => Some(format!("{skipped} overlapping notes skipped")),
                     Err(why) => Some(refused(&why)),
@@ -248,35 +206,50 @@ impl Window {
                 }
             }
             Action::OpenChart(index) => {
-                song.open_chart(index);
+                song.open_chart(*index);
                 self.typing.holding.clear();
                 self.typing.pressed.clear();
             }
+            _ => return false,
+        }
+        true
+    }
+
+    /// Applies cursor, snap, lane-key and direct-placement actions.
+    #[expect(
+        clippy::wildcard_enum_match_arm,
+        reason = "this helper handles only cursor and lane-key actions"
+    )]
+    fn apply_cursor_action(&mut self, action: &Action, input_latency: f64) -> bool {
+        let Some(song) = &mut self.song else {
+            return false;
+        };
+        match action {
             Action::Move(step) => {
-                song.step(step);
+                song.step(*step);
                 self.failure = stretch(song, &self.typing.holding).or_else(|| self.failure.take());
             }
             Action::MoveMeasure(step) => {
-                song.step_measure(step);
+                song.step_measure(*step);
                 self.failure = stretch(song, &self.typing.holding).or_else(|| self.failure.take());
             }
             Action::FinerSnap => song.finer_snap(),
             Action::CoarserSnap => song.coarser_snap(),
-            Action::ZoomBy(factor) => self.zoom = self.zoom.by(factor),
+            Action::ZoomBy(factor) => self.zoom = self.zoom.by(*factor),
             Action::Toggle(lane, note) => {
                 // Mines and removals are not held, so a chord starts once, with its first key.
                 if self.typing.chord_since.is_none() {
                     self.typing.chord_since = Some(song.history_step());
                 }
                 let at = placing_at(song, self.playback.playing.then_some(input_latency));
-                let toggled = song.toggle(at, lane, note.kind());
+                let toggled = song.toggle(at, *lane, note.kind());
                 if matches!(toggled, Ok(Toggled::Placed)) {
                     self.typing.placed = true;
-                    if note == Note::Tap {
-                        self.typing.holding.push((lane, at));
+                    if *note == Note::Tap {
+                        self.typing.holding.push((*lane, at));
                         if self.playback.playing {
                             let now = song.timing().time_at(song.cursor()).seconds();
-                            self.typing.pressed.push((lane, now - input_latency));
+                            self.typing.pressed.push((*lane, now - input_latency));
                         }
                     }
                 }
@@ -291,13 +264,13 @@ impl Window {
                         .holding
                         .iter()
                         .copied()
-                        .filter(|(held, _)| *held == lane)
+                        .filter(|(held, _)| held == lane)
                         .collect();
                     self.failure = grow(song, &held, &self.typing.pressed, now)
                         .or_else(|| self.failure.take());
                 }
-                self.typing.holding.retain(|(held, _)| *held != lane);
-                self.typing.pressed.retain(|(held, _)| *held != lane);
+                self.typing.holding.retain(|(held, _)| held != lane);
+                self.typing.pressed.retain(|(held, _)| held != lane);
             }
             // Playback moves the cursor on already; a jump would seek the audio ahead.
             Action::LanesReleased => {
@@ -326,55 +299,36 @@ impl Window {
             }
             Action::Place { tick, lane, note } => {
                 self.failure = song
-                    .toggle(tick, lane, note.kind())
+                    .toggle(*tick, *lane, note.kind())
                     .err()
                     .as_ref()
                     .map(refused);
             }
             Action::Stretch { lane, from, to } => {
-                self.failure = song.stretch(lane, from, to).err().as_ref().map(refused);
+                self.failure = song.stretch(*lane, *from, *to).err().as_ref().map(refused);
             }
-            Action::Select(Some(note), how) => song.select([note], how),
+            Action::Select(Some(note), how) => song.select([*note], *how),
             Action::Select(None, Selecting::Replace) | Action::ClearSelection => {
                 song.clear_selection();
             }
-            Action::OpenDemo
-            | Action::ToggleLayerColours
-            | Action::Open
-            | Action::Save
-            | Action::SaveAs
-            | Action::Settings
-            | Action::Calibrate
-            | Action::ToggleSync
-            | Action::ShowSync
-            | Action::ShowImport
-            | Action::ChooseTimingFile
-            | Action::Help
-            | Action::ToggleSongPanel
-            | Action::ToggleMetronome
-            | Action::ToggleTicks
-            | Action::ToggleTunedLanes
-            | Action::FindTiming
-            | Action::SetGrid(_)
-            | Action::TogglePlay
-            | Action::Audition(_)
-            | Action::AskResetTiming
-            | Action::Loop { .. }
-            | Action::ToggleRate
-            | Action::MuteMetronome(_)
-            | Action::ChooseAudio
-            | Action::ChooseArtwork
-            | Action::Here(..)
-            | Action::PasteHere(_)
-            | Action::OpenRecent(_)
-            | Action::ClearRecent
-            | Action::NudgeRate(_)
-            | Action::SetRate(_)
-            | Action::SetVolumes(_)
-            | Action::NewSong
-            | Action::Select(None, Selecting::Add | Selecting::Subtract) => {}
+            Action::Select(None, Selecting::Add | Selecting::Subtract) => {}
+            _ => return false,
+        }
+        true
+    }
+
+    /// Applies timing-window and cursor-jump actions.
+    #[expect(
+        clippy::wildcard_enum_match_arm,
+        reason = "this helper handles only timing and jump actions"
+    )]
+    fn apply_timing_action(&mut self, action: &Action) -> bool {
+        let Some(song) = &mut self.song else {
+            return false;
+        };
+        match action {
             Action::SelectBetween { ticks, lanes, how } => {
-                song.select_between(ticks.0..=ticks.1, lanes.0..=lanes.1, how);
+                song.select_between(ticks.0..=ticks.1, lanes.0..=lanes.1, *how);
             }
             Action::SetBpmAt(..)
             | Action::MovePointTo(..)
@@ -387,37 +341,67 @@ impl Window {
             | Action::NudgeOffset(_)
             | Action::ImportTiming(_)
             | Action::ResetTiming
-            | Action::MoveTiming { .. } => self.failure = retime(song, &action),
+            | Action::MoveTiming { .. } => self.failure = retime(song, action),
             // The timing window says itself why its edits were refused.
             Action::Timing(edit) => match edit.apply(song) {
                 Err(why) => {
                     let now = self.frame_time;
-                    self.sync.refused(&edit, &why, song.timing(), now);
+                    self.sync.refused(edit, &why, song.timing(), now);
                 }
                 // A loop plays again from its start, so the edit is heard on this pass.
                 Ok(()) if self.playback.looping.is_some() => self.play_loop(),
                 Ok(()) => {}
             },
-            Action::JumpTo(tick) => song.jump_to(tick),
+            Action::JumpTo(tick) => song.jump_to(*tick),
             Action::JumpEnd => song.jump_to(song.end()),
+            _ => return false,
+        }
+        true
+    }
+
+    /// Applies marker and section-list actions.
+    #[expect(
+        clippy::wildcard_enum_match_arm,
+        reason = "this helper handles only marker actions"
+    )]
+    fn apply_marker_action(&mut self, action: &Action) -> bool {
+        let Some(song) = &mut self.song else {
+            return false;
+        };
+        match action {
             Action::MoveMarker { index, to } => {
-                self.failure = song.move_marker(index, to).err().as_ref().map(refused);
+                self.failure = song.move_marker(*index, *to).err().as_ref().map(refused);
             }
             Action::JumpSection(step) => {
-                if let Some(tick) = song.section_from(step) {
+                if let Some(tick) = song.section_from(*step) {
                     song.jump_to(tick);
                 }
             }
             Action::ToggleBookmark => {
                 self.failure = song.toggle_bookmark().err().as_ref().map(refused);
             }
-            Action::NudgeBpm(by) => self.failure = nudge_bpm(song, by),
+            Action::NudgeBpm(by) => self.failure = nudge_bpm(song, *by),
             Action::SetSection(text) => {
-                self.failure = song.set_section(&text).err().as_ref().map(refused);
+                self.failure = song.set_section(text).err().as_ref().map(refused);
             }
             Action::RemoveMarker(index) => {
-                self.failure = song.remove_marker(index).err().as_ref().map(refused);
+                self.failure = song.remove_marker(*index).err().as_ref().map(refused);
             }
+            _ => return false,
+        }
+        true
+    }
+
+    /// Applies selection, clipboard and note-transform actions.
+    #[expect(
+        clippy::wildcard_enum_match_arm,
+        reason = "this helper handles only selection actions"
+    )]
+    fn apply_selection_action(&mut self, action: &Action) -> bool {
+        let Some(song) = &mut self.song else {
+            return false;
+        };
+        match action {
             Action::SelectAll => song.select_all(),
             Action::DeleteSelection => {
                 self.failure = song.delete_selection().err().as_ref().map(refused);
@@ -439,9 +423,9 @@ impl Window {
                     .note_length(song.snap())
                     .map_or(0, |step| i64::from(u32::from(step)));
                 let ticks =
-                    i32::try_from(i64::from(snaps).saturating_mul(step)).unwrap_or(i32::MAX);
+                    i32::try_from(i64::from(*snaps).saturating_mul(step)).unwrap_or(i32::MAX);
                 self.failure = song
-                    .move_selection(ticks, lanes)
+                    .move_selection(ticks, *lanes)
                     .err()
                     .as_ref()
                     .map(refused);
@@ -451,31 +435,33 @@ impl Window {
                 self.failure = song.quantize_selection().err().as_ref().map(refused);
             }
             Action::ChangeNotes(change) => {
-                self.failure = song.change_selection(&change).err().as_ref().map(refused);
+                self.failure = song.change_selection(change).err().as_ref().map(refused);
             }
             Action::Pattern {
                 steps,
                 per_beat,
                 lane,
-            } => self.failure = pattern(song, steps, per_beat, lane),
+            } => self.failure = pattern(song, steps, *per_beat, *lane),
             Action::SelectLane(lane) => {
                 song.select_between(
                     Tick::new(i32::MIN)..=Tick::new(i32::MAX),
-                    lane..=lane,
+                    *lane..=*lane,
                     Selecting::Replace,
                 );
             }
             Action::ResizeNotes(step) => {
-                self.failure = song.resize_notes(step).err().as_ref().map(refused);
+                self.failure = song.resize_notes(*step).err().as_ref().map(refused);
             }
             Action::MoveSelection { ticks, lanes } => {
                 self.failure = song
-                    .move_selection(ticks, lanes)
+                    .move_selection(*ticks, *lanes)
                     .err()
                     .as_ref()
                     .map(refused);
             }
+            _ => return false,
         }
+        true
     }
 }
 

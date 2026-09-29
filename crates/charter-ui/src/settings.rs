@@ -756,12 +756,19 @@ fn note_ticks(ui: &mut egui::Ui, settings: &mut Settings) {
 }
 
 /// The sounds page. Says which metronome to preview, when its button was pressed.
-#[expect(
-    clippy::non_ascii_literal,
-    reason = "the calibration button displays an ellipsis"
-)]
 fn sounds(ui: &mut egui::Ui, settings: &mut Settings) -> Option<Asked> {
     note_ticks(ui, settings);
+    sound_switches(ui, settings);
+    let mut asked = None;
+    metronome_sound(ui, settings, &mut asked);
+    latency(ui, settings, &mut asked);
+    playback_speed(ui, settings);
+    volume_rows(ui, settings);
+    asked
+}
+
+/// The sounds page's boolean rows.
+fn sound_switches(ui: &mut egui::Ui, settings: &mut Settings) {
     let name = "Tuned lanes";
     let about = "Each lane ticks in its own pitch, lowest on the left, a whole tone apart and an \
         octave at most across. Shift+F4 turns it on and off.";
@@ -773,7 +780,22 @@ fn sounds(ui: &mut egui::Ui, settings: &mut Settings) -> Option<Asked> {
     row(ui, "Metronome", metronome_about, |ui, _| {
         switch(ui, &mut settings.metronome, "Metronome");
     });
-    let mut preview = None;
+    let grid_name = "Metronome follows the grid";
+    let grid_about =
+        "A click on every line of the timing window's grid, the ones between beats quieter.";
+    row(ui, grid_name, grid_about, |ui, _| {
+        switch(ui, &mut settings.metronome_grid, grid_name);
+    });
+    let pitch_name = "Keep pitch at other speeds";
+    let pitch_about = "Slowed or sped-up audio keeps its pitch from 10% to 200%; outside that, and with \
+        this off, its pitch follows its speed.";
+    row(ui, pitch_name, pitch_about, |ui, _| {
+        switch(ui, &mut settings.keep_pitch, pitch_name);
+    });
+}
+
+/// The sounds page's metronome sound row.
+fn metronome_sound(ui: &mut egui::Ui, settings: &mut Settings, asked: &mut Option<Asked>) {
     let metronome_sound_about = "Synthesised click pairs, public domain.";
     row(
         ui,
@@ -782,7 +804,7 @@ fn sounds(ui: &mut egui::Ui, settings: &mut Settings) -> Option<Asked> {
         |ui, caption| {
             let tip = "Play a measure of it";
             if quiet_icon(ui, icon::PLAY, "Preview the metronome", tip).clicked() {
-                preview = Some(Asked::Preview(settings.metronome_sound));
+                *asked = Some(Asked::Preview(settings.metronome_sound));
             }
             let kit = &mut settings.metronome_sound;
             egui::ComboBox::from_id_salt("metronome sound")
@@ -797,27 +819,27 @@ fn sounds(ui: &mut egui::Ui, settings: &mut Settings) -> Option<Asked> {
                 .labelled_by(caption);
         },
     );
+}
+
+/// The sounds page's latency-calibration row.
+#[expect(
+    clippy::non_ascii_literal,
+    reason = "the calibration button displays an ellipsis"
+)]
+fn latency(ui: &mut egui::Ui, settings: &Settings, asked: &mut Option<Asked>) {
     let latency_about = format!(
         "Audio {:+.0} ms, input {:+.0} ms. Align the flash to the click, then tap along.",
         settings.audio_latency_ms, settings.input_latency_ms
     );
     row(ui, "Latency", &latency_about, |ui, _| {
         if ui.button("Calibrate…").clicked() {
-            preview = Some(Asked::Calibrate);
+            *asked = Some(Asked::Calibrate);
         }
     });
-    let grid_name = "Metronome follows the grid";
-    let grid_about =
-        "A click on every line of the timing window's grid, the ones between beats quieter.";
-    row(ui, grid_name, grid_about, |ui, _| {
-        switch(ui, &mut settings.metronome_grid, grid_name);
-    });
-    let pitch_name = "Keep pitch at other speeds";
-    let pitch_about = "Slowed or sped-up audio keeps its pitch from 10% to 200%; outside that, and with \
-        this off, its pitch follows its speed.";
-    row(ui, pitch_name, pitch_about, |ui, _| {
-        switch(ui, &mut settings.keep_pitch, pitch_name);
-    });
+}
+
+/// The sounds page's alternate-rate row.
+fn playback_speed(ui: &mut egui::Ui, settings: &mut Settings) {
     let speed_about = "The speed R switches to in the timing window, to hear flams slowed down.";
     row(ui, "Alternate speed", speed_about, |ui, caption| {
         let mut percent = settings.rate_b * 100.0;
@@ -828,6 +850,10 @@ fn sounds(ui: &mut egui::Ui, settings: &mut Settings) -> Option<Asked> {
             settings.rate_b = percent / 100.0;
         }
     });
+}
+
+/// The sounds page's volume rows.
+fn volume_rows(ui: &mut egui::Ui, settings: &mut Settings) {
     let volumes = &mut settings.volumes;
     for (volume_name, volume_about, gain) in [
         ("Music volume", "The song's audio.", &mut volumes.music),
@@ -851,7 +877,6 @@ fn sounds(ui: &mut egui::Ui, settings: &mut Settings) -> Option<Asked> {
             volume(ui, gain).labelled_by(caption);
         });
     }
-    preview
 }
 
 /// A slider setting `gain` in percent.

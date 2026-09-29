@@ -204,7 +204,7 @@ pub enum Answer {
 }
 
 /// The plugins among `plugins` that can start songs.
-pub fn games(plugins: &[&'static dyn RulesetPlugin]) -> Vec<&'static dyn RulesetPlugin> {
+fn games(plugins: &[&'static dyn RulesetPlugin]) -> Vec<&'static dyn RulesetPlugin> {
     plugins
         .iter()
         .copied()

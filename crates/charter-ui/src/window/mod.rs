@@ -1195,7 +1195,10 @@ fn found_message(song: &Song) -> String {
 }
 
 /// Makes the timing edit `action` asks for, and says why if it cannot.
-#[expect(clippy::too_many_lines, reason = "one match arm per timing action")]
+#[expect(
+    clippy::wildcard_enum_match_arm,
+    reason = "retime is called from a timing-only dispatcher; other actions are a no-op"
+)]
 fn retime(song: &mut Song, action: &Action) -> Option<String> {
     let done = match action {
         Action::SetBpmAt(tick, bpm) => song.set_bpm_at(*tick, *bpm),
@@ -1217,95 +1220,7 @@ fn retime(song: &mut Song, action: &Action) -> Option<String> {
             }
         }
         Action::MoveTiming { from, to } => song.move_timing_at(*from, *to),
-        Action::OpenDemo
-        | Action::OpenChart(_)
-        | Action::Move(_)
-        | Action::MoveMeasure(_)
-        | Action::FinerSnap
-        | Action::CoarserSnap
-        | Action::ZoomBy(_)
-        | Action::Toggle(..)
-        | Action::LaneUp(_)
-        | Action::LanesReleased
-        | Action::Place { .. }
-        | Action::Stretch { .. }
-        | Action::Select(..)
-        | Action::MoveSelection { .. }
-        | Action::SelectBetween { .. }
-        | Action::Undo
-        | Action::Redo
-        | Action::SelectAll
-        | Action::ClearSelection
-        | Action::DeleteSelection
-        | Action::ResizeNotes(_)
-        | Action::Copy
-        | Action::Cut
-        | Action::Paste(_)
-        | Action::Duplicate
-        | Action::ShiftSelection { .. }
-        | Action::Mirror
-        | Action::Quantize
-        | Action::ChangeNotes(_)
-        | Action::Pattern { .. }
-        | Action::SelectLane(_)
-        | Action::Here(..)
-        | Action::PasteHere(_)
-        | Action::Open
-        | Action::OpenRecent(_)
-        | Action::ClearRecent
-        | Action::Save
-        | Action::SaveAs
-        | Action::Settings
-        | Action::Calibrate
-        | Action::NewSong
-        | Action::TogglePlay
-        | Action::ChooseAudio
-        | Action::ChooseArtwork
-        | Action::NudgeRate(_)
-        | Action::SetRate(_)
-        | Action::SetVolumes(_)
-        | Action::ShowSync
-        | Action::ShowImport
-        | Action::ChooseTimingFile
-        | Action::JumpTo(_)
-        | Action::SetSection(_)
-        | Action::RemoveMarker(_)
-        | Action::JumpEnd
-        | Action::Timing(_)
-        | Action::Audition(_)
-        | Action::AskResetTiming
-        | Action::Loop { .. }
-        | Action::ToggleRate
-        | Action::MuteMetronome(_)
-        | Action::ToggleSync
-        | Action::MoveMarker { .. }
-        | Action::JumpSection(_)
-        | Action::ToggleBookmark
-        | Action::NudgeBpm(_)
-        | Action::Help
-        | Action::ToggleSongPanel
-        | Action::ToggleMetronome
-        | Action::ToggleTicks
-        | Action::ToggleTunedLanes
-        | Action::FindTiming
-        | Action::SetGrid(_)
-        | Action::AddLayer
-        | Action::SetActiveLayer(_)
-        | Action::StepLayer(_)
-        | Action::MoveSelectionToLayer(_)
-        | Action::SelectLayer(_)
-        | Action::SetLayerView(..)
-        | Action::SoloLayer(_)
-        | Action::SetLayerLocked(..)
-        | Action::RecolourLayer(..)
-        | Action::RenameLayer(..)
-        | Action::MoveLayer(..)
-        | Action::MergeActiveLayer
-        | Action::MergeLayer(_)
-        | Action::DeleteLayer(..)
-        | Action::CopyLayerToChart(..)
-        | Action::ToggleActiveLayerView
-        | Action::ToggleLayerColours => Ok(()),
+        _ => Ok(()),
     };
     done.err().as_ref().map(refused)
 }
