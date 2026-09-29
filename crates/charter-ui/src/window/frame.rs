@@ -462,3 +462,53 @@ impl Window {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::window::test_support::*;
+
+    #[test]
+    fn ctrl_minus_zooms_out_where_the_layout_puts_minus_on_a_digit_key() {
+        let mut harness = editable_demo();
+        let command = egui::Modifiers::COMMAND;
+        harness.event(egui::Event::ModifiersChanged(command));
+        harness.event(keyboard(egui::Key::Minus, egui::Key::Num6, true, command));
+        harness.run();
+        assert!(harness.query_by_label("Zoom 80%").is_some());
+    }
+    #[test]
+    fn the_song_panel_folds_away_and_comes_back() {
+        let mut harness = editable_demo();
+        assert!(harness.query_by_label("Verse").is_some());
+        harness.get_by_label("Hide the song panel").click();
+        harness.run();
+        assert!(harness.query_by_label("Verse").is_none());
+        assert!(!harness.state().settings().song_panel);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Backslash);
+        harness.run();
+        assert!(harness.query_by_label("Verse").is_some());
+        harness.get_by_label("View").click();
+        harness.run();
+        harness.get_by_label_contains("Song panel").click();
+        harness.run();
+        assert!(harness.query_by_label("Verse").is_none());
+    }
+    #[test]
+    fn the_settings_window_closes_from_its_own_button() {
+        let mut harness = editable_demo();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Comma);
+        harness.run();
+        harness.get_by_label("Close settings").click();
+        harness.run();
+        assert!(harness.query_all_by_label("Settings").next().is_none());
+    }
+    #[test]
+    fn the_interface_size_setting_scales_the_whole_window() {
+        let settings = Settings {
+            scale: 1.5,
+            ..Settings::default()
+        };
+        let harness = window(Window::new(PLUGINS).with_settings(settings));
+        assert!((harness.ctx.zoom_factor() - 1.5).abs() < f32::EPSILON);
+    }
+}

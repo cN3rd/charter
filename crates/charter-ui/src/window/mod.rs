@@ -1326,7 +1326,1063 @@ fn refused(refusal: &Refusal) -> String {
 }
 
 #[cfg(test)]
-pub(crate) mod tests;
+pub(crate) mod test_support {
+    pub(crate) use std::num::NonZeroU16;
+    pub(crate) use std::path::{Path, PathBuf};
+    pub(crate) use std::sync::Arc;
+
+    pub(crate) use std::error::Error;
+
+    pub(crate) use charter_core::{
+        Chart, LaneCount, LaneIndex, LaneSpan, Position, Tick, Valid, ValidDocument,
+    };
+    pub(crate) use egui::accesskit::Role;
+    pub(crate) use egui_kittest::Harness;
+    pub(crate) use egui_kittest::kittest::{NodeT, Queryable};
+
+    pub(crate) use super::*;
+    pub(crate) use crate::flip::Flip;
+    pub(crate) use crate::recovery;
+    pub(crate) use crate::settings::Sound;
+    pub(crate) use charter_audio::{Gain, Kit, Tone, Volumes};
+
+    /// The format chapter, embedded at compile time so the tests do no I/O.
+    pub(crate) const SPEC: &str = include_str!("../../../../docs/src/format.md");
+
+    /// The format chapter's full example song.
+    pub(crate) fn example() -> &'static [u8] {
+        let start = SPEC
+            .rfind("```json\n")
+            .unwrap()
+            .saturating_add("```json\n".len());
+        let end = start.saturating_add(
+            SPEC.as_bytes()[start..]
+                .windows(3)
+                .position(|part| part == b"```")
+                .unwrap(),
+        );
+        &SPEC.as_bytes()[start..end]
+    }
+
+    pub(crate) fn window(app: Window) -> Harness<'static, Window> {
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1280.0, 800.0))
+            .build_ui_state(|ui, app: &mut Window| app.ui(ui), app);
+        harness.run();
+        harness
+    }
+
+    pub(crate) fn with_demo() -> Harness<'static, Window> {
+        let mut app = Window::default();
+        app.open_demo();
+        window(app)
+    }
+
+    /// A file dropped on the window, held in memory.
+    #[derive(Debug)]
+    pub(crate) struct Dropped(pub(crate) &'static str, pub(crate) Vec<u8>);
+
+    impl egui::DroppedFile for Dropped {
+        fn path(&self) -> &Path {
+            Path::new(self.0)
+        }
+
+        fn bytes(&self) -> Result<Vec<u8>, String> {
+            Ok(self.1.clone())
+        }
+    }
+
+    /// Accepts every `sm` document, standing in for the StepMania plugin.
+    #[derive(Debug)]
+    pub(crate) struct AnySm;
+
+    #[expect(
+        clippy::missing_trait_methods,
+        reason = "a test plugin: the trait's defaults for every optional method"
+    )]
+    impl RulesetPlugin for AnySm {
+        fn id(&self) -> &'static str {
+            "sm"
+        }
+
+        fn check(&self, _: &ValidDocument) -> Result<(), Box<dyn Error + Send + Sync>> {
+            Ok(())
+        }
+    }
+
+    /// Refuses an `sm` document with a note on the fourth lane, which no format rule does.
+    #[derive(Debug)]
+    pub(crate) struct NoFourthLane;
+
+    #[expect(
+        clippy::missing_trait_methods,
+        reason = "a test plugin: the trait's defaults for every optional method"
+    )]
+    impl RulesetPlugin for NoFourthLane {
+        fn id(&self) -> &'static str {
+            "sm"
+        }
+
+        fn check(&self, document: &ValidDocument) -> Result<(), Box<dyn Error + Send + Sync>> {
+            let fourth = Some(LaneSpan::new(LaneIndex::new(3), LaneCount::ONE));
+            let on_fourth = |chart: Valid<'_, Chart>| {
+                chart
+                    .objects()
+                    .any(|object| object.position.lanes() == fourth)
+            };
+            if document.charts().any(on_fourth) {
+                return Err("a note on lane 4".into());
+            }
+            Ok(())
+        }
+    }
+
+    pub(crate) const PLUGINS: &[&dyn RulesetPlugin] = &[&AnySm];
+
+    pub(crate) fn editable_demo() -> Harness<'static, Window> {
+        let mut app = Window::new(PLUGINS);
+        app.open_demo();
+        window(app)
+    }
+
+    /// The lanes of the open chart's objects on `tick`, lowest first.
+    pub(crate) fn lanes_at(harness: &Harness<'_, Window>, tick: i32) -> Vec<u16> {
+        let song = harness.state().song.as_ref().unwrap();
+        let chart = song.chart().unwrap();
+        let mut lanes: Vec<u16> = chart
+            .objects
+            .iter()
+            .filter(|object| object.tick == Tick::new(tick))
+            .filter_map(|object| match object.position {
+                Position::Lane { index, .. } => Some(u16::from(index)),
+                Position::Plane { .. } => None,
+            })
+            .collect();
+        lanes.sort_unstable();
+        lanes
+    }
+
+    pub(crate) fn cursor_shows(harness: &Harness<'_, Window>, position: &str) -> bool {
+        harness
+            .query_by_label(&format!("Cursor at {position}"))
+            .is_some()
+    }
+
+    /// Presses and releases each of `keys` in turn, all in the next frame, as a fast typist does
+    /// when frames are slow. Queued events would each get a frame of their own.
+    pub(crate) fn tap_in_one_frame(harness: &mut Harness<'_, Window>, keys: &[egui::Key]) {
+        for &key in keys {
+            for pressed in [true, false] {
+                harness.input_mut().events.push(egui::Event::Key {
+                    key,
+                    pressed,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                    physical_key: None,
+                });
+            }
+        }
+    }
+
+    /// A key event as a keyboard sends it: what the layout makes of the key under `modifiers`,
+    /// and where the key sits.
+    pub(crate) fn keyboard(
+        key: egui::Key,
+        place: egui::Key,
+        pressed: bool,
+        modifiers: egui::Modifiers,
+    ) -> egui::Event {
+        egui::Event::Key {
+            key,
+            pressed,
+            repeat: false,
+            modifiers,
+            physical_key: Some(place),
+        }
+    }
+
+    /// What starts on `lane` at `tick` in the open chart, as the format writes it.
+    pub(crate) fn note_at(
+        harness: &Harness<'_, Window>,
+        tick: i32,
+        lane: u16,
+    ) -> Option<serde_json::Value> {
+        let song = harness.state().song.as_ref()?;
+        let chart = song.chart()?;
+        chart
+            .objects
+            .iter()
+            .find(|object| {
+                object.tick == Tick::new(tick)
+                    && matches!(object.position, Position::Lane { index, .. } if index == LaneIndex::new(lane))
+            })
+            .map(|object| serde_json::json!({ "kind": object.kind.to_string(), "shape": object.shape }))
+    }
+
+    pub(crate) fn tap() -> serde_json::Value {
+        serde_json::json!({ "kind": "tap", "shape": "instant" })
+    }
+
+    pub(crate) fn hold(duration: u32) -> serde_json::Value {
+        serde_json::json!({ "kind": "hold", "shape": { "sustain": { "duration": duration } } })
+    }
+
+    pub(crate) fn mine() -> serde_json::Value {
+        serde_json::json!({ "kind": "mine", "shape": "instant" })
+    }
+
+    /// Presses the lane key for `lane` under Shift, which a US layout reports as a symbol.
+    pub(crate) fn shift_down(harness: &Harness<'_, Window>, symbol: egui::Key, place: egui::Key) {
+        let shift = egui::Modifiers::SHIFT;
+        harness.event(egui::Event::ModifiersChanged(shift));
+        harness.event(keyboard(symbol, place, true, shift));
+    }
+
+    /// An `sm` song with one four-lane chart of taps walking across the lanes a sixteenth apart.
+    pub(crate) fn four_taps() -> Vec<u8> {
+        let tap = |tick: i32, lane: u16| {
+            serde_json::json!({ "tick": tick, "position": { "lane": { "index": lane } },
+                                "kind": "tap", "shape": "instant" })
+        };
+        let song = serde_json::json!({
+            "format_version": 0,
+            "ruleset": { "id": "sm", "version": "1" },
+            "metadata": { "title": "Four", "artist": "a", "audio": "a.ogg" },
+            "timing": { "offset_seconds": 0.0, "events": [ { "tick": 0, "kind": { "bpm": 120.0 } } ] },
+            "charts": [ { "name": "Easy", "lanes": 4,
+                          "objects": [tap(0, 0), tap(240, 1), tap(480, 2), tap(720, 3)] } ]
+        });
+        serde_json::to_vec(&song).unwrap()
+    }
+
+    pub(crate) fn editable_four_taps() -> Harness<'static, Window> {
+        let mut app = Window::new(PLUGINS);
+        app.open(Path::new("four.json"), &four_taps());
+        window(app)
+    }
+
+    pub(crate) fn note_count(harness: &Harness<'_, Window>) -> usize {
+        let song = harness.state().song.as_ref().unwrap();
+        song.chart().unwrap().objects.len()
+    }
+
+    pub(crate) fn nothing_selected(harness: &Harness<'_, Window>) -> bool {
+        harness.query_by_label_contains("selected").is_none()
+    }
+
+    /// Types `text` over the song panel's field `label`, then presses Enter.
+    pub(crate) fn retype(harness: &mut Harness<'_, Window>, label: &str, text: &str) {
+        harness
+            .get_by_role_and_label(Role::TextInput, label)
+            .focus();
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.key_press(egui::Key::Backspace);
+        harness
+            .get_by_role_and_label(Role::TextInput, label)
+            .type_text(text);
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+    }
+
+    pub(crate) fn metadata(harness: &Harness<'_, Window>) -> charter_core::Metadata {
+        let song = harness.state().song.as_ref().unwrap();
+        song.document().document().metadata.clone()
+    }
+
+    pub(crate) fn picture(bytes: &[u8]) -> Picture {
+        (
+            bytes.to_vec(),
+            egui::ColorImage::filled([4, 4], egui::Color32::RED),
+        )
+    }
+
+    pub(crate) fn artwork_name(harness: &Harness<'_, Window>) -> Option<String> {
+        metadata(harness).artwork.map(|path| path.to_string())
+    }
+
+    /// Where the middle of `lane` meets the line of `tick` on screen, `below` points lower.
+    pub(crate) fn spot(
+        harness: &Harness<'_, Window>,
+        lane: u16,
+        tick: i32,
+        below: f32,
+    ) -> egui::Pos2 {
+        let area = harness.get_by_label("Notefield").rect();
+        let app = harness.state();
+        let song = app.song.as_ref().unwrap();
+        let chart = song.chart().unwrap();
+        let timing = chart.timing();
+        let lanes = chart.lanes.map_or(0, u16::from);
+        let field = notefield::Field::new(
+            area,
+            lanes,
+            timing.time_at(song.cursor()),
+            app.zoom,
+            app.strip().is_some(),
+        );
+        let x = field
+            .columns
+            .span(LaneIndex::new(lane), LaneCount::ONE)
+            .center();
+        egui::pos2(x, field.view.y(timing.time_at(Tick::new(tick))) + below)
+    }
+
+    pub(crate) fn press(
+        harness: &Harness<'_, Window>,
+        pos: egui::Pos2,
+        pressed: bool,
+        modifiers: egui::Modifiers,
+    ) {
+        harness.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers,
+        });
+    }
+
+    pub(crate) fn click(
+        harness: &mut Harness<'_, Window>,
+        pos: egui::Pos2,
+        modifiers: egui::Modifiers,
+    ) {
+        harness.hover_at(pos);
+        harness.event(egui::Event::ModifiersChanged(modifiers));
+        press(harness, pos, true, modifiers);
+        press(harness, pos, false, modifiers);
+        harness.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+        harness.run();
+    }
+
+    pub(crate) fn drag(
+        harness: &mut Harness<'_, Window>,
+        from: egui::Pos2,
+        to: egui::Pos2,
+        modifiers: egui::Modifiers,
+    ) {
+        harness.hover_at(from);
+        harness.event(egui::Event::ModifiersChanged(modifiers));
+        press(harness, from, true, modifiers);
+        for step in 1..=4 {
+            harness
+                .hover_at(from.lerp(to, f32::from(u16::try_from(step).unwrap_or(u16::MAX)) / 4.0));
+        }
+        press(harness, to, false, modifiers);
+        harness.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+        harness.run();
+    }
+
+    pub(crate) fn lane_x(harness: &Harness<'_, Window>, lane: u16) -> f32 {
+        field(harness)
+            .columns
+            .span(LaneIndex::new(lane), LaneCount::ONE)
+            .center()
+    }
+
+    pub(crate) fn select_note(harness: &mut Harness<'_, Window>, lane: u16, tick: i32) {
+        let pos = on_line(harness, lane_x(harness, lane), tick);
+        click(harness, pos, egui::Modifiers::NONE);
+    }
+
+    /// The one request the window made since the last were taken.
+    pub(crate) fn request(harness: &mut Harness<'_, Window>) -> Request {
+        let mut requests = harness.state_mut().take_requests();
+        assert_eq!(requests.len(), 1, "{requests:?}");
+        requests.remove(0)
+    }
+
+    /// Whether `bytes` hold a song whose open chart has a tap on `lane` at `tick`.
+    pub(crate) fn holds_tap(bytes: &[u8], tick: i32, lane: u16) -> bool {
+        let song = charter_core::ValidDocument::from_json(bytes).unwrap();
+        let chart = song.charts().next().unwrap();
+        chart.objects().any(|object| {
+            object.tick == Tick::new(tick)
+                && object.position.lanes()
+                    == Some(LaneSpan::new(LaneIndex::new(lane), LaneCount::ONE))
+        })
+    }
+
+    /// The four taps with one more placed, so there is something to lose.
+    pub(crate) fn edited_four_taps() -> Harness<'static, Window> {
+        let mut harness = editable_four_taps();
+        harness.key_press(egui::Key::Num4);
+        harness.run();
+        harness
+    }
+
+    /// Asks to close the window as its close button does, and runs the one frame that answers.
+    pub(crate) fn close(harness: &mut Harness<'_, Window>) {
+        let root = harness.input_mut().viewports.entry(egui::ViewportId::ROOT);
+        root.or_default().events.push(egui::ViewportEvent::Close);
+        harness.step();
+    }
+
+    /// Whether the last frame sent `command` to the host's window.
+    pub(crate) fn sent(harness: &Harness<'_, Window>, command: &egui::ViewportCommand) -> bool {
+        let output = harness
+            .output()
+            .viewport_output
+            .get(&egui::ViewportId::ROOT);
+        output.is_some_and(|viewport| viewport.commands.contains(command))
+    }
+
+    pub(crate) fn asks_to_save(harness: &Harness<'_, Window>) -> bool {
+        harness
+            .query_by_label("Save changes to four.json?")
+            .is_some()
+    }
+
+    /// Shows the settings page named `name`.
+    pub(crate) fn settings_page(harness: &mut Harness<'_, Window>, name: &str) {
+        harness.get_by_label(name).click();
+        harness.run();
+    }
+
+    /// The demo, open for editing with the notefield running `direction`.
+    pub(crate) fn turned_demo(direction: Direction) -> Harness<'static, Window> {
+        let settings = Settings {
+            direction,
+            ..Settings::default()
+        };
+        let mut app = Window::new(PLUGINS).with_settings(settings);
+        app.open_demo();
+        window(app)
+    }
+
+    /// Where the middle of `lane` meets the line of `tick` on screen, however the notefield runs.
+    pub(crate) fn turned_spot(harness: &Harness<'_, Window>, lane: u16, tick: i32) -> egui::Pos2 {
+        let area = harness.get_by_label("Notefield").rect();
+        let app = harness.state();
+        let song = app.song.as_ref().unwrap();
+        let chart = song.chart().unwrap();
+        let timing = chart.timing();
+        let lanes = chart.lanes.map_or(0, u16::from);
+        let flip = Flip {
+            area,
+            direction: app.settings().direction,
+        };
+        let field = notefield::Field::new(
+            flip.field(),
+            lanes,
+            timing.time_at(song.cursor()),
+            app.zoom,
+            app.strip().is_some(),
+        );
+        let x = field
+            .columns
+            .span(LaneIndex::new(lane), LaneCount::ONE)
+            .center();
+        flip.pos(egui::pos2(x, field.view.y(timing.time_at(Tick::new(tick)))))
+    }
+
+    /// Clicks what `label` names in the song panel, scrolled into view first, since the panel
+    /// runs past the bottom of the test's window.
+    pub(crate) fn click_in_panel(harness: &mut Harness<'_, Window>, label: &str) {
+        harness.get_by_label(label).scroll_to_me();
+        harness.run();
+        harness.get_by_label(label).click();
+        harness.run();
+    }
+
+    pub(crate) fn bpm_field<'a>(harness: &'a Harness<'_, Window>) -> egui_kittest::Node<'a> {
+        harness.get_by_role_and_label(Role::TextInput, "BPM")
+    }
+
+    /// Types `text` over whatever the BPM field holds, then presses `key`.
+    pub(crate) fn enter_bpm(harness: &mut Harness<'_, Window>, text: &str, key: egui::Key) {
+        bpm_field(harness).focus();
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        bpm_field(harness).type_text(text);
+        harness.run();
+        harness.key_press(key);
+        harness.run();
+    }
+
+    /// The tick and BPM of the change in effect at the cursor.
+    pub(crate) fn bpm_at_cursor(harness: &Harness<'_, Window>) -> Option<(i64, String)> {
+        let song = harness.state().song.as_ref()?;
+        let (tick, bpm) = song.bpm()?;
+        let tick = serde_json::to_value(tick).ok()?.as_i64()?;
+        let value = f64::from(bpm);
+        let one = (value * 10.0).round() / 10.0;
+        let shown = if (value - one).abs() < 1e-5 {
+            charter_core::Bpm::try_from(one).map_or_else(|_| bpm.to_string(), |bpm| bpm.to_string())
+        } else {
+            bpm.to_string()
+        };
+        Some((tick, shown))
+    }
+
+    /// The tick and time of the first note after the start of the open chart.
+    pub(crate) fn first_note(harness: &Harness<'_, Window>) -> (Tick, f64) {
+        let song = harness.state().song.as_ref().unwrap();
+        let chart = song.chart().unwrap();
+        let note = chart
+            .objects
+            .iter()
+            .find(|note| note.tick > Tick::new(0))
+            .unwrap();
+        (note.tick, song.timing().time_at(note.tick).seconds())
+    }
+
+    pub(crate) fn meter_field<'a>(harness: &'a Harness<'_, Window>) -> egui_kittest::Node<'a> {
+        harness.get_by_role_and_label(Role::TextInput, "Meter")
+    }
+
+    pub(crate) fn section_field<'a>(harness: &'a Harness<'_, Window>) -> egui_kittest::Node<'a> {
+        harness.get_by_role_and_label(Role::TextInput, "Section here")
+    }
+
+    /// Types `text` over whatever the section field holds, then presses `key`.
+    pub(crate) fn enter_section(harness: &mut Harness<'_, Window>, text: &str, key: egui::Key) {
+        section_field(harness).focus();
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        section_field(harness).type_text(text);
+        harness.run();
+        harness.key_press(key);
+        harness.run();
+    }
+
+    pub(crate) fn marker_texts(harness: &Harness<'_, Window>) -> Vec<String> {
+        let song = harness.state().song.as_ref().unwrap();
+        let markers = &song.document().document().markers;
+        markers.iter().map(|marker| marker.text.clone()).collect()
+    }
+
+    pub(crate) fn four_taps_at(path: &str) -> Harness<'static, Window> {
+        let mut app = Window::new(PLUGINS);
+        app.open(Path::new(path), &four_taps());
+        window(app)
+    }
+
+    /// Four taps whose audio the host has loaded.
+    pub(crate) fn playable() -> Harness<'static, Window> {
+        let mut harness = four_taps_at("/songs/four.json");
+        harness
+            .state_mut()
+            .audio_ready(Path::new("/songs/a.ogg"), 60.0);
+        harness.run();
+        harness
+    }
+
+    pub(crate) fn space(harness: &mut Harness<'_, Window>) {
+        harness.key_press(egui::Key::Space);
+        harness.run();
+    }
+
+    /// Moves the playhead of a playing song to `seconds`, as the host reports each frame.
+    pub(crate) fn play_to(harness: &mut Harness<'_, Window>, seconds: f64) {
+        harness.state_mut().playhead(seconds);
+        harness.run();
+    }
+
+    pub(crate) fn playable_with(settings: Settings) -> Harness<'static, Window> {
+        let mut app = Window::new(PLUGINS).with_settings(settings);
+        app.open(Path::new("/songs/four.json"), &four_taps());
+        let mut harness = window(app);
+        harness
+            .state_mut()
+            .audio_ready(Path::new("/songs/a.ogg"), 2.0);
+        harness.run();
+        harness
+    }
+
+    pub(crate) fn clicks_played(harness: &mut Harness<'_, Window>) -> Vec<(f64, Tone)> {
+        space(harness);
+        let Request::Play { clicks, .. } = request(harness) else {
+            panic!("expected play");
+        };
+        clicks
+    }
+
+    pub(crate) fn quieter() -> Volumes {
+        Volumes {
+            music: Gain::from(0.5),
+            ticks: Gain::from(0.25),
+            metronome: Gain::from(0.75),
+            subdivision: Gain::from(0.5),
+        }
+    }
+
+    /// Four taps whose two seconds of audio have loaded, with the timing window open.
+    pub(crate) fn listening(settings: Settings) -> Harness<'static, Window> {
+        let mut harness = playable_with(settings);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
+        harness.run();
+        harness.state_mut().take_requests();
+        harness
+    }
+
+    /// Where a play started, what it loops and what clicks over it.
+    type Played = (f64, Option<(f64, f64)>, Vec<(f64, Tone)>);
+
+    pub(crate) fn played(harness: &mut Harness<'_, Window>) -> Played {
+        let requests = harness.state_mut().take_requests();
+        let play = requests.into_iter().rev().find_map(|request| {
+            if let Request::Play {
+                from,
+                looping,
+                clicks,
+                ..
+            } = request
+            {
+                Some((from, looping, clicks))
+            } else {
+                None
+            }
+        });
+        play.expect("a play")
+    }
+
+    /// Four lanes at 120 BPM that change to 150 BPM at the second beat, with a section at the
+    /// first eighth.
+    pub(crate) fn timed_song() -> Harness<'static, Window> {
+        let song = serde_json::json!({
+            "format_version": 0,
+            "ruleset": { "id": "sm", "version": "0.1.0" },
+            "metadata": { "title": "Timed", "artist": "a", "audio": "a.ogg" },
+            "timing": { "offset_seconds": 0.0, "events": [
+                { "tick": 0, "kind": { "bpm": 120.0 } },
+                { "tick": 960, "kind": { "bpm": 150.0 } }
+            ] },
+            "markers": [ { "tick": 480, "kind": "section", "text": "Drop" } ],
+            "charts": [ { "name": "Easy", "lanes": 4 } ]
+        });
+        let mut app = Window::new(PLUGINS);
+        app.open(Path::new("timed.json"), &serde_json::to_vec(&song).unwrap());
+        window(app)
+    }
+
+    pub(crate) fn field(harness: &Harness<'_, Window>) -> notefield::Field {
+        let area = harness.get_by_label("Notefield").rect();
+        let app = harness.state();
+        let song = app.song.as_ref().unwrap();
+        let chart = song.chart().unwrap();
+        let lanes = chart.lanes.map_or(0, u16::from);
+        notefield::Field::new(
+            area,
+            lanes,
+            chart.timing().time_at(song.cursor()),
+            app.zoom,
+            app.strip().is_some(),
+        )
+    }
+
+    /// Where the line of `tick` crosses the column at `x`.
+    pub(crate) fn on_line(harness: &Harness<'_, Window>, x: f32, tick: i32) -> egui::Pos2 {
+        let field = field(harness);
+        let song = harness.state().song.as_ref().unwrap();
+        let y = field.view.y(song.timing().time_at(Tick::new(tick)));
+        egui::pos2(x, y)
+    }
+
+    pub(crate) fn event_ticks(harness: &Harness<'_, Window>) -> Vec<Tick> {
+        let song = harness.state().song.as_ref().unwrap();
+        let timing = song.timing();
+        let mut ticks: Vec<_> = timing
+            .anchors
+            .iter()
+            .map(|anchor| anchor.tick)
+            .chain(timing.events.iter().map(|event| event.tick))
+            .collect();
+        ticks.sort_unstable();
+        ticks
+    }
+
+    /// The timing window open over `timed_song`, laid out a bar a row, as the gesture tests
+    /// measure their spots.
+    pub(crate) fn syncing() -> Harness<'static, Window> {
+        let mut harness = timed_song();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
+        harness.run();
+        harness
+            .state_mut()
+            .sync
+            .set_layout(charter_timing::rows::Layout::Bars);
+        harness.run();
+        harness
+    }
+
+    /// Where `tick` lies across its bar's row in the timing window, a bar a row with a tenth of
+    /// the bar before showing ahead of its downbeat.
+    pub(crate) fn in_row(harness: &Harness<'_, Window>, tick: i32) -> egui::Pos2 {
+        let song = harness.state().song.as_ref().unwrap();
+        let measure = song.timing().measures_from(Tick::new(tick)).next().unwrap();
+        let row = harness
+            .get_by_label(&format!("Measure {}", measure.number))
+            .rect();
+        let lead = charter_timing::rows::LEAD_IN;
+        let across =
+            crate::cast::f64_f32((measure.fraction(Tick::new(tick)) + lead) / (1.0 + lead));
+        egui::pos2(row.left() + across * row.width(), row.top() + 30.0)
+    }
+
+    pub(crate) fn seconds_at(harness: &Harness<'_, Window>, tick: i32) -> f64 {
+        let song = harness.state().song.as_ref().unwrap();
+        song.timing().time_at(Tick::new(tick)).seconds()
+    }
+
+    pub(crate) fn anchor_seconds(harness: &Harness<'_, Window>) -> Vec<f64> {
+        let song = harness.state().song.as_ref().unwrap();
+        song.anchors().iter().map(|pin| pin.seconds).collect()
+    }
+
+    #[expect(
+        clippy::non_ascii_literal,
+        reason = "the test clicks the Reset timing menu label with its ellipsis"
+    )]
+    pub(crate) fn reset_from_the_menu(harness: &mut Harness<'_, Window>) {
+        harness.query_all_by_label("Timing").next().unwrap().click();
+        harness.run();
+        harness.get_by_label("Reset timing…").click();
+        harness.run();
+    }
+
+    #[expect(
+        clippy::non_ascii_literal,
+        reason = "the test clicks the Find timing menu label with its ellipsis"
+    )]
+    pub(crate) fn find_from_the_menu(harness: &mut Harness<'_, Window>) {
+        harness.query_all_by_label("Timing").next().unwrap().click();
+        harness.run();
+        harness.get_by_label("Find timing from the audio…").click();
+        harness.run();
+    }
+
+    /// The timed song with its audio loaded and one strong onset `seconds` in.
+    pub(crate) fn syncing_with_an_onset(seconds: f64) -> Harness<'static, Window> {
+        let mut harness = syncing();
+        let file = harness.state().audio_file().unwrap();
+        harness.state_mut().audio_ready(&file, 60.0);
+        let onset = charter_audio::Onset {
+            seconds,
+            strength: 1.0,
+        };
+        harness.state_mut().onsets_ready(&file, vec![onset].into());
+        harness.run();
+        harness.state_mut().take_requests();
+        harness
+    }
+
+    /// Reads `offset,bpm` as a timing, standing in for a game's timing format.
+    #[derive(Debug)]
+    pub(crate) struct Importer;
+
+    #[expect(
+        clippy::missing_trait_methods,
+        reason = "a test plugin: the trait's defaults for every optional method"
+    )]
+    impl RulesetPlugin for Importer {
+        fn id(&self) -> &'static str {
+            "importer"
+        }
+
+        fn check(&self, _: &ValidDocument) -> Result<(), Box<dyn Error + Send + Sync>> {
+            Ok(())
+        }
+
+        fn timing_format(&self) -> Option<&str> {
+            Some("test timing")
+        }
+
+        fn import_timing(
+            &self,
+            text: &str,
+            _: &ValidDocument,
+        ) -> Result<charter_core::ImportedTiming, Box<dyn Error + Send + Sync>> {
+            let (offset, bpm) = text.trim().split_once(',').ok_or("no comma")?;
+            let timing = serde_json::from_value(serde_json::json!({
+                "anchors": [ { "tick": 0, "seconds": offset.parse::<f64>()? } ],
+                "tempo": bpm.parse::<f64>()?,
+                "events": []
+            }))?;
+            Ok(charter_core::ImportedTiming {
+                timing,
+                left_out: vec!["kiai time".to_owned()],
+            })
+        }
+    }
+
+    /// Reads the same text differently depending on the destination game's ruleset.
+    #[derive(Debug)]
+    pub(crate) struct ContextImporter;
+
+    #[expect(
+        clippy::missing_trait_methods,
+        reason = "a test plugin: the trait's defaults for every optional method"
+    )]
+    impl RulesetPlugin for ContextImporter {
+        fn id(&self) -> &'static str {
+            "context-importer"
+        }
+
+        fn check(&self, _: &ValidDocument) -> Result<(), Box<dyn Error + Send + Sync>> {
+            Ok(())
+        }
+
+        fn timing_format(&self) -> Option<&str> {
+            Some("context timing")
+        }
+
+        fn import_timing(
+            &self,
+            text: &str,
+            into: &ValidDocument,
+        ) -> Result<charter_core::ImportedTiming, Box<dyn Error + Send + Sync>> {
+            let bpm = if into.document().ruleset.id.as_str() == "ttr" {
+                "208.1"
+            } else {
+                "150"
+            };
+            Importer.import_timing(&format!("{text},{bpm}"), into)
+        }
+    }
+
+    pub(crate) const IMPORTING: &[&dyn RulesetPlugin] = &[&AnySm, &Importer];
+    pub(crate) const CONTEXT_IMPORTING: &[&dyn RulesetPlugin] = &[
+        &charter_stepmania::Plugin,
+        &charter_ttr::Plugin,
+        &ContextImporter,
+    ];
+
+    #[expect(
+        clippy::non_ascii_literal,
+        reason = "the import test opens the Import timing menu label with its ellipsis"
+    )]
+    pub(crate) fn importing() -> Harness<'static, Window> {
+        let mut app = Window::new(IMPORTING);
+        app.open_demo();
+        let mut harness = window(app);
+        // The menu, which comes before the song panel's section of the same name.
+        harness.query_all_by_label("Timing").next().unwrap().click();
+        harness.run();
+        harness.get_by_label("Import timing…").click();
+        harness.run();
+        harness
+    }
+
+    pub(crate) fn moments(harness: &Harness<'_, Window>) -> Vec<f64> {
+        let song = harness.state().song.as_ref().unwrap();
+        song.anchors().iter().map(|pin| pin.seconds).collect()
+    }
+
+    pub(crate) fn peaks() -> Arc<charter_audio::Peaks> {
+        let frames = vec![[0.25, -0.25]; 4000];
+        Arc::new(charter_audio::Peaks::of(
+            &charter_audio::Track::from_frames(1000, frames),
+        ))
+    }
+
+    /// Runs the window with its clock at `seconds`.
+    pub(crate) fn at_time(harness: &mut Harness<'_, Window>, seconds: f64) {
+        harness.input_mut().time = Some(seconds);
+        harness.run();
+    }
+
+    /// The four taps edited at one second in, and left long enough to be autosaved.
+    pub(crate) fn autosaved_four_taps() -> (Harness<'static, Window>, Vec<u8>) {
+        let mut harness = editable_four_taps();
+        at_time(&mut harness, 0.0);
+        harness.key_press(egui::Key::Num4);
+        at_time(&mut harness, 1.0);
+        at_time(&mut harness, 31.5);
+        let Request::Autosave { bytes } = request(&mut harness) else {
+            panic!("expected an autosave");
+        };
+        (harness, bytes)
+    }
+
+    pub(crate) fn four_taps_with(settings: Settings) -> Harness<'static, Window> {
+        let mut app = Window::new(PLUGINS).with_settings(settings);
+        app.open(Path::new("four.json"), &four_taps());
+        window(app)
+    }
+
+    pub(crate) fn snapshots(harness: &mut Harness<'_, Window>) -> Vec<(String, Vec<PathBuf>)> {
+        let requests = harness.state_mut().take_requests();
+        requests
+            .into_iter()
+            .filter_map(|request| {
+                if let Request::Snapshot { name, folders, .. } = request {
+                    Some((name, folders))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    pub(crate) fn restore_prompt(harness: &Harness<'_, Window>) -> bool {
+        harness
+            .query_by_label("Restore unsaved changes to four.json?")
+            .is_some()
+    }
+
+    /// The StepMania and Tap Tap Revenge plugins, which start songs.
+    pub(crate) const GAMES: &[&dyn RulesetPlugin] =
+        &[&charter_stepmania::Plugin, &charter_ttr::Plugin];
+
+    pub(crate) fn new_song_dialog() -> Harness<'static, Window> {
+        let mut harness = window(Window::new(GAMES));
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::N);
+        harness.run();
+        harness
+    }
+
+    pub(crate) fn dialog_open(harness: &Harness<'_, Window>) -> bool {
+        harness.query_by_label("Create").is_some()
+    }
+
+    pub(crate) fn charts(harness: &Harness<'_, Window>) -> Vec<(String, Option<LaneCount>)> {
+        let song = harness.state().song.as_ref().unwrap();
+        let charts = &song.document().document().charts;
+        charts
+            .iter()
+            .map(|chart| (chart.name.clone(), chart.lanes))
+            .collect()
+    }
+
+    pub(crate) fn lanes(n: u16) -> Option<LaneCount> {
+        LaneCount::new(n)
+    }
+
+    pub(crate) fn created() -> Harness<'static, Window> {
+        let mut harness = new_song_dialog();
+        harness.get_by_label("Create").click();
+        harness.run();
+        harness
+    }
+
+    /// A file dropped on the window that only a path stands for.
+    #[derive(Debug)]
+    pub(crate) struct DroppedPath(pub(crate) &'static str);
+
+    impl egui::DroppedFile for DroppedPath {
+        fn path(&self) -> &Path {
+            Path::new(self.0)
+        }
+
+        fn bytes(&self) -> Result<Vec<u8>, String> {
+            Err("not read in tests".to_owned())
+        }
+    }
+
+    /// Drops the file at `path` on the window, and forgets the tags it asks the host for.
+    pub(crate) fn drop_file(harness: &mut Harness<'_, Window>, path: &'static str) {
+        drop_keeping_requests(harness, path);
+        let requests = &mut harness.state_mut().requests;
+        requests.retain(|request| !matches!(request, Request::ReadTags { .. }));
+    }
+
+    pub(crate) fn drop_keeping_requests(harness: &mut Harness<'_, Window>, path: &'static str) {
+        harness
+            .input_mut()
+            .dropped_files
+            .push(Arc::new(DroppedPath(path)));
+        harness.run();
+    }
+
+    pub(crate) fn read_tags(
+        harness: &mut Harness<'_, Window>,
+        path: &str,
+        title: &str,
+        artist: &str,
+    ) {
+        let file = Path::new(path);
+        let (title, artist) = (Some(title.to_owned()), Some(artist.to_owned()));
+        harness.state_mut().tags_read(file, title, artist);
+        harness.run();
+    }
+
+    pub(crate) fn field_value(harness: &Harness<'_, Window>, label: &str) -> Option<String> {
+        harness
+            .get_by_role_and_label(Role::TextInput, label)
+            .value()
+    }
+
+    pub(crate) fn facts(harness: &Harness<'_, Window>) -> (String, String) {
+        let song = harness.state().song.as_ref().unwrap();
+        let metadata = &song.document().document().metadata;
+        (metadata.title.clone(), metadata.artist.clone())
+    }
+
+    pub(crate) const OFFER: &str = "Do you want to import song metadata from tags?";
+
+    pub(crate) fn offset_field<'a>(harness: &'a Harness<'_, Window>) -> egui_kittest::Node<'a> {
+        harness.get_by_role_and_label(Role::TextInput, "Offset")
+    }
+
+    pub(crate) fn offset(harness: &Harness<'_, Window>) -> serde_json::Value {
+        let song = harness.state().song.as_ref().unwrap();
+        serde_json::to_value(
+            song.document()
+                .timing()
+                .time_at(charter_core::Tick::new(0))
+                .seconds(),
+        )
+        .unwrap()
+    }
+
+    pub(crate) fn enter_offset(harness: &mut Harness<'_, Window>, text: &str) {
+        offset_field(harness).focus();
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        offset_field(harness).type_text(text);
+        harness.run();
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+    }
+
+    pub(crate) fn no_audio(harness: &Harness<'_, Window>) -> bool {
+        harness.query_by_label_contains("No audio yet").is_some()
+    }
+
+    pub(crate) fn audio(harness: &Harness<'_, Window>) -> String {
+        let song = harness.state().song.as_ref().unwrap();
+        song.document()
+            .document()
+            .metadata
+            .audio
+            .as_str()
+            .to_owned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::window::test_support::*;
+
+    #[test]
+    fn a_preview_that_is_not_a_time_says_so() {
+        let mut harness = editable_demo();
+        retype(&mut harness, "Preview", "soon");
+        assert!(
+            harness
+                .query_by_label_contains("soon is not a time")
+                .is_some()
+        );
+        assert_eq!(metadata(&harness).preview, None);
+    }
+    #[test]
+    fn space_before_the_audio_is_ready_says_so() {
+        let mut harness = four_taps_at("/songs/four.json");
+        space(&mut harness);
+        assert_eq!(harness.state_mut().take_requests(), []);
+        assert!(harness.query_by_label_contains("still loading").is_some());
+    }
+    #[test]
+    fn a_message_can_be_dismissed() {
+        let mut harness = editable_demo();
+        space(&mut harness);
+        harness.get_by_label("Dismiss").click();
+        harness.run();
+        assert_eq!(harness.state().message(), None);
+        assert!(harness.query_by_label("Dismiss").is_none());
+    }
+}
 
 #[cfg(kani)]
 mod proofs {
