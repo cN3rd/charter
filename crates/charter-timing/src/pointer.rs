@@ -228,17 +228,7 @@ pub(crate) fn row_input(
         match anchor {
             Some(tick) if shift => {
                 let from = window.focus.unwrap_or(tick);
-                let (low, high) = if from <= tick {
-                    (from, tick)
-                } else {
-                    (tick, from)
-                };
-                window.selection = frame
-                    .pins
-                    .iter()
-                    .map(|pin| pin.tick)
-                    .filter(|at| *at >= low && *at <= high)
-                    .collect();
+                window.select_between(frame, from, tick);
                 window.focus = Some(tick);
             }
             Some(tick) => {
@@ -447,13 +437,7 @@ pub(crate) fn release(
             let (Some(a), Some(b)) = (tick_of(origin), tick_of(at)) else {
                 return;
             };
-            let (low, high) = if a <= b { (a, b) } else { (b, a) };
-            window.selection = frame
-                .pins
-                .iter()
-                .map(|pin| pin.tick)
-                .filter(|tick| *tick >= low && *tick <= high)
-                .collect();
+            window.select_between(frame, a, b);
             window.focus = window.selection.first().copied();
         }
         Gesture::DragBeat { .. } | Gesture::DragAudio { .. } | Gesture::Idle => {}
@@ -500,21 +484,15 @@ pub(crate) fn menu(
             ui.close();
         }
         if ui.button("Select to the start").clicked() {
-            window.selection = frame
-                .pins
-                .iter()
-                .map(|pin| pin.tick)
-                .filter(|at| *at <= tick)
-                .collect();
+            if let Some(first) = frame.pins.first() {
+                window.select_between(frame, first.tick, tick);
+            }
             ui.close();
         }
         if ui.button("Select to the end").clicked() {
-            window.selection = frame
-                .pins
-                .iter()
-                .map(|pin| pin.tick)
-                .filter(|at| *at >= tick)
-                .collect();
+            if let Some(last) = frame.pins.last() {
+                window.select_between(frame, tick, last.tick);
+            }
             ui.close();
         }
         ui.separator();

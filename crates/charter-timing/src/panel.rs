@@ -2,7 +2,6 @@
 //! what the rows show, each one that can be edited editable in place.
 
 use charter_core::{Bpm, Tick};
-use charter_editor::Pin;
 use charter_style as style;
 use egui::{RichText, Ui};
 
@@ -266,7 +265,7 @@ fn anchor(
             .small()
             .strong(),
     );
-    let bpm = derived(frame, pin);
+    let bpm = frame.bpm_at(pin.tick);
     let delta = accuracy::nearest_onset(frame.onsets, window.sensitivity, pin.seconds)
         .map(|onset| (pin.seconds - onset) * 1000.0);
     compact(ui, "anchor", |ui| {
@@ -418,7 +417,7 @@ fn selection(ui: &mut Ui, window: &TimingWindow, frame: &Frame<'_>) {
     let tempos: Vec<f64> = chosen
         .windows(2)
         .filter_map(|pair| match pair {
-            [a, _] => Some(f64::from(derived(frame, *a))),
+            [a, _] => Some(f64::from(frame.bpm_at(a.tick))),
             _ => None,
         })
         .collect();
@@ -521,12 +520,6 @@ fn field(
     } else {
         None
     }
-}
-
-/// The tempo of the segment from `from`, as the song holds it: stops and delays in the segment
-/// take time the tempo does not.
-fn derived(frame: &Frame<'_>, from: Pin) -> Bpm {
-    frame.timing.bpm_at(from.tick).unwrap_or(frame.tail)
 }
 
 /// `value` to `places`, without trailing zeros.

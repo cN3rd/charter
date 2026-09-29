@@ -5,9 +5,7 @@ use egui::{Sense, vec2};
 use crate::pointer::{Gesture, anchor_near, ghost, reach, release, row_input};
 use crate::rows::{self, Anchor, Row, Scene};
 
-use super::{
-    Bpm, Command, Frame, Inputs, Issue, Layout, PULSE, Pos2, ROW, Tick, TimingWindow, style,
-};
+use super::{Command, Frame, Inputs, Issue, Layout, PULSE, Pos2, ROW, Tick, TimingWindow, style};
 
 /// The rows, and every press and drag on them. Says whether the pointer is over an anchor.
 #[expect(clippy::too_many_lines, reason = "draws rows then their drag state")]
@@ -47,8 +45,7 @@ pub(crate) fn rows(
         .iter()
         .map(|pin| Anchor {
             tick: pin.tick,
-            bpm: tempo_at(frame, pin.tick)
-                .map_or_else(|| frame.tail.to_string(), |bpm| bpm.to_string()),
+            bpm: frame.bpm_at(pin.tick).to_string(),
             focused: window.focus == Some(pin.tick),
             selected: window.selection.contains(&pin.tick),
             pulse: window
@@ -159,12 +156,6 @@ pub(crate) fn rows(
         release(window, frame, &laid, at, commands);
     }
     hovering
-}
-
-/// The tempo of the BPM change on `tick`, as the song holds it: stops and delays between
-/// anchors take time the tempo does not.
-fn tempo_at(frame: &Frame<'_>, tick: Tick) -> Option<Bpm> {
-    frame.timing.bpm_at(tick)
 }
 
 #[cfg(test)]

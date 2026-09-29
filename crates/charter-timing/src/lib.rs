@@ -292,6 +292,13 @@ pub(crate) struct Frame<'a> {
     now: f64,
 }
 
+impl Frame<'_> {
+    /// Tempo in effect at `tick`, falling back to the tail after the last anchor.
+    fn bpm_at(&self, tick: Tick) -> Bpm {
+        self.timing.bpm_at(tick).unwrap_or(self.tail)
+    }
+}
+
 /// What the host gives the window each frame.
 #[derive(Clone, Copy, Debug)]
 pub struct Inputs<'a> {
@@ -463,6 +470,17 @@ impl TimingWindow {
         self.focus = Some(tick);
         self.selection = vec![tick];
         self.scroll_to = Some(tick);
+    }
+
+    /// Selects every anchor between `a` and `b`, inclusive.
+    fn select_between(&mut self, frame: &Frame<'_>, a: Tick, b: Tick) {
+        let (low, high) = if a <= b { (a, b) } else { (b, a) };
+        self.selection = frame
+            .pins
+            .iter()
+            .map(|pin| pin.tick)
+            .filter(|tick| *tick >= low && *tick <= high)
+            .collect();
     }
 
     /// Nudges the targets `by` seconds, joining the step before when they were nudged a moment
