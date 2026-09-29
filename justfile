@@ -6,6 +6,10 @@ linux := "x86_64-unknown-linux-gnu"
 windows := "x86_64-pc-windows-msvc"
 # The C runtime built in, so Windows users need no Visual C++ redistributable.
 windows_flags := "RUSTFLAGS='-C target-feature=+crt-static'"
+# On Windows itself the MSVC toolchain builds for Windows; elsewhere cargo-xwin cross-compiles.
+windows_build := if os() == "windows" { "cargo build" } else { "cargo xwin build" }
+# Windows installs Python as `python`, without a `python3`.
+python := if os() == "windows" { "python" } else { "python3" }
 
 # List the recipes
 default:
@@ -54,8 +58,8 @@ docs-serve:
 
 # Check the book is an OKF bundle (SUMMARY.md's one E1 is expected) and its preprocessor works
 docs-check:
-    python3 docs/okf-frontmatter.py selftest
-    python3 docs/okf-frontmatter.py check docs/src
+    {{ python }} docs/okf-frontmatter.py selftest
+    {{ python }} docs/okf-frontmatter.py check docs/src
 
 # Everything a change should pass before it is committed
 ci: fmt-check clippy test docs docs-check
@@ -72,9 +76,9 @@ build:
 release:
     cargo build -p charter-app --release
 
-# Build the editor for 64-bit Windows, optimised, with cargo-xwin
+# Build the editor for 64-bit Windows, optimised: with MSVC on Windows, cargo-xwin elsewhere
 build-windows:
-    {{ windows_flags }} cargo xwin build -p charter-app --release --target {{ windows }}
+    {{ windows_flags }} {{ windows_build }} -p charter-app --release --target {{ windows }}
 
 # Run the Windows build under Wine
 run-windows *args: build-windows
@@ -86,7 +90,7 @@ _dist-build-linux:
 
 # Build what `dist-windows` packages
 _dist-build-windows:
-    {{ windows_flags }} cargo xwin build -p charter-app --profile dist --target {{ windows }}
+    {{ windows_flags }} {{ windows_build }} -p charter-app --profile dist --target {{ windows }}
 
 # Package the Linux build as dist/charter-<version>-linux-x86_64.tar.gz
 dist-linux: _dist-build-linux (_stage "linux" "charter-app" "charter") (_licenses "linux")
@@ -102,7 +106,12 @@ dist-windows: _dist-build-windows (_stage "windows" "charter-app.exe" "charter.e
     set -euo pipefail
     name="$(just _name windows-x86_64)"
     rm -f "dist/$name.zip"
-    (cd dist && zip -qr "$name.zip" "$name")
+    # Windows has no `zip`, but 7-Zip.
+    if command -v zip >/dev/null; then
+        (cd dist && zip -qr "$name.zip" "$name")
+    else
+        (cd dist && 7z a -tzip -bso0 "$name.zip" "$name")
+    fi
     echo "dist/$name.zip"
 
 # Package both; docs/src/packaging.md says what ships and why no assets folder is needed
@@ -118,7 +127,7 @@ _name platform:
     #!/usr/bin/env bash
     set -euo pipefail
     version="$(cargo metadata --no-deps --format-version 1 \
-        | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "charter-app"))')"
+        | {{ python }} -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "charter-app"))')"
     echo "charter-$version-{{ platform }}"
 
 # Copy the built binary into a fresh package folder, renamed
@@ -155,7 +164,7 @@ _licenses os:
     cp "$hits/LICENSE-AUDIO" "$folder/licenses/hit-sounds-LICENSE.txt"
     cp "$hits/CC0-1.0.txt" "$folder/licenses/hit-sounds-CC0-1.0.txt"
     cp "$hits/PROVENANCE.md" "$folder/licenses/hit-sounds-PROVENANCE.md"
-    cargo metadata --format-version 1 --filter-platform "$target" | python3 -c '
+    cargo metadata --format-version 1 --filter-platform "$target" | {{ python }} -c '
     import json, sys
     meta = json.load(sys.stdin)
     packages = {p["id"]: p for p in meta["packages"]}

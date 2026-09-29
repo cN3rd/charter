@@ -57,10 +57,18 @@ jobs:
     name: Package ${{ matrix.os }}
     needs: check
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
     strategy:
       matrix:
-        os: [linux, windows]
+        include:
+          - os: linux
+            runner: ubuntu-latest
+          # Built natively with MSVC rather than cross-compiled, so it is what Windows users run.
+          - os: windows
+            runner: windows-latest
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -71,12 +79,15 @@ jobs:
           key: dist-${{ matrix.os }}
       - uses: taiki-e/install-action@v2
         with:
-          tool: ${{ matrix.os == 'windows' && 'just,cargo-xwin' || 'just' }}
-      # Windows cross-compiles as `just build-windows` does locally, with clang-cl and lld-link.
-      - run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config zip \
-            ${{ matrix.os == 'windows' && 'clang lld llvm' || '' }}
+          tool: just
+      - if: matrix.os == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config zip
+      # just runs its recipes, shebang ones included, through Git's bash and coreutils, which must
+      # come before Windows' own `bash`, WSL's.
+      - if: matrix.os == 'windows'
+        run: |
+          echo 'C:\Program Files\Git\bin' >> "$GITHUB_PATH"
+          echo 'C:\Program Files\Git\usr\bin' >> "$GITHUB_PATH"
       - run: just dist-${{ matrix.os }}
       - uses: actions/upload-artifact@v4
         with:

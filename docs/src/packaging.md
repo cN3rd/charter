@@ -11,8 +11,10 @@ status: draft
 `just dist` builds the editor with the `dist` profile, release with symbols stripped, and writes two
 packages to `dist/`: `charter-<version>-linux-x86_64.tar.gz` and
 `charter-<version>-windows-x86_64.zip`. `just dist-linux` and `just dist-windows` build one each;
-the Windows build cross-compiles with cargo-xwin and links the C runtime in, so it needs no Visual
-C++ redistributable.
+the Windows build cross-compiles with cargo-xwin, or builds with MSVC when run on Windows as CI
+does, and links the C runtime in, so it needs no Visual C++ redistributable. CI tests every push
+and pull request, and publishes each push to `main` as a prerelease of both packages, its notes
+listing the commits since the one before.
 
 ## What a package holds
 
