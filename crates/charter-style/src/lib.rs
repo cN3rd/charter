@@ -404,6 +404,9 @@ pub fn switch(ui: &mut Ui, on: &mut bool, name: &str) -> egui::Response {
 /// A moment of the audio as minutes, seconds and milliseconds, such as `01:23.456`.
 #[must_use]
 pub fn clock(seconds: f64) -> String {
+    if !seconds.is_finite() {
+        return "00:00.000".to_owned();
+    }
     let sign = if seconds < 0.0 { "-" } else { "" };
     let millis = milliseconds(seconds);
     format!(
@@ -622,6 +625,13 @@ mod tests {
         assert_eq!(clock(59.9995), "01:00.000");
         assert_eq!(clock(-61.234), "-01:01.234");
         assert_eq!(clock(0.0004), "00:00.000");
+    }
+
+    #[test]
+    fn a_clock_treats_non_finite_times_as_zero() {
+        assert_eq!(clock(f64::NAN), "00:00.000");
+        assert_eq!(clock(f64::INFINITY), "00:00.000");
+        assert_eq!(clock(f64::NEG_INFINITY), "00:00.000");
     }
 
     #[test]
