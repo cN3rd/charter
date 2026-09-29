@@ -11,7 +11,7 @@
 //! keyboard and row painting internals live in private modules; the crate root keeps the public
 //! surface and per-frame shared state.
 
-pub mod accuracy;
+mod accuracy;
 mod draw;
 pub mod grid;
 mod keyboard;
@@ -253,7 +253,7 @@ struct CacheKey {
     /// Minimum onset strength the measurements were computed for.
     sensitivity: f32,
     /// Onsets the measurements were computed for.
-    onsets: Vec<Onset>,
+    onsets: Box<[Onset]>,
 }
 
 /// What the rows are measured against, worked out again only when the timing, the grid or the
@@ -262,6 +262,8 @@ struct CacheKey {
 struct Cache {
     /// Values that decide whether these measurements are still current.
     key: CacheKey,
+    /// Anchors measured with this timing map.
+    pins: Vec<Pin>,
     /// Audio deviations from the timing grid, in milliseconds.
     residuals: Vec<Residual>,
     /// Timing problems inferred from the residuals and anchors.
@@ -273,7 +275,7 @@ pub(crate) struct Frame<'a> {
     /// Validated timing map for this frame.
     timing: Valid<'a, Timing>,
     /// Anchors of the current map, in tick order.
-    pins: Vec<Pin>,
+    pins: &'a [Pin],
     /// Tempo after the last anchor.
     tail: Bpm,
     /// Mapping between ticks and visible row positions.
@@ -396,7 +398,7 @@ impl TimingWindow {
         let count = range.end().saturating_sub(*range.start()).saturating_add(1);
         let fitted = accuracy::fit(
             frame.timing,
-            (&frame.pins, frame.tail),
+            (frame.pins, frame.tail),
             range,
             frame.residuals,
             half_bpm,
@@ -578,7 +580,7 @@ pub fn show(
                 return;
             };
             let cache = refreshed(window.cache.take(), song, inputs.onsets, window);
-            settle(window, song);
+            settle(window, &cache.pins);
             let frame = frame(song, inputs.onsets, (&cache, window.layout), now);
             egui::Panel::top("timing toolbar")
                 .show(ui, |ui| panel::toolbar(ui, window, &frame, commands));
@@ -628,24 +630,24 @@ pub fn show(
 /// timing, grid or set of onsets.
 fn refreshed(cache: Option<Cache>, song: &Song, onsets: &[Onset], window: &TimingWindow) -> Cache {
     let timing = song.timing();
-    let key = CacheKey {
-        timing: (*timing).clone(),
-        grid: window.grid,
-        sensitivity: window.sensitivity,
-        onsets: onsets.to_vec(),
-    };
     let fresh = cache.filter(|cache| {
-        cache.key.timing == key.timing
-            && cache.key.grid == key.grid
-            && (cache.key.sensitivity - key.sensitivity).abs() <= f32::EPSILON
-            && cache.key.onsets == key.onsets
+        cache.key.timing == *timing
+            && cache.key.grid == window.grid
+            && (cache.key.sensitivity - window.sensitivity).abs() <= f32::EPSILON
+            && cache.key.onsets.as_ref() == onsets
     });
     fresh.unwrap_or_else(|| {
         let pins = song.anchors();
         let residuals = accuracy::residuals(timing, window.grid, onsets, window.sensitivity);
         let issues = accuracy::issues(timing, &pins, &residuals, (onsets, window.sensitivity));
         Cache {
-            key,
+            key: CacheKey {
+                timing: (*timing).clone(),
+                grid: window.grid,
+                sensitivity: window.sensitivity,
+                onsets: onsets.into(),
+            },
+            pins,
             residuals,
             issues,
         }
@@ -653,8 +655,7 @@ fn refreshed(cache: Option<Cache>, song: &Song, onsets: &[Onset], window: &Timin
 }
 
 /// Keeps the focus and selection on anchors that are there, after edits moved or removed some.
-fn settle(window: &mut TimingWindow, song: &Song) {
-    let pins = song.anchors();
+fn settle(window: &mut TimingWindow, pins: &[Pin]) {
     window
         .selection
         .retain(|tick| pins.iter().any(|pin| pin.tick == *tick));
@@ -685,7 +686,7 @@ fn frame<'a>(
     Frame {
         timing,
         tail: song.tail_bpm(),
-        pins: song.anchors(),
+        pins: &cache.pins,
         bars: Bars::new(timing, first, last, 4).laid_out(layout),
         onsets,
         residuals: &cache.residuals,

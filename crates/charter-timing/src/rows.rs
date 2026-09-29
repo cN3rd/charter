@@ -10,19 +10,19 @@ use crate::accuracy::{Residual, SATURATION_MS};
 use crate::grid::{Grid, Line};
 
 /// How tall a row is, its residual strip included.
-pub const ROW: f32 = 76.0;
+pub(crate) const ROW: f32 = 76.0;
 /// How tall the strip under a row that shows the residuals is.
-pub const STRIP: f32 = 6.0;
+pub(crate) const STRIP: f32 = 6.0;
 /// How wide the row headers down the left are.
-pub const GUTTER: f32 = 56.0;
+pub(crate) const GUTTER: f32 = 56.0;
 /// How far from an anchor's line, in points, a press still takes it.
-pub const GRAB: f32 = 6.0;
+pub(crate) const GRAB: f32 = 6.0;
 /// How much of the bar before each row starts shows ahead of its downbeat, so a pickup is seen.
 pub const LEAD_IN: f64 = 0.10;
 
 /// How many bars a row holds.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum BarsPerRow {
+pub(crate) enum BarsPerRow {
     /// Half a bar, for close inspection.
     Half,
     /// One bar across the row.
@@ -67,7 +67,7 @@ impl BarsPerRow {
 
 /// How long a row is in the time layout.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum SecondsPerRow {
+pub(crate) enum SecondsPerRow {
     /// One second across the row.
     One,
     /// Two seconds across the row.
@@ -126,7 +126,7 @@ pub enum Layout {
 /// down the rows whatever the tempo. The rows lay ticks out by a position that is the bar
 /// position in the bar layout and the audio time in the time layout.
 #[derive(Clone, Debug)]
-pub struct Bars<'a> {
+pub(crate) struct Bars<'a> {
     /// Measures used to translate between ticks and bar positions.
     measures: Vec<Measure>,
     /// Validated timing map for audio positions.
@@ -269,7 +269,7 @@ impl<'a> Bars<'a> {
 /// The stretch a row spans, in positions: from where it starts showing, through where its own
 /// part starts, to where it ends.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Span {
+pub(crate) struct Span {
     /// Beginning of the lead-in, in bars or seconds.
     pub from: f64,
     /// Beginning of the row's own span.
@@ -280,7 +280,7 @@ pub struct Span {
 
 /// The tick, maybe between ticks, at `seconds` into the audio: the earliest of a paused stretch.
 #[must_use]
-pub fn tick_at_seconds(timing: Valid<'_, Timing>, seconds: f64) -> f64 {
+pub(crate) fn tick_at_seconds(timing: Valid<'_, Timing>, seconds: f64) -> f64 {
     let tick = timing.latest_tick_by(seconds);
     let after = Tick::new(i32::try_from(i64::from(tick).saturating_add(1)).unwrap_or(i32::MAX));
     let (at, next) = (
@@ -368,7 +368,7 @@ pub(crate) const fn float_to_i64(value: f64) -> i64 {
 
 /// A row on screen: the positions it spans, and where.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Row {
+pub(crate) struct Row {
     /// Position where the lead-in to this row begins, in bars or seconds.
     pub from: f64,
     /// Where the row's own part starts, after the lead-in from before it.
@@ -437,7 +437,7 @@ impl Row {
 
 /// The moment of the audio at `tick`, which may be between ticks.
 #[must_use]
-pub fn seconds_at_tick(timing: Valid<'_, Timing>, tick: f64) -> f64 {
+pub(crate) fn seconds_at_tick(timing: Valid<'_, Timing>, tick: f64) -> f64 {
     let below = tick.floor();
     let whole = float_to_i32(below.clamp(f64::from(i32::MIN), f64::from(i32::MAX - 1)));
     let (at, next) = (
@@ -449,7 +449,7 @@ pub fn seconds_at_tick(timing: Valid<'_, Timing>, tick: f64) -> f64 {
 
 /// How an anchor is drawn.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Anchor {
+pub(crate) struct Anchor {
     /// Tick held by the anchor.
     pub tick: Tick,
     /// The tempo from it on.
@@ -464,7 +464,7 @@ pub struct Anchor {
 
 /// Where a pending anchor edit would land on a row.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Ghost {
+pub(crate) struct Ghost {
     /// Screen x-coordinate on the row.
     pub x: f32,
     /// Whether the target was snapped to the beat grid or an onset.
@@ -473,7 +473,7 @@ pub struct Ghost {
 
 /// Bar-position interval a dragged anchor may occupy.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Reach {
+pub(crate) struct Reach {
     /// First allowed position.
     pub from: f64,
     /// First position beyond the allowed interval.
@@ -482,7 +482,7 @@ pub struct Reach {
 
 /// Everything a row draws.
 #[derive(Debug)]
-pub struct Scene<'a> {
+pub(crate) struct Scene<'a> {
     /// Validated timing of the song being drawn.
     pub timing: Valid<'a, Timing>,
     /// Measures and layout used to locate ticks.
@@ -508,7 +508,7 @@ pub struct Scene<'a> {
 }
 
 /// Draws `row` of `scene` with `painter`.
-pub fn draw(painter: &egui::Painter, row: &Row, scene: &Scene<'_>) {
+pub(crate) fn draw(painter: &egui::Painter, row: &Row, scene: &Scene<'_>) {
     let rect = row.rect;
     let audio = Rect::from_min_max(rect.min, pos2(rect.right(), rect.bottom() - STRIP));
     painter.rect_filled(audio, 2.0, style::WAVE_BG);
@@ -557,7 +557,7 @@ pub fn draw(painter: &egui::Painter, row: &Row, scene: &Scene<'_>) {
     clippy::arithmetic_side_effects,
     reason = "egui screen-coordinate vector addition cannot overflow integers"
 )]
-pub fn header(
+pub(crate) fn header(
     painter: &egui::Painter,
     row: &Row,
     (title, measure): (&str, Option<&Measure>),
@@ -707,7 +707,7 @@ fn onsets(painter: &egui::Painter, row: &Row, audio: Rect, scene: &Scene<'_>) {
 
 /// Where the moment `seconds` lies across the row.
 #[must_use]
-pub fn x_at_seconds(row: &Row, scene: &Scene<'_>, seconds: f64) -> f32 {
+pub(crate) fn x_at_seconds(row: &Row, scene: &Scene<'_>, seconds: f64) -> f32 {
     match scene.bars.layout() {
         Layout::Time => row.x_of(seconds),
         Layout::Bars => row.x_of(scene.bars.bar_of(tick_at_seconds(scene.timing, seconds))),
@@ -800,7 +800,7 @@ fn draw_anchor(painter: &egui::Painter, row: &Row, audio: Rect, bars: &Bars, anc
 
 /// Where `pos` is, among the rows laid out.
 #[must_use]
-pub fn row_at(rows: &[Row], pos: Pos2) -> Option<&Row> {
+pub(crate) fn row_at(rows: &[Row], pos: Pos2) -> Option<&Row> {
     rows.iter()
         .find(|row| row.whole().y_range().contains(pos.y))
 }
