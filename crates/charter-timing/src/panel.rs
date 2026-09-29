@@ -40,12 +40,13 @@ fn start_bpm(
         .weak("Start BPM")
         .on_hover_text("The tempo from the first anchor on, until the next");
     let bpm = frame.timing.bpm_at(first.tick).unwrap_or(frame.tail);
-    let text = trimmed(f64::from(bpm), 3);
+    let text = style::trimmed_decimal(f64::from(bpm), 3);
     if !frame.editable {
         ui.label(text);
         return;
     }
-    let Some(typed) = field(ui, caption.id, &text, &mut window.drafts.start_bpm, false) else {
+    let Some(typed) = style::text_field(ui, caption.id, &text, &mut window.drafts.start_bpm, false)
+    else {
         return;
     };
     match typed
@@ -272,7 +273,7 @@ fn anchor(
         let caption = ui.weak("t");
         let text = format!("{:.4}", pin.seconds);
         if editable {
-            let field = field(
+            let field = style::text_field(
                 ui,
                 caption.id,
                 &text,
@@ -302,7 +303,8 @@ fn anchor(
             .bar_of(crate::rows::float_from_i64(i64::from(pin.tick)));
         let bar_text = format!("{bar:.3}");
         if editable {
-            if let Some(typed) = field(ui, bar_caption.id, &bar_text, &mut window.drafts.bar, false)
+            if let Some(typed) =
+                style::text_field(ui, bar_caption.id, &bar_text, &mut window.drafts.bar, false)
             {
                 match typed.parse::<f64>() {
                     Ok(bar_position) if bar_position.is_finite() => {
@@ -319,9 +321,9 @@ fn anchor(
         ui.weak(frame.timing.grid_position(pin.tick).to_string());
         ui.end_row();
         let tempo_caption = ui.weak("BPM");
-        let tempo_text = trimmed(f64::from(bpm), 3);
+        let tempo_text = style::trimmed_decimal(f64::from(bpm), 3);
         if editable {
-            if let Some(typed) = field(
+            if let Some(typed) = style::text_field(
                 ui,
                 tempo_caption.id,
                 &tempo_text,
@@ -491,41 +493,6 @@ fn compact(ui: &mut Ui, id: &str, rows: impl FnOnce(&mut Ui)) {
         .min_col_width(20.0)
         .spacing([8.0, 5.0])
         .show(ui, rows);
-}
-
-/// A one-line field showing `current`, kept in `draft` while it has the keyboard, and what was
-/// typed once it is entered or left; Escape leaves it as it was.
-fn field(
-    ui: &mut Ui,
-    caption: egui::Id,
-    current: &str,
-    draft: &mut Option<String>,
-    take_focus: bool,
-) -> Option<String> {
-    let mut text = draft.take().unwrap_or_else(|| current.to_owned());
-    let response = ui
-        .add(egui::TextEdit::singleline(&mut text).desired_width(84.0))
-        .labelled_by(caption);
-    if take_focus {
-        response.request_focus();
-    }
-    let left = response.lost_focus()
-        && !ui.input(|input| input.key_pressed(egui::Key::Escape))
-        && text.trim() != current;
-    if response.has_focus() {
-        *draft = Some(text);
-        None
-    } else if left {
-        Some(text.trim().to_owned())
-    } else {
-        None
-    }
-}
-
-/// `value` to `places`, without trailing zeros.
-fn trimmed(value: f64, places: usize) -> String {
-    let text = format!("{value:.places$}");
-    text.trim_end_matches('0').trim_end_matches('.').to_owned()
 }
 
 /// Something the issue list names, for the window to go to.

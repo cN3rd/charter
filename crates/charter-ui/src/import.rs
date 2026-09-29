@@ -225,7 +225,7 @@ fn summary(ui: &mut Ui, imported: &ImportedTiming) {
         .map_or(0.0, |anchor| f64::from(anchor.seconds) * 1000.0);
     style::table(ui, "imported", |ui| {
         ui.weak("Offset");
-        ui.label(format!("{} ms", trimmed(offset)));
+        ui.label(format!("{} ms", style::trimmed_decimal(offset, 3)));
         ui.end_row();
         ui.weak("Tempo");
         let first = if tempo_points == 0 {
@@ -253,12 +253,6 @@ fn summary(ui: &mut Ui, imported: &ImportedTiming) {
         ui.add_space(4.0);
         ui.weak(format!("Left out: {}.", imported.left_out.join("; ")));
     }
-}
-
-/// `value` to three places, without trailing zeros.
-fn trimmed(value: f64) -> String {
-    let text = format!("{value:.3}");
-    text.trim_end_matches('0').trim_end_matches('.').to_owned()
 }
 
 #[cfg(test)]
@@ -505,9 +499,9 @@ mod tests {
 
     #[test]
     fn milliseconds_show_without_trailing_zeros() {
-        assert_eq!(trimmed(895.0), "895");
-        assert_eq!(trimmed(895.25), "895.25");
-        assert_eq!(trimmed(-14.0), "-14");
+        assert_eq!(style::trimmed_decimal(895.0, 3), "895");
+        assert_eq!(style::trimmed_decimal(895.25, 3), "895.25");
+        assert_eq!(style::trimmed_decimal(-14.0, 3), "-14");
     }
 
     proptest! {

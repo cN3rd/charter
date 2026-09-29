@@ -108,6 +108,8 @@ pub const ANCHOR_FOCUS: Color32 = Color32::from_rgb(255, 214, 140);
 pub const ANCHOR_SELECTED: Color32 = ACCENT;
 /// The area beyond the timing window's editable reach.
 pub const REACH_DIM: Color32 = Color32::from_rgba_unmultiplied_const(0, 0, 0, 120);
+/// The timing window's waveform, brighter than the notefield waveform because it stands alone.
+pub const TIMING_WAVE: Color32 = Color32::from_rgb(118, 158, 210);
 
 /// Palette colour legible against the dark panels and note lanes.
 #[must_use]
@@ -428,6 +430,45 @@ fn milliseconds(seconds: f64) -> u64 {
     (seconds.abs() * 1000.0).round() as u64
 }
 
+/// `value` to `places` decimal places, without trailing zeroes.
+#[must_use]
+pub fn trimmed_decimal(value: f64, places: usize) -> String {
+    let text = format!("{value:.places$}");
+    text.trim_end_matches('0').trim_end_matches('.').to_owned()
+}
+
+/// A one-line text field showing `current`, kept in `draft` while it has keyboard focus.
+///
+/// Returns the trimmed text once the field is entered or left, unless Escape cancelled the edit
+/// or the text still matches `current`.
+#[must_use]
+pub fn text_field(
+    ui: &mut Ui,
+    caption: egui::Id,
+    current: &str,
+    draft: &mut Option<String>,
+    take_focus: bool,
+) -> Option<String> {
+    let mut text = draft.take().unwrap_or_else(|| current.to_owned());
+    let response = ui
+        .add(egui::TextEdit::singleline(&mut text).desired_width(84.0))
+        .labelled_by(caption);
+    if take_focus {
+        response.request_focus();
+    }
+    let left = response.lost_focus()
+        && !ui.input(|input| input.key_pressed(egui::Key::Escape))
+        && text.trim() != current;
+    if response.has_focus() {
+        *draft = Some(text);
+        None
+    } else if left {
+        Some(text.trim().to_owned())
+    } else {
+        None
+    }
+}
+
 /// A checkbox before `text`, both one target: a sunken square with an edge when off, filled in
 /// the accent with a white tick when on.
 pub fn check(ui: &mut Ui, on: &mut bool, text: &str) -> egui::Response {
@@ -632,6 +673,13 @@ mod tests {
         assert_eq!(clock(f64::NAN), "00:00.000");
         assert_eq!(clock(f64::INFINITY), "00:00.000");
         assert_eq!(clock(f64::NEG_INFINITY), "00:00.000");
+    }
+
+    #[test]
+    fn a_trimmed_decimal_keeps_requested_precision_without_trailing_zeroes() {
+        assert_eq!(trimmed_decimal(120.0, 3), "120");
+        assert_eq!(trimmed_decimal(1.25, 3), "1.25");
+        assert_eq!(trimmed_decimal(-0.001, 3), "-0.001");
     }
 
     #[test]

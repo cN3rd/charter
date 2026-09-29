@@ -497,13 +497,8 @@ fn stepper(ui: &mut Ui, symbol: &str, name: &str, key: &str) -> bool {
 
 /// `seconds` as milliseconds to the microsecond, without trailing zeros.
 fn milliseconds_of(seconds: f64) -> String {
-    let text = format!("{:.3}", seconds * 1000.0);
-    let text = text.trim_end_matches('0').trim_end_matches('.');
-    if text == "-0" {
-        "0".to_owned()
-    } else {
-        text.to_owned()
-    }
+    let text = style::trimmed_decimal(seconds * 1000.0, 3);
+    if text == "-0" { "0".to_owned() } else { text }
 }
 
 #[cfg(test)]

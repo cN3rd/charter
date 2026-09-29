@@ -615,15 +615,12 @@ fn waveform(painter: &egui::Painter, row: &Row, audio: Rect, scene: &Scene<'_>, 
             painter.vline(
                 x + 0.5,
                 egui::Rangef::new(top, bottom),
-                Stroke::new(1.0, WAVE),
+                Stroke::new(1.0, style::TIMING_WAVE),
             );
         }
         x += 1.0;
     }
 }
-
-/// The waveform a touch brighter than the notefield's, since it is all this window shows.
-const WAVE: Color32 = Color32::from_rgb(118, 158, 210);
 
 /// The grid lines in the row, told apart by shape as well as colour: downbeats thick, beats
 /// solid, lines between dashed, or dotted for triplets, and the beats numbered along the top.
@@ -863,7 +860,7 @@ mod tests {
         assert!(harness.output().shapes.iter().any(|shape| {
             matches!(
                 &shape.shape,
-                egui::Shape::LineSegment { stroke, .. } if stroke.color == WAVE
+                egui::Shape::LineSegment { stroke, .. } if stroke.color == style::TIMING_WAVE
             )
         }));
     }

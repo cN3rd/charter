@@ -3,6 +3,7 @@
 
 mod rulesets;
 
+use charter_style as style;
 use eframe::egui::{
     self, Align, Align2, Color32, FontId, Layout, Painter, Pos2, Rangef, Rect, RichText, Sense,
     Shape, Stroke, StrokeKind, Ui, Visuals, pos2, vec2,
@@ -59,37 +60,37 @@ const HEADER_H: f32 = 26.0;
 const LABEL_W: f32 = 64.0;
 
 /// Background colour of the timeline's non-playfield columns.
-const COLUMN_BG: Color32 = Color32::from_gray(22);
+const COLUMN_BG: Color32 = style::COLUMN_BG;
 /// Background colour behind the ruleset's notes.
-const LANES_BG: Color32 = Color32::from_gray(12);
+const LANES_BG: Color32 = style::LANES_BG;
 /// Colour separating adjacent columns.
-const DIVIDER: Color32 = Color32::from_gray(60);
+const DIVIDER: Color32 = style::DIVIDER;
 /// Colour of ordinary beat lines and lane boundaries.
-const BEAT_LINE: Color32 = Color32::from_gray(38);
+const BEAT_LINE: Color32 = style::BEAT_LINE;
 /// Colour of measure starts.
-const MEASURE_LINE: Color32 = Color32::from_gray(95);
+const MEASURE_LINE: Color32 = style::MEASURE_LINE;
 /// Primary label colour against the dark mock panels.
-const TEXT: Color32 = Color32::from_gray(200);
+const TEXT: Color32 = style::TEXT;
 /// At least 4.5:1 against the panels, which egui's own weak text is not.
-const WEAK_TEXT: Color32 = Color32::from_gray(140);
+const WEAK_TEXT: Color32 = style::WEAK_TEXT;
 /// Background colour of each key label.
-const KEY_CAP: Color32 = Color32::from_gray(34);
+const KEY_CAP: Color32 = style::RAISED;
 /// Border colour of each key label.
-const KEY_EDGE: Color32 = Color32::from_gray(70);
+const KEY_EDGE: Color32 = style::EDGE;
 /// Colour of tempo and stop markers.
-const TIMING_MARK: Color32 = Color32::from_rgb(230, 170, 90);
+const TIMING_MARK: Color32 = style::TIMING_MARK;
 /// Colour of the cursor's horizontal line.
-const NOW_LINE: Color32 = Color32::from_rgb(236, 240, 245);
+const NOW_LINE: Color32 = style::NOW_LINE;
 /// Translucent strip surrounding the now line.
-const NOW_BAND: Color32 = Color32::from_rgba_unmultiplied_const(255, 255, 255, 10);
+const NOW_BAND: Color32 = style::NOW_BAND;
 /// Colour of section markers.
-const SECTION: Color32 = Color32::from_rgb(110, 200, 130);
+const SECTION: Color32 = style::SECTION;
 /// Colour of bookmark markers.
-const BOOKMARK: Color32 = Color32::from_rgb(190, 140, 255);
+const BOOKMARK: Color32 = style::BOOKMARK;
 /// Colour of waveform peaks.
-const WAVE: Color32 = Color32::from_rgb(62, 108, 96);
+const WAVE: Color32 = style::WAVE;
 /// Colour of the overview's note-density bars.
-const DENSITY: Color32 = Color32::from_gray(110);
+const DENSITY: Color32 = style::FAKE;
 
 /// Markers, the same in every mock song.
 const MARKERS: [(Beat, &str, Color32); 2] = [

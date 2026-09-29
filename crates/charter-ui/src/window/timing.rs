@@ -595,7 +595,7 @@ mod tests {
         assert!(harness.output().shapes.iter().any(|shape| matches!(
             &shape.shape,
             egui::Shape::LineSegment { stroke, .. }
-                if stroke.color == egui::Color32::from_rgb(118, 158, 210)
+                if stroke.color == style::TIMING_WAVE
         )));
     }
     #[test]
