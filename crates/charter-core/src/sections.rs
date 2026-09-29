@@ -28,7 +28,7 @@ pub struct Sectioned {
     /// Pinned beats and meter changes produced from the sections.
     pub timing: Timing,
     /// Sections retained, paired with their computed starting ticks.
-    pub kept: Vec<(i64, Section)>,
+    pub kept: Vec<(Tick, Section)>,
     /// Number of sections displaced by another on the same tick.
     pub merged: usize,
 }
@@ -128,7 +128,10 @@ pub fn sectioned(
             tempo,
             events,
         },
-        kept,
+        kept: kept
+            .into_iter()
+            .map(|(tick, section)| Ok((tick_of(tick)?, section)))
+            .collect::<Result<_, SectionError>>()?,
         merged,
     })
 }
@@ -219,6 +222,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(anchors(&made), [(0, 0.0), (3840, 2.0)]);
+        let kept_ticks: Vec<Tick> = made.kept.iter().map(|(tick, _)| *tick).collect();
+        assert_eq!(kept_ticks, [Tick::new(0), Tick::new(3840)]);
         assert_eq!(made.timing.tempo, Bpm::try_from(150.0).unwrap());
         assert!(made.timing.events.is_empty());
         assert_eq!(made.merged, 0);

@@ -90,7 +90,7 @@ pub(crate) fn import(text: &str, into: &ValidDocument) -> Result<ImportedTiming,
         .iter()
         .map(|&(tick, section)| {
             let red = Placed {
-                tick,
+                tick: i64::from(tick),
                 at: section.seconds * 1000.0,
                 beat_length: section.beat_seconds * 1000.0,
             };
