@@ -23,3 +23,13 @@ pub use song::{
     reason = "timing pins are part of charter-editor's flat API"
 )]
 pub use sync::Pin;
+
+/// Deterministic property tests with no regression files.
+#[cfg(test)]
+fn proptest_config() -> proptest::test_runner::Config {
+    proptest::test_runner::Config {
+        failure_persistence: None,
+        rng_seed: proptest::test_runner::RngSeed::Fixed(0),
+        ..proptest::test_runner::Config::default()
+    }
+}

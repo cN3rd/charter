@@ -360,7 +360,77 @@ impl Song {
 mod tests {
     use super::*;
     use crate::song::tests::*;
+    use proptest::prelude::*;
     use serde_json::{Value, json};
+
+    #[derive(Clone, Debug)]
+    enum Action {
+        Toggle { tick: i32, lane: u16, mine: bool },
+        Stretch { from: i32, lane: u16, to: i32 },
+        Step(Step),
+        OpenChart(usize),
+        SelectAll,
+        DeleteSelection,
+        AddLayer,
+    }
+
+    impl Action {
+        fn apply(&self, song: &mut Song) {
+            match *self {
+                Self::Toggle {
+                    tick,
+                    lane: lane_index,
+                    mine,
+                } => {
+                    let kind = if mine { Kind::Mine } else { Kind::Tap };
+                    match song.toggle(at(tick), lane(lane_index), kind) {
+                        Ok(_) | Err(_) => {}
+                    }
+                }
+                Self::Stretch {
+                    from,
+                    lane: lane_index,
+                    to,
+                } => match song.stretch(lane(lane_index), at(from), at(to)) {
+                    Ok(()) | Err(_) => {}
+                },
+                Self::Step(step) => song.step(step),
+                Self::OpenChart(index) => song.open_chart(index),
+                Self::SelectAll => song.select_all(),
+                Self::DeleteSelection => match song.delete_selection() {
+                    Ok(()) | Err(_) => {}
+                },
+                Self::AddLayer => match song.add_layer() {
+                    Ok(()) | Err(_) => {}
+                },
+            }
+        }
+    }
+
+    fn action() -> impl Strategy<Value = Action> {
+        prop_oneof![
+            (0_i32..=4, 0_u16..4, any::<bool>()).prop_map(|(slot, lane, mine)| {
+                Action::Toggle {
+                    tick: slot.saturating_mul(240),
+                    lane,
+                    mine,
+                }
+            }),
+            (0_i32..=4, 0_u16..4, 0_i32..=4).prop_map(|(from, lane, to)| Action::Stretch {
+                from: from.saturating_mul(240),
+                lane,
+                to: to.saturating_mul(240),
+            }),
+            prop_oneof![
+                Just(Action::Step(Step::Earlier)),
+                Just(Action::Step(Step::Later))
+            ],
+            (0_usize..3).prop_map(Action::OpenChart),
+            Just(Action::SelectAll),
+            Just(Action::DeleteSelection),
+            Just(Action::AddLayer),
+        ]
+    }
 
     #[test]
     fn a_note_placed_and_stretched_undoes_in_one_step() {
@@ -579,5 +649,38 @@ mod tests {
         assert!(song.is_modified());
         song.mark_saved();
         assert!(!song.is_modified());
+    }
+
+    proptest! {
+        #![proptest_config(crate::proptest_config())]
+
+        #[test]
+        fn random_edit_sequences_undo_to_the_original_and_redo_to_the_final(
+            actions in prop::collection::vec(action(), 0..40)
+        ) {
+            let mut song = Song::new(document(json!([])), EDITABLE);
+            let original = song.document().to_json().unwrap();
+            for action in actions {
+                action.apply(&mut song);
+            }
+            let final_document = song.document().to_json().unwrap();
+            let final_step = song.history_step();
+            let final_modified = song.is_modified();
+            prop_assert_eq!(final_modified, final_step != 0);
+
+            while song.can_undo() {
+                song.undo().unwrap();
+            }
+            prop_assert_eq!(song.document().to_json().unwrap(), original);
+            prop_assert!(!song.is_modified());
+            prop_assert_eq!(song.history_step(), 0);
+
+            while song.can_redo() {
+                song.redo().unwrap();
+            }
+            prop_assert_eq!(song.document().to_json().unwrap(), final_document);
+            prop_assert_eq!(song.history_step(), final_step);
+            prop_assert_eq!(song.is_modified(), final_modified);
+        }
     }
 }
