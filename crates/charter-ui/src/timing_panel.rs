@@ -112,7 +112,7 @@ fn meter_at(timing: &Timing, tick: Tick) -> TimeSignature {
             | TimingKind::Other { .. } => None,
         })
         .next_back()
-        .unwrap_or(TimeSignature::COMMON)
+        .unwrap_or_default()
 }
 
 /// A meter typed as `numerator/denominator`.

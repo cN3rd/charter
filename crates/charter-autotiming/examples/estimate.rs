@@ -13,7 +13,7 @@ use std::time::Instant;
 
 use charter_autotiming::estimate;
 use charter_beatthis_burn::Tracker;
-use charter_core::{DEFAULT_TICKS_PER_BEAT, Section};
+use charter_core::{Section, TicksPerBeat};
 
 #[expect(
     clippy::print_stdout,
@@ -59,7 +59,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &beats.beats,
         &beats.downbeats,
         &onsets,
-        DEFAULT_TICKS_PER_BEAT,
+        TicksPerBeat::default(),
     )?
     .ok_or("too few beats")?;
     println!("estimated in {:.2?}", started.elapsed());

@@ -432,7 +432,7 @@ fn meter(stretch: &[Beat]) -> NonZeroU16 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use charter_core::{Bpm, DEFAULT_TICKS_PER_BEAT, ResolvedTime, Tick};
+    use charter_core::{Bpm, ResolvedTime, Tick, TicksPerBeat};
 
     /// Beats `period` apart from `start`, `count` of them, each pushed by `jitter(n)`, with a
     /// downbeat every `bar` beats from the first.
@@ -523,7 +523,7 @@ mod tests {
             &beats,
             &downbeats,
             &onsets(0.371, 128.0, 200),
-            DEFAULT_TICKS_PER_BEAT,
+            TicksPerBeat::default(),
         )
         .unwrap()
         .unwrap();
@@ -542,7 +542,7 @@ mod tests {
         heard.extend(onsets(change, 150.0, 80));
         all.extend(later);
         downs.extend(later_downs);
-        let found = estimate(&all, &downs, &heard, DEFAULT_TICKS_PER_BEAT)
+        let found = estimate(&all, &downs, &heard, TicksPerBeat::default())
             .unwrap()
             .unwrap();
         let bpms: Vec<f64> = found
@@ -564,7 +564,7 @@ mod tests {
             &all,
             &downs,
             &onsets(0.5, 100.0, 60),
-            DEFAULT_TICKS_PER_BEAT,
+            TicksPerBeat::default(),
         )
         .unwrap()
         .unwrap();
@@ -579,7 +579,7 @@ mod tests {
             &beats,
             &downbeats,
             &onsets(0.0, 90.0, 60),
-            DEFAULT_TICKS_PER_BEAT,
+            TicksPerBeat::default(),
         )
         .unwrap()
         .unwrap();
@@ -595,7 +595,7 @@ mod tests {
             &beats,
             &downbeats,
             &onsets(0.0, 133.2, 300),
-            DEFAULT_TICKS_PER_BEAT,
+            TicksPerBeat::default(),
         )
         .unwrap()
         .unwrap();
@@ -607,7 +607,7 @@ mod tests {
     fn too_few_beats_make_no_estimate() {
         let (beats, downbeats) = beats(0.0, 120.0, 5, 4);
         assert_eq!(
-            estimate(&beats, &downbeats, &[], DEFAULT_TICKS_PER_BEAT),
+            estimate(&beats, &downbeats, &[], TicksPerBeat::default()),
             Ok(None)
         );
     }

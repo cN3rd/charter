@@ -1898,7 +1898,7 @@ impl Window {
                 // A song opened is not copied until it changes.
                 self.snapshotted = self.song.as_ref().map(Song::revision);
                 self.snapshot_due = None;
-                self.zoom = Zoom::START.by(self.settings.zoom / 100.0);
+                self.zoom = Zoom::default().by(self.settings.zoom / 100.0);
                 self.failure = None;
                 self.placed = false;
                 self.holding.clear();
@@ -6809,7 +6809,7 @@ mod tests {
             harness.state_mut().take_requests(),
             [Request::FindTiming {
                 file: PathBuf::from("/songs/a.ogg"),
-                ticks_per_beat: charter_core::DEFAULT_TICKS_PER_BEAT,
+                ticks_per_beat: charter_core::TicksPerBeat::default(),
             }]
         );
         assert!(

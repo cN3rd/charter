@@ -13,12 +13,11 @@
 use std::collections::BTreeMap;
 
 use charter_core::{
-    Anchor, Bpm, Chart as CoreChart, DEFAULT_TICKS_PER_BEAT, Decimal, Document, Extensions,
-    FORMAT_VERSION, InvalidValue, Key, Kind, LaneCount, LaneIndex, Layout, Location, Marker,
-    MarkerKind, Metadata, Name, Namespace, NewSong, Object, Origin, Position, ResourcePath,
-    Ruleset, RulesetPlugin, SampleId, Seconds, Settings, Shape, Stream, Tick, Ticks, TicksPerBeat,
-    TimeSignature, Timing as CoreTiming, TimingEvent as CoreEvent, TimingKind as CoreKind,
-    ValidDocument,
+    Anchor, Bpm, Chart as CoreChart, Decimal, Document, Extensions, FORMAT_VERSION, InvalidValue,
+    Key, Kind, LaneCount, LaneIndex, Layout, Location, Marker, MarkerKind, Metadata, Name,
+    Namespace, NewSong, Object, Origin, Position, ResourcePath, Ruleset, RulesetPlugin, SampleId,
+    Seconds, Settings, Shape, Stream, Tick, Ticks, TicksPerBeat, TimeSignature,
+    Timing as CoreTiming, TimingEvent as CoreEvent, TimingKind as CoreKind, ValidDocument,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::Value;
@@ -733,11 +732,11 @@ impl RulesetPlugin for Plugin {
                 seconds: Origin::try_from(0.0)?,
             }],
             tempo: Bpm::try_from(120.0)?,
-            events: vec![at_zero(TimingKind::TimeSignature(TimeSignature::COMMON))],
+            events: vec![at_zero(TimingKind::TimeSignature(TimeSignature::default()))],
         };
         let song = Song::new(
             song.metadata.clone(),
-            DEFAULT_TICKS_PER_BEAT,
+            TicksPerBeat::default(),
             BTreeMap::new(),
             timing,
             Vec::new(),

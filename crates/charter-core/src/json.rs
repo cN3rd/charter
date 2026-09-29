@@ -310,7 +310,7 @@ fn migrate_v0(mut value: serde_json::Value) -> Result<serde_json::Value, Error> 
         .cloned()
         .map(serde_json::from_value)
         .transpose()?
-        .unwrap_or(crate::DEFAULT_TICKS_PER_BEAT);
+        .unwrap_or_default();
     let Some(object) = value.as_object_mut() else {
         return Ok(value);
     };

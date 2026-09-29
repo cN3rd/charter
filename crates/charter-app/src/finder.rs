@@ -250,7 +250,7 @@ mod tests {
         let mut finder = Finder {
             waiting: Some((
                 PathBuf::from("/songs/a.ogg"),
-                charter_core::DEFAULT_TICKS_PER_BEAT,
+                charter_core::TicksPerBeat::default(),
                 None,
             )),
             ..Finder::default()
@@ -270,7 +270,7 @@ mod tests {
         let mut finder = Finder {
             waiting: Some((
                 PathBuf::from("/songs/a.ogg"),
-                charter_core::DEFAULT_TICKS_PER_BEAT,
+                charter_core::TicksPerBeat::default(),
                 None,
             )),
             ..Finder::default()
@@ -437,7 +437,7 @@ mod tests {
         let mut finder = Finder::new(None);
         finder.find(
             PathBuf::from("/songs/a.ogg"),
-            charter_core::DEFAULT_TICKS_PER_BEAT,
+            charter_core::TicksPerBeat::default(),
             None,
             &mut window,
         );

@@ -80,9 +80,6 @@ impl fmt::Display for GridPosition {
     }
 }
 
-/// The meter before the first time signature.
-const COMMON_TIME: TimeSignature = TimeSignature::COMMON;
-
 /// A stretch of ticks over which one meter lays measures `length` apart from `origin`, until
 /// the next stretch begins.
 #[derive(Clone, Copy, Debug)]
@@ -174,8 +171,8 @@ impl Timing {
         let mut stretches = vec![Stretch {
             begin: i64::MIN,
             origin: 0,
-            length: measure_length(COMMON_TIME, resolution)?,
-            meter: COMMON_TIME,
+            length: measure_length(TimeSignature::default(), resolution)?,
+            meter: TimeSignature::default(),
         }];
         for event in &self.events {
             if let TimingKind::TimeSignature(meter) = event.kind {
@@ -315,7 +312,7 @@ mod proofs {
                 begin: i64::MIN,
                 origin: 0,
                 length,
-                meter: COMMON_TIME,
+                meter: TimeSignature::default(),
             }],
         };
         let (index, start) = grid.holding(i64::from(tick)).unwrap();
@@ -348,7 +345,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
-    use crate::document::{Anchor, DEFAULT_TICKS_PER_BEAT, TimingEvent, TimingKind};
+    use crate::document::{Anchor, TimingEvent, TimingKind};
+    use crate::unit::TicksPerBeat;
     use crate::unit::{Bpm, Origin};
 
     fn meter(numerator: u16, denominator: u16) -> TimeSignature {
@@ -388,7 +386,7 @@ mod tests {
 
     fn first_measures(timing: &Timing, from: i32, count: usize) -> Vec<Measure> {
         timing
-            .measures_from(DEFAULT_TICKS_PER_BEAT, Tick::new(from))
+            .measures_from(TicksPerBeat::default(), Tick::new(from))
             .unwrap()
             .take(count)
             .collect()
@@ -497,7 +495,7 @@ mod tests {
         let last = Tick::new(i32::MAX);
         let timing = timing(&[(i32::MAX, meter(4, 4))]);
         let measure = timing
-            .measures_from(DEFAULT_TICKS_PER_BEAT, last)
+            .measures_from(TicksPerBeat::default(), last)
             .unwrap()
             .next()
             .unwrap();
@@ -505,14 +503,14 @@ mod tests {
             (measure.start, measure.length),
             (last, Ticks::new(1).unwrap())
         );
-        let position = timing.grid_position(DEFAULT_TICKS_PER_BEAT, last).unwrap();
+        let position = timing.grid_position(TicksPerBeat::default(), last).unwrap();
         assert_eq!((position.beat, position.tick), (0, 0));
     }
 
     #[test]
     fn the_first_tick_counts_from_where_its_measure_really_starts() {
         let position = timing(&[])
-            .grid_position(DEFAULT_TICKS_PER_BEAT, Tick::new(i32::MIN))
+            .grid_position(TicksPerBeat::default(), Tick::new(i32::MIN))
             .unwrap();
         assert_eq!(
             position,
@@ -528,7 +526,7 @@ mod tests {
     fn a_tick_falls_in_a_measure_on_a_beat_some_ticks_along() {
         let position = timing(&[])
             .grid_position(
-                DEFAULT_TICKS_PER_BEAT,
+                TicksPerBeat::default(),
                 Tick::new(
                     3840_i32
                         .saturating_add(2_i32.saturating_mul(960))

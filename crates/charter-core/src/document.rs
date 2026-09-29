@@ -15,13 +15,6 @@ use crate::unit::{
 /// The format version this crate reads and writes.
 pub const FORMAT_VERSION: u32 = 1;
 
-/// Resolution when a document does not set `ticks_per_beat`.
-#[expect(clippy::unreachable, reason = "960 is nonzero by construction")]
-pub const DEFAULT_TICKS_PER_BEAT: TicksPerBeat = match TicksPerBeat::new(960) {
-    Some(resolution) => resolution,
-    None => unreachable!(),
-};
-
 /// Plugin data keyed by `<namespace>.<name>`, opaque to the core.
 pub type Extensions = BTreeMap<Key, Value>;
 
@@ -46,10 +39,7 @@ pub type Settings = BTreeMap<String, Value>;
 pub struct Document {
     /// Core schema version, checked before reading the rest of the document.
     pub format_version: u32,
-    #[serde(
-        default = "default_ticks_per_beat",
-        skip_serializing_if = "is_default_ticks_per_beat"
-    )]
+    #[serde(default, skip_serializing_if = "is_default_ticks_per_beat")]
     /// Grid resolution shared by the song and its charts.
     pub ticks_per_beat: TicksPerBeat,
     /// Plugin defining the meaning of the charts.
@@ -75,18 +65,13 @@ pub struct Document {
     pub charts: Vec<Chart>,
 }
 
-/// Resolution substituted when the JSON omits `ticks_per_beat`.
-const fn default_ticks_per_beat() -> TicksPerBeat {
-    DEFAULT_TICKS_PER_BEAT
-}
-
 #[expect(
     clippy::trivially_copy_pass_by_ref,
     reason = "serde skip_serializing_if passes a reference"
 )]
 /// Whether serde should omit the default resolution on writing.
 fn is_default_ticks_per_beat(value: &TicksPerBeat) -> bool {
-    *value == DEFAULT_TICKS_PER_BEAT
+    *value == TicksPerBeat::default()
 }
 
 /// The one ruleset that defines what the file's charts mean.
@@ -271,11 +256,6 @@ pub struct Child {
     pub ext: Extensions,
 }
 
-/// Default width of a lane position when its JSON omits `width`.
-const fn one() -> LaneCount {
-    LaneCount::ONE
-}
-
 #[expect(
     clippy::trivially_copy_pass_by_ref,
     reason = "serde skip_serializing_if passes a reference"
@@ -294,7 +274,7 @@ pub enum Position {
         /// First lane covered, counting from zero.
         index: LaneIndex,
         /// Consecutive lanes covered, defaulting to one.
-        #[serde(default = "one", skip_serializing_if = "is_one")]
+        #[serde(default, skip_serializing_if = "is_one")]
         width: LaneCount,
     },
     /// A point on a continuous playfield, in units the ruleset defines.

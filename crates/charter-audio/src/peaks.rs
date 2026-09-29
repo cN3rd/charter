@@ -6,8 +6,9 @@ use crate::{Track, cast};
 /// Frames a block holds at the finest resolution.
 const FINEST: usize = 64;
 
-/// The lowest and highest sample of a stretch of audio, both channels together.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// The lowest and highest sample of a stretch of audio, both channels together; silence by
+/// default.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Extent {
     /// Lowest sample across both channels.
     pub low: f32,
@@ -16,12 +17,6 @@ pub struct Extent {
 }
 
 impl Extent {
-    /// The zero-amplitude extent used when no frames contribute.
-    const SILENT: Self = Self {
-        low: 0.0,
-        high: 0.0,
-    };
-
     /// The extent covering both.
     const fn and(self, other: Self) -> Self {
         Self {
@@ -33,7 +28,7 @@ impl Extent {
     /// The minimum and maximum across both channels of `frames`, including zero.
     fn of(frames: &[[f32; 2]]) -> Self {
         let samples = frames.iter().flatten().copied();
-        samples.fold(Self::SILENT, |extent, sample| Self {
+        samples.fold(Self::default(), |extent, sample| Self {
             low: extent.low.min(sample),
             high: extent.high.max(sample),
         })
@@ -83,7 +78,10 @@ impl Peaks {
         {
             let coarser = last
                 .chunks(2)
-                .map(|pair| pair.iter().fold(Extent::SILENT, |all, &one| all.and(one)))
+                .map(|pair| {
+                    pair.iter()
+                        .fold(Extent::default(), |all, &one| all.and(one))
+                })
                 .collect();
             levels.push(coarser);
         }
@@ -150,12 +148,12 @@ impl Peaks {
     pub fn between(&self, from: f64, to: f64) -> Extent {
         let (start, end) = (from * self.rate, to * self.rate);
         if !(start.is_finite() && end.is_finite()) || end < 0.0 {
-            return Extent::SILENT;
+            return Extent::default();
         }
         let frames = |at: f64| cast::f64_usize(at.max(0.0)).min(self.frames);
         let (start, end) = (frames(start.floor()), frames(end.ceil()));
         if start >= self.frames {
-            return Extent::SILENT;
+            return Extent::default();
         }
         let end = end.max(start.saturating_add(1));
         // The coarsest level that still gives the stretch a few blocks.
@@ -172,7 +170,7 @@ impl Peaks {
             .checked_shl(u32::try_from(level).unwrap_or(u32::MAX))
             .unwrap_or(FINEST);
         let Some(blocks) = self.levels.get(level) else {
-            return Extent::SILENT;
+            return Extent::default();
         };
         let (first, last) = (
             start.div_euclid(block),
@@ -181,7 +179,7 @@ impl Peaks {
         let covered = blocks.get(first..last).unwrap_or_default();
         covered
             .iter()
-            .fold(Extent::SILENT, |all, &one| all.and(one))
+            .fold(Extent::default(), |all, &one| all.and(one))
     }
 }
 
@@ -262,9 +260,9 @@ mod tests {
     #[test]
     fn time_outside_the_track_is_silent() {
         let peaks = Peaks::of(&burst(0.5));
-        assert_eq!(peaks.between(-5.0, -1.0), Extent::SILENT);
-        assert_eq!(peaks.between(10.0, 12.0), Extent::SILENT);
-        assert_eq!(peaks.between(f64::NAN, 1.0), Extent::SILENT);
+        assert_eq!(peaks.between(-5.0, -1.0), Extent::default());
+        assert_eq!(peaks.between(10.0, 12.0), Extent::default());
+        assert_eq!(peaks.between(f64::NAN, 1.0), Extent::default());
     }
 
     #[test]

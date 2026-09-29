@@ -158,10 +158,14 @@ impl Kit {
 #[serde(from = "f32", into = "f32")]
 pub struct Gain(f32);
 
-impl Gain {
+impl Default for Gain {
     /// The recorded amplitude, without attenuation.
-    pub const FULL: Self = Self(1.0);
+    fn default() -> Self {
+        Self(1.0)
+    }
+}
 
+impl Gain {
     /// The factor on the samples, from 0 to 1.
     #[must_use]
     pub const fn amplitude(self) -> f32 {
@@ -179,17 +183,11 @@ impl Gain {
     }
 }
 
-impl Default for Gain {
-    fn default() -> Self {
-        Self::FULL
-    }
-}
-
 /// Any number as a gain: kept from 0 to 1, and full for one that is not a number.
 impl From<f32> for Gain {
     fn from(factor: f32) -> Self {
         if factor.is_nan() {
-            Self::FULL
+            Self::default()
         } else {
             Self(factor.clamp(0.0, 1.0))
         }
@@ -219,9 +217,9 @@ pub struct Volumes {
 impl Default for Volumes {
     fn default() -> Self {
         Self {
-            music: Gain::FULL,
-            ticks: Gain::FULL,
-            metronome: Gain::FULL,
+            music: Gain::default(),
+            ticks: Gain::default(),
+            metronome: Gain::default(),
             subdivision: Gain::from(0.5),
         }
     }
@@ -495,7 +493,7 @@ mod tests {
 
     #[test]
     fn a_gain_reads_in_decibels_down_to_a_floor() {
-        assert!(Gain::FULL.decibels(-60.0).abs() < 1e-6);
+        assert!(Gain::default().decibels(-60.0).abs() < 1e-6);
         assert!((Gain::from(0.5).decibels(-60.0) + 6.0206).abs() < 1e-3);
         assert!((Gain::from(0.0).decibels(-60.0) + 60.0).abs() < f32::EPSILON);
         assert!((Gain::from(0.000_01).decibels(-60.0) + 60.0).abs() < f32::EPSILON);

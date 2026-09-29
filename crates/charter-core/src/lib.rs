@@ -26,9 +26,9 @@ mod unit;
 mod validate;
 
 pub use document::{
-    Anchor, Chart, Child, DEFAULT_TICKS_PER_BEAT, Document, Extensions, FORMAT_VERSION, Marker,
-    Metadata, Object, PathPoint, Plugin, Points, Position, Preview, Ruleset, SampleId, Settings,
-    Shape, Timing, TimingEvent, TimingKind,
+    Anchor, Chart, Child, Document, Extensions, FORMAT_VERSION, Marker, Metadata, Object,
+    PathPoint, Plugin, Points, Position, Preview, Ruleset, SampleId, Settings, Shape, Timing,
+    TimingEvent, TimingKind,
 };
 pub use error::{Error, InvalidValue, Location, Rule, Stream, Violation};
 pub use grid::{GridPosition, Measure, Measures};

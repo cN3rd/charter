@@ -13,12 +13,11 @@ use std::collections::BTreeMap;
 use std::num::NonZeroU16;
 
 use charter_core::{
-    Anchor, Bpm, Chart as CoreChart, DEFAULT_TICKS_PER_BEAT, Decimal, Document, Extensions,
-    FORMAT_VERSION, InvalidValue, Key, Kind, LaneCount, LaneIndex, Layout, Location, Marker,
-    MarkerKind, Metadata, Name, Namespace, NewSong, Object, Origin, Position, ResourcePath,
-    Ruleset, RulesetPlugin, SampleId, Settings, Shape, Stream, Tick, Ticks, TicksPerBeat,
-    TimeSignature, Timing as CoreTiming, TimingEvent as CoreEvent, TimingKind as CoreKind,
-    ValidDocument,
+    Anchor, Bpm, Chart as CoreChart, Decimal, Document, Extensions, FORMAT_VERSION, InvalidValue,
+    Key, Kind, LaneCount, LaneIndex, Layout, Location, Marker, MarkerKind, Metadata, Name,
+    Namespace, NewSong, Object, Origin, Position, ResourcePath, Ruleset, RulesetPlugin, SampleId,
+    Settings, Shape, Stream, Tick, Ticks, TicksPerBeat, TimeSignature, Timing as CoreTiming,
+    TimingEvent as CoreEvent, TimingKind as CoreKind, ValidDocument,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -237,27 +236,26 @@ const fn whole(n: i64) -> Decimal {
     }
 }
 
-/// osu!'s difficulty value when a beatmap omits `hp` or `od`.
-const fn default_difficulty() -> Difficulty {
-    Difficulty::DEFAULT
-}
-
 /// Chart settings as stored in the document.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ChartSettings {
     /// HP drain rate; defaults to osu!'s standard value.
-    #[serde(default = "default_difficulty")]
+    #[serde(default)]
     hp: Difficulty,
     /// Overall difficulty used for judgement windows.
-    #[serde(default = "default_difficulty")]
+    #[serde(default)]
     od: Difficulty,
 }
 
-impl Difficulty {
-    /// osu!'s value when a beatmap does not set one.
-    pub const DEFAULT: Self = Self(whole(5));
+impl Default for Difficulty {
+    /// 5, osu!'s value when a beatmap does not set one.
+    fn default() -> Self {
+        Self(whole(5))
+    }
+}
 
+impl Difficulty {
     /// A difficulty within osu!'s inclusive 0 to 10 range.
     #[must_use]
     pub fn new(value: Decimal) -> Option<Self> {
@@ -678,7 +676,7 @@ impl RulesetPlugin for Plugin {
         };
         let song = Song::new(
             song.metadata.clone(),
-            DEFAULT_TICKS_PER_BEAT,
+            TicksPerBeat::default(),
             BTreeMap::new(),
             timing,
             Vec::new(),

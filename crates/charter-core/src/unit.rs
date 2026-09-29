@@ -199,8 +199,15 @@ pub struct LaneIndex(u16);
 #[serde(transparent)]
 pub struct LaneCount(NonZeroU16);
 
+impl Default for LaneCount {
+    /// A single lane, the width of a lane position that does not give one.
+    fn default() -> Self {
+        Self::ONE
+    }
+}
+
 impl LaneCount {
-    /// The width of a single-lane position, and the default.
+    /// The width of a single-lane position.
     pub const ONE: Self = Self(NonZeroU16::MIN);
 
     /// `count` lanes, if there are any.
@@ -431,19 +438,18 @@ pub struct TimeSignature {
     pub denominator: NonZeroU16,
 }
 
-impl TimeSignature {
+impl Default for TimeSignature {
     /// Four quarter notes a measure, the meter a song has unless it says otherwise.
-    pub const COMMON: Self = match NonZeroU16::new(4) {
-        Some(four) => Self {
+    fn default() -> Self {
+        let four = NonZeroU16::MIN.saturating_add(3);
+        Self {
             numerator: four,
             denominator: four,
-        },
-        None => Self {
-            numerator: NonZeroU16::MIN,
-            denominator: NonZeroU16::MIN,
-        },
-    };
+        }
+    }
+}
 
+impl TimeSignature {
     /// Whether a measure, `numerator * 4 / denominator` beats, is a whole number of ticks at
     /// `resolution`.
     #[must_use]
@@ -453,6 +459,13 @@ impl TimeSignature {
             .saturating_mul(4)
             .saturating_mul(std::num::NonZeroU64::from(resolution.0).get());
         quarters.is_multiple_of(std::num::NonZeroU64::from(self.denominator).get())
+    }
+}
+
+impl Default for TicksPerBeat {
+    /// 960 ticks a beat, the resolution of a document that does not set one.
+    fn default() -> Self {
+        Self(NonZeroU16::MIN.saturating_add(959))
     }
 }
 

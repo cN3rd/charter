@@ -185,7 +185,7 @@ fn out_of_range(what: impl std::fmt::Display) -> SectionError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::document::DEFAULT_TICKS_PER_BEAT;
+    use crate::unit::TicksPerBeat;
 
     fn section(seconds: f64, bpm: f64, meter: u16) -> Section {
         Section {
@@ -215,7 +215,7 @@ mod tests {
         // A bar at 120 BPM, then 150 from two seconds in, given out of order.
         let made = sectioned(
             &[section(2.0, 150.0, 4), section(0.0, 120.0, 4)],
-            DEFAULT_TICKS_PER_BEAT,
+            TicksPerBeat::default(),
         )
         .unwrap();
         assert_eq!(anchors(&made), [(0, 0.0), (3840, 2.0)]);
@@ -233,7 +233,7 @@ mod tests {
                 section(3.0, 60.0, 4),
                 section(7.0, 60.0, 3),
             ],
-            DEFAULT_TICKS_PER_BEAT,
+            TicksPerBeat::default(),
         )
         .unwrap();
         let ticks: Vec<_> = made.timing.events.iter().map(|event| event.tick).collect();
@@ -244,7 +244,7 @@ mod tests {
     fn a_section_on_the_tick_of_the_one_before_takes_its_place() {
         let made = sectioned(
             &[section(0.0, 120.0, 4), section(0.0001, 180.0, 4)],
-            DEFAULT_TICKS_PER_BEAT,
+            TicksPerBeat::default(),
         )
         .unwrap();
         assert_eq!(made.merged, 1);
@@ -255,10 +255,10 @@ mod tests {
     #[test]
     fn no_sections_or_a_tempo_past_the_format_are_refused() {
         assert_eq!(
-            sectioned(&[], DEFAULT_TICKS_PER_BEAT),
+            sectioned(&[], TicksPerBeat::default()),
             Err(SectionError::Empty)
         );
-        sectioned(&[section(0.0, 0.0, 4)], DEFAULT_TICKS_PER_BEAT).unwrap_err();
+        sectioned(&[section(0.0, 0.0, 4)], TicksPerBeat::default()).unwrap_err();
     }
 
     #[test]
@@ -269,7 +269,7 @@ mod tests {
             section(18_000_000_000_000_000.0, 60.0, 4),
         ];
         assert_eq!(
-            sectioned(&sections, DEFAULT_TICKS_PER_BEAT),
+            sectioned(&sections, TicksPerBeat::default()),
             Err(SectionError::OutOfRange(
                 "a section's tick is out of range".into()
             ))
@@ -280,12 +280,12 @@ mod tests {
     fn sections_refuse_audio_times_and_ticks_outside_the_format() {
         let far_tick = sectioned(
             &[section(0.0, 60.0, 4), section(3_000_000.0, 60.0, 4)],
-            DEFAULT_TICKS_PER_BEAT,
+            TicksPerBeat::default(),
         )
         .unwrap_err();
         assert!(matches!(far_tick, SectionError::OutOfRange(message) if message.contains("tick")));
 
-        let far_time = sectioned(&[section(1e30, 120.0, 4)], DEFAULT_TICKS_PER_BEAT).unwrap_err();
+        let far_time = sectioned(&[section(1e30, 120.0, 4)], TicksPerBeat::default()).unwrap_err();
         assert!(
             matches!(far_time, SectionError::OutOfRange(message) if message.contains("s is out of range"))
         );

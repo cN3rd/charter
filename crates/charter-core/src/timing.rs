@@ -268,7 +268,8 @@ mod tests {
     use proptest::prelude::*;
 
     use super::*;
-    use crate::document::{DEFAULT_TICKS_PER_BEAT, TimingEvent};
+    use crate::document::TimingEvent;
+    use crate::unit::TicksPerBeat;
     use crate::unit::{Origin, Seconds, Ticks};
 
     fn bpm(value: f64) -> Bpm {
@@ -315,7 +316,7 @@ mod tests {
 
     fn time(timing: &Timing, tick: i32) -> f64 {
         timing
-            .seconds_at(DEFAULT_TICKS_PER_BEAT, Tick::new(tick))
+            .seconds_at(TicksPerBeat::default(), Tick::new(tick))
             .unwrap()
             .seconds()
     }
@@ -335,7 +336,7 @@ mod tests {
         assert_time(&t, 0, 1.0);
         assert_time(&t, 960, 2.0);
         assert_time(&t, 1920, 3.0);
-        let tempo = t.tempo_at(DEFAULT_TICKS_PER_BEAT, Tick::new(960)).unwrap();
+        let tempo = t.tempo_at(TicksPerBeat::default(), Tick::new(960)).unwrap();
         assert!((tempo - 60.0).abs() < 1e-9);
     }
 
@@ -344,7 +345,7 @@ mod tests {
         // Seven beats in two seconds is 210 BPM; three in 1.4 s is 128.571428…, which a BPM of six
         // places would round and land the next anchor a little off.
         let t = timing(&[(0, 0.0), (2880, 1.4), (5760, 2.8)], 128.0, Vec::new());
-        let tempo = t.tempo_at(DEFAULT_TICKS_PER_BEAT, Tick::new(1)).unwrap();
+        let tempo = t.tempo_at(TicksPerBeat::default(), Tick::new(1)).unwrap();
         assert!((tempo - 180.0 / 1.4).abs() < 1e-9, "{tempo}");
         assert!(time(&t, 2879) < 1.4);
         assert_time(&t, 2880, 1.4);
@@ -354,7 +355,7 @@ mod tests {
     fn the_tail_uses_the_stored_tempo() {
         let t = timing(&[(0, 0.0), (960, 1.0)], 120.0, Vec::new());
         assert_time(&t, 1920, 1.5);
-        let tempos = t.tempos(DEFAULT_TICKS_PER_BEAT).unwrap();
+        let tempos = t.tempos(TicksPerBeat::default()).unwrap();
         assert_eq!(tempos.len(), 2);
         assert!((tempos[0].1 - 60.0).abs() < 1e-9 && (tempos[1].1 - 120.0).abs() < 1e-9);
     }
@@ -384,7 +385,7 @@ mod tests {
                 })
                 .collect(),
         };
-        let tempos = timing.tempos(DEFAULT_TICKS_PER_BEAT).unwrap();
+        let tempos = timing.tempos(TicksPerBeat::default()).unwrap();
         assert_eq!(tempos.len(), 100_000);
         assert_eq!(tempos[0], (Tick::new(0), 62.5));
         assert_eq!(tempos[99_999], (Tick::new(99_999), 120.0));
@@ -422,7 +423,7 @@ mod tests {
     #[test]
     fn an_anchor_on_a_delay_is_the_time_after_the_delay() {
         let t = timing(&[(0, 0.0), (960, 4.0)], 60.0, vec![event(960, delay(3.0))]);
-        let tempo = t.tempo_at(DEFAULT_TICKS_PER_BEAT, Tick::new(480)).unwrap();
+        let tempo = t.tempo_at(TicksPerBeat::default(), Tick::new(480)).unwrap();
         assert!(
             (tempo - 60.0).abs() < 1e-9,
             "the delay takes three of the four seconds"
@@ -433,7 +434,7 @@ mod tests {
     #[test]
     fn a_stop_inside_a_segment_shortens_the_time_its_beats_get() {
         let t = timing(&[(0, 0.0), (1920, 3.0)], 60.0, vec![event(960, stop(1.0))]);
-        let tempo = t.tempo_at(DEFAULT_TICKS_PER_BEAT, Tick::new(1)).unwrap();
+        let tempo = t.tempo_at(TicksPerBeat::default(), Tick::new(1)).unwrap();
         assert!((tempo - 60.0).abs() < 1e-9);
         assert_time(&t, 960, 1.0);
         assert_time(&t, 961, 2.0 + 1.0 / 960.0);
@@ -471,7 +472,7 @@ mod tests {
         let typed = timing(&[(0, 0.0), (73_289, 26.1)], 120.0, Vec::new());
         let at = |tick| {
             typed
-                .bpm_at(DEFAULT_TICKS_PER_BEAT, Tick::new(tick))
+                .bpm_at(TicksPerBeat::default(), Tick::new(tick))
                 .unwrap()
         };
         assert!((at(0) - 175.5).abs() < 1e-12, "{}", at(0));
@@ -480,8 +481,8 @@ mod tests {
         assert!((time(&typed, 73_289) - 26.1).abs() < 1e-9);
         // A rate that no shorter decimal lands on the same tick is read exactly.
         let odd = timing(&[(0, 0.0), (73_289, 26.123_457)], 120.0, Vec::new());
-        let exact = odd.tempo_at(DEFAULT_TICKS_PER_BEAT, Tick::new(0)).unwrap();
-        let read = odd.bpm_at(DEFAULT_TICKS_PER_BEAT, Tick::new(0)).unwrap();
+        let exact = odd.tempo_at(TicksPerBeat::default(), Tick::new(0)).unwrap();
+        let read = odd.bpm_at(TicksPerBeat::default(), Tick::new(0)).unwrap();
         assert!(
             (read - exact).abs() * 73_289.0 / exact < 0.5,
             "{read} {exact}"
@@ -491,17 +492,20 @@ mod tests {
     #[test]
     fn a_timing_without_anchors_has_no_times() {
         let empty = timing(&[], 60.0, Vec::new());
-        assert_eq!(empty.seconds_at(DEFAULT_TICKS_PER_BEAT, Tick::new(0)), None);
-        assert_eq!(empty.tempo_at(DEFAULT_TICKS_PER_BEAT, Tick::new(0)), None);
+        assert_eq!(
+            empty.seconds_at(TicksPerBeat::default(), Tick::new(0)),
+            None
+        );
+        assert_eq!(empty.tempo_at(TicksPerBeat::default(), Tick::new(0)), None);
     }
 
     #[test]
     fn a_segment_its_pauses_outlast_has_no_rate() {
         let t = timing(&[(0, 0.0), (1920, 1.0)], 60.0, vec![event(960, stop(1.0))]);
-        assert_eq!(t.seconds_at(DEFAULT_TICKS_PER_BEAT, Tick::new(480)), None);
+        assert_eq!(t.seconds_at(TicksPerBeat::default(), Tick::new(480)), None);
         let warped = timing(&[(0, 0.0), (960, 1.0)], 60.0, vec![event(0, warp(960))]);
         assert_eq!(
-            warped.seconds_at(DEFAULT_TICKS_PER_BEAT, Tick::new(480)),
+            warped.seconds_at(TicksPerBeat::default(), Tick::new(480)),
             None
         );
     }
@@ -518,14 +522,19 @@ mod tests {
     fn a_span_takes_the_tempo_that_makes_it_last_the_seconds_asked_to_six_places() {
         let t = timing(&[(0, 0.0)], 60.0, vec![event(480, stop(0.5))]);
         let tempo = |to: i32, seconds: f64| {
-            t.tempo_for(DEFAULT_TICKS_PER_BEAT, Tick::new(0), Tick::new(to), seconds)
-                .map(f64::from)
+            t.tempo_for(
+                TicksPerBeat::default(),
+                Tick::new(0),
+                Tick::new(to),
+                seconds,
+            )
+            .map(f64::from)
         };
         assert_eq!(tempo(1920, 1.5), Some(120.0));
         assert_eq!(tempo(1920, 0.5), None);
         assert_eq!(tempo(960, 1.2), Some(85.714_286));
         assert_eq!(
-            t.tempo_for(DEFAULT_TICKS_PER_BEAT, Tick::new(960), Tick::new(0), 1.0),
+            t.tempo_for(TicksPerBeat::default(), Tick::new(960), Tick::new(0), 1.0),
             None
         );
     }
@@ -640,8 +649,8 @@ mod tests {
             .get(index.max(1).saturating_sub(1))
             .expect("generated timing has an anchor");
         let per_tick = timing
-            .tempo_at(DEFAULT_TICKS_PER_BEAT, at(tick))
-            .map(|tempo| 60.0 / (tempo * f64::from(DEFAULT_TICKS_PER_BEAT.get())))
+            .tempo_at(TicksPerBeat::default(), at(tick))
+            .map(|tempo| 60.0 / (tempo * f64::from(TicksPerBeat::default().get())))
             .unwrap();
         let start = i64::from(from.tick);
         let (low, high) = if i64::from(tick) >= start {
@@ -694,20 +703,20 @@ mod tests {
         #[test]
         fn every_anchor_of_a_valid_map_resolves_to_its_own_time(timing in map()) {
             for anchor in &timing.anchors {
-                let at = timing.seconds_at(DEFAULT_TICKS_PER_BEAT, anchor.tick).unwrap();
+                let at = timing.seconds_at(TicksPerBeat::default(), anchor.tick).unwrap();
                 prop_assert!((at.seconds() - ResolvedTime::from(anchor.seconds).seconds()).abs() < 1e-9);
             }
         }
 
         #[test]
         fn time_never_runs_backwards_even_across_an_anchor(timing in map(), tick in -9000i32..9000) {
-            let now = timing.seconds_at(DEFAULT_TICKS_PER_BEAT, Tick::new(tick)).unwrap().seconds();
-            let next = timing.seconds_at(DEFAULT_TICKS_PER_BEAT, Tick::new(tick.saturating_add(1))).unwrap().seconds();
+            let now = timing.seconds_at(TicksPerBeat::default(), Tick::new(tick)).unwrap().seconds();
+            let next = timing.seconds_at(TicksPerBeat::default(), Tick::new(tick.saturating_add(1))).unwrap().seconds();
             prop_assert!(now.is_finite() && next.is_finite());
             prop_assert!(next >= now - 1e-9, "{tick}: {now} then {next}");
             for anchor in &timing.anchors {
                 let before = i32::try_from(i64::from(anchor.tick).saturating_sub(1)).unwrap();
-                let just = timing.seconds_at(DEFAULT_TICKS_PER_BEAT, Tick::new(before)).unwrap().seconds();
+                let just = timing.seconds_at(TicksPerBeat::default(), Tick::new(before)).unwrap().seconds();
                 prop_assert!(just <= ResolvedTime::from(anchor.seconds).seconds() + 1e-9);
             }
         }
@@ -717,7 +726,7 @@ mod tests {
             timing in map(),
             tick in -9000i32..9000,
         ) {
-            let resolved = timing.seconds_at(DEFAULT_TICKS_PER_BEAT, Tick::new(tick)).unwrap().seconds();
+            let resolved = timing.seconds_at(TicksPerBeat::default(), Tick::new(tick)).unwrap().seconds();
             let walked = walked(&timing, tick);
             prop_assert!((resolved - walked).abs() < 1e-6, "{tick}: {resolved} vs {walked}");
         }

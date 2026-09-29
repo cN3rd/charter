@@ -23,9 +23,14 @@ use crate::{Action, Note};
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Zoom(f32);
 
-impl Zoom {
+impl Default for Zoom {
     /// Where a song opens: a 16th stream at 150 BPM sits about 25 points apart.
-    pub(crate) const START: Self = Self(240.0);
+    fn default() -> Self {
+        Self(240.0)
+    }
+}
+
+impl Zoom {
     /// Highest permitted scale, in points per second.
     const CLOSEST: f32 = 3000.0;
     /// Lowest permitted scale, in points per second.
@@ -40,19 +45,13 @@ impl Zoom {
 
     /// How close the zoom is, against where a song opens.
     pub fn percent(self) -> f32 {
-        self.0 / Self::START.0 * 100.0
+        self.0 / Self::default().0 * 100.0
     }
 
     /// This zoom scaled by `factor`, as far as it goes either way.
     #[must_use]
     pub fn by(self, factor: f32) -> Self {
         Self((self.0 * factor).clamp(Self::FARTHEST, Self::CLOSEST))
-    }
-}
-
-impl Default for Zoom {
-    fn default() -> Self {
-        Self::START
     }
 }
 
@@ -2012,7 +2011,7 @@ mod tests {
             number: 0,
             start: Tick::new(0),
             length: Ticks::new(3840).unwrap(),
-            meter: charter_core::TimeSignature::COMMON,
+            meter: charter_core::TimeSignature::default(),
         }
     }
 
@@ -2108,7 +2107,7 @@ mod tests {
 
     #[test]
     fn zoom_grows_and_shrinks_by_a_quarter_within_bounds() {
-        let start = Zoom::START;
+        let start = Zoom::default();
         let closer = start.by(Zoom::STEP);
         assert!((closer.points_per_second() - start.points_per_second() * 1.25).abs() < 1e-3);
         let closest = (0..50).fold(start, |zoom, _| zoom.by(Zoom::STEP));
@@ -2120,7 +2119,7 @@ mod tests {
 
     #[test]
     fn zoom_opens_at_a_hundred_percent_and_scales_within_bounds() {
-        let zoom = Zoom::START;
+        let zoom = Zoom::default();
         assert!((zoom.percent() - 100.0).abs() < 1e-3);
         assert!((zoom.by(2.0).percent() - 200.0).abs() < 1e-3);
         assert!((zoom.by(2.0).by(1e6).points_per_second() - 3000.0).abs() < 1e-3);
@@ -2130,9 +2129,9 @@ mod tests {
     fn later_audio_sits_lower_by_the_zoom_per_second() {
         let song = song();
         let timing = song.timing();
-        let view = View::new(100.0, timing.time_at(Tick::new(0)), Zoom::START);
+        let view = View::new(100.0, timing.time_at(Tick::new(0)), Zoom::default());
         let beat_later = view.y(timing.time_at(Tick::new(960)));
-        let per_second = Zoom::START.points_per_second();
+        let per_second = Zoom::default().points_per_second();
         assert!(
             (beat_later - (100.0 + 0.4 * per_second)).abs() < 1e-3,
             "{beat_later}"
@@ -2144,7 +2143,7 @@ mod tests {
     fn a_height_turns_back_into_the_time_drawn_there() {
         let song = song();
         let timing = song.timing();
-        let view = View::new(100.0, timing.time_at(Tick::new(960)), Zoom::START);
+        let view = View::new(100.0, timing.time_at(Tick::new(960)), Zoom::default());
         let y = view.y(timing.time_at(Tick::new(1920)));
         assert!((view.seconds_at(y) - 0.8).abs() < 1e-6);
     }
@@ -2153,7 +2152,7 @@ mod tests {
     fn a_hold_preview_spans_the_beats_it_will_cover_in_either_direction() {
         let song = song();
         let timing = song.timing();
-        let view = View::new(100.0, timing.time_at(Tick::new(0)), Zoom::START);
+        let view = View::new(100.0, timing.time_at(Tick::new(0)), Zoom::default());
         let columns = Columns::laid_out(Rangef::new(0.0, 600.0), 4, false);
         let later = hold_preview_rect(
             &columns,
@@ -2275,7 +2274,7 @@ mod tests {
         }));
         let peaks = Peaks::of(&Track::from_frames(1000, frames));
         let now = song().timing().time_at(Tick::new(0));
-        let view = View::new(0.0, now, Zoom::START);
+        let view = View::new(0.0, now, Zoom::default());
         let rows = wave_rows(&peaks, view, Rangef::new(0.0, view.y_of(2.0)));
         let at = |seconds: f64| {
             let y = view.y_of(seconds);
@@ -2296,7 +2295,7 @@ mod tests {
     fn a_box_over_a_chart_without_lanes_reaches_no_lane() {
         let area = Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0));
         let now = song().timing().time_at(Tick::new(0));
-        let field = Field::new(area, 0, now, Zoom::START, false);
+        let field = Field::new(area, 0, now, Zoom::default(), false);
         assert_eq!(field.lanes_between(0.0, 800.0), None);
     }
 
@@ -2304,7 +2303,7 @@ mod tests {
     fn a_box_past_either_side_of_the_lanes_reaches_the_lane_on_that_side() {
         let area = Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0));
         let now = song().timing().time_at(Tick::new(0));
-        let field = Field::new(area, 4, now, Zoom::START, false);
+        let field = Field::new(area, 4, now, Zoom::default(), false);
         let lanes = field.columns.lanes;
         let (first, last) = (LaneIndex::new(0), LaneIndex::new(3));
         assert_eq!(field.lanes_between(0.0, 800.0), Some((first, last)));
@@ -2331,7 +2330,7 @@ mod tests {
             Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0)),
             4,
             song.timing().time_at(song.cursor()),
-            Zoom::START,
+            Zoom::default(),
             false,
         )
     }
@@ -2769,7 +2768,7 @@ mod tests {
                 flip.field(),
                 4,
                 song.timing().time_at(Tick::new(0)),
-                Zoom::START,
+                Zoom::default(),
                 false,
             );
             let lane = field
@@ -2929,7 +2928,7 @@ mod tests {
                         ui,
                         &state.song,
                         Shown {
-                            zoom: Zoom::START,
+                            zoom: Zoom::default(),
                             direction: Direction::Up,
                             strip: None,
                             grid: grid_of(16),
@@ -2950,7 +2949,7 @@ mod tests {
             harness.get_by_label("Notefield").rect(),
             4,
             harness.state().song.timing().time_at(Tick::new(0)),
-            Zoom::START,
+            Zoom::default(),
             false,
         );
         let from = pos2(field.columns.lanes.max - 10.0, field.view.now_y + 20.0);

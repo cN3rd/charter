@@ -15,11 +15,11 @@ use std::collections::BTreeMap;
 use serde_json::Value;
 
 use charter_core::{
-    Anchor, Bpm, Chart as CoreChart, DEFAULT_TICKS_PER_BEAT, Difficulties, DifficultyPreset,
-    Document, Extensions, FORMAT_VERSION, InvalidValue, Key, Kind, LaneCount, LaneIndex, Layout,
-    Location, Marker, MarkerKind, Metadata, Name, Namespace, NewSong, NoteChange, Object, Origin,
-    Position, Ruleset, RulesetPlugin, SettingScope, Settings, Shape, Stream, TextSetting, Tick,
-    Ticks, TicksPerBeat, TimeSignature, Timing, TimingEvent, TimingKind, ValidDocument,
+    Anchor, Bpm, Chart as CoreChart, Difficulties, DifficultyPreset, Document, Extensions,
+    FORMAT_VERSION, InvalidValue, Key, Kind, LaneCount, LaneIndex, Layout, Location, Marker,
+    MarkerKind, Metadata, Name, Namespace, NewSong, NoteChange, Object, Origin, Position, Ruleset,
+    RulesetPlugin, SettingScope, Settings, Shape, Stream, TextSetting, Tick, Ticks, TicksPerBeat,
+    TimeSignature, Timing, TimingEvent, TimingKind, ValidDocument,
 };
 
 /// The ruleset namespace.
@@ -812,11 +812,11 @@ impl RulesetPlugin for Plugin {
                 seconds: Origin::try_from(0.0)?,
             }],
             tempo: Bpm::try_from(120.0)?,
-            changes: vec![at_zero(TempoKind::TimeSignature(TimeSignature::COMMON))],
+            changes: vec![at_zero(TempoKind::TimeSignature(TimeSignature::default()))],
         };
         let song = Song::new(
             song.metadata.clone(),
-            DEFAULT_TICKS_PER_BEAT,
+            TicksPerBeat::default(),
             tempo,
             Vec::new(),
             charts,
