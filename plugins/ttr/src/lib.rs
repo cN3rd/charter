@@ -23,7 +23,7 @@ use charter_core::{
 };
 
 /// The ruleset namespace.
-pub const ID: &str = "ttr";
+const ID: &str = "ttr";
 
 /// A song, checked against this ruleset and every document rule when built, and unchangeable
 /// after.
@@ -277,7 +277,7 @@ pub enum Shake {
 }
 
 /// Written as the ruleset version.
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Why a document cannot be represented as a Tap Tap Revenge song.
 #[expect(

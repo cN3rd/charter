@@ -23,7 +23,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de, de::IntoDeseri
 use serde_json::Value;
 
 /// The ruleset namespace.
-pub const ID: &str = "sm";
+const ID: &str = "sm";
 
 /// A song, checked against this ruleset and every document rule when built, and unchangeable
 /// after.
@@ -338,7 +338,7 @@ fn own(name: &str) -> Result<Key, InvalidValue> {
 }
 
 /// Written as the ruleset version.
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 impl Song {
     /// A song of `charts` with the keysound bank `samples`.

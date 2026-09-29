@@ -24,15 +24,8 @@ use serde_json::Value;
 
 mod import;
 
-#[expect(
-    clippy::pub_use,
-    clippy::useless_attribute,
-    reason = "the plugin exposes its timing import error beside its song and plugin types"
-)]
-pub use import::ImportError;
-
 /// The ruleset namespace.
-pub const ID: &str = "osu_mania";
+const ID: &str = "osu_mania";
 
 #[cfg(test)]
 fn proptest_config() -> proptest::test_runner::Config {
@@ -299,7 +292,7 @@ const SCROLL_SPEED: &str = "scroll_speed";
 const FOUR: NonZeroU16 = NonZeroU16::MIN.saturating_add(3);
 
 /// Written as the ruleset version.
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 impl Song {
     /// A song of `charts` with the keysound bank `samples`.

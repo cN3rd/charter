@@ -17,7 +17,7 @@ use crate::{ID, SCROLL_SPEED};
 
 /// Why pasted text holds no timing.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
-pub enum ImportError {
+pub(crate) enum ImportError {
     /// A malformed timing point at the given line.
     #[error("line {line}: {why}")]
     Line {
