@@ -629,8 +629,8 @@ const PATTERNS: [(&str, &[u16]); 3] = [
 ];
 const SPACINGS: [u16; 7] = [1, 2, 4, 8, 16, 32, 64];
 
-/// The right-click menu. A right click moves the cursor to the line under the pointer and
-/// selects the note there unless it is selected already; what the menu places goes there, from
+/// The right-click menu. A right click selects the note under the pointer unless it is selected
+/// already, and leaves the cursor alone; what the menu places goes on the snap line clicked, from
 /// the lane clicked.
 fn menu(
     ui: &Ui,
@@ -644,9 +644,6 @@ fn menu(
         && let Some(pos) = ui.input(|input| input.pointer.latest_pos().map(|at| flip.back(at)))
     {
         let tick = snap_line(song, field.view, pos);
-        if let Some(tick) = tick {
-            actions.push(Action::JumpTo(tick));
-        }
         if let Some(chart) = song.chart()
             && let Some(note) = hit(&chart.objects, field, chart.timing(), pos, visible)
             && !song.selection().any(|selected| selected == note)

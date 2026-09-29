@@ -1773,8 +1773,13 @@ impl Window {
             song.merge_since(step);
         }
         if let Action::Here(tick, action) = action {
+            // Done on the line the menu was opened on, and the cursor left where it was.
+            let was = self.song.as_ref().map(Song::cursor);
             self.apply(Action::JumpTo(tick));
             self.apply(*action);
+            if let Some(was) = was {
+                self.apply(Action::JumpTo(was));
+            }
             return;
         }
         if let Action::PasteHere(tick) = action {
@@ -1786,7 +1791,8 @@ impl Window {
         if let Action::Paste(Some(_)) = &action
             && let Some((tick, _)) = self.pasting.take()
         {
-            self.apply(Action::JumpTo(tick));
+            self.apply(Action::Here(tick, Box::new(action)));
+            return;
         }
         self.apply_to_window(&action);
         let input_latency = self.input_latency();
@@ -3789,7 +3795,7 @@ mod tests {
     }
 
     #[test]
-    fn a_right_click_moves_the_cursor_there_and_offers_the_menu() {
+    fn a_right_click_opens_the_menu_and_leaves_the_cursor_where_it_was() {
         let mut harness = editable_four_taps();
         let pos = on_line(&harness, lane_x(&harness, 2), 480);
         harness.hover_at(pos);
@@ -3804,7 +3810,7 @@ mod tests {
         harness.run();
         assert_eq!(
             harness.state().song.as_ref().unwrap().cursor(),
-            Tick::new(480)
+            Tick::new(0)
         );
         assert!(harness.query_by_label("1 note selected").is_some());
         assert!(
@@ -3828,10 +3834,12 @@ mod tests {
         harness.run();
         harness.key_press(egui::Key::PageDown);
         harness.run();
+        let before = harness.state().song.as_ref().unwrap().cursor();
         let paste = Action::Here(Tick::new(7680), Box::new(Action::Paste(None)));
         harness.state_mut().apply(paste);
         harness.run();
         assert_eq!(lanes_at(&harness, 7680), [0]);
+        assert_eq!(harness.state().song.as_ref().unwrap().cursor(), before);
     }
 
     #[test]
