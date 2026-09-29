@@ -392,7 +392,8 @@ impl Song {
         Ok(())
     }
 
-    /// Solo a row, or restore the views remembered when that row was soloed.
+    /// Solo a row by showing it and ghosting other shown rows, or restore the views remembered
+    /// when that row was soloed.
     ///
     /// # Errors
     /// Refuses a missing row, read-only song or plugin rejection.
@@ -489,7 +490,8 @@ impl Song {
         self.selection = found;
     }
 
-    /// Copy one layer and its notes into another chart, skipping occupied note spots.
+    /// Copy one layer, its view, lock state and notes into another chart, skipping occupied note
+    /// spots.
     ///
     /// # Errors
     /// Refuses missing charts or rows, read-only songs and plugin rejections.

@@ -60,7 +60,8 @@ chart's settings do. It folds away with the rest of the panel.
 Each row is, left to right:
 
 - **Visibility**, `[o]` shown, `[~]` ghosted, `[ ]` hidden. A click cycles through them. Alt+click
-  solos the layer, ghosting every other, and Alt+click again puts them back as they were.
+  solos the layer, ghosting other shown layers and leaving hidden or already-ghosted layers as
+  they were; Alt+click again puts them back as they were.
 - **Lock**, `[L]`. A locked layer is drawn as usual but its notes cannot be selected or changed.
 - **The colour swatch.** A click opens the palette.
 - **The name.** A double-click renames it in place, and Enter or leaving the field applies it.
@@ -68,8 +69,9 @@ Each row is, left to right:
   Ctrl+click on a layer's thumbnail selects its pixels in Photoshop.
 
 The highlighted row is the **active layer**, where new notes go; a click on a row makes it active.
-Drag a row by its handle to reorder it. `[+]` makes a layer above the active one and makes it active. `[…]`, and right-click on a row, hold
-the rest: rename, colour, *Select notes*, *Merge down*, *Copy to chart ›* and delete.
+Drag a row by its handle to reorder it. `[+]` makes a layer above the active one and makes it
+active. `[…]`, and right-click on a row, hold the rest: rename, colour, *Select notes*, *Merge
+down*, *Copy to chart ›* and delete.
 
 ## Drawing
 
@@ -96,9 +98,9 @@ the rest: rename, colour, *Select notes*, *Merge down*, *Copy to chart ›* and 
   later.
 - **Paste** puts notes on the active layer. **Duplicate** (Ctrl+D) keeps each note's layer, since
   it stays in the same chart.
-- **Copy to chart ›** copies a layer, its name and colour, into another difficulty, which is how
-  a harder chart's melody becomes the start of an easier one. Notes that would land on a note
-  already there are left out, and the status bar counts them.
+- **Copy to chart ›** copies a layer, its name, colour, visibility, lock state and notes into
+  another difficulty, which is how a harder chart's melody becomes the start of an easier one.
+  Notes that would land on a note already there are left out, and the status bar counts them.
 - **Merge down** moves a layer's notes into the one below and removes it. **Delete** on a layer
   with notes asks whether to delete them or merge them down.
 - **Recording** captures into the active layer, so a take can be a layer of its own, the "layered

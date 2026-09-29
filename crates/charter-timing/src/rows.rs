@@ -1,5 +1,5 @@
-//! The rows of the timing window: the song laid out by bar position, a few bars a row with a
-//! little of the bar before shown ahead of each downbeat, and everything drawn over a row.
+//! The rows of the timing window: the song laid out either by bar position or by audio time, a
+//! little of the previous row shown as lead-in, and everything drawn over a row.
 
 use charter_audio::{Onset, Peaks};
 use charter_core::{Measure, Tick, Timing, Valid};
@@ -471,7 +471,7 @@ pub(crate) struct Ghost {
     pub snapped: bool,
 }
 
-/// Bar-position interval a dragged anchor may occupy.
+/// Row-position interval a dragged anchor may occupy.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Reach {
     /// First allowed position.
@@ -503,7 +503,7 @@ pub(crate) struct Scene<'a> {
     pub cursor: Tick,
     /// Where a drag would drop, and whether it is on a snap target.
     pub ghost: Option<Ghost>,
-    /// The bar positions a dragged anchor may reach; the rest is dimmed.
+    /// The row positions a dragged anchor may reach; the rest is dimmed.
     pub reach: Option<Reach>,
 }
 

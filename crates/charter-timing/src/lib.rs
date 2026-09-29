@@ -1,9 +1,9 @@
-//! The timing window: the song's audio a bar or a few a row, laid out by bar position rather
-//! than by time, so a correct map lines its beats up down the rows and a wrong one shows. Every
-//! BPM change is an anchor, pinning a beat to a moment of the audio; the tempo between anchors
-//! follows from where they are. The window measures the map against the onsets its host found,
-//! and the interaction follows the Beatline specification: the verb is visible, Shift means
-//! finer, Ctrl switches from the beat to the audio.
+//! The timing window: the song's audio laid out either by bars or by fixed spans of time, so a
+//! correct map lines its beats up down the rows and a wrong one shows. Every BPM change is an
+//! anchor, pinning a beat to a moment of the audio; the tempo between anchors follows from where
+//! they are. The window measures the map against the onsets its host found, and the interaction
+//! follows the Beatline specification: the verb is visible, Shift means finer, Ctrl switches from
+//! the beat to the audio.
 //!
 //! The window reads a song and draws it; what the user asks of it comes back as [`Command`]s,
 //! which its host carries out, since the host owns the song, its history and its playback. The
@@ -256,8 +256,8 @@ struct CacheKey {
     onsets: Box<[Onset]>,
 }
 
-/// What the rows are measured against, worked out again only when the timing, the grid or the
-/// onsets change.
+/// What the rows are measured against, worked out again only when the timing, grid, onset
+/// sensitivity or onsets change.
 #[derive(Debug)]
 struct Cache {
     /// Values that decide whether these measurements are still current.
