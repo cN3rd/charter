@@ -862,7 +862,12 @@ mod tests {
         assert!((stretched_position(SourceSeconds(4.0), fast).get() - 2.5).abs() < 1e-12);
         assert!((stretched_position(SourceSeconds(8.0), fast).get() - 5.0).abs() < 1e-12);
         // The seek and loop start are clamped in source seconds before conversion.
-        assert!(stretched_position(SourceSeconds(-2.0).start(), fast).get() < 1e-12);
+        assert!(
+            stretched_position(SourceSeconds(-2.0).start(), fast)
+                .get()
+                .abs()
+                < 1e-12
+        );
         let slow = PlaybackRate(0.75);
         assert!((source_position(StretchedSeconds(8.0), slow).get() - 6.0).abs() < 1e-12);
         assert!((stretched_position(SourceSeconds(6.0), slow).get() - 8.0).abs() < 1e-12);
