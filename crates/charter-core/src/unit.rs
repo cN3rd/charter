@@ -773,8 +773,12 @@ mod proofs {
         let (start, span) = (tick(), span());
         let sum = i64::from(start.0) + i64::from(span.0.get());
         match start.checked_add(span) {
-            Some(end) => assert!(i64::from(end.0) == sum),
-            None => assert!(sum > i64::from(i32::MAX)),
+            Some(end) => {
+                assert!(i64::from(end.0) == sum);
+            }
+            None => {
+                assert!(sum > i64::from(i32::MAX));
+            }
         }
     }
 
@@ -782,8 +786,12 @@ mod proofs {
     fn a_later_tick_is_the_span_that_reaches_it() {
         let (from, to) = (tick(), tick());
         match from.ticks_until(to) {
-            Some(span) => assert!(to > from && from.checked_add(span) == Some(to)),
-            None => assert!(to <= from),
+            Some(span) => {
+                assert!(to > from && from.checked_add(span) == Some(to));
+            }
+            None => {
+                assert!(to <= from);
+            }
         }
     }
 
