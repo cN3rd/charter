@@ -18,11 +18,32 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  check:
-    name: Format, lint, test and book
+  format-and-book:
+    name: Format and book
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,mdbook
+      - run: just fmt-check
+      - run: just docs
+      - run: just docs-check
+
+  rust:
+    name: Rust ${{ matrix.task }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        task: [clippy, test]
     env:
-      # Warnings fail CI, so the lint table in Cargo.toml stays the whole story.
       RUSTFLAGS: -D warnings
     steps:
       - uses: actions/checkout@v7
@@ -30,18 +51,15 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy, rustfmt
+          components: clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.task }}
       - uses: taiki-e/install-action@v2
         with:
-          tool: just,mdbook
-      # kira plays through ALSA; nothing else links a system library.
+          tool: just
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config
-      - run: just fmt-check
-      - run: cargo clippy --workspace --all-targets
-      - run: just test
-      - run: just docs
-      - run: just docs-check
+      - run: just ${{ matrix.task }}
 
   # Slow, so beside the checks rather than after them; the crates linking burn are left out, as
   # `just kani` explains.
@@ -60,7 +78,6 @@ jobs:
 
   package:
     name: Package ${{ matrix.os }}
-    needs: check
     if: github.event_name != 'pull_request'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -107,8 +124,8 @@ jobs:
 
   prerelease:
     name: Prerelease
-    needs: [package, kani]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [format-and-book, rust, kani, package]
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write
