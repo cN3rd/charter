@@ -133,24 +133,17 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: List the commits since the last prerelease
+      - name: Write release notes
         run: |
           previous="$(git tag --list 'ci-*' --sort=-version:refname --merged HEAD | head -n 1)"
           {
             echo "Built by CI from ${GITHUB_SHA}. Not a release: it may be broken, and may"
             echo "change the format without notice."
             echo
-            if [ -n "$previous" ]; then
-              echo "## Changes since ${previous}"
-              range="${previous}..HEAD"
-            else
-              echo "## Changes"
-              range="HEAD"
-            fi
+            echo "## Changes${previous:+ since $previous}"
             echo
-            git log --no-merges --format='- %s (%h)' "$range"
+            git log --no-merges --format='- %s (%h)' "${previous:+$previous..}HEAD"
           } > notes.md
-          cat notes.md
       - uses: actions/download-artifact@v8
         with:
           path: dist
