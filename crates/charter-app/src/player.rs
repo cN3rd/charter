@@ -173,33 +173,38 @@ impl Player {
             .or_else(|| self.loaded.as_ref().map(|(path, ..)| path))
             .or(self.failed.as_ref());
         if have != wanted.as_ref() {
-            if self.playing.is_some() {
-                self.stop();
-                window.playback_ended();
-            }
-            self.loaded = None;
-            self.failed = None;
-            let (load, inline) = (self.load, self.inline);
-            let project = window.song_folder();
-            self.loading = wanted.map(|path| {
-                let (send, receive) = std::sync::mpsc::channel();
-                let file = PathBuf::clone(&path);
-                let (cache, onset_cache) = if inline {
-                    (None, None)
-                } else {
-                    let at = |kind: &str| cache_file(project.as_deref(), &file, kind);
-                    (at("peaks"), at("onsets"))
-                };
-                // The peaks are read or worked out beside the decoding, off the window's thread.
-                let summarize = move || summarize(load, &file, (cache, onset_cache), &send);
-                if inline {
-                    summarize();
-                } else {
-                    std::thread::spawn(summarize);
-                }
-                (path, receive)
-            });
+            self.replace_audio(wanted, window);
         }
+        self.receive_loaded(window);
+        // ponytail: repaint during loading; wake on channel sends if idle redraws matter.
+        let loading = self.loading.is_some();
+        let Some(sound) = &self.playing else {
+            return loading;
+        };
+        if sound.state() == PlaybackState::Stopped {
+            self.playing = None;
+            window.playback_ended();
+            return loading;
+        }
+        window.playhead(sound.position());
+        true
+    }
+
+    /// Starts loading `wanted`, replacing any current audio and ending playback if needed.
+    fn replace_audio(&mut self, wanted: Option<PathBuf>, window: &mut Window) {
+        if self.playing.is_some() {
+            self.stop();
+            window.playback_ended();
+        }
+        self.loaded = None;
+        self.failed = None;
+        let project = window.song_folder();
+        self.loading =
+            wanted.map(|path| start_loading(path, project.as_deref(), self.load, self.inline));
+    }
+
+    /// Receives every result that has arrived from the current loading job.
+    fn receive_loaded(&mut self, window: &mut Window) {
         if let Some((path, receive)) = &self.loading {
             // Everything that has arrived, in order: peaks, the audio, its frequencies, its onsets.
             let mut done = false;
@@ -239,18 +244,6 @@ impl Player {
                 self.loading = None;
             }
         }
-        // ponytail: repaint during loading; wake on channel sends if idle redraws matter.
-        let loading = self.loading.is_some();
-        let Some(sound) = &self.playing else {
-            return loading;
-        };
-        if sound.state() == PlaybackState::Stopped {
-            self.playing = None;
-            window.playback_ended();
-            return loading;
-        }
-        window.playhead(sound.position());
-        true
     }
 
     /// Does what the window asked of playback; other requests are left to the caller.
@@ -460,6 +453,31 @@ fn load(path: &Path) -> Result<Track, String> {
     let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
     let extension = path.extension().and_then(|extension| extension.to_str());
     Track::decode(bytes, extension).map_err(|error| error.to_string())
+}
+
+/// Starts the audio loading job for `path`, either inline for tests or on a worker thread.
+fn start_loading(
+    path: PathBuf,
+    project: Option<&Path>,
+    load: fn(&Path) -> Result<Track, String>,
+    inline: bool,
+) -> Loading {
+    let (send, receive) = std::sync::mpsc::channel();
+    let file = PathBuf::clone(&path);
+    let (cache, onset_cache) = if inline {
+        (None, None)
+    } else {
+        let at = |kind: &str| cache_file(project, &file, kind);
+        (at("peaks"), at("onsets"))
+    };
+    // The peaks are read or worked out beside the decoding, off the window's thread.
+    let summarize = move || summarize(load, &file, (cache, onset_cache), &send);
+    if inline {
+        summarize();
+    } else {
+        std::thread::spawn(summarize);
+    }
+    (path, receive)
 }
 
 /// Reads `file` with `load` and sends what the window needs of it through `send`, as the loading
