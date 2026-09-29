@@ -9222,3 +9222,26 @@ mod tests {
         );
     }
 }
+
+/// Proofs for Kani, run with `cargo kani -p charter-ui`.
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+    use std::num::NonZeroU16;
+
+    #[kani::proof]
+    #[kani::unwind(34)]
+    fn the_shown_grid_holds_both_requested_lines_or_falls_back_to_snap() {
+        let a: u16 = u16::from(kani::any::<u8>());
+        let b: u16 = u16::from(kani::any::<u8>());
+        kani::assume(a > 0 && a <= 192 && b > 0 && b <= 192);
+        let grid = NonZeroU16::new(a).expect("positive");
+        let snap = NonZeroU16::new(b).expect("positive");
+        let shown = shown_grid(grid, snap).get();
+        if shown != b {
+            assert!(shown <= 192);
+            assert_eq!(shown % a, 0);
+            assert_eq!(shown % b, 0);
+        }
+    }
+}

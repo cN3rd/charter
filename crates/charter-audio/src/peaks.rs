@@ -274,3 +274,28 @@ mod tests {
         assert!(near(brief.high, 0.5), "{brief:?}");
     }
 }
+
+/// Proofs for Kani, run with `cargo kani -p charter-audio`.
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+
+    #[kani::proof]
+    #[kani::unwind(10)]
+    fn arbitrary_short_saved_peaks_never_panic() {
+        let bytes: [u8; 8] = kani::any();
+        let length = usize::from(kani::any::<u8>());
+        kani::assume(length <= bytes.len());
+        let _ = Peaks::from_bytes(&bytes[..length], kani::any());
+    }
+
+    #[kani::proof]
+    fn every_frame_count_has_exactly_enough_peak_blocks_when_it_fits() {
+        let frames: usize = kani::any();
+        let blocks = frames.div_ceil(FINEST);
+        assert_eq!(blocks, frames / FINEST + usize::from(frames % FINEST != 0));
+        if let Some(bytes) = blocks.checked_mul(8) {
+            assert!(bytes / 8 == blocks);
+        }
+    }
+}

@@ -2522,3 +2522,28 @@ mod tests {
         assert!(harness.state().window.preview.is_none());
     }
 }
+
+/// Proofs for Kani, run with `cargo kani -p charter-timing`.
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+
+    #[kani::proof]
+    fn an_empty_selection_targets_the_focused_anchor_if_there_is_one() {
+        let mut window = TimingWindow::default();
+        let tick = Tick::new(kani::any());
+        window.focus = Some(tick);
+        assert_eq!(window.targets(), vec![tick]);
+        window.focus = None;
+        assert!(window.targets().is_empty());
+    }
+
+    #[kani::proof]
+    fn a_selection_targets_its_members_instead_of_the_focused_anchor() {
+        let mut window = TimingWindow::default();
+        let selected = Tick::new(kani::any());
+        window.focus = Some(Tick::new(kani::any()));
+        window.selection = vec![selected];
+        assert_eq!(window.targets(), vec![selected]);
+    }
+}

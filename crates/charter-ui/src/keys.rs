@@ -512,3 +512,21 @@ mod tests {
         assert_eq!(command(Key::F2, Modifiers::ALT), None);
     }
 }
+
+/// Proofs for Kani, run with `cargo kani -p charter-ui`.
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+
+    #[kani::proof]
+    #[kani::unwind(12)]
+    fn every_digit_key_maps_back_to_its_lane_index() {
+        let lane: usize = usize::from(kani::any::<u8>());
+        if let Some(&key) = LANE_KEYS.get(lane) {
+            assert_eq!(
+                LANE_KEYS.iter().position(|&candidate| candidate == key),
+                Some(lane)
+            );
+        }
+    }
+}

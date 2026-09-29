@@ -594,3 +594,20 @@ mod tests {
         }));
     }
 }
+
+/// Proofs for Kani, run with `cargo kani -p charter-style`.
+#[cfg(kani)]
+mod proofs {
+    #[kani::proof]
+    fn every_short_millisecond_count_splits_into_minutes_seconds_and_millis() {
+        let millis: u16 = kani::any();
+        let minutes = millis / 60_000;
+        let seconds = (millis / 1000) % 60;
+        let remainder = millis % 1000;
+        assert!(seconds < 60 && remainder < 1000);
+        assert_eq!(
+            u32::from(minutes) * 60_000 + u32::from(seconds) * 1000 + u32::from(remainder),
+            u32::from(millis)
+        );
+    }
+}

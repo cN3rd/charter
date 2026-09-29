@@ -238,6 +238,27 @@ fn is_namespace(value: &str) -> bool {
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
 }
 
+/// Proofs for Kani, run with `cargo kani -p charter-core`.
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+
+    #[kani::proof]
+    #[kani::unwind(7)]
+    fn a_bounded_namespace_is_accepted_exactly_for_its_ascii_grammar() {
+        let bytes: [u8; 4] = kani::any();
+        let length: usize = kani::any();
+        kani::assume(length <= bytes.len());
+        if let Ok(text) = std::str::from_utf8(&bytes[..length]) {
+            let expected = bytes[..length].first().is_some_and(u8::is_ascii_lowercase)
+                && bytes[1..length.max(1)].iter().all(|byte| {
+                    byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'_'
+                });
+            assert!(is_namespace(text) == expected);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

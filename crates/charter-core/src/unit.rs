@@ -796,6 +796,49 @@ mod proofs {
     }
 
     #[kani::proof]
+    fn stepping_forward_finds_the_first_representable_grid_line_after_a_tick() {
+        let (tick, step) = (tick(), Ticks::new(256).unwrap());
+        let step_size = i64::from(step.0.get());
+        let answer = tick.next_on(step);
+        let expected = (i64::from(tick.0).div_euclid(step_size) + 1) * step_size;
+        assert!(
+            answer.map(|line| i64::from(line.0)) == i32::try_from(expected).ok().map(i64::from)
+        );
+        if let Some(line) = answer {
+            assert!(line > tick && i64::from(line.0).rem_euclid(step_size) == 0);
+        }
+    }
+
+    #[kani::proof]
+    fn stepping_backward_finds_the_last_representable_grid_line_before_a_tick() {
+        let (tick, step) = (tick(), Ticks::new(256).unwrap());
+        let step_size = i64::from(step.0.get());
+        let answer = tick.previous_on(step);
+        let expected = (i64::from(tick.0) - 1).div_euclid(step_size) * step_size;
+        assert!(
+            answer.map(|line| i64::from(line.0)) == i32::try_from(expected).ok().map(i64::from)
+        );
+        if let Some(line) = answer {
+            assert!(line < tick && i64::from(line.0).rem_euclid(step_size) == 0);
+        }
+    }
+
+    #[kani::proof]
+    fn a_quarter_note_has_exactly_the_resolution_in_ticks() {
+        let resolution = TicksPerBeat(kani::any());
+        let length = resolution.note_length(NonZeroU16::new(4).unwrap());
+        assert!(length.map(u32::from) == Some(u32::from(resolution.0.get())));
+    }
+
+    #[kani::proof]
+    fn a_lane_counts_last_and_middle_are_inside_its_bounds() {
+        let lanes = lanes();
+        let count = u32::from(lanes.0.get());
+        assert!(u32::from(lanes.last().0) + 1 == count);
+        assert!(u32::from(lanes.middle().0) == (count - 1) / 2);
+    }
+
+    #[kani::proof]
     fn lane_spans_overlap_exactly_when_they_share_a_lane() {
         let (a, b) = (lane_span(), lane_span());
         let lane: u32 = kani::any();

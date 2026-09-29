@@ -298,3 +298,41 @@ mod tests {
         }
     }
 }
+
+/// Proofs for Kani, run with `cargo kani -p charter-timing`.
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn grid_lines_are_ordered_inside_a_short_measure_and_begin_at_its_downbeat() {
+        let start: i32 = kani::any();
+        let length: u32 = kani::any();
+        kani::assume(start <= i32::MAX - 3 && length > 0 && length <= 3);
+        let measure = Measure {
+            number: 0,
+            start: Tick::new(start),
+            length: Ticks::new(length).expect("nonzero measure"),
+            meter: (NonZeroU16::MIN, NonZeroU16::new(4).expect("four")).into(),
+        };
+        let grid = Grid::default();
+        let lines = grid.lines(&measure, TicksPerBeat::new(2).expect("two ticks per beat"));
+        assert_eq!(lines.first(), Some(&(measure.start, Line::Downbeat)));
+        for pair in lines.windows(2) {
+            assert!(pair[0].0 < pair[1].0);
+        }
+        for (tick, _) in lines {
+            assert!(
+                tick >= measure.start && i64::from(tick) < i64::from(start) + i64::from(length)
+            );
+        }
+    }
+
+    #[kani::proof]
+    fn triplet_lines_are_exactly_the_resolutions_divisible_by_three() {
+        let resolution: NonZeroU16 = kani::any();
+        let grid = Grid { resolution };
+        assert_eq!(grid.triplet(), resolution.get() % 3 == 0);
+    }
+}

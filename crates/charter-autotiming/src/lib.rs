@@ -566,3 +566,25 @@ mod tests {
         );
     }
 }
+
+/// Proofs for Kani, run with `cargo kani -p charter-autotiming`.
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+
+    #[kani::proof]
+    #[kani::unwind(18)]
+    fn three_matching_downbeat_gaps_choose_their_meter() {
+        let gap: i64 = if kani::any::<bool>() { 3 } else { 5 };
+        let stretch: [Beat; 4] = std::array::from_fn(|index| Beat {
+            seconds: 0.0,
+            weight: 1.0,
+            index: i64::try_from(index).unwrap_or_default() * gap,
+            downbeat: true,
+        });
+        assert_eq!(
+            meter(&stretch).get(),
+            u16::try_from(gap).unwrap_or_default()
+        );
+    }
+}

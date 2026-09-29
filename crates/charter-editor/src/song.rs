@@ -3605,3 +3605,76 @@ pub(crate) mod tests {
         assert_eq!(song.snap(), note(16));
     }
 }
+
+/// Proofs for Kani, run with `cargo kani -p charter-editor`.
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+
+    #[kani::proof]
+    fn moving_a_tick_succeeds_exactly_when_the_destination_is_in_range() {
+        let tick = Tick::new(kani::any());
+        let by: i64 = kani::any();
+        let destination = i128::from(i64::from(tick)) + i128::from(by);
+        match moved(tick, by) {
+            Ok(to) => {
+                assert!(i128::from(i64::from(to)) == destination);
+            }
+            Err(Refusal::NotWhole) => {
+                assert!(destination < i128::from(i32::MIN) || destination > i128::from(i32::MAX));
+            }
+            Err(_) => unreachable!(),
+        }
+    }
+
+    #[kani::proof]
+    fn selection_width_covers_both_end_lanes_when_representable() {
+        let first: u16 = kani::any();
+        let last: u16 = kani::any();
+        let width = last
+            .checked_sub(first)
+            .and_then(|span| LaneCount::new(span.saturating_add(1)));
+        if first <= last && (first != 0 || last != u16::MAX) {
+            let area = LaneSpan::new(LaneIndex::new(first), width.expect("range fits"));
+            let last_lane = LaneSpan::new(LaneIndex::new(last), LaneCount::ONE);
+            assert!(area.overlaps(last_lane));
+        } else if last < first {
+            assert!(width.is_none());
+        }
+    }
+
+    #[kani::proof]
+    fn a_lane_note_fits_exactly_when_its_last_lane_exists() {
+        let index: u16 = kani::any();
+        let width: std::num::NonZeroU16 = kani::any();
+        let lanes: u16 = kani::any();
+        let object = note(Tick::new(0), LaneIndex::new(index), Kind::Tap);
+        let object = Object {
+            position: Position::Lane {
+                index: LaneIndex::new(index),
+                width: LaneCount::new(width.get()).expect("nonzero width"),
+            },
+            ..object
+        };
+        assert!(
+            fits(&object, lanes) == (u32::from(index) + u32::from(width.get()) <= u32::from(lanes))
+        );
+    }
+
+    #[kani::proof]
+    fn successive_snap_menu_entries_are_finer_and_whole_steps_never_zero() {
+        let index: usize = kani::any();
+        let resolution: std::num::NonZeroU16 = kani::any();
+        kani::assume(index < SNAPS.len() - 1);
+        let first = NonZeroU16::new(SNAPS[index]).expect("snap is nonzero");
+        let next = NonZeroU16::new(SNAPS[index + 1]).expect("snap is nonzero");
+        assert!(first < next);
+        let resolution = TicksPerBeat::new(resolution.get()).expect("nonzero resolution");
+        if let Some(length) = resolution.note_length(first) {
+            assert!(u32::from(length) > 0);
+        }
+        if let Some(length) = resolution.note_length(next) {
+            assert!(u32::from(length) > 0);
+        }
+    }
+}

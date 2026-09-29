@@ -1790,4 +1790,25 @@ mod proofs {
         assert!(left != right && right != down && left != down);
         assert!(lanes.position(Slice(Side::Left)) != lanes.position(Slice(Side::Right)));
     }
+
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn lane_widths_read_back_exactly_when_ttr_supports_them() {
+        let count: u16 = kani::any();
+        let Some(width) = LaneCount::new(count) else {
+            return;
+        };
+        assert!(Lanes::of(width).is_some() == (3..=5).contains(&count));
+        if let Some(lanes) = Lanes::of(width) {
+            assert!(lanes.width() == width);
+        }
+    }
+
+    #[kani::proof]
+    #[kani::unwind(16)]
+    fn standard_difficulties_read_back_from_their_keys() {
+        let level = Difficulty::ALL[kani::any_where(|index: &usize| *index < 4)];
+        assert!(Difficulty::keyed(level.key()) == Some(level));
+        assert!(level.index() < Difficulty::ALL.len());
+    }
 }

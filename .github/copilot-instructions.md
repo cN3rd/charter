@@ -17,7 +17,7 @@ cargo clippy --workspace --all-targets
 cargo fmt --all
 cargo run -p charter-app                 # the editor; add `-- path/to/song.json` to open a song
 cargo run -p charter-ui --example mock   # the static mock of the UI draft
-cargo kani -p charter-core               # Kani proofs, also in charter-ttr and charter-osu-mania; `cargo install --locked kani-verifier && cargo kani setup` once
+just kani                                # Kani proofs of every crate but the two linking burn, which Kani cannot build; `cargo kani -p <crate>` for one; `cargo install --locked kani-verifier && cargo kani setup` once
 git submodule update --init              # required once, see .github/skills/README.md
 ```
 

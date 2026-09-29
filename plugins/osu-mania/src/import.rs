@@ -328,6 +328,35 @@ fn out_of_range(error: impl std::fmt::Display) -> ImportError {
     ImportError::OutOfRange(error.to_string())
 }
 
+/// Proofs for Kani, run with `cargo kani -p charter-osu-mania`.
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+
+    #[kani::proof]
+    fn an_empty_point_line_is_rejected_without_panicking() {
+        assert!(point("").is_err());
+    }
+
+    #[kani::proof]
+    fn bounded_numeric_point_lines_have_valid_meter_and_inheritance() {
+        if kani::any() {
+            let parsed = point("1,2,3").unwrap();
+            assert!(parsed.meter.get() == 3 && parsed.uninherited);
+        } else {
+            let parsed = point("0,-1,0").unwrap();
+            assert!(parsed.meter.get() == 4 && !parsed.uninherited);
+        }
+    }
+
+    #[kani::proof]
+    fn a_meter_conversion_preserves_every_integral_value_in_range() {
+        let meter: u16 = kani::any();
+        kani::assume(meter != 0);
+        assert!(meter_u16(f64::from(meter)) == meter);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use proptest::prelude::*;

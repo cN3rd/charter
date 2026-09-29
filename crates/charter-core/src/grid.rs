@@ -292,6 +292,57 @@ impl Grid {
     }
 }
 
+/// Proofs for Kani, run with `cargo kani -p charter-core`.
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+
+    #[kani::proof]
+    fn ceiling_division_brackets_every_signed_dividend_with_a_positive_divisor() {
+        let n: i32 = kani::any();
+        let (n, d) = (i64::from(n), 7_i64);
+        let ceiling = ceil_div(n, d);
+        assert!((ceiling - 1) * d < n);
+        assert!(n <= ceiling * d);
+    }
+
+    #[kani::proof]
+    fn a_single_meter_stretch_holds_every_tick_in_exactly_one_measure() {
+        let tick: i32 = kani::any();
+        let length = 3840_i64;
+        let grid = Grid {
+            stretches: vec![Stretch {
+                begin: i64::MIN,
+                origin: 0,
+                length,
+                meter: COMMON_TIME,
+            }],
+        };
+        let (index, start) = grid.holding(i64::from(tick)).unwrap();
+        assert!(index == 0);
+        assert!(start <= i64::from(tick) && i64::from(tick) < start + length);
+        assert!(start.rem_euclid(length) == 0);
+    }
+
+    #[kani::proof]
+    fn a_whole_meter_length_agrees_with_its_resolution() {
+        let meter = TimeSignature {
+            numerator: std::num::NonZeroU16::new(7).unwrap(),
+            denominator: std::num::NonZeroU16::new(8).unwrap(),
+        };
+        let resolution = TicksPerBeat::new(kani::any()).unwrap_or(TicksPerBeat::new(1).unwrap());
+        let length = measure_length(meter, resolution);
+        assert!(length.is_some() == meter.measure_is_whole(resolution));
+        if let Some(length) = length {
+            assert!(length > 0);
+            assert!(
+                length * i64::from(meter.denominator.get())
+                    == i64::from(meter.numerator.get()) * 4 * i64::from(resolution.get())
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;

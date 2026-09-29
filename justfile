@@ -38,11 +38,11 @@ fmt:
 fmt-check:
     cargo fmt --all --check
 
-# Run the Kani proofs of the crates that have them
+# Run the Kani proofs of every crate Kani can build
+# ponytail: burn pulls in backtrace, which fails to compile under Kani's nightly (an ambiguous
+# `unreachable!`), so the two crates linking burn are left out. Drop the exclusions once it builds.
 kani:
-    cargo kani -p charter-core
-    cargo kani -p charter-ttr
-    cargo kani -p charter-osu-mania
+    cargo kani --workspace --exclude charter-beatthis-burn --exclude charter-app
 
 # Build the book into docs/book
 docs:

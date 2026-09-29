@@ -233,4 +233,14 @@ mod proofs {
             assert!((-MAX_MILLIONTHS..=MAX_MILLIONTHS).contains(&millionths));
         }
     }
+
+    #[kani::proof]
+    fn decimal_construction_accepts_exactly_the_bounded_millionths() {
+        let millionths: i64 = kani::any();
+        let parsed = Decimal::from_millionths(millionths);
+        assert!(parsed.is_some() == (-MAX_MILLIONTHS..=MAX_MILLIONTHS).contains(&millionths));
+        if let Some(decimal) = parsed {
+            assert!(decimal.0 == millionths);
+        }
+    }
 }

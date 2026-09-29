@@ -234,3 +234,22 @@ mod tests {
         assert!(one.iter().zip(&many).all(|(one, many)| many >= one));
     }
 }
+
+/// Proofs for Kani, run with `cargo kani -p charter-audio`.
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+
+    #[kani::proof]
+    #[kani::unwind(52)]
+    fn one_spectrum_frame_is_read_without_walking_past_either_end() {
+        let level: u8 = kani::any();
+        let mut row = [0; Spectrum::BANDS];
+        row[0] = level;
+        let spectrum = Spectrum { levels: vec![row] };
+        let at_start = spectrum.between(0.0, 0.0).expect("first frame");
+        assert_eq!(at_start[0], level);
+        assert!(spectrum.between(1.0, 1.0).is_none());
+        assert!(Spectrum { levels: vec![] }.between(0.0, 0.0).is_none());
+    }
+}

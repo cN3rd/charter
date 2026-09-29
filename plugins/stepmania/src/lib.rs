@@ -1490,3 +1490,29 @@ mod tests {
             .unwrap_err();
     }
 }
+
+/// Proofs for Kani, run with `cargo kani -p charter-stepmania`.
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+
+    #[kani::proof]
+    #[kani::unwind(40)]
+    fn every_steps_type_reads_back_by_name_with_a_playable_lane_count() {
+        let style = Style::ALL[kani::any_where(|index: &usize| *index < Style::ALL.len())];
+        assert!(Style::named(style.name()) == Some(style));
+        let width = u16::from(style.lanes());
+        assert!((1..=20).contains(&width));
+    }
+
+    #[kani::proof]
+    fn routine_columns_double_without_overflow() {
+        let columns: u16 = kani::any();
+        if columns <= u16::MAX / 2 {
+            assert!(u32::from(routine(columns)) == u32::from(columns) * 2);
+        } else {
+            assert!(routine(columns) == u16::MAX);
+        }
+        assert!(routine(columns) >= columns);
+    }
+}

@@ -1420,4 +1420,14 @@ mod proofs {
             assert!(keys.lanes() == lanes);
         }
     }
+
+    #[kani::proof]
+    fn difficulty_and_scroll_speed_accept_exactly_their_decimal_ranges() {
+        let millionths: i64 = kani::any();
+        let Some(value) = Decimal::from_millionths(millionths) else {
+            return;
+        };
+        assert!(Difficulty::new(value).is_some() == (0..=10_000_000).contains(&millionths));
+        assert!(ScrollSpeed::new(value).is_some() == (millionths > 0));
+    }
 }

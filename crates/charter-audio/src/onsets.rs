@@ -435,3 +435,37 @@ mod tests {
         assert_eq!(onsets_from_bytes(&bytes, 9), None);
     }
 }
+
+/// Proofs for Kani, run with `cargo kani -p charter-audio`.
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+
+    #[kani::proof]
+    #[kani::unwind(10)]
+    fn arbitrary_short_kept_onset_bytes_never_panic() {
+        let bytes: [u8; 8] = kani::any();
+        let length = usize::from(kani::any::<u8>());
+        kani::assume(length <= bytes.len());
+        let _ = onsets_from_bytes(&bytes[..length], kani::any());
+    }
+
+    #[kani::proof]
+    #[kani::unwind(14)]
+    fn accepted_kept_onset_has_valid_time_and_strength() {
+        let seconds: [u8; 8] = kani::any();
+        let strength: [u8; 4] = kani::any();
+        let mut bytes = [0_u8; 36];
+        bytes[..8].copy_from_slice(MAGIC);
+        bytes[16] = 1;
+        bytes[24..32].copy_from_slice(&seconds);
+        bytes[32..36].copy_from_slice(&strength);
+        if let Some(onsets) = onsets_from_bytes(&bytes, 0) {
+            assert_eq!(onsets.len(), 1);
+            for onset in onsets.iter() {
+                assert!(onset.seconds.is_finite() && onset.seconds >= 0.0);
+                assert!(onset.strength > 0.0 && onset.strength <= 1.0);
+            }
+        }
+    }
+}

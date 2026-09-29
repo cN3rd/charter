@@ -688,3 +688,31 @@ mod tests {
         ));
     }
 }
+
+/// Proofs for Kani, run with `cargo kani -p charter-editor`.
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+
+    #[kani::proof]
+    #[kani::unwind(4)]
+    fn anchors_are_in_order_exactly_when_each_tick_is_later_than_its_predecessor() {
+        let (first, second) = (Tick::new(kani::any()), Tick::new(kani::any()));
+        let pins = [
+            Pin {
+                tick: first,
+                seconds: 0.0,
+            },
+            Pin {
+                tick: second,
+                seconds: 1.0,
+            },
+        ];
+        let result = in_order(&pins, |pin| i64::from(pin.tick));
+        if second > first {
+            assert!(result.is_ok());
+        } else {
+            assert!(matches!(result, Err(Refusal::Crosses(tick)) if tick == second));
+        }
+    }
+}
