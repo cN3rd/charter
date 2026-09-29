@@ -165,7 +165,7 @@ fn timing_of(
 /// Downloads the weights to `weights` through a partial file beside it, telling `progress` how
 /// far it has got about every hundredth.
 fn fetch(weights: &Path, progress: &Sender<Progress>) -> Result<(), String> {
-    let partial = weights.with_extension("ckpt.partial");
+    let partial = crate::disk::partial_path(weights);
     if let Some(folder) = weights.parent() {
         std::fs::create_dir_all(folder).map_err(|why| format!("{}: {why}", folder.display()))?;
     }

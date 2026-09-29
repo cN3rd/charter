@@ -607,10 +607,7 @@ fn kept_peaks(disk: &dyn crate::disk::Disk, cache: &Path, source: u64) -> Option
 /// Keeps `peaks` at `cache` for next time. A cache that cannot be written is not worth saying so:
 /// the peaks are only worked out again.
 fn keep_peaks(disk: &dyn crate::disk::Disk, cache: &Path, source: u64, peaks: &Peaks) {
-    if let Some(folder) = cache.parent() {
-        drop(disk.make_folder(folder));
-    }
-    drop(crate::disk::write_whole(
+    drop(crate::disk::write_cache(
         disk,
         cache,
         &peaks.to_bytes(source),
@@ -627,10 +624,7 @@ fn kept_onsets(disk: &dyn crate::disk::Disk, cache: &Path, source: u64) -> Optio
 /// Keeps `onsets` at `cache` for next time; a cache that cannot be written only costs finding
 /// them again.
 fn keep_onsets(disk: &dyn crate::disk::Disk, cache: &Path, source: u64, onsets: &[Onset]) {
-    if let Some(folder) = cache.parent() {
-        drop(disk.make_folder(folder));
-    }
-    drop(crate::disk::write_whole(
+    drop(crate::disk::write_cache(
         disk,
         cache,
         &charter_audio::onsets_to_bytes(onsets, source),

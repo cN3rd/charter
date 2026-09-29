@@ -101,9 +101,7 @@ impl Disk for Real {
 ///
 /// Whatever kept the bytes from being written or moved; the file at `path` is as it was.
 pub(crate) fn write_whole(disk: &dyn Disk, path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let mut beside = path.as_os_str().to_owned();
-    beside.push(".partial");
-    let beside = PathBuf::from(beside);
+    let beside = partial_path(path);
     // ponytail: no fsync, since some filesystems refuse it. The autosave covers a crash; sync
     // here if saves on power loss turn out to matter.
     let written = disk
@@ -114,6 +112,25 @@ pub(crate) fn write_whole(disk: &dyn Disk, path: &Path, bytes: &[u8]) -> io::Res
         drop(disk.remove(&beside));
     }
     written
+}
+
+/// The partial file used for a write-then-rename update of `path`.
+pub(crate) fn partial_path(path: &Path) -> PathBuf {
+    let mut beside = path.as_os_str().to_owned();
+    beside.push(".partial");
+    PathBuf::from(beside)
+}
+
+/// Creates `path`'s parent folder, then writes the bytes atomically enough for discardable caches.
+///
+/// # Errors
+///
+/// Whatever kept the folder, partial file or final rename from being written.
+pub(crate) fn write_cache(disk: &dyn Disk, path: &Path, bytes: &[u8]) -> io::Result<()> {
+    if let Some(folder) = path.parent() {
+        disk.make_folder(folder)?;
+    }
+    write_whole(disk, path, bytes)
 }
 
 /// Copies audio without leaving a failed partial copy at its destination. An existing file is
@@ -136,9 +153,7 @@ pub(crate) fn copy_whole(disk: &dyn Disk, from: &Path, to: &Path) -> io::Result<
     if let Some(folder) = to.parent() {
         disk.make_folder(folder)?;
     }
-    let mut beside = to.as_os_str().to_owned();
-    beside.push(".partial");
-    let beside = PathBuf::from(beside);
+    let beside = partial_path(to);
     let copied = disk
         .copy(from, &beside)
         .and_then(|()| disk.rename(&beside, to));
@@ -303,6 +318,20 @@ mod tests {
         };
         assert!(write_whole(&disk, Path::new("/s/song.json"), b"new").is_err());
         assert_eq!(disk.get("/s/song.json").as_deref(), Some(&b"old"[..]));
+    }
+
+    #[test]
+    fn cached_writes_create_their_folder_and_use_the_standard_partial_name() {
+        let disk = Memory::default();
+        write_cache(&disk, Path::new("/s/cache/song.ogg.peaks"), b"peaks").unwrap();
+        assert_eq!(
+            disk.get("/s/cache/song.ogg.peaks").as_deref(),
+            Some(&b"peaks"[..])
+        );
+        assert_eq!(
+            partial_path(Path::new("/s/cache/song.ogg.peaks")),
+            PathBuf::from("/s/cache/song.ogg.peaks.partial")
+        );
     }
 
     #[test]
