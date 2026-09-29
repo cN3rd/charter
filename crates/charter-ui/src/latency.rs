@@ -159,11 +159,11 @@ pub fn show(
     egui::Window::new("Calibrate latency")
         .open(&mut open)
         .collapsible(false)
-        .resizable(false)
         .pivot(egui::Align2::CENTER_CENTER)
         .default_pos(ctx.content_rect().center())
+        .default_width(360.0)
+        .min_width(260.0)
         .show(ctx, |ui| {
-            ui.set_width(360.0);
             let playing = calibration.started.map_or(beat, |(_, beat)| beat);
             ui.label(format!(
                 "A click plays {CLICKS} times at the song's first tempo, {:.0} BPM, in the \

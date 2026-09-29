@@ -298,13 +298,13 @@ pub fn shortcuts(ctx: &egui::Context, open: &mut bool, filter: &mut String) {
     let window = egui::Window::new("Keyboard shortcuts")
         .open(open)
         .collapsible(false)
-        .resizable(false)
         .pivot(egui::Align2::CENTER_CENTER)
-        .default_pos(ctx.content_rect().center());
+        .default_pos(ctx.content_rect().center())
+        .min_size([260.0, 180.0]);
     let window = if compact {
-        window.fixed_size([width, height])
+        window.default_size([width, height])
     } else {
-        window
+        window.default_size([640.0, 560.0])
     };
     window.show(ctx, |ui| {
         ui.horizontal(|ui| {
@@ -322,12 +322,8 @@ pub fn shortcuts(ctx: &egui::Context, open: &mut bool, filter: &mut String) {
         };
         style::solid_scroll_bars(ui);
         egui::ScrollArea::vertical()
-            .max_height(if compact { height - 88.0 } else { 480.0 })
-            .auto_shrink([!compact, !compact])
+            .auto_shrink([false, false])
             .show(ui, |ui| {
-                if compact {
-                    ui.set_width(width - 32.0);
-                }
                 for (group, keys) in KEYS {
                     let keys: Vec<_> = keys.iter().filter(shown).collect();
                     if keys.is_empty() {

@@ -357,10 +357,8 @@ impl Settings {
     }
 }
 
-/// How wide the sidebar, a page and a setting's control are.
+/// How wide the sidebar is.
 const SIDEBAR_W: f32 = 150.0;
-/// Width of a settings page, in pixels.
-const PAGE_W: f32 = 422.0;
 /// Width of a settings row's control, in pixels.
 const CONTROL_W: f32 = 200.0;
 
@@ -438,23 +436,22 @@ pub fn show(
     let height = if compact {
         (space.y - 24.0).max(180.0)
     } else {
-        360.0
-    };
-    let page_height = if compact {
-        (height - 125.0).max(60.0)
-    } else {
-        (space.y - 150.0).max(120.0)
+        (space.y - 48.0).clamp(300.0, 640.0)
     };
     // Its own header, the title over the sidebar and a close button over the page, rather than
     // egui's title bar, which would sit flush against the edges the window draws to.
     egui::Window::new("Settings")
         .title_bar(false)
-        .resizable(false)
         .collapsible(false)
         .pivot(egui::Align2::CENTER_CENTER)
         .default_pos(ctx.content_rect().center())
         .frame(egui::Frame::window(&ctx.global_style()).inner_margin(egui::Margin::same(0)))
-        .fixed_size([width, height])
+        .default_size([width, height])
+        .min_size(if compact {
+            [260.0, 180.0]
+        } else {
+            [SIDEBAR_W + 300.0, 300.0]
+        })
         .show(ctx, |window_ui| {
             let mut contents = |content_ui: &mut egui::Ui,
                                 shown_page: &mut Page,
@@ -465,7 +462,7 @@ pub fn show(
                     .show(content_ui, |page_ui| {
                         page_ui.vertical(|ui| {
                             ui.spacing_mut().item_spacing = egui::vec2(8.0, 4.0);
-                            ui.set_width(if compact { width - 32.0 } else { PAGE_W });
+                            ui.set_width(ui.available_width());
                             if compact {
                                 let caption = ui.weak("Page");
                                 egui::ComboBox::from_id_salt("settings page")
@@ -494,7 +491,7 @@ pub fn show(
                             ui.add_space(14.0);
                             crate::style::solid_scroll_bars(ui);
                             egui::ScrollArea::vertical()
-                                .max_height(page_height)
+                                .auto_shrink([false, false])
                                 .show(ui, |ui| match shown_page {
                                     Page::Editing => editing(ui, settings),
                                     Page::Display => display(ui, settings),
@@ -554,7 +551,7 @@ fn sidebar(ui: &mut egui::Ui, page: &mut Page) {
         .show(ui, |ui| {
             ui.vertical(|ui| {
                 ui.set_width(SIDEBAR_W);
-                ui.set_min_height(360.0);
+                ui.set_min_height(ui.available_height());
                 ui.spacing_mut().item_spacing.y = 4.0;
                 ui.add_space(4.0);
                 ui.label(RichText::new("Settings").family(titles(ui)).size(16.0));
@@ -992,6 +989,58 @@ mod tests {
     use egui::accesskit::Role;
     use egui_kittest::Harness;
     use egui_kittest::kittest::Queryable;
+
+    #[test]
+    fn dragging_the_settings_windows_corner_resizes_it() {
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1000.0, 700.0))
+            .build_ui_state(
+                |ui, (settings, open): &mut (Settings, bool)| {
+                    show(ui.ctx(), settings, open, None);
+                },
+                (Settings::default(), true),
+            );
+        harness.run();
+        let area = |shown: &Harness<'_, (Settings, bool)>| {
+            shown
+                .ctx
+                .memory(|memory| {
+                    let window = memory
+                        .layer_ids()
+                        .find(|layer| layer.order == egui::Order::Middle)?;
+                    memory.area_rect(window.id)
+                })
+                .unwrap()
+        };
+        let before = area(&harness);
+        let corner = before.max - egui::vec2(2.0, 2.0);
+        harness.hover_at(corner);
+        harness.event(egui::Event::PointerButton {
+            pos: corner,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+        let to = corner + egui::vec2(-120.0, -80.0);
+        harness.hover_at(to);
+        harness.event(egui::Event::PointerButton {
+            pos: to,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+        let after = area(&harness);
+        assert!(
+            after.width() < before.width() - 60.0,
+            "{before:?} {after:?}"
+        );
+        assert!(
+            after.height() < before.height() - 40.0,
+            "{before:?} {after:?}"
+        );
+    }
 
     #[test]
     fn settings_pages_and_controls_fit_a_narrow_window() {
