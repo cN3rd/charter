@@ -3,7 +3,7 @@ type: Design Note
 title: Layers
 description: Layers within a chart, from the model to drawing, editing, playback and saving.
 tags: [ui, layers, format]
-status: implemented
+status: stable
 ---
 
 # Layers
