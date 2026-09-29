@@ -788,10 +788,7 @@ fn frame<'a>(
     }
     Frame {
         timing,
-        #[expect(clippy::unreachable, reason = "the constant 120 BPM is valid")]
-        tail: song
-            .tail_bpm()
-            .unwrap_or_else(|| Bpm::try_from(120.0).unwrap_or_else(|_| unreachable!())),
+        tail: song.tail_bpm(),
         pins: song.anchors(),
         bars: Bars::new(timing, first, last, 4).laid_out(layout),
         onsets,

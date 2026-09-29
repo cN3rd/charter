@@ -37,8 +37,8 @@ impl Song {
 
     /// The tempo after the last anchor, the one tempo set rather than following from anchors.
     #[must_use]
-    pub fn tail_bpm(&self) -> Option<Bpm> {
-        Some(self.timing().tempo)
+    pub fn tail_bpm(&self) -> Bpm {
+        self.timing().tempo
     }
 
     /// Makes the beat on `tick` fall `seconds` into the audio, as one step, anchoring it there
@@ -60,7 +60,7 @@ impl Song {
                 pins.insert(at, Pin { tick, seconds });
             }
         }
-        self.repin(&pins, self.tail(), false)
+        self.repin(&pins, self.tail_bpm(), false)
     }
 
     /// Moves the anchor on `from` to the beat `to`, keeping its moment in the audio, as one step;
@@ -95,7 +95,7 @@ impl Song {
         }
         in_order(&pins, |pin| i64::from(pin.tick))?;
         pins.sort_by_key(|pin| pin.tick);
-        self.repin(&pins, self.tail(), false)
+        self.repin(&pins, self.tail_bpm(), false)
     }
 
     /// Moves the anchors on `ticks` `by` seconds later in the audio, keeping their beats, as one
@@ -116,7 +116,7 @@ impl Song {
         if !moved || by == 0.0 {
             return Ok(());
         }
-        self.repin(&pins, self.tail(), merge)
+        self.repin(&pins, self.tail_bpm(), merge)
     }
 
     /// Removes the anchors on `ticks`, as one step. The anchors left keep their moments and the
@@ -141,7 +141,7 @@ impl Song {
         let tail = if before.last().is_some_and(|old| old.tick != last.tick) {
             self.timing().bpm_at(last.tick).ok_or(Refusal::NotWhole)?
         } else {
-            self.tail()
+            self.tail_bpm()
         };
         self.repin(&kept, tail, false)
     }
@@ -162,7 +162,7 @@ impl Song {
     ///
     /// Refuses on a read-only song, or when the game refuses the tempo.
     pub fn set_tail_bpm(&mut self, bpm: Bpm, merge: bool) -> Result<(), Refusal> {
-        if self.tail_bpm() == Some(bpm) {
+        if self.tail_bpm() == bpm {
             return Ok(());
         }
         let pins = self.anchors();
@@ -181,7 +181,7 @@ impl Song {
     /// tempo or tick would go out of range.
     pub fn scale_tempo(&mut self, ticks: &[Tick], double: bool) -> Result<(), Refusal> {
         let pins = self.anchors();
-        let tail = self.tail();
+        let tail = self.tail_bpm();
         // Each scaled segment, by its old start and end: ticks after it move by what it grew.
         let mut segments: Vec<(i64, i64)> = Vec::new();
         for pair in pins.windows(2) {
@@ -296,13 +296,6 @@ impl Song {
         new.tempo = tail;
         self.checked(&new)?;
         Ok(new)
-    }
-
-    /// The tempo after the last anchor now.
-    #[expect(clippy::expect_used, reason = "120 BPM is a valid tempo")]
-    fn tail(&self) -> Bpm {
-        self.tail_bpm()
-            .unwrap_or_else(|| Bpm::try_from(120.0).expect("120 BPM is valid"))
     }
 
     /// The song with `timing` in place of the one tempo edits go to, checked as an edit would be.
@@ -494,11 +487,11 @@ mod tests {
     #[test]
     fn setting_the_existing_tail_tempo_leaves_the_save_and_history_alone() {
         let mut song = timed(&json!([bpm_event(0, 120.0)]), None);
-        let tail = song.tail_bpm().unwrap();
+        let tail = song.tail_bpm();
         let before = song.history_step();
         song.set_tail_bpm(tail, false).unwrap();
         song.set_tail_bpm(tail, true).unwrap();
-        assert_eq!(song.tail_bpm(), Some(tail));
+        assert_eq!(song.tail_bpm(), tail);
         assert_eq!(song.history_step(), before);
         assert!(!song.is_modified());
     }
@@ -537,7 +530,7 @@ mod tests {
             None,
         );
         song.unsync(at(3840)).unwrap();
-        assert_eq!(song.tail_bpm(), Some(Bpm::try_from(150.0).unwrap()));
+        assert_eq!(song.tail_bpm(), Bpm::try_from(150.0).unwrap());
         assert!((song.timing().time_at(at(2400)).seconds() - 1.2).abs() < 1e-6);
     }
 
@@ -559,7 +552,7 @@ mod tests {
         let pins = song.anchors();
         assert_eq!(pins.len(), 2);
         assert!((pins[1].seconds - 1.0).abs() < 1e-9);
-        assert_eq!(song.tail_bpm(), Some(Bpm::try_from(60.0).unwrap()));
+        assert_eq!(song.tail_bpm(), Bpm::try_from(60.0).unwrap());
     }
 
     fn four() -> Value {
@@ -661,7 +654,7 @@ mod tests {
         });
         assert!(moved);
         song.scale_tempo(&[at(5760)], false).unwrap();
-        assert_eq!(song.tail_bpm(), Some(Bpm::try_from(30.0).unwrap()));
+        assert_eq!(song.tail_bpm(), Bpm::try_from(30.0).unwrap());
     }
 
     #[test]
