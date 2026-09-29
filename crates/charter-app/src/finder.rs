@@ -1,7 +1,7 @@
 //! Finding a song's timing from its audio, off the window's thread: the beat tracker's weights
 //! downloaded once the user agrees, then the song's beats tracked and a tempo map fitted to them.
 
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 
@@ -173,20 +173,35 @@ fn fetch(weights: &Path, progress: &Sender<Progress>) -> Result<(), String> {
     if let Some(folder) = weights.parent() {
         std::fs::create_dir_all(folder).map_err(|why| format!("{}: {why}", folder.display()))?;
     }
-    let mut response = ureq::get(WEIGHTS_URL)
-        .call()
-        .map_err(|why| why.to_string())?;
-    let body = response.body_mut();
-    let length = body.content_length();
-    let mut reader = body.as_reader();
-    let mut file =
-        std::fs::File::create(&partial).map_err(|why| format!("{}: {why}", partial.display()))?;
-    copy_weights(&mut reader, &mut file, length, progress)
-        .map_err(|why| format!("{}: {why}", partial.display()))?;
-    file.sync_all()
-        .map_err(|why| format!("{}: {why}", partial.display()))?;
-    std::fs::rename(&partial, weights)
-        .map_err(|why| format!("{} to {}: {why}", partial.display(), weights.display()))
+    let downloaded = (|| {
+        let mut response = ureq::get(WEIGHTS_URL)
+            .call()
+            .map_err(|why| why.to_string())?;
+        let body = response.body_mut();
+        let length = body.content_length();
+        let mut reader = body.as_reader();
+        let mut file = std::fs::File::create(&partial)
+            .map_err(|why| format!("{}: {why}", partial.display()))?;
+        copy_weights(&mut reader, &mut file, length, progress)
+            .map_err(|why| format!("{}: {why}", partial.display()))?;
+        file.sync_all()
+            .map_err(|why| format!("{}: {why}", partial.display()))?;
+        std::fs::rename(&partial, weights)
+            .map_err(|why| format!("{} to {}: {why}", partial.display(), weights.display()))
+    })();
+    cleanup_partial_on_error(downloaded, &partial, |path| std::fs::remove_file(path))
+}
+
+/// Removes `partial` after a failed write-then-rename download.
+fn cleanup_partial_on_error<T>(
+    result: Result<T, String>,
+    partial: &Path,
+    remove: impl FnOnce(&Path) -> io::Result<()>,
+) -> Result<T, String> {
+    if result.is_err() {
+        drop(remove(partial));
+    }
+    result
 }
 
 /// Adds the failed stream operation without discarding the underlying I/O error.
@@ -452,5 +467,24 @@ mod tests {
         assert!(!finder.update(&mut window));
         finder.download(&mut window);
         assert!(finder.work.is_none());
+    }
+
+    #[test]
+    fn a_failed_weight_download_removes_its_partial_file() {
+        let mut removed = None;
+        let result = cleanup_partial_on_error(
+            Err::<(), _>("stream broke".to_owned()),
+            Path::new("/data/beat_this-final0.ckpt.partial"),
+            |path| {
+                removed = Some(path.to_path_buf());
+                Ok(())
+            },
+        );
+
+        assert_eq!(result, Err("stream broke".to_owned()));
+        assert_eq!(
+            removed.as_deref(),
+            Some(Path::new("/data/beat_this-final0.ckpt.partial"))
+        );
     }
 }
