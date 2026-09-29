@@ -19,6 +19,10 @@ use crate::window::Rate;
 
 /// The menu bar. `recent` is the songs opened before, the latest first.
 #[expect(clippy::too_many_lines, reason = "menus read left to right")]
+#[expect(
+    clippy::non_ascii_literal,
+    reason = "menu labels use ellipses for dialogs and a check mark for the selected option"
+)]
 pub fn menu_bar(
     ui: &mut Ui,
     (song, recent): (Option<&Song>, &[std::path::PathBuf]),
@@ -547,6 +551,10 @@ pub fn song_panel(
 
 /// Rows of the open chart's layer stack and the confirmation for deleting notes.
 #[expect(clippy::too_many_lines, reason = "one row and its deletion dialog")]
+#[expect(
+    clippy::non_ascii_literal,
+    reason = "layer status badges are separated by visible middle dots"
+)]
 fn layers(ui: &mut Ui, song: &Song, drafts: &mut SongDrafts, actions: &mut Vec<Action>) {
     let rows = song.layers();
     for (index, row) in rows.iter().enumerate() {
@@ -693,7 +701,6 @@ fn layers(ui: &mut Ui, song: &Song, drafts: &mut SongDrafts, actions: &mut Vec<A
                             {
                                 actions.push(Action::RenameLayer(index, name.clone()));
                                 drafts.layer_name = None;
-                            } else {
                             }
                         } else {
                             let text =
@@ -1342,7 +1349,6 @@ fn markers_body(ui: &mut Ui, song: &Song, draft: &mut Option<String>, actions: &
                 *draft = Some(text);
             } else if entered {
                 actions.push(Action::SetSection(text.trim().to_owned()));
-            } else {
             }
             ui.end_row();
         });
@@ -1458,7 +1464,6 @@ pub(crate) fn entry_sized(
         && !ui.input(|input| input.key_pressed(egui::Key::Escape))
     {
         *draft = Some(text);
-    } else {
     }
     None
 }
@@ -1707,6 +1712,10 @@ fn readout(ui: &mut Ui, song: &Song) {
 
 /// What changes rarely: whether the audio plays and how it stands, and whether the song can be
 /// edited.
+#[expect(
+    clippy::non_ascii_literal,
+    reason = "the status bar displays coloured circle and square markers"
+)]
 pub fn status_bar(
     ui: &mut Ui,
     song: Option<&Song>,
@@ -1782,6 +1791,10 @@ pub fn ordinal(n: NonZeroU16) -> String {
 }
 
 /// What the centre shows with no song open.
+#[expect(
+    clippy::non_ascii_literal,
+    reason = "the empty-window Open song button displays an ellipsis"
+)]
 pub fn empty(
     ui: &mut Ui,
     (no_drops, recent): (bool, &[std::path::PathBuf]),
@@ -1841,6 +1854,10 @@ pub fn empty(
 
 /// That the open song has no audio yet, and how to give it some: choosing a file, or dropping
 /// one unless `no_drops`.
+#[expect(
+    clippy::non_ascii_literal,
+    reason = "the missing-audio chooser button displays an ellipsis"
+)]
 pub fn no_audio(ui: &mut Ui, no_drops: bool, actions: &mut Vec<Action>) {
     notice(ui, style::icon::MUSIC_NOTES, |ui| {
         if no_drops {
@@ -2273,9 +2290,12 @@ mod tests {
         assert_eq!(harness.state(), &Some(expected), "{button}");
     }
 
+    /// A yes/no dialog and the labels of its affirmative and negative buttons.
+    type Confirmation = (fn(&Ui) -> Option<bool>, &'static str, &'static str);
+
     #[test]
     fn each_confirmation_button_returns_the_answer_it_names() {
-        let dialogs: [(fn(&Ui) -> Option<bool>, &str, &str); 4] = [
+        let dialogs: [Confirmation; 4] = [
             (|ui: &Ui| ask_to_restore(ui, "Demo"), "Restore", "Discard"),
             (
                 |ui: &Ui| offer_tags(ui, Some("New title"), Some("Artist")),

@@ -667,6 +667,10 @@ impl TryFrom<&ValidDocument> for Song {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Plugin;
 
+#[expect(
+    clippy::missing_trait_methods,
+    reason = "Tap Tap Revenge uses the trait's defaults for `layout_kind`, Lanes, and `timing_format` and `import_timing`: it reads no timing format"
+)]
 impl RulesetPlugin for Plugin {
     fn id(&self) -> &str {
         ID

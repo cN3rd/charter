@@ -95,6 +95,10 @@ impl Peaks {
     /// The peaks as bytes to keep, marked as the peaks of the audio whose [`fingerprint`] is
     /// `source`. Only the finest level is kept, since the rest follow from it.
     #[must_use]
+    #[expect(
+        clippy::little_endian_bytes,
+        reason = "the peaks cache is little-endian on every platform"
+    )]
     pub fn to_bytes(&self, source: u64) -> Vec<u8> {
         let finest = self.levels.first().map_or(&[][..], Vec::as_slice);
         let mut bytes = Vec::with_capacity(HEADER.saturating_add(finest.len().saturating_mul(8)));
@@ -113,6 +117,10 @@ impl Peaks {
     /// whose fingerprint is `source`. Anything else, damaged, of other audio or of an older
     /// layout, is `None`, and the peaks are worked out again.
     #[must_use]
+    #[expect(
+        clippy::little_endian_bytes,
+        reason = "the peaks cache is little-endian on every platform"
+    )]
     pub fn from_bytes(bytes: &[u8], source: u64) -> Option<Self> {
         let (header, body) = bytes.split_at_checked(HEADER)?;
         let (magic, header) = header.split_at(MAGIC.len());
@@ -216,6 +224,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::little_endian_bytes,
+        reason = "corrupting a little-endian cache field tests invalid peak handling"
+    )]
     fn damaged_saved_peaks_are_refused_without_panicking() {
         let saved = Peaks::of(&burst(0.8)).to_bytes(7);
         for cut in 0..saved.len() {

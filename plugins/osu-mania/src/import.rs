@@ -290,7 +290,7 @@ fn point(line: &str) -> Result<Point, String> {
     reason = "caller checks finite integral meter in the u16 range"
 )]
 /// Meter already checked as a whole number within the `u16` range.
-fn meter_u16(meter: f64) -> u16 {
+const fn meter_u16(meter: f64) -> u16 {
     meter as u16
 }
 
@@ -301,8 +301,7 @@ fn meter_u16(meter: f64) -> u16 {
     reason = "float-to-integer conversion saturates until event checks the i32 range"
 )]
 fn ticks(milliseconds: f64, beat_length: f64, ticks_per_beat: f64) -> i64 {
-    let ticks = (milliseconds / beat_length * ticks_per_beat).round() as i64;
-    ticks
+    (milliseconds / beat_length * ticks_per_beat).round() as i64
 }
 
 /// A format event at `tick`, rejecting ticks outside the chart's `i32` range.

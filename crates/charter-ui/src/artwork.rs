@@ -10,12 +10,12 @@ pub type Picture = (Vec<u8>, egui::ColorImage);
 #[derive(Debug)]
 pub struct Artwork {
     /// The file the song names, beside the song.
-    pub name: String,
+    name: String,
     /// Where that file is, when the song has been saved: it is read again once this changes.
-    pub file: Option<PathBuf>,
+    file: Option<PathBuf>,
     /// The step of the song's history that named it, for a picture not yet saved, which an
     /// undo back to that step brings back.
-    pub step: usize,
+    step: usize,
     /// The picture's bytes, once read or chosen.
     bytes: Option<Vec<u8>>,
     /// Whether the bytes are still to be written beside the song.
@@ -48,6 +48,31 @@ impl std::fmt::Debug for Preview {
 }
 
 impl Artwork {
+    /// The filename named in the song.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The artwork's path beside a saved song.
+    pub fn file(&self) -> Option<&Path> {
+        self.file.as_deref()
+    }
+
+    /// The history step that named this artwork.
+    pub const fn step(&self) -> usize {
+        self.step
+    }
+
+    /// Records the history step that named this artwork.
+    pub const fn set_step(&mut self, step: usize) {
+        self.step = step;
+    }
+
+    /// Records the path of this artwork beside the song.
+    pub fn set_file(&mut self, file: Option<PathBuf>) {
+        self.file = file;
+    }
+
     /// Artwork named `name`, being read from `file`, or not until the song is saved without one.
     pub fn named(name: &str, file: Option<&Path>) -> Self {
         Self {
@@ -109,6 +134,10 @@ impl Artwork {
     }
 
     /// The picture to preview, or why there is none, making the texture once.
+    #[expect(
+        clippy::non_ascii_literal,
+        reason = "the artwork loading state uses an ellipsis in its UI label"
+    )]
     pub fn shown(&mut self, ctx: &egui::Context) -> Result<&egui::TextureHandle, &'static str> {
         if let Preview::Decoded(image) = &self.preview {
             let texture = ctx.load_texture("artwork", image.clone(), egui::TextureOptions::LINEAR);
@@ -163,6 +192,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::non_ascii_literal,
+        reason = "the test compares the artwork loading label with its ellipsis"
+    )]
     fn a_file_that_is_not_a_picture_previews_why_and_leaves_taken_artwork_alone() {
         let ctx = egui::Context::default();
         let mut artwork = Artwork::named("art.png", Some(Path::new("/a/art.png")));
@@ -219,6 +252,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::non_ascii_literal,
+        reason = "the test compares the artwork loading label with its ellipsis"
+    )]
     fn a_missing_or_unreadable_file_cannot_be_copied_to_a_new_folder() {
         let ctx = egui::Context::default();
         let mut artwork = Artwork::named("cover.png", Some(Path::new("/old/cover.png")));

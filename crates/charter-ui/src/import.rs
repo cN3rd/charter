@@ -13,7 +13,7 @@ use crate::window::Action;
 #[derive(Debug, Default)]
 pub struct Import {
     /// Whether the import dialog is showing.
-    pub open: bool,
+    open: bool,
     /// Which of the plugins that read timing reads it, by its place among them.
     format: usize,
     /// Text pasted into the dialog or read by the host from a file.
@@ -23,6 +23,16 @@ pub struct Import {
 }
 
 impl Import {
+    /// Whether the import dialog is showing.
+    pub const fn is_open(&self) -> bool {
+        self.open
+    }
+
+    /// Shows or hides the import dialog.
+    pub const fn set_open(&mut self, open: bool) {
+        self.open = open;
+    }
+
     /// Forces the next display to read the current text and selected format again.
     pub(crate) fn invalidate(&mut self) {
         self.read = None;
@@ -52,7 +62,7 @@ pub(crate) fn show(
     import: &mut Import,
     actions: &mut Vec<Action>,
 ) {
-    let (Some(song), true) = (song, import.open) else {
+    let (Some(song), true) = (song, import.is_open()) else {
         return;
     };
     let formats = formats(plugins);
@@ -90,6 +100,10 @@ pub(crate) fn show(
 }
 
 /// The window's contents. Says whether the timing was taken, which closes it.
+#[expect(
+    clippy::non_ascii_literal,
+    reason = "the file chooser button displays an ellipsis"
+)]
 fn body(
     ui: &mut Ui,
     song: &Song,
@@ -257,6 +271,10 @@ mod tests {
     #[derive(Debug)]
     struct Importer;
 
+    #[expect(
+        clippy::missing_trait_methods,
+        reason = "a test plugin: the trait's defaults for every optional method"
+    )]
     impl RulesetPlugin for Importer {
         fn id(&self) -> &'static str {
             "importer"
@@ -306,6 +324,10 @@ mod tests {
     #[derive(Debug)]
     struct Sm;
 
+    #[expect(
+        clippy::missing_trait_methods,
+        reason = "a test plugin: the trait's defaults for every optional method"
+    )]
     impl RulesetPlugin for Sm {
         fn id(&self) -> &'static str {
             "sm"
@@ -322,6 +344,10 @@ mod tests {
     #[derive(Debug)]
     struct OtherImporter;
 
+    #[expect(
+        clippy::missing_trait_methods,
+        reason = "a test plugin: the trait's defaults for every optional method"
+    )]
     impl RulesetPlugin for OtherImporter {
         fn id(&self) -> &'static str {
             "other-importer"

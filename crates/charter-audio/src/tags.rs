@@ -116,6 +116,10 @@ mod tests {
     use super::*;
 
     /// A FLAC metadata block of `kind` holding `body`, the last one when `last` is set.
+    #[expect(
+        clippy::big_endian_bytes,
+        reason = "FLAC metadata block lengths are big-endian"
+    )]
     fn block(kind: u8, last: bool, body: &[u8]) -> Vec<u8> {
         let length = u32::try_from(body.len()).unwrap().to_be_bytes();
         let mut bytes = vec![kind | if last { 0x80 } else { 0 }];
@@ -131,6 +135,10 @@ mod tests {
     }
 
     /// A FLAC PICTURE block of picture `kind`, 3 for the front cover, holding `data` of `mime`.
+    #[expect(
+        clippy::big_endian_bytes,
+        reason = "FLAC picture block fields are big-endian"
+    )]
     fn picture(kind: u32, mime: &str, data: &[u8]) -> Vec<u8> {
         let length = |n: usize| u32::try_from(n).unwrap().to_be_bytes();
         let mut body = kind.to_be_bytes().to_vec();
@@ -144,10 +152,18 @@ mod tests {
     }
 
     /// A FLAC file as [`tagged`] makes, with a PICTURE block for each of `pictures`.
+    #[expect(
+        clippy::big_endian_bytes,
+        reason = "FLAC stream-info fields are big-endian"
+    )]
+    #[expect(
+        clippy::little_endian_bytes,
+        reason = "Vorbis comment lengths are little-endian"
+    )]
     fn pictured(comments: &[&str], pictures: &[Vec<u8>]) -> Vec<u8> {
         let mut info = Vec::new();
-        info.extend_from_slice(&4096u16.to_be_bytes());
-        info.extend_from_slice(&4096u16.to_be_bytes());
+        info.extend_from_slice(&4096_u16.to_be_bytes());
+        info.extend_from_slice(&4096_u16.to_be_bytes());
         info.extend_from_slice(&[0; 6]);
         // 8000 Hz in 20 bits, one channel as 0 in 3 bits, 16 bits a sample as 15 in 5 bits,
         // then 36 bits of total samples.
@@ -175,6 +191,10 @@ mod tests {
 
     /// One FLAC frame of 16 silent mono samples: a frame header, a constant subframe of 0, and
     /// the checksums the format asks for.
+    #[expect(
+        clippy::big_endian_bytes,
+        reason = "FLAC frame checksums are big-endian"
+    )]
     fn silent_frame() -> Vec<u8> {
         // Sync and fixed blocking; a block size given at the end as an 8-bit count less one, and
         // the sample rate the stream info gives; mono at 16 bits; frame 0; 16 samples.
@@ -188,7 +208,7 @@ mod tests {
     }
 
     fn crc8(bytes: &[u8]) -> u8 {
-        bytes.iter().fold(0u8, |crc, byte| {
+        bytes.iter().fold(0_u8, |crc, byte| {
             (0..8).fold(crc ^ byte, |crc, _| {
                 if crc & 0x80 == 0 {
                     crc << 1
@@ -200,7 +220,7 @@ mod tests {
     }
 
     fn crc16(bytes: &[u8]) -> u16 {
-        bytes.iter().fold(0u16, |crc, byte| {
+        bytes.iter().fold(0_u16, |crc, byte| {
             (0..8).fold(crc ^ (u16::from(*byte) << 8), |crc, _| {
                 if crc & 0x8000 == 0 {
                     crc << 1

@@ -136,6 +136,10 @@ pub(crate) fn toolbar(
 
 /// The status line: what the gesture under the pointer does, why the last edit was refused,
 /// and how many issues the map has.
+#[expect(
+    clippy::non_ascii_literal,
+    reason = "timing status labels use middle dots and a visible warning sign"
+)]
 pub(crate) fn status(
     ui: &mut Ui,
     window: &TimingWindow,
@@ -241,6 +245,10 @@ pub(crate) fn inspector(
     reason = "one field after another, typed in place"
 )]
 /// Draws the inspector for the anchor at `index`, with editable timing fields.
+#[expect(
+    clippy::non_ascii_literal,
+    reason = "the timing inspector marks onset accuracy with delta and check symbols"
+)]
 fn anchor(
     ui: &mut Ui,
     window: &mut TimingWindow,
@@ -431,6 +439,10 @@ fn selection(ui: &mut Ui, window: &TimingWindow, frame: &Frame<'_>) {
 }
 
 /// Displays fit error and grid coverage for `metrics` in a compact grid.
+#[expect(
+    clippy::non_ascii_literal,
+    reason = "the timing inspector shows an en dash for unavailable metrics"
+)]
 fn metrics_rows(ui: &mut Ui, id: &str, metrics: &Metrics) {
     compact(ui, id, |ui| {
         ui.weak("fit error");
@@ -732,6 +744,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::non_ascii_literal,
+        reason = "the test matches the inspector's right-arrow error label"
+    )]
     fn fit_preview_can_be_discarded_or_applied_once_from_the_inspector() {
         let mut harness = timing_harness();
         preview(&mut harness);
@@ -827,6 +843,10 @@ mod tests {
     #[derive(Debug)]
     struct AcceptsTiming;
 
+    #[expect(
+        clippy::missing_trait_methods,
+        reason = "a test plugin: the trait's defaults for every optional method"
+    )]
     impl RulesetPlugin for AcceptsTiming {
         fn id(&self) -> &'static str {
             "test"

@@ -67,7 +67,7 @@ string_newtype!(
 );
 string_newtype!(
     /// A chart-local layer name, between 1 and 64 characters without surrounding whitespace or controls.
-    LayerName, "a layer name of 1–64 characters without surrounding whitespace or controls",
+    LayerName, "a layer name of 1 to 64 characters without surrounding whitespace or controls",
     |v| !v.is_empty()
         && v.chars().count() <= 64
         && v.trim() == v
@@ -272,6 +272,10 @@ mod tests {
     use super::*;
 
     #[test]
+    #[expect(
+        clippy::non_ascii_literal,
+        reason = "the layer-name test counts a Unicode emoji as one character"
+    )]
     fn layer_names_reject_empty_whitespace_controls_and_overlong_text() {
         for bad in [
             "",

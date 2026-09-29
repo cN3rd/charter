@@ -48,7 +48,7 @@ impl Measure {
     reason = "distance between i32 ticks is exact in f64"
 )]
 /// Tick distance as a float; differences between `i32` ticks remain exact.
-fn tick_distance_as_f64(value: i64) -> f64 {
+const fn tick_distance_as_f64(value: i64) -> f64 {
     value as f64
 }
 
@@ -58,7 +58,7 @@ fn tick_distance_as_f64(value: i64) -> f64 {
     reason = "fraction is clamped to a u32 measure length"
 )]
 /// Whole tick offset after clamping a fraction to one measure.
-fn clamped_measure_tick(value: f64) -> i64 {
+const fn clamped_measure_tick(value: f64) -> i64 {
     value as i64
 }
 
@@ -116,6 +116,10 @@ impl Measures {
     }
 }
 
+#[expect(
+    clippy::missing_trait_methods,
+    reason = "the standard adapters are right, and some, such as `next_chunk`, are unstable"
+)]
 impl Iterator for Measures {
     type Item = Measure;
 

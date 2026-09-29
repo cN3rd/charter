@@ -130,8 +130,8 @@ impl LaneKeys {
 pub fn key_actions(input: &egui::InputState, lanes: u16, keys: &mut LaneKeys) -> Vec<Action> {
     let mut actions = Vec::new();
     for event in &input.events {
-        match *event {
-            egui::Event::Key {
+        match event {
+            &egui::Event::Key {
                 key,
                 physical_key,
                 pressed,
@@ -157,7 +157,7 @@ pub fn key_actions(input: &egui::InputState, lanes: u16, keys: &mut LaneKeys) ->
             egui::Event::WindowFocused(false) => keys.release_all(&mut actions),
             egui::Event::Copy => actions.push(Action::Copy),
             egui::Event::Cut => actions.push(Action::Cut),
-            egui::Event::Paste(ref text) => actions.push(Action::Paste(Some(text.clone()))),
+            egui::Event::Paste(text) => actions.push(Action::Paste(Some(text.clone()))),
             _ => {}
         }
     }

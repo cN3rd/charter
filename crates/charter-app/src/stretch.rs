@@ -192,8 +192,10 @@ impl Chain {
 
 // ponytail: one entry per speed and sample rate played, a handful a session; bound it if speeds
 // ever become continuous.
+/// A measured lead and the speed, sample rate, and pitch used to measure it.
+type CachedLead = ((u64, u32, Pitch), f64);
 /// Leads measured so far, by rate, sample rate and pitch, so a speed played again starts at once.
-static LEADS: Mutex<Vec<((u64, u32, Pitch), f64)>> = Mutex::new(Vec::new());
+static LEADS: Mutex<Vec<CachedLead>> = Mutex::new(Vec::new());
 
 /// The lead of the stretcher at `rate` with `pitch` for audio at `sample_rate`, measured once.
 fn known_lead(rate: f64, sample_rate: u32, pitch: Pitch) -> Option<f64> {
@@ -347,8 +349,8 @@ impl Decoder for Stretched {
 
     fn num_frames(&self) -> usize {
         let source = frame_index_as_f64(self.track.frames().len());
-        let frames = frame_index_from_f64((source / self.rate).ceil());
-        frames
+
+        frame_index_from_f64((source / self.rate).ceil())
     }
 
     fn decode(&mut self) -> Result<Vec<Frame>, Infallible> {
@@ -398,7 +400,7 @@ impl Decoder for Stretched {
     reason = "the audio frame index is approximate when converted to seconds"
 )]
 /// Converts a source frame index to floating point for rate scaling.
-fn frame_index_as_f64(index: usize) -> f64 {
+const fn frame_index_as_f64(index: usize) -> f64 {
     index as f64
 }
 
@@ -409,7 +411,7 @@ fn frame_index_as_f64(index: usize) -> f64 {
     reason = "a calculated frame index is clamped to the source length"
 )]
 /// Truncates a nonnegative calculated frame index to an array offset.
-fn frame_index_from_f64(index: f64) -> usize {
+const fn frame_index_from_f64(index: f64) -> usize {
     index as usize
 }
 
@@ -419,7 +421,7 @@ fn frame_index_from_f64(index: f64) -> usize {
     reason = "a click's samples are between -1 and 1"
 )]
 /// A sample of the calibration click as the engines take it.
-fn narrow(sample: f64) -> f32 {
+const fn narrow(sample: f64) -> f32 {
     sample as f32
 }
 
@@ -459,9 +461,8 @@ mod tests {
             .windows(2)
             .filter(|pair| matches!(pair, [a, b] if *a < 0.0 && *b >= 0.0))
             .count();
-        let hertz =
-            frame_index_as_f64(rising) * f64::from(RATE) / frame_index_as_f64(samples.len());
-        hertz
+
+        frame_index_as_f64(rising) * f64::from(RATE) / frame_index_as_f64(samples.len())
     }
 
     #[expect(
@@ -542,7 +543,7 @@ mod tests {
     fn click_track() -> (Arc<Track>, Vec<f64>) {
         let seconds = 4.0;
         let frames = frame_index_from_f64(seconds * f64::from(RATE));
-        let mut samples = vec![[0.0f32; 2]; frames];
+        let mut samples = vec![[0.0_f32; 2]; frames];
         let mut clicks = Vec::new();
         let mut t = 0.25;
         while t < seconds - 0.5 {

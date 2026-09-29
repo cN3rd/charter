@@ -28,7 +28,7 @@ pub(crate) fn from_millionths(millionths: i64) -> f64 {
     reason = "millionths stay below 2^53"
 )]
 /// A millionths count as a double; callers keep it below the exact integer limit.
-fn i64_to_f64(value: i64) -> f64 {
+const fn i64_to_f64(value: i64) -> f64 {
     value as f64
 }
 
@@ -38,7 +38,7 @@ fn i64_to_f64(value: i64) -> f64 {
     reason = "caller bounds a whole number to millionths"
 )]
 /// Whole scaled decimal already checked against the millionths bound.
-fn bounded_whole_to_i64(value: f64) -> i64 {
+const fn bounded_whole_to_i64(value: f64) -> i64 {
     value as i64
 }
 

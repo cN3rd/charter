@@ -242,6 +242,10 @@ impl Serialize for Style {
 }
 
 // Written by hand so the names come from the style table.
+#[expect(
+    clippy::missing_trait_methods,
+    reason = "serde's default `deserialize_in_place` is right"
+)]
 impl<'de> Deserialize<'de> for Style {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let name = String::deserialize(deserializer)?;
@@ -672,6 +676,10 @@ impl TryFrom<&ValidDocument> for Song {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Plugin;
 
+#[expect(
+    clippy::missing_trait_methods,
+    reason = "StepMania uses the trait's defaults for `note_changes`, `change_note`, `difficulties`, `text_settings`, `timing_format` and `import_timing`: it offers none of them yet"
+)]
 impl RulesetPlugin for Plugin {
     fn id(&self) -> &str {
         ID

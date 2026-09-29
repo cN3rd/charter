@@ -6,6 +6,11 @@ use std::sync::Arc;
 
 use egui::{self, Color32, CornerRadius, FontFamily, FontId, Margin, RichText, Stroke, Ui, vec2};
 
+#[expect(
+    clippy::pub_use,
+    clippy::useless_attribute,
+    reason = "Phosphor glyph names are part of the shared style's icon vocabulary"
+)]
 pub use egui_phosphor::regular as icon;
 
 /// Ordinary text against the dark surfaces.

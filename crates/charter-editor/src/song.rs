@@ -2540,7 +2540,7 @@ fn tick_delta_as_f64(to: Tick, from: Tick) -> f64 {
     clippy::cast_possible_truncation,
     reason = "the caller checks the resulting tick range"
 )]
-fn rounded_tick_delta(value: f64) -> i64 {
+const fn rounded_tick_delta(value: f64) -> i64 {
     value.round() as i64
 }
 
@@ -2720,6 +2720,10 @@ pub(crate) mod tests {
     #[derive(Debug)]
     struct Lenient;
 
+    #[expect(
+        clippy::missing_trait_methods,
+        reason = "a test plugin: the trait's defaults for every optional method"
+    )]
     impl RulesetPlugin for Lenient {
         fn id(&self) -> &'static str {
             "test"
@@ -2734,6 +2738,10 @@ pub(crate) mod tests {
     #[derive(Debug)]
     struct NoLastLane;
 
+    #[expect(
+        clippy::missing_trait_methods,
+        reason = "a test plugin: the trait's defaults for every optional method"
+    )]
     impl RulesetPlugin for NoLastLane {
         fn id(&self) -> &'static str {
             "test"
@@ -2757,6 +2765,10 @@ pub(crate) mod tests {
     #[derive(Debug)]
     struct NoHolds;
 
+    #[expect(
+        clippy::missing_trait_methods,
+        reason = "a test plugin: the trait's defaults for every optional method"
+    )]
     impl RulesetPlugin for NoHolds {
         fn id(&self) -> &'static str {
             "test"
@@ -2779,6 +2791,10 @@ pub(crate) mod tests {
     #[derive(Debug)]
     struct NoExtraLayers;
 
+    #[expect(
+        clippy::missing_trait_methods,
+        reason = "a test plugin: the trait's defaults for every optional method"
+    )]
     impl RulesetPlugin for NoExtraLayers {
         fn id(&self) -> &'static str {
             "test"
@@ -2802,6 +2818,10 @@ pub(crate) mod tests {
     #[derive(Debug)]
     struct Elsewhere;
 
+    #[expect(
+        clippy::missing_trait_methods,
+        reason = "a test plugin: the trait's defaults for every optional method"
+    )]
     impl RulesetPlugin for Elsewhere {
         fn id(&self) -> &'static str {
             "sm"
@@ -3574,6 +3594,10 @@ pub(crate) mod tests {
     #[derive(Debug)]
     struct Across;
 
+    #[expect(
+        clippy::missing_trait_methods,
+        reason = "a test plugin: the trait's defaults for every optional method"
+    )]
     impl RulesetPlugin for Across {
         fn id(&self) -> &'static str {
             "test"

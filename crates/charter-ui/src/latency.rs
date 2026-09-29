@@ -34,6 +34,18 @@ pub struct Beat {
     per_measure: u16,
 }
 
+impl Calibration {
+    /// Whether the calibration dialog is showing.
+    pub const fn is_open(&self) -> bool {
+        self.open
+    }
+
+    /// Shows or hides the calibration dialog.
+    pub const fn set_open(&mut self, open: bool) {
+        self.open = open;
+    }
+}
+
 impl Beat {
     /// Clicks at `bpm`, doubled or halved into a tappable range, `per_measure` to a measure.
     #[must_use]
@@ -138,7 +150,7 @@ pub fn flashing(elapsed: f64, audio_ms: f64, clicks: &[f64]) -> bool {
 #[derive(Debug, Default)]
 pub struct Calibration {
     /// Whether the calibration dialog is showing.
-    pub open: bool,
+    open: bool,
     /// When the clicks started, on the frame clock, and at what beat.
     started: Option<(f64, Beat)>,
     /// When each tap came, from the start.
@@ -148,6 +160,10 @@ pub struct Calibration {
 /// Draws the calibration window while it is open, at `now` on the frame clock, its clicks at
 /// `beat` in the sound of `kit`. Asks for the clicks to play when started, and keeps what it
 /// measures in `settings`.
+#[expect(
+    clippy::non_ascii_literal,
+    reason = "the audio latency decrement button displays the minus sign"
+)]
 pub fn show(
     ctx: &egui::Context,
     calibration: &mut Calibration,
@@ -456,6 +472,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::non_ascii_literal,
+        reason = "the test clicks the audio latency minus-sign button"
+    )]
     fn audio_adjustments_and_an_early_tap_leave_the_input_latency_alone() {
         let mut harness = calibrating();
         harness.step();

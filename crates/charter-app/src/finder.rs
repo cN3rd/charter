@@ -392,6 +392,10 @@ mod tests {
     #[test]
     fn a_failed_weight_write_reports_the_error_without_claiming_a_complete_download() {
         struct FailingWriter;
+        #[expect(
+            clippy::missing_trait_methods,
+            reason = "a failing test writer; the standard provided methods are right"
+        )]
         impl Write for FailingWriter {
             fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
                 Err(std::io::Error::other("out of space"))
@@ -417,6 +421,10 @@ mod tests {
     #[test]
     fn a_failed_weight_read_preserves_the_error_without_claiming_a_complete_download() {
         struct FailingReader;
+        #[expect(
+            clippy::missing_trait_methods,
+            reason = "a failing test reader; the standard provided methods are right"
+        )]
         impl Read for FailingReader {
             fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
                 Err(std::io::Error::other("stream broke"))

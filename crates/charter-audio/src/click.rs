@@ -253,7 +253,7 @@ fn pitched(frames: &[[f32; 2]], cents: i16) -> Vec<[f32; 2]> {
     if cents == 0 {
         return frames.to_vec();
     }
-    resample_by(frames, 2f64.powf(f64::from(cents) / 1200.0))
+    resample_by(frames, 2_f64.powf(f64::from(cents) / 1200.0))
 }
 
 /// `sound` at its own pitch as frames at `rate`.
@@ -487,7 +487,7 @@ mod tests {
 
     #[test]
     fn a_sound_resampled_keeps_its_length_in_time() {
-        let ramp: Vec<[f32; 2]> = (0..441u16).map(|n| [f32::from(n) / 441.0; 2]).collect();
+        let ramp: Vec<[f32; 2]> = (0..441_u16).map(|n| [f32::from(n) / 441.0; 2]).collect();
         let resampled = resample(&ramp, 44_100, 48_000);
         assert_eq!(resampled.len(), 480);
         assert!((resampled[240][0] - 0.5).abs() < 0.01);

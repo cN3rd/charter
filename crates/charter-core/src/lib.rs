@@ -25,21 +25,66 @@ mod unit;
 /// Cross-field rules applied before a document becomes valid.
 mod validate;
 
+#[expect(
+    clippy::pub_use,
+    clippy::useless_attribute,
+    reason = "the chart model is exported through the flat charter-core format API"
+)]
 pub use document::{
     Anchor, Chart, Child, Document, Extensions, FORMAT_VERSION, Layer, LayerColour, LayerView,
     Marker, Metadata, Object, PathPoint, Plugin, Points, Position, Preview, Ruleset, SampleId,
     Settings, Shape, Timing, TimingEvent, TimingKind,
 };
+#[expect(
+    clippy::pub_use,
+    clippy::useless_attribute,
+    reason = "format validation errors belong in the flat charter-core API"
+)]
 pub use error::{Error, InvalidValue, Location, Rule, Stream, Violation};
+#[expect(
+    clippy::pub_use,
+    clippy::useless_attribute,
+    reason = "measure and grid positions are part of the flat format API"
+)]
 pub use grid::{GridPosition, Measure, Measures};
+#[expect(
+    clippy::pub_use,
+    clippy::useless_attribute,
+    reason = "validated identifier types are part of the flat format API"
+)]
 pub use ident::{Ease, Key, Kind, LayerName, MarkerKind, Name, Namespace};
+#[expect(
+    clippy::pub_use,
+    clippy::useless_attribute,
+    reason = "validated documents are the flat format API's parse result"
+)]
 pub use json::{MAX_DOCUMENT_BYTES, Valid, ValidDocument};
+#[expect(
+    clippy::pub_use,
+    clippy::useless_attribute,
+    reason = "exact decimals are part of the flat format API"
+)]
 pub use number::Decimal;
+#[expect(
+    clippy::pub_use,
+    clippy::useless_attribute,
+    reason = "validated resource paths are part of the flat format API"
+)]
 pub use path::ResourcePath;
+#[expect(
+    clippy::pub_use,
+    clippy::useless_attribute,
+    reason = "ruleset plugin types form the flat format extension API"
+)]
 pub use plugin::{
     Difficulties, DifficultyPreset, ImportedTiming, Layout, NewChart, NewSong, NoteChange,
     RulesetPlugin, SettingScope, TextSetting,
 };
+#[expect(
+    clippy::pub_use,
+    clippy::useless_attribute,
+    reason = "tempo sections are exposed through the flat format API"
+)]
 pub use sections::{Section, SectionError, Sectioned, sectioned};
 
 /// Property tests run from a fixed seed and keep no regression files, so they repeat exactly
@@ -52,6 +97,11 @@ fn proptest_config() -> proptest::test_runner::Config {
         ..proptest::test_runner::Config::default()
     }
 }
+#[expect(
+    clippy::pub_use,
+    clippy::useless_attribute,
+    reason = "unit-safe timing and lane types are exposed through the flat format API"
+)]
 pub use unit::{
     AudioTime, Bpm, LaneCount, LaneIndex, LaneSpan, Origin, ResolvedTime, Seconds, Tick, Ticks,
     TicksPerBeat, TimeSignature,

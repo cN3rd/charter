@@ -216,7 +216,6 @@ impl Song {
                     } else {
                         within.div_euclid(2).saturating_neg()
                     });
-                } else {
                 }
             }
             i32::try_from(new)

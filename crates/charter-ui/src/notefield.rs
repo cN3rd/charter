@@ -668,7 +668,6 @@ pub fn show(
             .is_some_and(|at| grab(song, &field, at, (first, last), modifiers, &line).is_some())
     {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
-    } else {
     }
     if gesture.is_some()
         || hovered.is_some_and(|at| response.hovered() && handle_at(song, &field, at).is_some())
@@ -1014,7 +1013,6 @@ fn pointer(
                 Note::Tap
             };
             actions.push(Action::Place { tick, lane, note });
-        } else {
         }
     }
     let (middle, secondary) = ui.input(|input| {
@@ -1413,7 +1411,7 @@ fn tile_image(
     level: u32,
     index: usize,
 ) -> Option<egui::ColorImage> {
-    let run = 1usize.checked_shl(level)?;
+    let run = 1_usize.checked_shl(level)?;
     let first = index.checked_mul(TILE)?.checked_mul(run)?;
     let covered = frames.get(first..)?;
     if covered.is_empty() {
@@ -1443,7 +1441,7 @@ fn tile_image(
 /// The seconds tile `index` of `level` spans, `rows` rows tall: from the start of its first
 /// frame, each frame centred on its time, to the end of its last.
 fn tile_span(level: u32, index: usize, rows: usize) -> (f64, f64) {
-    let run = f64::from(1u32 << level.min(COARSEST));
+    let run = f64::from(1_u32 << level.min(COARSEST));
     let (first, rows) = (
         crate::cast::usize_f64(index) * crate::cast::usize_f64(TILE) * run,
         crate::cast::usize_f64(rows),
@@ -1457,7 +1455,7 @@ fn tile_span(level: u32, index: usize, rows: usize) -> (f64, f64) {
 fn level_for(pixels_per_second: f32) -> u32 {
     let mut level = 0;
     while level < COARSEST
-        && Spectrum::PER_SECOND / f64::from(1u32 << level) > f64::from(pixels_per_second)
+        && Spectrum::PER_SECOND / f64::from(1_u32 << level) > f64::from(pixels_per_second)
     {
         level = level.saturating_add(1);
     }
@@ -1477,7 +1475,7 @@ fn frequencies(
     let level = level_for(pixels);
     let (top, bottom) = (view.seconds_at(rows.min), view.seconds_at(rows.max));
     let (from, to) = (top.min(bottom), top.max(bottom));
-    let seconds = crate::cast::usize_f64(TILE) * f64::from(1u32 << level) / Spectrum::PER_SECOND;
+    let seconds = crate::cast::usize_f64(TILE) * f64::from(1_u32 << level) / Spectrum::PER_SECOND;
     let (first, last) = (
         crate::cast::f64_usize((from / seconds).floor().max(0.0)),
         crate::cast::f64_usize((to / seconds).floor().max(0.0)),
@@ -1515,8 +1513,8 @@ fn heat(level: u8) -> egui::Color32 {
 /// A channel value between `low` and `high` at the clamped fraction `t`.
 fn mix(low: u8, high: u8, t: f32) -> u8 {
     let value = f32::from(low) + (f32::from(high) - f32::from(low)) * t.clamp(0.0, 1.0);
-    let value = crate::cast::f32_u8(value.round());
-    value
+
+    crate::cast::f32_u8(value.round())
 }
 
 /// The audio under each row of `rows`, a point apart: the row, and the lowest and highest
@@ -1694,7 +1692,7 @@ fn events(
         };
         let y = view.y(timing.time_at(event.tick));
         painter.hline(columns.timing, y, Stroke::new(2.0, style::TIMING_MARK));
-        for (row, detail) in (0u8..).zip(point) {
+        for (row, detail) in (0_u8..).zip(point) {
             let text = match &detail.kind {
                 TimingKind::Stop(pause) => format!("stop {pause} s"),
                 TimingKind::Delay(pause) => format!("delay {pause} s"),
@@ -2026,8 +2024,8 @@ pub fn wheel_steps(events: &[egui::Event], remainder: &mut f32) -> i32 {
         *remainder -= whole * POINTS_PER_STEP;
         steps += whole;
     }
-    let steps = crate::cast::f32_i32(steps);
-    steps
+
+    crate::cast::f32_i32(steps)
 }
 
 /// How many measures the wheel turned under Shift this frame, later positive: a notch a measure,
@@ -2072,8 +2070,8 @@ fn measure_steps(events: &[egui::Event], remainder: &mut f32) -> i32 {
     *remainder += notches;
     let whole = remainder.trunc();
     *remainder -= whole;
-    let whole = crate::cast::f32_i32(whole);
-    whole
+
+    crate::cast::f32_i32(whole)
 }
 
 /// Points of touchpad scrolling that make one cursor step.
@@ -2527,7 +2525,7 @@ mod tests {
 
     #[test]
     fn a_tile_holds_a_row_a_frame_and_coarser_levels_keep_each_run_s_loudest() {
-        let mut frames = vec![[0u8; Spectrum::BANDS]; TILE + 10];
+        let mut frames = vec![[0_u8; Spectrum::BANDS]; TILE + 10];
         // A short sound in one frame and one band.
         frames[3][5] = 255;
         let image = tile_image(&frames, 0, 0).unwrap();

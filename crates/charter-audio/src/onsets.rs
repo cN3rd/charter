@@ -139,7 +139,7 @@ fn flux(mono: &[f32]) -> Vec<f32> {
         })
         .collect();
     let bins = FRAME.div_euclid(2).saturating_add(1);
-    let mut previous = vec![0.0f32; bins];
+    let mut previous = vec![0.0_f32; bins];
     let mut buffer = vec![Complex::new(0.0, 0.0); FRAME];
     let mut scratch = vec![Complex::new(0.0, 0.0); fft.get_inplace_scratch_len()];
     // Each frame is centred on its hop, with silence before the track, so a hit on the first
@@ -215,8 +215,8 @@ fn envelope(mono: &[f32], rate: f64) -> Vec<f32> {
                 .get(to)
                 .zip(running.get(from))
                 .map_or(0.0, |(a, b)| a - b);
-            let mean = cast::f64_f32(sum / cast::usize_f64(to.saturating_sub(from)));
-            mean
+
+            cast::f64_f32(sum / cast::usize_f64(to.saturating_sub(from)))
         })
         .collect()
 }
@@ -255,8 +255,12 @@ const MAGIC: &[u8; 8] = b"CHONSET3";
 /// `onsets` as bytes to keep, marked as those of the audio whose
 /// [fingerprint](crate::fingerprint) is `source`.
 #[must_use]
+#[expect(
+    clippy::little_endian_bytes,
+    reason = "the onsets cache is little-endian on every platform"
+)]
 pub fn onsets_to_bytes(onsets: &[Onset], source: u64) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(24usize.saturating_add(onsets.len().saturating_mul(12)));
+    let mut bytes = Vec::with_capacity(24_usize.saturating_add(onsets.len().saturating_mul(12)));
     bytes.extend_from_slice(MAGIC);
     bytes.extend_from_slice(&source.to_le_bytes());
     bytes.extend_from_slice(&cast::usize_u64(onsets.len()).to_le_bytes());
@@ -270,6 +274,10 @@ pub fn onsets_to_bytes(onsets: &[Onset], source: u64) -> Vec<u8> {
 /// The onsets kept in `bytes` by [`onsets_to_bytes`], if they are whole, in order and of the
 /// audio whose fingerprint is `source`.
 #[must_use]
+#[expect(
+    clippy::little_endian_bytes,
+    reason = "the onsets cache is little-endian on every platform"
+)]
 pub fn onsets_from_bytes(bytes: &[u8], source: u64) -> Option<Arc<[Onset]>> {
     let (header, body) = bytes.split_at_checked(24)?;
     let (magic, header) = header.split_at(8);
@@ -310,7 +318,7 @@ mod tests {
     fn clicks(times: &[(f64, f32)], seconds: f64) -> Track {
         let rate = f64::from(RATE);
         let length = cast::f64_usize(seconds * rate);
-        let mut frames = vec![[0.0f32; 2]; length];
+        let mut frames = vec![[0.0_f32; 2]; length];
         for &(at, level) in times {
             let start = cast::f64_usize((at * rate).round());
             for (offset, frame) in frames.iter_mut().skip(start).take(2000).enumerate() {
@@ -345,7 +353,7 @@ mod tests {
     fn kicks(times: &[f64], seconds: f64) -> Track {
         let rate = f64::from(RATE);
         let length = cast::f64_usize(seconds * rate);
-        let mut frames = vec![[0.0f32; 2]; length];
+        let mut frames = vec![[0.0_f32; 2]; length];
         for &at in times {
             let start = cast::f64_usize((at * rate).round());
             for (offset, frame) in frames.iter_mut().skip(start).take(19_800).enumerate() {
@@ -393,7 +401,7 @@ mod tests {
 
     #[test]
     fn a_steady_tone_has_at_most_the_onset_where_it_begins() {
-        let frames: Vec<[f32; 2]> = (0..88_200u32)
+        let frames: Vec<[f32; 2]> = (0..88_200_u32)
             .map(|n| {
                 let sample =
                     (std::f32::consts::TAU * 440.0 * cast::f64_f32(f64::from(n)) / 44_100.0).sin()

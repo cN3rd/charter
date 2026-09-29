@@ -45,7 +45,7 @@ pub struct Draft {
     /// level is made, and its name. Empty until the dialog shows such a game.
     picks: Vec<Pick>,
     /// The audio file the song plays, once one is dropped on the dialog or chosen.
-    pub audio: Option<PathBuf>,
+    audio: Option<PathBuf>,
     /// Why the last Create attempt was refused.
     pub(crate) error: Option<String>,
 }
@@ -66,6 +66,16 @@ impl Default for Draft {
 }
 
 impl Draft {
+    /// The audio file chosen for the new song, if any.
+    pub fn audio(&self) -> Option<&std::path::Path> {
+        self.audio.as_deref()
+    }
+
+    /// Names the audio file chosen for the new song.
+    pub fn set_audio(&mut self, audio: Option<PathBuf>) {
+        self.audio = audio;
+    }
+
     /// Whether the title and artist are both still to be written.
     pub fn blank(&self) -> bool {
         self.title.trim().is_empty() && self.artist.trim().is_empty()
@@ -400,6 +410,10 @@ fn choose_game(ui: &mut Ui, games: &[&'static dyn RulesetPlugin], draft: &mut Dr
 
 /// The audio the song plays, a way to choose it or take it away, and how dropping one fills in
 /// the title and artist. Says whether the user asked to choose it.
+#[expect(
+    clippy::non_ascii_literal,
+    reason = "the audio chooser button displays an ellipsis"
+)]
 fn audio_row(ui: &mut Ui, draft: &mut Draft, no_drops: bool) -> bool {
     let mut choose = false;
     row(
@@ -726,6 +740,10 @@ mod tests {
     #[derive(Debug)]
     struct Checks;
 
+    #[expect(
+        clippy::missing_trait_methods,
+        reason = "a test plugin: the trait's defaults for every optional method"
+    )]
     impl RulesetPlugin for Checks {
         fn id(&self) -> &'static str {
             "checks"

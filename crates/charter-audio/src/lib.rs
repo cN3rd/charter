@@ -16,7 +16,7 @@ mod cast {
         clippy::cast_precision_loss,
         reason = "audio buffer lengths exceed exact float precision only on impractically large tracks"
     )]
-    pub(crate) fn usize_f64(value: usize) -> f64 {
+    pub(crate) const fn usize_f64(value: usize) -> f64 {
         value as f64
     }
 
@@ -26,7 +26,7 @@ mod cast {
         clippy::cast_precision_loss,
         reason = "DSP windows and test buffers are short"
     )]
-    pub(crate) fn usize_f32(value: usize) -> f32 {
+    pub(crate) const fn usize_f32(value: usize) -> f32 {
         value as f32
     }
 
@@ -37,7 +37,7 @@ mod cast {
         clippy::cast_sign_loss,
         reason = "sample indices saturate as Rust float-to-int casts specify"
     )]
-    pub(crate) fn f64_usize(value: f64) -> usize {
+    pub(crate) const fn f64_usize(value: f64) -> usize {
         value as usize
     }
 
@@ -47,7 +47,7 @@ mod cast {
         clippy::cast_possible_truncation,
         reason = "DSP sample values can lose precision when reduced to f32"
     )]
-    pub(crate) fn f64_f32(value: f64) -> f32 {
+    pub(crate) const fn f64_f32(value: f64) -> f32 {
         value as f32
     }
 
@@ -58,7 +58,7 @@ mod cast {
         clippy::cast_sign_loss,
         reason = "spectrum levels are scaled to 0..=255 before conversion"
     )]
-    pub(crate) fn f64_u8(value: f64) -> u8 {
+    pub(crate) const fn f64_u8(value: f64) -> u8 {
         value as u8
     }
 
@@ -67,14 +67,44 @@ mod cast {
         clippy::as_conversions,
         reason = "serialized frame counts use the low 64 bits on wider platforms"
     )]
-    pub(crate) fn usize_u64(value: usize) -> u64 {
+    pub(crate) const fn usize_u64(value: usize) -> u64 {
         value as u64
     }
 }
 
+#[expect(
+    clippy::pub_use,
+    clippy::useless_attribute,
+    reason = "metronome mixing is part of charter-audio's flat DSP API"
+)]
 pub use click::{Clicks, Gain, Kit, Tick, Tone, Volumes, mix, render};
+#[expect(
+    clippy::pub_use,
+    clippy::useless_attribute,
+    reason = "onset detection and cache I/O are part of the flat audio API"
+)]
 pub use onsets::{Onset, onsets, onsets_from_bytes, onsets_to_bytes};
+#[expect(
+    clippy::pub_use,
+    clippy::useless_attribute,
+    reason = "waveform peaks and fingerprints are part of the flat audio API"
+)]
 pub use peaks::{Extent, Peaks, fingerprint};
+#[expect(
+    clippy::pub_use,
+    clippy::useless_attribute,
+    reason = "spectrum analysis is part of the flat audio API"
+)]
 pub use spectrum::Spectrum;
+#[expect(
+    clippy::pub_use,
+    clippy::useless_attribute,
+    reason = "decoded audio tags are part of the flat audio API"
+)]
 pub use tags::{Artwork, Tags, tags};
+#[expect(
+    clippy::pub_use,
+    clippy::useless_attribute,
+    reason = "decoded tracks and errors are part of the flat audio API"
+)]
 pub use track::{DecodeError, Track};

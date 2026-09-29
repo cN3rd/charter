@@ -133,20 +133,24 @@ mod tests {
     use super::*;
 
     /// A 16-bit PCM WAV file of `channels` interleaved channels at `rate` holding `samples`.
+    #[expect(
+        clippy::little_endian_bytes,
+        reason = "WAV and RIFF chunk sizes and samples are little-endian"
+    )]
     fn wav(rate: u32, channels: u16, samples: &[i16]) -> Vec<u8> {
         let data = u32::try_from(samples.len().saturating_mul(2)).unwrap();
         let block = channels.saturating_mul(2);
         let mut bytes = Vec::new();
         bytes.extend_from_slice(b"RIFF");
-        bytes.extend_from_slice(&36u32.saturating_add(data).to_le_bytes());
+        bytes.extend_from_slice(&36_u32.saturating_add(data).to_le_bytes());
         bytes.extend_from_slice(b"WAVEfmt ");
-        bytes.extend_from_slice(&16u32.to_le_bytes());
-        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&16_u32.to_le_bytes());
+        bytes.extend_from_slice(&1_u16.to_le_bytes());
         bytes.extend_from_slice(&channels.to_le_bytes());
         bytes.extend_from_slice(&rate.to_le_bytes());
         bytes.extend_from_slice(&rate.saturating_mul(u32::from(block)).to_le_bytes());
         bytes.extend_from_slice(&block.to_le_bytes());
-        bytes.extend_from_slice(&16u16.to_le_bytes());
+        bytes.extend_from_slice(&16_u16.to_le_bytes());
         bytes.extend_from_slice(b"data");
         bytes.extend_from_slice(&data.to_le_bytes());
         for sample in samples {

@@ -132,8 +132,8 @@ fn report(what: &str, mut errors: Vec<f64>) {
     errors.sort_by(f64::total_cmp);
     let share = |ms: f64| {
         let within = errors.iter().filter(|error| **error <= ms).count();
-        let share = count_float(within) / count_float(errors.len().max(1));
-        share
+
+        count_float(within) / count_float(errors.len().max(1))
     };
     println!(
         "{what}: {} beats: median {:.1} ms, p95 {:.1} ms, within 5/10/20 ms {:.0}% / {:.0}% / {:.0}%",
@@ -152,7 +152,7 @@ fn report(what: &str, mut errors: Vec<f64>) {
     reason = "song-length counts are converted for benchmark percentages"
 )]
 /// A beat count as a floating-point value for benchmark percentages.
-fn count_float(count: usize) -> f64 {
+const fn count_float(count: usize) -> f64 {
     count as f64
 }
 
@@ -163,7 +163,7 @@ fn count_float(count: usize) -> f64 {
     reason = "the percentile index is bounded by the slice before use"
 )]
 /// A bounded percentile position as an integer slice index.
-fn percentile_index(index: f64) -> usize {
+const fn percentile_index(index: f64) -> usize {
     index as usize
 }
 

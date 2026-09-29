@@ -51,6 +51,10 @@ impl BarsPerRow {
 
     /// Short label for the toolbar.
     #[must_use]
+    #[expect(
+        clippy::non_ascii_literal,
+        reason = "the half-bar row option displays the ½ glyph"
+    )]
     pub const fn name(self) -> &'static str {
         match self {
             Self::Half => "½ bar",
@@ -294,8 +298,7 @@ pub fn tick_at_seconds(timing: Valid<'_, Timing>, seconds: f64) -> f64 {
 
 /// Start tick of `measure` as a floating-point value.
 fn start(measure: &Measure) -> f64 {
-    let at = float_from_i64(i64::from(measure.start));
-    at
+    float_from_i64(i64::from(measure.start))
 }
 
 /// Length of `measure` in ticks as a floating-point value.
@@ -309,7 +312,7 @@ fn length(measure: &Measure) -> f64 {
     reason = "song positions fit visual precision"
 )]
 /// Converts a tick count to floating-point visual coordinates.
-pub(crate) fn float_from_i64(value: i64) -> f64 {
+pub(crate) const fn float_from_i64(value: i64) -> f64 {
     value as f64
 }
 
@@ -319,7 +322,7 @@ pub(crate) fn float_from_i64(value: i64) -> f64 {
     reason = "row counts fit visual precision"
 )]
 /// Converts a row count to single-precision drawing coordinates.
-pub(crate) fn float_from_usize(value: usize) -> f32 {
+pub(crate) const fn float_from_usize(value: usize) -> f32 {
     value as f32
 }
 
@@ -329,7 +332,7 @@ pub(crate) fn float_from_usize(value: usize) -> f32 {
     reason = "collection counts fit visual precision"
 )]
 /// Converts a collection count to double precision for visual calculations.
-pub(crate) fn double_from_usize(value: usize) -> f64 {
+pub(crate) const fn double_from_usize(value: usize) -> f64 {
     value as f64
 }
 
@@ -339,7 +342,7 @@ pub(crate) fn double_from_usize(value: usize) -> f64 {
     reason = "rendering needs f32 coordinates"
 )]
 /// Converts a visual coordinate to the painter's single-precision coordinates.
-pub(crate) fn float_to_f32(value: f64) -> f32 {
+pub(crate) const fn float_to_f32(value: f64) -> f32 {
     value as f32
 }
 
@@ -359,7 +362,7 @@ pub(crate) fn float_to_i32(value: f64) -> i32 {
     reason = "bar numbers outside i64 saturate"
 )]
 /// Truncates a floating-point bar number to an integer, saturating outside the `i64` range.
-pub(crate) fn float_to_i64(value: f64) -> i64 {
+pub(crate) const fn float_to_i64(value: f64) -> i64 {
     value as i64
 }
 
@@ -979,9 +982,9 @@ mod tests {
 
         #[test]
         fn rows_cover_their_own_span_without_gaps_for_odd_meters_and_all_layouts(
-            numerator in 1u16..=11,
-            start_bar in 0i32..=6,
-            count in 1i32..=12,
+            numerator in 1_u16..=11,
+            start_bar in 0_i32..=6,
+            count in 1_i32..=12,
             layout in prop_oneof![Just(Layout::Bars), Just(Layout::Time)],
             bars_per in prop::sample::select(BarsPerRow::ALL.to_vec()),
             seconds_per in prop::sample::select(SecondsPerRow::ALL.to_vec()),

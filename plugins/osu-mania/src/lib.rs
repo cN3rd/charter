@@ -24,6 +24,11 @@ use serde_json::Value;
 
 mod import;
 
+#[expect(
+    clippy::pub_use,
+    clippy::useless_attribute,
+    reason = "the plugin exposes its timing import error beside its song and plugin types"
+)]
 pub use import::ImportError;
 
 /// The ruleset namespace.
@@ -601,6 +606,10 @@ impl TryFrom<&ValidDocument> for Song {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Plugin;
 
+#[expect(
+    clippy::missing_trait_methods,
+    reason = "osu!mania uses the trait's defaults for `note_changes`, `change_note`, `difficulties` and `text_settings`: it offers no note changes, difficulty presets or text settings"
+)]
 impl RulesetPlugin for Plugin {
     fn id(&self) -> &str {
         ID

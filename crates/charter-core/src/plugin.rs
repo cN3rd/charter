@@ -215,6 +215,10 @@ mod tests {
     #[derive(Debug)]
     struct Checks;
 
+    #[expect(
+        clippy::missing_trait_methods,
+        reason = "a test plugin: the trait's defaults for every optional method"
+    )]
     impl RulesetPlugin for Checks {
         fn id(&self) -> &'static str {
             "checks"

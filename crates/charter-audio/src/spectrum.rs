@@ -110,10 +110,7 @@ impl Spectrum {
     /// track.
     #[must_use]
     pub fn between(&self, from: f64, to: f64) -> Option<[u8; Self::BANDS]> {
-        let frame = |seconds: f64| {
-            let frame = cast::f64_usize((seconds * PER_SECOND).round().max(0.0));
-            frame
-        };
+        let frame = |seconds: f64| cast::f64_usize((seconds * PER_SECOND).round().max(0.0));
         if to < 0.0 {
             return None;
         }
@@ -172,8 +169,8 @@ mod tests {
     /// The band `hz` falls in.
     fn band_of(hz: f64) -> usize {
         let ratio = (HIGHEST / LOWEST).powf(1.0 / 48.0);
-        let band = cast::f64_usize(((hz / LOWEST).ln() / ratio.ln()).floor());
-        band
+
+        cast::f64_usize(((hz / LOWEST).ln() / ratio.ln()).floor())
     }
 
     #[test]
@@ -195,7 +192,7 @@ mod tests {
     fn a_click_late_in_a_44100_hz_track_lands_on_the_frame_of_its_time() {
         // Ten seconds of silence at 44.1 kHz, which 200 frames a second do not divide, with a
         // click at 9.5 s.
-        let mut frames = vec![[0.0f32; 2]; 10 * 44_100];
+        let mut frames = vec![[0.0_f32; 2]; 10 * 44_100];
         for frame in frames.iter_mut().skip(9 * 44_100 + 22_050).take(64) {
             *frame = [0.9, 0.9];
         }

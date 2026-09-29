@@ -95,7 +95,7 @@ impl<B: Backend> RmsNorm<B> {
     reason = "network dimensions and chunk positions are converted to floating-point angles"
 )]
 /// `width` as an angle-compatible floating-point value.
-fn width_float(width: usize) -> f64 {
+const fn width_float(width: usize) -> f64 {
     width as f64
 }
 
@@ -105,7 +105,7 @@ fn width_float(width: usize) -> f64 {
     reason = "rotary angles are stored as f32 tensors"
 )]
 /// `angle` narrowed to the precision of burn's angle tensors.
-fn angle_float(angle: f64) -> f32 {
+const fn angle_float(angle: f64) -> f32 {
     angle as f32
 }
 

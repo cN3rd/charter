@@ -173,7 +173,7 @@ fn lines_between(timing: Valid<'_, Timing>, grid: Grid, from: Tick, to: Tick) ->
 
 /// Root mean square of `values`, or `None` for an empty iterator.
 fn rms(values: impl Iterator<Item = f64>) -> Option<f64> {
-    let (count, sum) = values.fold((0u32, 0.0), |(count, sum), value| {
+    let (count, sum) = values.fold((0_u32, 0.0), |(count, sum), value| {
         (count.saturating_add(1), sum + value * value)
     });
     (count > 0).then(|| (sum / f64::from(count)).sqrt())
@@ -962,7 +962,7 @@ mod tests {
             (Tick::new(0), Some(Tick::new(3840))),
         );
         assert_eq!(measured.onsets, 3);
-        assert!((measured.error_ms.unwrap() - (200.0f64).sqrt()).abs() < 1e-9);
+        assert!((measured.error_ms.unwrap() - (200.0_f64).sqrt()).abs() < 1e-9);
         assert_eq!(measured.coverage, Some(0.5));
         let outside = metrics(
             timing,
@@ -1007,9 +1007,9 @@ mod tests {
 
         #[test]
         fn residuals_are_symmetric_around_an_unpaused_grid_line(
-            bpm_value in 60u16..=240,
-            offset_ms in 1u16..=40,
-            beat in 2i32..=20,
+            bpm_value in 60_u16..=240,
+            offset_ms in 1_u16..=40,
+            beat in 2_i32..=20,
         ) {
             let document = song(0.0, &json!([bpm(0, f64::from(bpm_value))]));
             let timing = document.timing();

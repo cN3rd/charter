@@ -765,7 +765,7 @@ impl Window {
     /// window, which shows what it holds.
     pub fn timing_file_read(&mut self, text: &str) {
         text.clone_into(&mut self.import.text);
-        self.import.open = true;
+        self.import.set_open(true);
     }
 
     /// Says a file chosen for [`Request::ChooseTimingFile`] could not be read, and `why`.
@@ -936,6 +936,10 @@ impl Window {
     }
 
     /// What the status bar says of the audio.
+    #[expect(
+        clippy::non_ascii_literal,
+        reason = "the audio-analysis status shows an ellipsis while running"
+    )]
     fn audio_state(&self) -> String {
         match self.finding {
             Finding::Downloading(share) => {
@@ -1021,7 +1025,6 @@ impl Window {
         } else if !ui.input(|input| input.pointer.any_down()) {
             self.toggle_play();
             self.toggle_play();
-        } else {
         }
     }
 
@@ -1066,7 +1069,6 @@ impl Window {
         } else if let Some(song) = &self.song {
             let from = song.timing().time_at(song.cursor()).seconds();
             self.start(from, None, false);
-        } else {
         }
     }
 
@@ -1087,7 +1089,7 @@ impl Window {
             &self.settings,
             (self.settings.metronome || metronome) && !self.muted,
             (0.0, until),
-            self.sync.grid,
+            self.sync.grid(),
         );
         let volumes = self.settings.volumes;
         self.playing = true;
@@ -1115,6 +1117,10 @@ impl Window {
     }
 
     /// Starts audio at the cursor, or pauses it; explains why playback could not start.
+    #[expect(
+        clippy::non_ascii_literal,
+        reason = "the playback error names the Choose audio menu label with its ellipsis"
+    )]
     fn toggle_play(&mut self) {
         if std::mem::take(&mut self.playing) {
             self.requests.push(Request::Pause);
@@ -1166,7 +1172,6 @@ impl Window {
             self.replay();
         } else if self.playing {
             self.requests.push(Request::Rate(rate.factor()));
-        } else {
         }
     }
 
@@ -1204,7 +1209,7 @@ impl Window {
         if self
             .new_song
             .as_ref()
-            .is_some_and(|draft| draft.audio.as_deref() == Some(file))
+            .is_some_and(|draft| draft.audio() == Some(file))
         {
             self.embedded = Some((file.to_path_buf(), extension.to_owned(), picture));
             return;
@@ -1298,7 +1303,7 @@ impl Window {
             self.park_artwork();
             let step = self.song.as_ref().map_or(0, Song::history_step);
             let mut artwork = Artwork::taken(name, self.artwork_file(), picture);
-            artwork.step = step;
+            artwork.set_step(step);
             self.artwork = Some(artwork);
             // A picture under the same name leaves the revision as it was, so autosave again.
             self.autosaved = None;
@@ -1321,12 +1326,12 @@ impl Window {
         let restored_position = self
             .parked
             .iter()
-            .position(|parked| parked.name == named && parked.step == step);
+            .position(|parked| parked.name() == named && parked.step() == step);
         // Another picture of the same name may belong to the step undo or redo reached.
         let current = self.artwork.as_ref().is_some_and(|artwork| {
-            artwork.name == named
-                && artwork.file == file
-                && (artwork.step == step || restored_position.is_none())
+            artwork.name() == named
+                && artwork.file() == file.as_deref()
+                && (artwork.step() == step || restored_position.is_none())
         });
         if current {
             return;
@@ -1336,10 +1341,10 @@ impl Window {
         let parked_after_park = self
             .parked
             .iter()
-            .position(|parked| parked.name == named && parked.step == step);
+            .position(|parked| parked.name() == named && parked.step() == step);
         if let Some(at) = parked_after_park {
             let mut artwork = self.parked.swap_remove(at);
-            artwork.file = file;
+            artwork.set_file(file);
             self.artwork = Some(artwork);
             return;
         }
@@ -1356,7 +1361,7 @@ impl Window {
             return;
         };
         if artwork.unsaved().is_some() {
-            self.parked.retain(|parked| parked.step != artwork.step);
+            self.parked.retain(|parked| parked.step() != artwork.step());
             self.parked.push(artwork);
         }
     }
@@ -1448,7 +1453,7 @@ impl Window {
         }
         let (named, by) = (title.as_deref(), artist.as_deref());
         if let Some(draft) = &mut self.new_song {
-            if draft.audio.as_deref() != Some(file) || !draft.differs(named, by) {
+            if draft.audio() != Some(file) || !draft.differs(named, by) {
                 return;
             }
             if draft.blank() {
@@ -1512,7 +1517,7 @@ impl Window {
     /// Gives the song being started the audio at `file`, and asks for its tags.
     fn draft_audio(&mut self, file: &Path) {
         if let Some(draft) = &mut self.new_song {
-            draft.audio = Some(file.to_path_buf());
+            draft.set_audio(Some(file.to_path_buf()));
             self.requests.push(Request::ReadTags {
                 file: file.to_path_buf(),
             });
@@ -1630,7 +1635,10 @@ impl Window {
     fn create(&mut self, plugin: &dyn charter_core::RulesetPlugin, song: &charter_core::NewSong) {
         match plugin.new_song(song) {
             Ok(document) => {
-                let audio = self.new_song.as_ref().and_then(|draft| draft.audio.clone());
+                let audio = self
+                    .new_song
+                    .as_ref()
+                    .and_then(|draft| draft.audio().map(std::path::Path::to_path_buf));
                 let created_song = Box::new(Song::new(document, self.plugins));
                 self.after_asking(Discard::Open {
                     path: None,
@@ -1993,6 +2001,10 @@ impl Window {
             }
             Action::OpenDemo => self.open_demo(),
             Action::Open => self.requests.push(Request::Open),
+            #[expect(
+                clippy::ref_patterns,
+                reason = "every other arm copies its fields out of the dereferenced action"
+            )]
             Action::OpenRecent(ref path) => {
                 self.requests.push(Request::OpenPath { path: path.clone() });
             }
@@ -2000,10 +2012,10 @@ impl Window {
             Action::Save => self.saving = Some(Saving::InPlace),
             Action::SaveAs => self.saving = Some(Saving::Elsewhere),
             Action::Settings => self.settings_open = !self.settings_open,
-            Action::Calibrate => self.calibration.open = true,
-            Action::ToggleSync => self.sync.open = !self.sync.open,
-            Action::ShowSync => self.sync.open = true,
-            Action::ShowImport => self.import.open = true,
+            Action::Calibrate => self.calibration.set_open(true),
+            Action::ToggleSync => self.sync.set_open(!self.sync.is_open()),
+            Action::ShowSync => self.sync.set_open(true),
+            Action::ShowImport => self.import.set_open(true),
             Action::ChooseTimingFile => self.requests.push(Request::ChooseTimingFile),
             Action::Help => self.help_open = !self.help_open,
             Action::ToggleSongPanel => self.settings.song_panel = !self.settings.song_panel,
@@ -2507,7 +2519,7 @@ impl Window {
     /// windows such as the settings leave the keys to the editor; only a text field being typed
     /// in, a question, or the timing window once clicked takes them.
     fn keyboard(&mut self, ui: &Ui) -> Vec<Action> {
-        let lanes = if self.calibration.open {
+        let lanes = if self.calibration.is_open() {
             0
         } else {
             self.song.as_ref().map_or(0, editable_lanes)
@@ -2520,7 +2532,7 @@ impl Window {
             || self.discard.is_some()
             || self.restoring.is_some()
             || self.offer.is_some()
-            || self.calibration.open
+            || self.calibration.is_open()
             || self.resetting
             || self.finding == Finding::Asking;
         // A button that Tab focused wants no letters, so only a text field counts.
@@ -2777,7 +2789,7 @@ impl Window {
             self.requests.push(Request::ChooseSnapshotFolder);
         }
         if asked == Some(settings::Asked::Calibrate) {
-            self.calibration.open = true;
+            self.calibration.set_open(true);
         }
         let kit = self.settings.metronome_sound;
         let time = (self.frame_time, kit, self.calibration_beat());
@@ -2805,7 +2817,7 @@ impl Window {
             }
         }
         if let Some(settings::Asked::Preview(preview_kit)) = asked {
-            let clicks = (0..4u8).map(|beat| {
+            let clicks = (0..4_u8).map(|beat| {
                 let tone = if beat == 0 {
                     charter_audio::Tone::Accent(preview_kit)
                 } else {
@@ -2825,7 +2837,7 @@ impl Window {
             &mut self.import,
             &mut actions,
         );
-        if self.sync.open {
+        if self.sync.is_open() {
             // The timing window shows the audio whether or not the notefield's waveform is on.
             let file = self.audio_file();
             let peaks = self
@@ -3117,8 +3129,8 @@ fn lane_cents(position: charter_core::Position, lanes: u16) -> i16 {
     let cents = ((at - f64::from(gaps) / 2.0) * step)
         .round()
         .clamp(-1200.0, 1200.0);
-    let cents = crate::cast::f64_i16(cents);
-    cents
+
+    crate::cast::f64_i16(cents)
 }
 
 /// Note ticks and metronome clicks between `from` and `until` seconds, as the playback settings
@@ -3433,6 +3445,10 @@ mod tests {
     #[derive(Debug)]
     struct AnySm;
 
+    #[expect(
+        clippy::missing_trait_methods,
+        reason = "a test plugin: the trait's defaults for every optional method"
+    )]
     impl RulesetPlugin for AnySm {
         fn id(&self) -> &'static str {
             "sm"
@@ -3447,6 +3463,10 @@ mod tests {
     #[derive(Debug)]
     struct NoFourthLane;
 
+    #[expect(
+        clippy::missing_trait_methods,
+        reason = "a test plugin: the trait's defaults for every optional method"
+    )]
     impl RulesetPlugin for NoFourthLane {
         fn id(&self) -> &'static str {
             "sm"
@@ -3674,6 +3694,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::non_ascii_literal,
+        reason = "the test locates the Choose audio menu label with its ellipsis"
+    )]
     fn read_only_songs_disable_menu_items_that_would_edit_them() {
         let mut app = Window::new(PLUGINS);
         app.open(Path::new("example.json"), example());
@@ -4224,6 +4248,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::non_ascii_literal,
+        reason = "the test locates the artwork Reading label with its ellipsis"
+    )]
     fn a_song_naming_artwork_asks_for_it_beside_the_song_and_previews_it() {
         let mut harness = four_taps_at("/songs/four.json");
         retype(&mut harness, "Artwork", "art.png");
@@ -4927,6 +4955,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::non_ascii_literal,
+        reason = "the test locates the Open menu label with its ellipsis"
+    )]
     fn ctrl_o_and_the_file_menu_ask_for_a_song_to_open() {
         let mut harness = editable_four_taps();
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::O);
@@ -5151,6 +5183,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::non_ascii_literal,
+        reason = "the test locates the Settings menu label with its ellipsis"
+    )]
     fn the_settings_window_opens_from_the_edit_menu_and_with_ctrl_comma() {
         let mut harness = editable_demo();
         harness.get_by_label("Edit").click();
@@ -6564,6 +6600,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::non_ascii_literal,
+        reason = "the test locates the Calibrate button with its ellipsis"
+    )]
     fn calibrating_latency_plays_clicks_at_the_songs_first_tempo() {
         let mut harness = editable_demo();
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Comma);
@@ -6873,6 +6913,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::non_ascii_literal,
+        reason = "the test clicks the Open song button with its ellipsis"
+    )]
     fn the_empty_window_opens_a_song_from_a_file() {
         let mut harness = window(Window::new(GAMES));
         harness.get_by_label("Open song…").click();
@@ -6902,6 +6946,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::non_ascii_literal,
+        reason = "the test clicks the Choose audio button with its ellipsis"
+    )]
     fn a_new_song_asks_the_host_to_choose_its_audio() {
         let mut harness = created();
         harness.get_by_label("Choose audio…").click();
@@ -6914,6 +6962,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::non_ascii_literal,
+        reason = "the test matches both Choose audio buttons with their ellipses"
+    )]
     fn where_files_cannot_be_dropped_the_window_offers_choosing_them_and_says_why() {
         let mut harness = window(Window::new(GAMES).without_file_drops());
         assert!(
@@ -7085,7 +7137,10 @@ mod tests {
         let mut harness = timed_song();
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
         harness.run();
-        harness.state_mut().sync.layout = charter_timing::rows::Layout::Bars;
+        harness
+            .state_mut()
+            .sync
+            .set_layout(charter_timing::rows::Layout::Bars);
         harness.run();
         harness
     }
@@ -7166,6 +7221,10 @@ mod tests {
         song.anchors().iter().map(|pin| pin.seconds).collect()
     }
 
+    #[expect(
+        clippy::non_ascii_literal,
+        reason = "the test clicks the Reset timing menu label with its ellipsis"
+    )]
     fn reset_from_the_menu(harness: &mut Harness<'_, Window>) {
         harness.query_all_by_label("Timing").next().unwrap().click();
         harness.run();
@@ -7173,6 +7232,10 @@ mod tests {
         harness.run();
     }
 
+    #[expect(
+        clippy::non_ascii_literal,
+        reason = "the test clicks the Find timing menu label with its ellipsis"
+    )]
     fn find_from_the_menu(harness: &mut Harness<'_, Window>) {
         harness.query_all_by_label("Timing").next().unwrap().click();
         harness.run();
@@ -7522,7 +7585,7 @@ mod tests {
         click(&mut harness, at, egui::Modifiers::NONE);
         harness.key_press(egui::Key::Num8);
         harness.run();
-        assert_eq!(harness.state().sync.grid.resolution.get(), 16);
+        assert_eq!(harness.state().sync.grid().resolution.get(), 16);
         assert!(lanes_at(&harness, 0).is_empty());
         let grid = harness.get_by_role_and_label(Role::ComboBox, "Grid");
         assert_eq!(grid.value().as_deref(), Some("1/16"));
@@ -7534,7 +7597,10 @@ mod tests {
         let mut harness = editable_demo();
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
         harness.run();
-        harness.state_mut().sync.layout = charter_timing::rows::Layout::Bars;
+        harness
+            .state_mut()
+            .sync
+            .set_layout(charter_timing::rows::Layout::Bars);
         harness.run();
         let heard = seconds_at(&harness, 3830);
         let at = in_row(&harness, 3830);
@@ -7551,6 +7617,10 @@ mod tests {
     #[derive(Debug)]
     struct Importer;
 
+    #[expect(
+        clippy::missing_trait_methods,
+        reason = "a test plugin: the trait's defaults for every optional method"
+    )]
     impl RulesetPlugin for Importer {
         fn id(&self) -> &'static str {
             "importer"
@@ -7586,6 +7656,10 @@ mod tests {
     #[derive(Debug)]
     struct ContextImporter;
 
+    #[expect(
+        clippy::missing_trait_methods,
+        reason = "a test plugin: the trait's defaults for every optional method"
+    )]
     impl RulesetPlugin for ContextImporter {
         fn id(&self) -> &'static str {
             "context-importer"
@@ -7620,6 +7694,10 @@ mod tests {
         &ContextImporter,
     ];
 
+    #[expect(
+        clippy::non_ascii_literal,
+        reason = "the import test opens the Import timing menu label with its ellipsis"
+    )]
     fn importing() -> Harness<'static, Window> {
         let mut app = Window::new(IMPORTING);
         app.open_demo();
@@ -7633,6 +7711,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::non_ascii_literal,
+        reason = "the test reopens the Import timing menu label with its ellipsis"
+    )]
     fn reopening_import_after_opening_another_game_previews_for_that_song() {
         let draft = charter_core::NewSong {
             metadata: charter_editor::demo::song().document().metadata.clone(),
@@ -7707,6 +7789,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::non_ascii_literal,
+        reason = "the test clicks the Read a file button with its ellipsis"
+    )]
     fn the_import_window_reads_timing_from_a_file_the_host_opens() {
         let mut harness = importing();
         harness.get_by_label("Read a file…").click();
@@ -8836,6 +8922,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::non_ascii_literal,
+        reason = "the test clicks the New song menu label with its ellipsis"
+    )]
     fn the_file_menu_and_ctrl_n_start_a_new_song_and_cancel_leaves_it() {
         let mut harness = window(Window::new(GAMES));
         harness.get_by_label("File").click();
@@ -9188,6 +9278,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::non_ascii_literal,
+        reason = "the test clicks the Choose audio button with its ellipsis"
+    )]
     fn the_new_song_dialog_chooses_its_audio_through_the_host() {
         let mut harness = new_song_dialog();
         harness.get_by_label("Choose audio…").click();
@@ -9692,7 +9786,7 @@ mod tests {
     fn a_timing_file_read_opens_the_import_and_a_read_failure_explains_it() {
         let mut app = Window::new(PLUGINS);
         app.timing_file_read("not timing");
-        assert!(app.import.open);
+        assert!(app.import.is_open());
         assert_eq!(app.import.text, "not timing");
         app.timing_file_failed("permission denied");
         assert_eq!(

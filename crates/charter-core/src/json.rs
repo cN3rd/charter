@@ -104,6 +104,10 @@ pub struct Valid<'a, T> {
     document: &'a Document,
 }
 
+#[expect(
+    clippy::missing_trait_methods,
+    reason = "a borrowed view: the standard `clone_from` is right"
+)]
 impl<T> Clone for Valid<'_, T> {
     fn clone(&self) -> Self {
         *self
@@ -527,7 +531,7 @@ const MAX_EXACT_INTEGER: u64 = (1 << 53) - 1;
     reason = "2^53 - 1 is exactly representable"
 )]
 /// Largest I-JSON exact integer expressed as a double.
-fn exact_integer_limit_as_f64() -> f64 {
+const fn exact_integer_limit_as_f64() -> f64 {
     MAX_EXACT_INTEGER as f64
 }
 
@@ -535,6 +539,10 @@ fn exact_integer_limit_as_f64() -> f64 {
 /// would resolve by keeping the last, and on an integer a double cannot hold exactly.
 struct IJson;
 
+#[expect(
+    clippy::missing_trait_methods,
+    reason = "serde's default `deserialize_in_place` is right"
+)]
 impl<'de> Deserialize<'de> for IJson {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         deserializer.deserialize_any(IJsonVisitor)
@@ -544,6 +552,10 @@ impl<'de> Deserialize<'de> for IJson {
 /// Checks integer precision and duplicate map keys while walking arbitrary JSON.
 struct IJsonVisitor;
 
+#[expect(
+    clippy::missing_trait_methods,
+    reason = "serde's defaults reject the JSON kinds this visitor does not accept"
+)]
 impl<'de> Visitor<'de> for IJsonVisitor {
     type Value = IJson;
 

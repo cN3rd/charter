@@ -81,7 +81,52 @@ missing_debug_implementations = "warn"
 pedantic = { level = "warn", priority = -1 }
 restriction = { level = "warn", priority = -1 }
 nursery = { level = "warn", priority = -1 }
-# blanket_clippy_restriction_lints = "allow"
+# The restriction group is on whole, so its lints below are allowed by name, each for a reason.
+blanket_clippy_restriction_lints = "allow"
+# Idiomatic Rust these would ban: `?`, implicit returns, `mod tests`, helper functions.
+implicit_return = "allow"
+question_mark_used = "allow"
+inline_modules = "allow"
+single_call_fn = "allow"
+# DSP and timing are float arithmetic; `mul_add` changes rounding and is slow without FMA.
+float_arithmetic = "allow"
+suboptimal_flops = "allow"
+while_float = "allow"
+# Only for published libraries, `no_std` crates, or constant-time code.
+exhaustive_structs = "allow"
+exhaustive_enums = "allow"
+std_instead_of_core = "allow"
+std_instead_of_alloc = "allow"
+integer_division_remainder_used = "allow"
+# Style against the house one, or readability traded for nothing.
+shadow_reuse = "allow"
+arbitrary_source_item_ordering = "allow"
+option_if_let_else = "allow"
+redundant_pub_crate = "allow"
+decimal_literal_representation = "allow"
+inline_trait_bounds = "allow"
+impl_trait_in_params = "allow"
+# Its only fix is an empty `else {}`, which `needless_else` rightly refuses.
+else_if_without_else = "allow"
+# One side of each opposing pair, kept as most of the code already writes it: `1.0_f32` and
+# `pub(crate)`.
+separated_literal_suffix = "allow"
+pub_with_shorthand = "allow"
+# Flags every literal beside a typed value, `x < 0.0` included, not only guessed types: suffixing
+# 1,845 of them would add noise without catching anything.
+default_numeric_fallback = "allow"
+# Fights match ergonomics: `if let Some(x) = &field` is how the codebase binds by reference.
+pattern_type_mismatch = "allow"
+# Fat LTO in the dist profile inlines across crates already; `#[inline]` everywhere is noise.
+missing_inline_in_public_items = "allow"
+# Checked and left as the house style: short closure names, inline paths, `'a`, `pub(crate)`
+# fields, trait imports by name, and impls split across files on purpose.
+min_ident_chars = "allow"
+absolute_paths = "allow"
+single_char_lifetime_names = "allow"
+field_scoped_visibility_modifiers = "allow"
+unused_trait_names = "allow"
+multiple_inherent_impl = "allow"
 
 # ponytail: tick/sample arithmetic is everywhere in a charting app and silent wraparound
 # is a nightmare to debug. Drop this if DSP profiling ever shows it costs real time.

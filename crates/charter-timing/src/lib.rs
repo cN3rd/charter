@@ -144,25 +144,25 @@ const FINE: f64 = 10.0;
 )]
 pub struct TimingWindow {
     /// Whether the timing window is visible.
-    pub open: bool,
+    open: bool,
     /// Subdivision used for beat lines and snapping.
-    pub grid: Grid,
+    grid: Grid,
     /// Whether the rows lay the song out by bar or by audio time.
-    pub layout: Layout,
+    layout: Layout,
     /// Number of bars displayed per row in the bar layout.
-    pub bars_per_row: BarsPerRow,
+    bars_per_row: BarsPerRow,
     /// How many seconds a row holds in the time layout.
-    pub seconds_per_row: SecondsPerRow,
+    seconds_per_row: SecondsPerRow,
     /// Whether added and moved beats snap to the grid.
-    pub snap_grid: bool,
+    snap_grid: bool,
     /// Whether moments snap to an onset within 25 ms.
-    pub snap_onset: bool,
+    snap_onset: bool,
     /// How strong an onset has to be, from 0 to 1, to count.
-    pub sensitivity: f32,
+    sensitivity: f32,
     /// Whether adding an anchor plays from a beat before it.
-    pub audition: bool,
+    audition: bool,
     /// Whether the rows follow the playhead while the song plays.
-    pub follow: bool,
+    follow: bool,
     /// Anchor under keyboard focus, by its tick.
     focus: Option<Tick>,
     /// The selected anchors, a run of neighbours, by tick.
@@ -319,6 +319,28 @@ pub struct Inputs<'a> {
 }
 
 impl TimingWindow {
+    /// Whether the timing window is visible.
+    #[must_use]
+    pub const fn is_open(&self) -> bool {
+        self.open
+    }
+
+    /// Shows or hides the timing window.
+    pub const fn set_open(&mut self, open: bool) {
+        self.open = open;
+    }
+
+    /// Subdivision used for beat lines and snapping.
+    #[must_use]
+    pub const fn grid(&self) -> Grid {
+        self.grid
+    }
+
+    /// Sets the row layout.
+    pub const fn set_layout(&mut self, layout: Layout) {
+        self.layout = layout;
+    }
+
     /// Whether the window takes the keyboard's commands, so the editor window leaves them.
     #[must_use]
     pub const fn has_keyboard(&self) -> bool {
@@ -628,6 +650,10 @@ fn intent(key: Key, modifiers: Modifiers) -> Option<Intent> {
 }
 
 /// The keys of the timing window, for its shortcut sheet.
+#[expect(
+    clippy::non_ascii_literal,
+    reason = "the timing help displays arrow, minus, ellipsis and separator symbols as UI labels"
+)]
 const KEYS: &[(&str, &str)] = &[
     ("Space", "Play or pause"),
     (
@@ -678,7 +704,6 @@ pub fn show(
         window.pulse = None;
     } else if window.pulse.is_some() {
         ctx.request_repaint();
-    } else {
     }
     let mut open = window.open;
     let shown = egui::Window::new("Timing")
@@ -970,7 +995,6 @@ fn rows(
                 && let Some(pos) = response.interact_pointer_pos()
             {
                 commands.push(Command::PlayFrom(row.tick_at(&frame.bars, pos.x)));
-            } else {
             }
             laid.push(row);
         }
@@ -1205,7 +1229,6 @@ fn row_input(
                 window.add(frame, seconds, shift, commands);
             }
         }
-    } else {
     }
     if response.middle_clicked()
         && let Some(pos) = pointer
@@ -1477,7 +1500,6 @@ fn menu(
             window.add(frame, seconds, false, commands);
             ui.close();
         }
-    } else {
     }
 }
 
@@ -1573,7 +1595,6 @@ fn act(window: &mut TimingWindow, frame: &Frame<'_>, intent: Intent, commands: &
                 .and_then(|at| frame.pins.get(at))
             {
                 commands.push(Command::Audition(pin.seconds - lead(frame, pin.tick)));
-            } else {
             }
         }
         Intent::Escape => {
@@ -1754,6 +1775,10 @@ mod tests {
     #[derive(Debug)]
     struct TestRuleset;
 
+    #[expect(
+        clippy::missing_trait_methods,
+        reason = "a test plugin: the trait's defaults for every optional method"
+    )]
     impl RulesetPlugin for TestRuleset {
         fn id(&self) -> &'static str {
             "test"

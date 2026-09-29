@@ -111,7 +111,6 @@ fn hard() -> Vec<Value> {
                     0,
                     false,
                 );
-            } else {
             }
         } else if step.rem_euclid(2) == 0 {
             let lane = walk(step.div_euclid(2), &[0, 2, 1, 3]);
@@ -125,7 +124,6 @@ fn hard() -> Vec<Value> {
             if step.rem_euclid(64) == 40 {
                 chart.place(tick, 1, "roll", 3 * SIXTEENTH, false);
             }
-        } else {
         }
     }
     chart.objects

@@ -255,15 +255,17 @@ impl Player {
 
     /// Does what the window asked of playback; other requests are left to the caller.
     pub fn answer(&mut self, request: &Request, window: &mut Window) {
-        match *request {
+        match request {
             Request::Play {
                 from,
                 rate,
-                ref clicks,
+                clicks,
                 volumes,
                 looping,
                 keep_pitch,
             } => {
+                let (from, rate, volumes, looping, keep_pitch) =
+                    (*from, *rate, *volumes, *looping, *keep_pitch);
                 self.stop();
                 let Some((path, track, data)) = &self.loaded else {
                     window.playback_ended();
@@ -318,17 +320,14 @@ impl Player {
             }
             Request::Volume(gain) => {
                 if let Some(sound) = &mut self.playing {
-                    sound.set_volume(decibels(gain));
+                    sound.set_volume(decibels(*gain));
                 }
             }
-            Request::Preview {
-                ref clicks,
-                volumes,
-            } => {
+            Request::Preview { clicks, volumes } => {
                 if let Some(mut sound) = self.previewing.take() {
                     sound.stop(Tween::default());
                 }
-                let data = sound(&preview(clicks, volumes));
+                let data = sound(&preview(clicks, *volumes));
                 // A preview that cannot play says nothing: playing the song says why.
                 self.previewing = self.device().ok().and_then(|device| device.play(data).ok());
             }
@@ -341,7 +340,7 @@ impl Player {
             // Stretched audio changes speed by playing again, which the window asks for.
             Request::Rate(rate) => {
                 if let Some(Playing::Plain(sound)) = &mut self.playing {
-                    sound.set_playback_rate(rate, Tween::default());
+                    sound.set_playback_rate(*rate, Tween::default());
                 }
             }
             Request::Write { .. }
@@ -447,7 +446,7 @@ fn preview(clicks: &[(f64, charter_audio::Tone)], volumes: charter_audio::Volume
     reason = "preview duration is clamped to ten seconds"
 )]
 /// Truncates the clamped preview frame count to a buffer length.
-fn preview_frames(frames: f64) -> usize {
+const fn preview_frames(frames: f64) -> usize {
     frames as usize
 }
 
@@ -803,7 +802,7 @@ mod tests {
 
     #[expect(clippy::unnecessary_wraps, reason = "matches the loader signature")]
     fn clicking(_: &Path) -> Result<Track, String> {
-        let mut frames = vec![[0.0f32; 2]; 44_100 * 2];
+        let mut frames = vec![[0.0_f32; 2]; 44_100 * 2];
         for start in [22_050, 44_100] {
             for (offset, frame) in frames.iter_mut().skip(start).take(1500).enumerate() {
                 let t = offset_as_f32(offset) / 44_100.0;
@@ -1028,24 +1027,28 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::little_endian_bytes,
+        reason = "the WAV and RIFF test fixture uses little-endian fields"
+    )]
     fn a_track_becomes_sound_of_the_same_frames_and_rate() {
         // A one-frame 16-bit stereo WAV at 8000 Hz.
         let mut wav = Vec::new();
         wav.extend_from_slice(b"RIFF");
-        wav.extend_from_slice(&40u32.to_le_bytes());
+        wav.extend_from_slice(&40_u32.to_le_bytes());
         wav.extend_from_slice(b"WAVEfmt ");
-        wav.extend_from_slice(&16u32.to_le_bytes());
-        for field in [1u16, 2] {
+        wav.extend_from_slice(&16_u32.to_le_bytes());
+        for field in [1_u16, 2] {
             wav.extend_from_slice(&field.to_le_bytes());
         }
-        wav.extend_from_slice(&8000u32.to_le_bytes());
-        wav.extend_from_slice(&32000u32.to_le_bytes());
-        for field in [4u16, 16] {
+        wav.extend_from_slice(&8000_u32.to_le_bytes());
+        wav.extend_from_slice(&32000_u32.to_le_bytes());
+        for field in [4_u16, 16] {
             wav.extend_from_slice(&field.to_le_bytes());
         }
         wav.extend_from_slice(b"data");
-        wav.extend_from_slice(&4u32.to_le_bytes());
-        for sample in [16384i16, -16384] {
+        wav.extend_from_slice(&4_u32.to_le_bytes());
+        for sample in [16384_i16, -16384] {
             wav.extend_from_slice(&sample.to_le_bytes());
         }
         let track = Track::decode(wav, Some("wav")).unwrap();

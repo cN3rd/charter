@@ -352,6 +352,10 @@ fn point_fields(
 }
 
 /// The BPM on `tick`, `bpm`, with steppers when `editable`, each setting the tempo there.
+#[expect(
+    clippy::non_ascii_literal,
+    reason = "the tempo decrement button displays the minus sign"
+)]
 fn bpm_row(
     ui: &mut Ui,
     (editable, caption, what): (bool, egui::Id, &str),
@@ -424,6 +428,10 @@ const OFFSET_ABOUT: &str = "Where beat 0 falls in the audio, in milliseconds. Ra
     notes come before the music, lower it if they come after.";
 
 /// The offset's rows of the tempo table: a field in milliseconds with steppers, and what it is.
+#[expect(
+    clippy::non_ascii_literal,
+    reason = "the offset decrement button displays the minus sign"
+)]
 fn offset_rows(
     ui: &mut Ui,
     (editable, caption): (bool, egui::Id),

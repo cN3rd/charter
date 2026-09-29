@@ -200,7 +200,7 @@ fn counted(beats: &[(f64, f64, bool)]) -> Vec<Beat> {
     reason = "a beat gap's rounded step count saturates at the integer limits"
 )]
 /// Rounded beat gap as a saturating integer count.
-fn rounded_steps(steps: f64) -> i64 {
+const fn rounded_steps(steps: f64) -> i64 {
     steps as i64
 }
 
@@ -210,7 +210,7 @@ fn rounded_steps(steps: f64) -> i64 {
     reason = "song-length beat counts are converted for the floating-point fit"
 )]
 /// A beat count as a floating-point value for the fit.
-fn beat_float(count: usize) -> f64 {
+const fn beat_float(count: usize) -> f64 {
     count as f64
 }
 
@@ -220,7 +220,7 @@ fn beat_float(count: usize) -> f64 {
     reason = "song-length beat indices are converted for the floating-point fit"
 )]
 /// A counted beat index as a floating-point value for the fit.
-fn index_float(index: i64) -> f64 {
+const fn index_float(index: i64) -> f64 {
     index as f64
 }
 

@@ -157,7 +157,7 @@ fn tick_of(tick: i64) -> Result<Tick, SectionError> {
     reason = "caller checked finite i64 bounds"
 )]
 /// Nearest whole tick after the caller checks the `i64` bounds.
-fn rounded_tick(value: f64) -> i64 {
+const fn rounded_tick(value: f64) -> i64 {
     value as i64
 }
 
@@ -167,7 +167,7 @@ fn rounded_tick(value: f64) -> i64 {
     reason = "i64 bound comparison is conservative at the upper edge"
 )]
 /// Float bound for comparing a calculated tick before integer conversion.
-fn i64_bound_to_f64(value: i64) -> f64 {
+const fn i64_bound_to_f64(value: i64) -> f64 {
     value as f64
 }
 

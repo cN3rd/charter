@@ -279,9 +279,9 @@ mod tests {
 
         #[test]
         fn grid_lines_are_sorted_inside_their_measure_even_before_tick_zero(
-            numerator in 1u16..=15,
+            numerator in 1_u16..=15,
             resolution in prop::sample::select(RESOLUTIONS.to_vec()),
-            bar in -5i32..=5,
+            bar in -5_i32..=5,
         ) {
             let document = song(&serde_json::json!([
                 { "tick": 0, "kind": { "bpm": 120.0 } },

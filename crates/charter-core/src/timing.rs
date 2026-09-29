@@ -242,7 +242,7 @@ fn simplest(exact: f64, from: Tick, to: Tick) -> f64 {
     let span = span_as_f64(i64::from(to).saturating_sub(i64::from(from)));
     (0..6)
         .map(|places| {
-            let scale = 10f64.powi(places);
+            let scale = 10_f64.powi(places);
             (exact * scale).round() / scale
         })
         .find(|tempo| (span * tempo / exact - span).abs() < 0.5)
@@ -255,7 +255,7 @@ fn simplest(exact: f64, from: Tick, to: Tick) -> f64 {
     reason = "two i32 tick positions differ by less than 2^53"
 )]
 /// Tick distance as a float; the difference between two chart ticks stays exact.
-fn span_as_f64(ticks: i64) -> f64 {
+const fn span_as_f64(ticks: i64) -> f64 {
     ticks as f64
 }
 
@@ -677,19 +677,20 @@ mod tests {
     }
 
     fn kind() -> impl Strategy<Value = TimingKind> {
-        let pause = (1u32..=2_000_000).prop_map(|m| Seconds::try_from(f64::from(m) / 1e6).unwrap());
+        let pause =
+            (1_u32..=2_000_000).prop_map(|m| Seconds::try_from(f64::from(m) / 1e6).unwrap());
         prop_oneof![
             pause.clone().prop_map(TimingKind::Stop),
             pause.prop_map(TimingKind::Delay),
-            (1u32..=2000).prop_map(|w| TimingKind::Warp(Ticks::new(w).unwrap())),
+            (1_u32..=2000).prop_map(|w| TimingKind::Warp(Ticks::new(w).unwrap())),
         ]
     }
 
     fn map() -> impl Strategy<Value = Timing> {
         (
-            vec((-8000i32..8000, kind()), 0..8),
-            vec((-8000i32..8000, 0.01f64..5.0), 1..6),
-            (-5.0f64..5.0, 20.0f64..400.0),
+            vec((-8000_i32..8000, kind()), 0..8),
+            vec((-8000_i32..8000, 0.01_f64..5.0), 1..6),
+            (-5.0_f64..5.0, 20.0_f64..400.0),
         )
             .prop_map(|(events, anchors, (first, tempo))| {
                 valid_timing(events, anchors, (first, bpm((tempo * 1e6).round() / 1e6)))
@@ -709,7 +710,7 @@ mod tests {
         }
 
         #[test]
-        fn time_never_runs_backwards_even_across_an_anchor(timing in map(), tick in -9000i32..9000) {
+        fn time_never_runs_backwards_even_across_an_anchor(timing in map(), tick in -9000_i32..9000) {
             let now = timing.seconds_at(TicksPerBeat::default(), Tick::new(tick)).unwrap().seconds();
             let next = timing.seconds_at(TicksPerBeat::default(), Tick::new(tick.saturating_add(1))).unwrap().seconds();
             prop_assert!(now.is_finite() && next.is_finite());
@@ -724,7 +725,7 @@ mod tests {
         #[test]
         fn resolving_a_tick_agrees_with_walking_the_map_one_tick_at_a_time(
             timing in map(),
-            tick in -9000i32..9000,
+            tick in -9000_i32..9000,
         ) {
             let resolved = timing.seconds_at(TicksPerBeat::default(), Tick::new(tick)).unwrap().seconds();
             let walked = walked(&timing, tick);

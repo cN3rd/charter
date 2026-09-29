@@ -50,6 +50,10 @@ struct Host {
     disk: Box<dyn Disk>,
 }
 
+#[expect(
+    clippy::missing_trait_methods,
+    reason = "eframe's defaults for saving, clearing, exiting and input are what charter wants"
+)]
 impl eframe::App for Host {
     fn ui(&mut self, ui: &mut eframe::egui::Ui, _frame: &mut eframe::Frame) {
         if self.player.update(&mut self.window) | self.finder.update(&mut self.window) {
@@ -1126,6 +1130,14 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::little_endian_bytes,
+        reason = "Vorbis comments encode lengths in little-endian order"
+    )]
+    #[expect(
+        clippy::big_endian_bytes,
+        reason = "FLAC metadata and frame fields encode lengths and values in big-endian order"
+    )]
     fn tagged_audio_offers_its_embedded_cover_beside_the_song() {
         let comment = b"TITLE=Track";
         let mut vorbis = Vec::new();

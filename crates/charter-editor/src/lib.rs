@@ -8,8 +8,18 @@ mod points;
 mod song;
 mod sync;
 
+#[expect(
+    clippy::pub_use,
+    clippy::useless_attribute,
+    reason = "editor song state and edits form charter-editor's flat API"
+)]
 pub use song::{
     KeepNotes, LayerNotes, LayerRow, NoteAt, Refusal, SNAPS, Selecting, Song, Step, TimedSpan,
     Toggled,
 };
+#[expect(
+    clippy::pub_use,
+    clippy::useless_attribute,
+    reason = "timing pins are part of charter-editor's flat API"
+)]
 pub use sync::Pin;

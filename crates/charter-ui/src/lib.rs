@@ -12,7 +12,7 @@ mod cast {
         reason = "pixel and sample values need floating-point casts"
     )]
     /// A sample or pixel count as a floating-point value for UI calculations.
-    pub(crate) fn usize_f64(value: usize) -> f64 {
+    pub(crate) const fn usize_f64(value: usize) -> f64 {
         value as f64
     }
 
@@ -22,7 +22,7 @@ mod cast {
         reason = "UI pixel values use f32"
     )]
     /// A calculated coordinate narrowed to the precision egui draws with.
-    pub(crate) fn f64_f32(value: f64) -> f32 {
+    pub(crate) const fn f64_f32(value: f64) -> f32 {
         value as f32
     }
 
@@ -33,7 +33,7 @@ mod cast {
         reason = "flooring a screen coordinate yields a lane"
     )]
     /// A floored screen coordinate narrowed to a lane index.
-    pub(crate) fn f32_u16(value: f32) -> u16 {
+    pub(crate) const fn f32_u16(value: f32) -> u16 {
         value as u16
     }
 
@@ -44,7 +44,7 @@ mod cast {
         reason = "saturating float-to-index cast for display tiles"
     )]
     /// A floating-point display coordinate saturated to a tile index.
-    pub(crate) fn f64_usize(value: f64) -> usize {
+    pub(crate) const fn f64_usize(value: f64) -> usize {
         value as usize
     }
 
@@ -55,7 +55,7 @@ mod cast {
         reason = "rounded color channel is in u8 range"
     )]
     /// A rounded colour channel narrowed to its byte value.
-    pub(crate) fn f32_u8(value: f32) -> u8 {
+    pub(crate) const fn f32_u8(value: f32) -> u8 {
         value as u8
     }
 
@@ -65,7 +65,7 @@ mod cast {
         reason = "UI scroll notches fit in i32"
     )]
     /// A scroll distance narrowed to a count of notches.
-    pub(crate) fn f32_i32(value: f32) -> i32 {
+    pub(crate) const fn f32_i32(value: f32) -> i32 {
         value as i32
     }
 
@@ -75,7 +75,7 @@ mod cast {
         reason = "bounded audio pitch in cents fits in i16"
     )]
     /// An audio pitch offset in cents narrowed to the track's pitch type.
-    pub(crate) fn f64_i16(value: f64) -> i16 {
+    pub(crate) const fn f64_i16(value: f64) -> i16 {
         value as i16
     }
 }
@@ -94,8 +94,28 @@ use charter_style as style;
 mod timing_panel;
 mod window;
 
+#[expect(
+    clippy::pub_use,
+    clippy::useless_attribute,
+    reason = "host-supplied decoded artwork is part of charter-ui's flat host API"
+)]
 pub use artwork::Picture;
+#[expect(
+    clippy::pub_use,
+    clippy::useless_attribute,
+    reason = "the host's flip direction is part of charter-ui's flat host API"
+)]
 pub use flip::Direction;
+#[expect(
+    clippy::pub_use,
+    clippy::useless_attribute,
+    reason = "persisted UI settings are part of charter-ui's flat host API"
+)]
 pub use settings::{Settings, Sound};
 use window::{Action, Note};
+#[expect(
+    clippy::pub_use,
+    clippy::useless_attribute,
+    reason = "the window and its host requests are charter-ui's flat host API"
+)]
 pub use window::{Request, Saved, Window};

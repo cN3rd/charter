@@ -756,6 +756,10 @@ fn note_ticks(ui: &mut egui::Ui, settings: &mut Settings) {
 }
 
 /// The sounds page. Says which metronome to preview, when its button was pressed.
+#[expect(
+    clippy::non_ascii_literal,
+    reason = "the calibration button displays an ellipsis"
+)]
 fn sounds(ui: &mut egui::Ui, settings: &mut Settings) -> Option<Asked> {
     note_ticks(ui, settings);
     let name = "Tuned lanes";
@@ -903,6 +907,10 @@ fn autosave(
 
 /// The autosave page's snapshot rows: where timestamped copies of a changed song go, how often,
 /// and how many are kept. Says when the user asked to choose the folder.
+#[expect(
+    clippy::non_ascii_literal,
+    reason = "the snapshot-folder chooser displays an ellipsis"
+)]
 fn snapshots(
     ui: &mut egui::Ui,
     settings: &mut Settings,
@@ -1449,6 +1457,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::non_ascii_literal,
+        reason = "the test finds the calibration button by its displayed ellipsis"
+    )]
     fn sound_preview_and_calibration_buttons_ask_for_their_distinct_actions() {
         let mut harness = Harness::builder().build_ui_state(
             |ui, (settings, open, asked): &mut (Settings, bool, Option<Asked>)| {

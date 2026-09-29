@@ -106,7 +106,7 @@ pub fn log_mel(samples: &[f32]) -> Vec<[f32; BINS]> {
     reason = "FFT and mel bin positions fit in a small integer"
 )]
 /// FFT and filterbank indices as floating-point positions.
-fn count_float(count: usize) -> f64 {
+const fn count_float(count: usize) -> f64 {
     count as f64
 }
 
@@ -116,7 +116,7 @@ fn count_float(count: usize) -> f64 {
     reason = "the network consumes the mel magnitudes as f32"
 )]
 /// An FFT magnitude at the precision consumed by the network.
-fn narrow_float(value: f64) -> f32 {
+const fn narrow_float(value: f64) -> f32 {
     value as f32
 }
 
@@ -237,6 +237,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::little_endian_bytes,
+        reason = "the reference spectrogram fixture stores little-endian float32 values"
+    )]
     fn the_spectrogram_matches_the_reference_front_end() {
         let want: Vec<f32> = include_bytes!("../fixtures/mel.f32")
             .as_chunks::<4>()

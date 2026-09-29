@@ -9,6 +9,11 @@
 mod mel;
 mod model;
 
+#[expect(
+    clippy::pub_use,
+    clippy::useless_attribute,
+    reason = "the beat tracker's frontend and sample rate are its flat DSP API"
+)]
 pub use mel::{FPS, RATE, log_mel, resample};
 
 use std::path::Path;
@@ -365,7 +370,7 @@ fn mean(frames: &[usize]) -> f64 {
     reason = "song-length frame positions are converted for peak averaging"
 )]
 /// A frame index as a floating-point value for peak averaging.
-fn frame_float(frame: usize) -> f64 {
+const fn frame_float(frame: usize) -> f64 {
     frame as f64
 }
 
@@ -374,6 +379,10 @@ mod tests {
     use super::*;
 
     /// Little-endian floats.
+    #[expect(
+        clippy::little_endian_bytes,
+        reason = "the reference model fixture stores float32 values in little-endian order"
+    )]
     fn floats_of(bytes: &[u8]) -> Vec<f32> {
         bytes
             .as_chunks::<4>()
