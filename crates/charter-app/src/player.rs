@@ -158,7 +158,7 @@ fn stretched_position(source_seconds: SourceSeconds, rate: PlaybackRate) -> Stre
 type Loading = (PathBuf, Receiver<Loaded>);
 
 /// The audio device, the song's audio and the sound playing it.
-pub struct Player {
+pub(crate) struct Player {
     /// The output, opened on first use and retried after a failure.
     device: Option<Result<AudioManager<DefaultBackend>, String>>,
     /// Reads and decodes an audio file.
@@ -206,7 +206,7 @@ impl std::fmt::Debug for Player {
 impl Player {
     /// Loads the audio the window wants when it changes, tells the window how loading went, and
     /// where playback has got to. Says whether playback or loading needs another frame.
-    pub fn update(&mut self, window: &mut Window) -> bool {
+    pub(crate) fn update(&mut self, window: &mut Window) -> bool {
         let wanted = window.audio_file();
         let have = self
             .loading
@@ -289,7 +289,7 @@ impl Player {
     }
 
     /// Does what the window asked of playback; other requests are left to the caller.
-    pub fn answer(&mut self, request: &Request, window: &mut Window) {
+    pub(crate) fn answer(&mut self, request: &Request, window: &mut Window) {
         match request {
             Request::Play {
                 from,

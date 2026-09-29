@@ -18,7 +18,7 @@ const SLOWEST: f64 = 0.1;
 const FASTEST: f64 = 2.0;
 /// Whether stretched audio keeps its pitch or lets it follow its speed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Pitch {
+pub(crate) enum Pitch {
     /// The song sounds at its own pitch, by the wide-range keylock.
     Kept,
     /// The song's pitch rises and falls with its speed, like tape.
@@ -57,7 +57,7 @@ const CLICK_LENGTH: usize = 256;
 /// Whether playing at `rate` times the audio's speed can keep its pitch: at any other speed than
 /// its own, within what the stretcher reaches.
 #[must_use]
-pub fn keeps_pitch(rate: f64) -> bool {
+pub(crate) fn keeps_pitch(rate: f64) -> bool {
     (rate - 1.0).abs() > 1e-9 && (SLOWEST..=FASTEST).contains(&rate)
 }
 
@@ -261,7 +261,7 @@ fn lead(rates: &[f64], sample_rate: u32, pitch: Pitch) -> Option<f64> {
 // switching speeds is heard as a drop.
 /// A track played at `rate` times its speed, as frames of the stretched audio: frame `n` sounds
 /// source frame `n * rate`, with any clicks mixed in at their own speed.
-pub struct Stretched {
+pub(crate) struct Stretched {
     /// Source audio kept alive for the streaming decoder.
     track: Arc<Track>,
     /// Source frames played per output frame.
@@ -290,7 +290,7 @@ impl Stretched {
     /// `track` at `rate` with `pitch`, from its start, unless the stretcher cannot take its
     /// sample rate.
     #[must_use]
-    pub fn new(track: Arc<Track>, rate: f64, pitch: Pitch) -> Option<Self> {
+    pub(crate) fn new(track: Arc<Track>, rate: f64, pitch: Pitch) -> Option<Self> {
         let lead = known_lead(rate, track.rate().get(), pitch)?;
         let chain = Chain::new(&stage_rates(rate, pitch), track.rate().get(), pitch)?;
         let mut stretched = Self {
@@ -312,7 +312,7 @@ impl Stretched {
 
     /// The same, with `clicks` placed for its speed mixed over the song at `music`.
     #[must_use]
-    pub fn with_clicks(self, clicks: Clicks, music: Gain) -> Self {
+    pub(crate) fn with_clicks(self, clicks: Clicks, music: Gain) -> Self {
         Self {
             clicks,
             music: music.amplitude(),

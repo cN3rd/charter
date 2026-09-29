@@ -5,7 +5,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 /// Where the host's files live.
-pub trait Disk {
+pub(crate) trait Disk {
     /// Reads all bytes at `path`.
     ///
     /// # Errors
@@ -47,7 +47,7 @@ pub trait Disk {
 
 /// The computer's own files.
 #[derive(Debug)]
-pub struct Real;
+pub(crate) struct Real;
 
 impl Disk for Real {
     fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
@@ -100,7 +100,7 @@ impl Disk for Real {
 /// # Errors
 ///
 /// Whatever kept the bytes from being written or moved; the file at `path` is as it was.
-pub fn write_whole(disk: &dyn Disk, path: &Path, bytes: &[u8]) -> io::Result<()> {
+pub(crate) fn write_whole(disk: &dyn Disk, path: &Path, bytes: &[u8]) -> io::Result<()> {
     let mut beside = path.as_os_str().to_owned();
     beside.push(".partial");
     let beside = PathBuf::from(beside);
@@ -122,7 +122,7 @@ pub fn write_whole(disk: &dyn Disk, path: &Path, bytes: &[u8]) -> io::Result<()>
 /// # Errors
 ///
 /// The source cannot be read or copied, the destination differs, or the copy cannot be moved.
-pub fn copy_whole(disk: &dyn Disk, from: &Path, to: &Path) -> io::Result<()> {
+pub(crate) fn copy_whole(disk: &dyn Disk, from: &Path, to: &Path) -> io::Result<()> {
     if disk.exists(to) {
         // ponytail: read both files to compare; stream if large existing audio costs real memory.
         if disk.read(from)? == disk.read(to)? {
@@ -149,7 +149,7 @@ pub fn copy_whole(disk: &dyn Disk, from: &Path, to: &Path) -> io::Result<()> {
 }
 
 #[cfg(test)]
-pub mod memory {
+pub(crate) mod memory {
     use std::cell::RefCell;
     use std::collections::BTreeMap;
 
@@ -157,19 +157,19 @@ pub mod memory {
 
     /// Files held in memory, some of which refuse to be written or moved.
     #[derive(Debug, Default)]
-    pub struct Memory {
+    pub(crate) struct Memory {
         /// File contents keyed by path.
-        pub files: RefCell<BTreeMap<PathBuf, Vec<u8>>>,
+        pub(crate) files: RefCell<BTreeMap<PathBuf, Vec<u8>>>,
         /// Files that refuse writes.
-        pub unwritable: Vec<PathBuf>,
+        pub(crate) unwritable: Vec<PathBuf>,
         /// Files that refuse reads.
-        pub unreadable: Vec<PathBuf>,
+        pub(crate) unreadable: Vec<PathBuf>,
         /// Folders that refuse creation.
-        pub uncreatable: Vec<PathBuf>,
+        pub(crate) uncreatable: Vec<PathBuf>,
         /// Whether every move fails.
-        pub stuck: bool,
+        pub(crate) stuck: bool,
         /// Whether a copy writes half its bytes before failing.
-        pub partial_copy_fail: bool,
+        pub(crate) partial_copy_fail: bool,
     }
 
     fn missing(path: &Path) -> io::Error {
@@ -181,7 +181,7 @@ pub mod memory {
 
     impl Memory {
         /// Starts with the given path-and-content pairs.
-        pub fn with(files: &[(&str, &[u8])]) -> Self {
+        pub(crate) fn with(files: &[(&str, &[u8])]) -> Self {
             let files = files
                 .iter()
                 .map(|(path, bytes)| (PathBuf::from(path), bytes.to_vec()))
@@ -193,7 +193,7 @@ pub mod memory {
         }
 
         /// Returns the bytes at `path`, if present.
-        pub fn get(&self, path: &str) -> Option<Vec<u8>> {
+        pub(crate) fn get(&self, path: &str) -> Option<Vec<u8>> {
             self.files.borrow().get(Path::new(path)).cloned()
         }
     }

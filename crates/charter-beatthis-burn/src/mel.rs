@@ -14,11 +14,11 @@ use rustfft::num_complex::Complex;
 use crate::Error;
 
 /// The sample rate the network was trained at.
-pub const RATE: u32 = 22_050;
+pub(crate) const RATE: u32 = 22_050;
 /// Frames a second of the spectrogram, and of the network's predictions.
-pub const FPS: u32 = 50;
+pub(crate) const FPS: u32 = 50;
 /// Mel bands a frame holds.
-pub const BINS: usize = 128;
+pub(crate) const BINS: usize = 128;
 /// Samples a frame's window spans.
 const WINDOW: usize = 1024;
 /// Samples from one frame to the next.
@@ -35,7 +35,7 @@ const LOG_MULTIPLIER: f32 = 1000.0;
 /// # Errors
 ///
 /// Returns [`Error::Resample`] for a rate the resampler cannot convert from.
-pub fn resample(samples: &[f32], rate: u32) -> Result<Vec<f32>, Error> {
+pub(crate) fn resample(samples: &[f32], rate: u32) -> Result<Vec<f32>, Error> {
     if rate == RATE || samples.is_empty() {
         return Ok(samples.to_vec());
     }
@@ -60,7 +60,7 @@ pub fn resample(samples: &[f32], rate: u32) -> Result<Vec<f32>, Error> {
 /// The log-mel spectrogram of `samples`, mono audio at [`RATE`], a frame every 441 samples from
 /// the first, each centred on its hop.
 #[must_use]
-pub fn log_mel(samples: &[f32]) -> Vec<[f32; BINS]> {
+pub(crate) fn log_mel(samples: &[f32]) -> Vec<[f32; BINS]> {
     if samples.is_empty() {
         return Vec::new();
     }

@@ -26,7 +26,7 @@ enum Progress {
 
 /// Finds timing when the window asks, a job at a time.
 #[derive(Default)]
-pub struct Finder {
+pub(crate) struct Finder {
     /// Where the weights are kept, when the user's data folder is known.
     weights: Option<PathBuf>,
     /// The audio and resolution waiting on the weights.
@@ -46,7 +46,7 @@ impl std::fmt::Debug for Finder {
 
 impl Finder {
     /// A finder keeping the weights at `weights`.
-    pub fn new(weights: Option<PathBuf>) -> Self {
+    pub(crate) fn new(weights: Option<PathBuf>) -> Self {
         Self {
             weights,
             ..Self::default()
@@ -55,7 +55,7 @@ impl Finder {
 
     /// Starts finding the timing of the audio in `file` at `ticks_per_beat`, with the `onsets`
     /// already found in it, or asks the window to let the weights download first.
-    pub fn find(
+    pub(crate) fn find(
         &mut self,
         file: PathBuf,
         ticks_per_beat: TicksPerBeat,
@@ -82,7 +82,7 @@ impl Finder {
     }
 
     /// Downloads the weights, the user having agreed, then finds the timing waiting on them.
-    pub fn download(&mut self, window: &mut Window) {
+    pub(crate) fn download(&mut self, window: &mut Window) {
         let Some(weights) = self.weights.clone() else {
             window.timing_found(Err(
                 "charter has no data folder to keep the beat tracker in".into(),
@@ -99,7 +99,7 @@ impl Finder {
 
     /// Passes on what the finder's thread has to say. Says whether it is still at work, so the
     /// window keeps drawing its progress.
-    pub fn update(&mut self, window: &mut Window) -> bool {
+    pub(crate) fn update(&mut self, window: &mut Window) -> bool {
         let Some(work) = &self.work else {
             return false;
         };

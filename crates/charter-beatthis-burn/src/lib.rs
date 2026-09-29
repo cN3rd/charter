@@ -9,12 +9,7 @@
 mod mel;
 mod model;
 
-#[expect(
-    clippy::pub_use,
-    clippy::useless_attribute,
-    reason = "the beat tracker's frontend and sample rate are its flat DSP API"
-)]
-pub use mel::{FPS, RATE, log_mel, resample};
+use mel::{FPS, log_mel, resample};
 
 use std::path::Path;
 
@@ -298,7 +293,7 @@ fn chunk(spect: &[[f32; mel::BINS]], start: isize) -> (Vec<f32>, usize) {
 /// a probability above one half. Runs of neighbouring peaks merge to their mean, and each downbeat
 /// moves onto its nearest beat.
 #[must_use]
-pub fn peaks(beat_logits: Vec<f32>, downbeat_logits: Vec<f32>) -> Beats {
+pub(crate) fn peaks(beat_logits: Vec<f32>, downbeat_logits: Vec<f32>) -> Beats {
     let beats = merged(&peak_frames(&beat_logits));
     let mut downbeats: Vec<PredictionFrame> = merged(&peak_frames(&downbeat_logits))
         .into_iter()
@@ -588,7 +583,7 @@ mod tests {
     #[test]
     fn tracking_empty_and_short_audio_uses_the_resampled_frame_count() {
         let tracker = tiny();
-        assert_eq!(tracker.track(&[], RATE).unwrap(), Beats::default());
+        assert_eq!(tracker.track(&[], mel::RATE).unwrap(), Beats::default());
         let found = tracker.track(&vec![0.0; 882], 44_100).unwrap();
         assert_eq!(found.beat_logits.len(), 2);
         assert_eq!(found.downbeat_logits.len(), 2);

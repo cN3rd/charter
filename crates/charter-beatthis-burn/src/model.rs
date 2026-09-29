@@ -22,22 +22,22 @@ use crate::mel::BINS;
 
 /// The sizes a Beat This! network is built with.
 #[derive(Clone, Copy, Debug)]
-pub struct Dims {
+pub(crate) struct Dims {
     /// Channels out of the stem; each frontend block doubles them.
-    pub stem: usize,
+    pub(crate) stem: usize,
     /// Width of every attention head.
-    pub head: usize,
+    pub(crate) head: usize,
     /// Width of the transformer over time.
-    pub transformer: usize,
+    pub(crate) transformer: usize,
     /// Number of attention and feed-forward layers over time.
-    pub layers: usize,
+    pub(crate) layers: usize,
     /// How much wider a feed-forward's inside is than its outside.
-    pub ff_mult: usize,
+    pub(crate) ff_mult: usize,
 }
 
 impl Dims {
     /// The released model's.
-    pub const FULL: Self = Self {
+    pub(crate) const FULL: Self = Self {
         stem: 32,
         head: 32,
         transformer: 512,
@@ -47,7 +47,7 @@ impl Dims {
 
     /// The seeded model the parity fixtures were made with.
     #[cfg(test)]
-    pub const TINY: Self = Self {
+    pub(crate) const TINY: Self = Self {
         stem: 8,
         head: 8,
         transformer: 16,
@@ -58,7 +58,7 @@ impl Dims {
 
 /// Normalisation by the root mean square, as `F.normalize(x) * sqrt(size) * gamma`.
 #[derive(Module, Debug)]
-pub struct RmsNorm<B: Backend> {
+struct RmsNorm<B: Backend> {
     /// Per-feature scale learned after RMS normalisation.
     gamma: Param<Tensor<B, 1>>,
     /// Square root of the feature count, restoring the input's scale after normalisation.
@@ -111,7 +111,7 @@ const fn angle_float(angle: f64) -> f32 {
 
 /// Normalise, widen, GELU, narrow.
 #[derive(Module, Debug)]
-pub struct FeedForward<B: Backend> {
+struct FeedForward<B: Backend> {
     /// Normalisation applied before the two projections.
     norm: RmsNorm<B>,
     /// Projection to `mult` times the input width.
@@ -140,7 +140,7 @@ impl<B: Backend> FeedForward<B> {
 /// Self-attention over a sequence, its queries and keys rotated by position, each head's
 /// output gated by a sigmoid of the normalised input.
 #[derive(Module, Debug)]
-pub struct Attention<B: Backend> {
+struct Attention<B: Backend> {
     /// Normalisation shared by the query and gate projections.
     norm: RmsNorm<B>,
     /// Packed projections of queries, keys and values for all heads.
@@ -236,7 +236,7 @@ fn rotated<B: Backend>(x: Tensor<B, 4>) -> Tensor<B, 4> {
 
 /// Attention and feed-forward across frequency, then across time, each added to its input.
 #[derive(Module, Debug)]
-pub struct PartialFt<B: Backend> {
+struct PartialFt<B: Backend> {
     /// Attention across mel frequencies at each time step.
     attn_f: Attention<B>,
     /// Feed-forward projection after frequency attention.
@@ -285,7 +285,7 @@ impl<B: Backend> PartialFt<B> {
 /// Across frequency and time, then a convolution halving the frequencies and doubling the
 /// channels.
 #[derive(Module, Debug)]
-pub struct FrontendBlock<B: Backend> {
+struct FrontendBlock<B: Backend> {
     /// Frequency and time residual attention before downsampling.
     partial: PartialFt<B>,
     /// Convolution halving the frequency count and doubling channels.
@@ -319,7 +319,7 @@ impl<B: Backend> FrontendBlock<B> {
 
 /// Normalise each mel band, then a convolution over four bands at a time.
 #[derive(Module, Debug)]
-pub struct Stem<B: Backend> {
+struct Stem<B: Backend> {
     /// Normalisation across the input's mel bands.
     bn1d: BatchNorm<B>,
     /// Strided convolution reducing mel bands by four.
@@ -351,7 +351,7 @@ impl<B: Backend> Stem<B> {
 
 /// The spectrogram stem and three frequency-halving blocks, projected into transformer width.
 #[derive(Module, Debug)]
-pub struct Frontend<B: Backend> {
+struct Frontend<B: Backend> {
     /// First convolution from mel bands into channels.
     stem: Stem<B>,
     /// Three blocks of attention and frequency downsampling.
@@ -393,7 +393,7 @@ impl<B: Backend> Frontend<B> {
 
 /// One attention and feed-forward residual pair over time.
 #[derive(Module, Debug)]
-pub struct Layer<B: Backend> {
+struct Layer<B: Backend> {
     /// Rotary self-attention across time.
     attn: Attention<B>,
     /// Feed-forward network after attention.
@@ -402,7 +402,7 @@ pub struct Layer<B: Backend> {
 
 /// Stacked temporal residual pairs with a final RMS normalisation.
 #[derive(Module, Debug)]
-pub struct Transformer<B: Backend> {
+struct Transformer<B: Backend> {
     /// The `dims.layers` attention and feed-forward pairs.
     layers: Vec<Layer<B>>,
     /// Output normalisation after the last residual pair.
@@ -441,14 +441,14 @@ impl<B: Backend> Transformer<B> {
 
 /// A beat and a downbeat logit a frame, the downbeat's added to the beat's.
 #[derive(Module, Debug)]
-pub struct SumHead<B: Backend> {
+struct SumHead<B: Backend> {
     /// Projection to separate beat and downbeat logits before the latter is added to the former.
     beat_downbeat_lin: Linear<B>,
 }
 
 /// The full spectrogram-to-beat network whose field paths match the released checkpoint.
 #[derive(Module, Debug)]
-pub struct BeatThis<B: Backend> {
+pub(crate) struct BeatThis<B: Backend> {
     /// Stem and frequency-reducing attention blocks.
     frontend: Frontend<B>,
     /// Attention across the projected frame sequence.
@@ -459,7 +459,7 @@ pub struct BeatThis<B: Backend> {
 
 impl<B: Backend> BeatThis<B> {
     /// An unweighted model with the dimensions needed to load its checkpoint.
-    pub fn new(dims: Dims, device: &B::Device) -> Self {
+    pub(crate) fn new(dims: Dims, device: &B::Device) -> Self {
         Self {
             frontend: Frontend::new(dims, device),
             transformer_blocks: Transformer::new(dims, device),
@@ -474,7 +474,7 @@ impl<B: Backend> BeatThis<B> {
         clippy::arithmetic_side_effects,
         reason = "tensor addition combines beat and downbeat logits elementwise"
     )]
-    pub fn forward(&self, spect: Tensor<B, 3>) -> (Tensor<B, 1>, Tensor<B, 1>) {
+    pub(crate) fn forward(&self, spect: Tensor<B, 3>) -> (Tensor<B, 1>, Tensor<B, 1>) {
         let x = self
             .transformer_blocks
             .forward(self.frontend.forward(spect));
