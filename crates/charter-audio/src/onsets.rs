@@ -289,7 +289,7 @@ pub fn onsets_from_bytes(bytes: &[u8], source: u64) -> Option<Arc<[Onset]>> {
             let (seconds, strength) = record.split_at(8);
             let seconds = f64::from_le_bytes(seconds.try_into().ok()?);
             let strength = f32::from_le_bytes(strength.try_into().ok()?);
-            let sane = seconds.is_finite() && seconds >= 0.0 && (0.0..=1.0).contains(&strength);
+            let sane = seconds.is_finite() && seconds >= 0.0 && (0.0 < strength && strength <= 1.0);
             sane.then_some(Onset { seconds, strength })
         })
         .collect::<Option<_>>()?;
@@ -421,5 +421,17 @@ mod tests {
         assert_eq!(onsets_from_bytes(&unordered, 9), None);
         unordered[0] = b'X';
         assert_eq!(onsets_from_bytes(&unordered, 9), None);
+    }
+
+    #[test]
+    fn kept_onsets_refuse_zero_strength_that_a_detector_never_emits() {
+        let bytes = onsets_to_bytes(
+            &[Onset {
+                seconds: 0.5,
+                strength: 0.0,
+            }],
+            9,
+        );
+        assert_eq!(onsets_from_bytes(&bytes, 9), None);
     }
 }
