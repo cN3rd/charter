@@ -2,6 +2,7 @@
 
 use std::io::Cursor;
 use std::num::NonZeroU32;
+use std::sync::Arc;
 
 use crate::cast;
 use symphonia::core::codecs::audio::AudioDecoderOptions;
@@ -17,7 +18,7 @@ pub struct Track {
     /// Nonzero sample rate in frames per second.
     rate: NonZeroU32,
     /// Interleaved-in-time stereo samples, left then right per frame.
-    frames: Vec<[f32; 2]>,
+    frames: Arc<[[f32; 2]]>,
 }
 
 /// Why bytes did not decode.
@@ -84,6 +85,7 @@ impl Track {
             let spec = buffer.spec();
             rate = rate.or_else(|| NonZeroU32::new(spec.rate()));
             let channels = spec.channels().count();
+            samples.clear();
             buffer.copy_to_vec_interleaved(&mut samples);
             frames.extend(samples.chunks(channels.max(1)).map(|frame| match frame {
                 [left, right, ..] => [*left, *right],
@@ -92,14 +94,20 @@ impl Track {
             }));
         }
         let rate = rate.ok_or(DecodeError::NoTrack)?;
-        Ok(Self { rate, frames })
+        Ok(Self {
+            rate,
+            frames: frames.into(),
+        })
     }
 
     /// `frames` at `rate` frames per second, using 44.1 kHz when the rate is zero.
     #[must_use]
     pub fn from_frames(rate: u32, frames: Vec<[f32; 2]>) -> Self {
         let rate = NonZeroU32::new(rate).unwrap_or(NonZeroU32::MIN.saturating_add(44_099));
-        Self { rate, frames }
+        Self {
+            rate,
+            frames: frames.into(),
+        }
     }
 
     /// `frames` frames of silence at `rate` frames per second.
@@ -198,6 +206,17 @@ mod tests {
     #[test]
     fn frames_at_a_rate_of_zero_are_taken_as_cd_audio() {
         assert_eq!(Track::from_frames(0, Vec::new()).rate().get(), 44_100);
+    }
+
+    #[test]
+    fn cloning_a_track_shares_its_sample_buffer() {
+        let track = Track::from_frames(44_100, vec![[0.25, -0.25]; 8]);
+        let cloned = track.clone();
+        assert!(std::ptr::eq(
+            track.frames().as_ptr(),
+            cloned.frames().as_ptr()
+        ));
+        assert_eq!(track, cloned);
     }
 
     #[test]
