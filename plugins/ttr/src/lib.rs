@@ -40,7 +40,7 @@ pub struct Song {
     /// Levels checked against this ruleset.
     charts: Vec<Chart>,
     /// The theme every level plays in unless it names its own.
-    theme: Option<String>,
+    theme: Option<Name>,
 }
 
 /// Supported chart column counts.
@@ -92,7 +92,35 @@ pub struct Chart {
     /// The standard level the chart is, whatever it is called, when it is one.
     pub difficulty: Option<Difficulty>,
     /// The theme this level plays in, over the song's.
-    pub theme: Option<String>,
+    ///
+    /// ```
+    /// # use charter_core::{Bpm, Name};
+    /// # use charter_ttr::{Chart, Lanes, Tempo};
+    /// let theme = Name::new("TTRDJ").unwrap();
+    /// let _ = Chart {
+    ///     lanes: Lanes::Four,
+    ///     name: "Easy".to_owned(),
+    ///     difficulty: None,
+    ///     theme: Some(theme),
+    ///     tempo: Some(Tempo { anchors: Vec::new(), tempo: Bpm::try_from(120.0).unwrap(), changes: Vec::new() }),
+    ///     notes: Vec::new(),
+    /// };
+    /// ```
+    ///
+    /// A theme is a validated name, not raw text:
+    ///
+    /// ```compile_fail
+    /// # use charter_ttr::{Chart, Lanes};
+    /// let _ = Chart {
+    ///     lanes: Lanes::Four,
+    ///     name: "Easy".to_owned(),
+    ///     difficulty: None,
+    ///     theme: Some("TTRDJ".to_owned()),
+    ///     tempo: None,
+    ///     notes: Vec::new(),
+    /// };
+    /// ```
+    pub theme: Option<Name>,
     /// Replaces the song's tempo map when present.
     pub tempo: Option<Tempo>,
     /// Notes in this level's lanes.
@@ -399,25 +427,14 @@ impl Song {
     /// The theme every level plays in unless it names its own.
     #[must_use]
     pub fn theme(&self) -> Option<&str> {
-        self.theme.as_deref()
+        self.theme.as_ref().map(Name::as_str)
     }
 
     /// The song with every level playing in `theme` unless it names its own.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::Theme`] for a theme without a name.
-    pub fn with_theme(mut self, theme: Option<String>) -> Result<Self, Error> {
-        self.theme = match theme {
-            Some(name) if name.trim().is_empty() => {
-                return Err(Error::Theme {
-                    at: Location::Settings,
-                    found: Value::String(name).to_string(),
-                });
-            }
-            other => other,
-        };
-        Ok(self)
+    #[must_use]
+    pub fn with_theme(mut self, theme: Option<Name>) -> Self {
+        self.theme = theme;
+        self
     }
 
     /// Song-wide markers of the shared kinds.
@@ -451,7 +468,7 @@ impl Song {
                 id: Namespace::new(ID)?,
                 version: VERSION.to_owned(),
             },
-            settings: themed(self.theme.as_deref()),
+            settings: themed(self.theme.as_ref()),
             plugins: BTreeMap::new(),
             metadata: self.metadata.clone(),
             samples: BTreeMap::new(),
@@ -573,7 +590,7 @@ impl Chart {
             name: self.name.clone(),
             lanes: Some(lanes.width()),
             settings: {
-                let mut settings = themed(self.theme.as_deref());
+                let mut settings = themed(self.theme.as_ref());
                 if let Some(level) = self.difficulty {
                     settings.insert(DIFFICULTY.to_owned(), Value::from(level.key()));
                 }
@@ -656,7 +673,7 @@ impl TryFrom<&ValidDocument> for Song {
             .cloned()
             .collect();
         let tempo = read_tempo(&doc.timing, Stream::Song)?;
-        Self::new(metadata, doc.ticks_per_beat, tempo, markers, charts)?.with_theme(theme)
+        Ok(Self::new(metadata, doc.ticks_per_beat, tempo, markers, charts)?.with_theme(theme))
     }
 }
 
@@ -794,6 +811,7 @@ impl RulesetPlugin for Plugin {
         let lanes = *LANES
             .get(song.layout)
             .ok_or("Tap Tap Revenge has no such lane count")?;
+        let default_theme = Name::new(DEFAULT_THEME)?;
         let charts = song
             .charts
             .iter()
@@ -810,7 +828,7 @@ impl RulesetPlugin for Plugin {
                     lanes,
                     name: chart.name.clone(),
                     difficulty,
-                    theme: Some(DEFAULT_THEME.to_owned()),
+                    theme: Some(default_theme.clone()),
                     tempo: None,
                     notes: Vec::new(),
                 })
@@ -835,7 +853,7 @@ impl RulesetPlugin for Plugin {
             Vec::new(),
             charts,
         )?
-        .with_theme(Some(DEFAULT_THEME.to_owned()))?;
+        .with_theme(Some(default_theme));
         Ok(song.to_document())
     }
 }
@@ -968,18 +986,25 @@ fn read_tempo(timing: &Timing, stream: Stream) -> Result<Tempo, Error> {
 }
 
 /// Settings holding `theme` as the theme, if there is one.
-fn themed(theme: Option<&str>) -> Settings {
+fn themed(theme: Option<&Name>) -> Settings {
     theme
-        .map(|theme| (THEME.to_owned(), Value::from(theme)))
+        .map(|theme| (THEME.to_owned(), Value::from(theme.as_str())))
         .into_iter()
         .collect()
 }
 
 /// The theme a setting names, if it is there, refused unless it is a name.
-fn named(value: Option<&Value>, at: Location) -> Result<Option<String>, Error> {
+fn named(value: Option<&Value>, at: Location) -> Result<Option<Name>, Error> {
     match value {
         None => Ok(None),
-        Some(Value::String(theme)) if !theme.trim().is_empty() => Ok(Some(theme.clone())),
+        Some(Value::String(theme)) => {
+            Name::new(theme.clone())
+                .map(Some)
+                .map_err(|_invalid| Error::Theme {
+                    at,
+                    found: Value::String(theme.clone()).to_string(),
+                })
+        }
         Some(other) => Err(Error::Theme {
             at,
             found: other.to_string(),
@@ -1625,7 +1650,7 @@ mod tests {
         assert!(
             song.charts()
                 .iter()
-                .all(|chart| chart.theme.as_deref() == Some(DEFAULT_THEME))
+                .all(|chart| chart.theme.as_ref().map(Name::as_str) == Some(DEFAULT_THEME))
         );
     }
 
@@ -1636,7 +1661,10 @@ mod tests {
         value["charts"][0]["settings"] = json!({ "difficulty": "easy", "theme": "Neon" });
         let song = read(&value).unwrap();
         assert_eq!(song.theme(), Some("DeltaHeavyTheme"));
-        assert_eq!(song.charts()[0].theme.as_deref(), Some("Neon"));
+        assert_eq!(
+            song.charts()[0].theme.as_ref().map(Name::as_str),
+            Some("Neon")
+        );
         value["ruleset"]["version"] = json!(VERSION);
         value["charts"][0]
             .as_object_mut()
