@@ -1117,6 +1117,17 @@ mod tests {
             Err(Refusal::NoChart)
         ));
     }
+
+    #[test]
+    fn a_note_starts_where_its_head_is_on_any_lane_it_covers() {
+        let wide = json!({ "tick": 240, "position": { "lane": { "index": 1, "width": 2 } },
+                           "kind": "tap", "shape": "instant" });
+        let song = Song::new(document(json!([wide])), EDITABLE);
+        assert!(song.starts_at(at(240), lane(1)));
+        assert!(song.starts_at(at(240), lane(2)));
+        assert!(!song.starts_at(at(240), lane(3)));
+        assert!(!song.starts_at(at(0), lane(1)));
+    }
 }
 
 #[cfg(kani)]
@@ -1171,15 +1182,5 @@ mod proofs {
         assert!(
             fits(&object, lanes) == (u32::from(index) + u32::from(width.get()) <= u32::from(lanes))
         );
-    }
-    #[test]
-    fn a_note_starts_where_its_head_is_on_any_lane_it_covers() {
-        let wide = json!({ "tick": 240, "position": { "lane": { "index": 1, "width": 2 } },
-                           "kind": "tap", "shape": "instant" });
-        let song = Song::new(document(json!([wide])), EDITABLE);
-        assert!(song.starts_at(at(240), lane(1)));
-        assert!(song.starts_at(at(240), lane(2)));
-        assert!(!song.starts_at(at(240), lane(3)));
-        assert!(!song.starts_at(at(0), lane(1)));
     }
 }
