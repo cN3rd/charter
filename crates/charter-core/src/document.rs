@@ -185,7 +185,7 @@ pub enum TimingKind {
     },
 }
 
-/// One difficulty of the file's ruleset.
+/// A colour token from the editor's layer palette.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LayerColour {

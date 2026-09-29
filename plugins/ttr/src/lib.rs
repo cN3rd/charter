@@ -1,7 +1,7 @@
 //! Tap Tap Revenge as a charter ruleset.
 //!
 //! A chart has 3, 4 or 5 lanes, and a song's charts may differ. Notes scroll at a constant speed in
-//! time, so a BPM change only moves the beat grid and never speeds play up or slows it down the
+//! time, so a tempo change only moves the beat grid and never speeds play up or slows it down the
 //! way StepMania's does. Stops, delays and warps have no meaning here.
 //!
 //! [`Song`] is the typed view of a document whose ruleset is [`ID`]. Reading one fails on
@@ -59,7 +59,7 @@ pub enum Lanes {
 pub struct Tempo {
     /// Audio positions pinned to chart ticks.
     pub anchors: Vec<Anchor>,
-    /// Starting tempo.
+    /// Tempo after the last anchor.
     pub tempo: Bpm,
     /// Metre changes.
     pub changes: Vec<TempoChange>,

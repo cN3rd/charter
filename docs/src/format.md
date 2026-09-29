@@ -601,8 +601,9 @@ need none.
 Deserialization checks each value on its own: the types, the [identifier grammar](#identifiers),
 [resource paths](#resource-paths) and [numeric bounds](#numbers). One validation pass then checks
 every rule relating values to each other: the rules below, the [namespace rules](#ownership), the
-anchor requirement, [warp overlap](#resolving-time) and
-[measure lengths](#measures). No other code sees a document that failed either.
+anchor requirement and ordering, [warp overlap](#resolving-time), anchor segments that must leave
+time for at least one unwarped tick, and [measure lengths](#measures). No other code sees a
+document that failed either.
 
 Types remove most illegal states: a `Shape` cannot hold a duration and a path at once, a nonzero
 `Ticks` stops `Sustain` restating `Instant`, and containment cannot dangle. What is left is stated
@@ -622,6 +623,7 @@ implementations disagreeing.
 - At most one marker per `tick` and kind, since two sections starting on one tick name one part
   twice.
 - Chart names are unique, since the editor tells charts apart by name.
+- Timing anchors strictly increase in both tick and audio time.
 
 **References**
 
@@ -633,6 +635,8 @@ implementations disagreeing.
 
 - Every span ends on a tick: a sustain or warp at tick `t` with length `w` has
   `t + w <= i32::MAX`, so adding a span to a tick never leaves the type.
+- Anchors do not sit inside warps, and the pauses and warps between two anchors leave positive
+  time for the unwarped ticks between them.
 - `Path` points are strictly increasing in `tick`, and the first is later than the object's own
   tick.
 - All points of a `Path`, including the object's own position, are the **same** `Position` variant.

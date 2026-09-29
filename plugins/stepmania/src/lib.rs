@@ -48,9 +48,9 @@ pub struct Song {
 pub struct Timing {
     /// Audio positions pinned to chart ticks.
     pub anchors: Vec<Anchor>,
-    /// Starting tempo.
+    /// Tempo after the last anchor.
     pub tempo: Bpm,
-    /// Changes to tempo, metre and game-specific timing.
+    /// Changes to metre and game-specific timing.
     pub events: Vec<TimingEvent>,
 }
 

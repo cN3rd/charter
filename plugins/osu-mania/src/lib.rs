@@ -1,7 +1,7 @@
 //! osu!mania as a charter ruleset.
 //!
-//! A chart's lane count is its key count. Notes are taps and holds. Timing is BPM, meter in
-//! beats per measure, and scroll speed changes; osu! has no stops, delays or warps.
+//! A chart's lane count is its key count. Notes are taps and holds. Timing is tempo anchors,
+//! meter in beats per measure, and scroll speed changes; osu! has no stops, delays or warps.
 //!
 //! [`Song`] is the typed view of a document whose ruleset is [`ID`]. Reading one fails on
 //! anything osu!mania cannot represent and skips data other plugins left behind;
@@ -59,7 +59,7 @@ pub struct Song {
 pub struct Timing {
     /// Audio positions pinned to chart ticks.
     pub anchors: Vec<Anchor>,
-    /// Starting tempo.
+    /// Tempo after the last anchor.
     pub tempo: Bpm,
     /// Metre and scroll-speed changes.
     pub events: Vec<TimingEvent>,

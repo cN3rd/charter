@@ -171,12 +171,13 @@ impl Valid<'_, Child> {
 
 impl Valid<'_, Timing> {
     /// Audio time of an object on `tick`, at the document's resolution. The time of a tick
-    /// includes a `delay` on it and excludes a `stop` on it; warps take no time, and the first
-    /// `bpm` also rules earlier ticks.
+    /// includes a `delay` on it and excludes a `stop` on it; warps take no time, and ticks before
+    /// the first anchor use the first anchored segment's tempo, or the tail tempo when there is
+    /// only one anchor.
     ///
     /// # Panics
     ///
-    /// Never: validation guarantees a `bpm` and warps that end on a tick.
+    /// Never: validation guarantees an anchor and warps that end on a tick.
     #[must_use]
     #[expect(
         clippy::expect_used,
@@ -188,10 +189,10 @@ impl Valid<'_, Timing> {
             .expect("a valid timing map resolves every tick")
     }
 
-    /// The tempo a single `bpm` event on `from`, in place of any others before `to`, needs for
-    /// `to` to fall `seconds` after `from`, to six places, as when syncing a beat to the audio.
-    /// Stops, delays and warps keep their lengths. `None` when `to` is not after `from`, or the
-    /// pauses in between already take `seconds` or longer.
+    /// The tempo a segment beginning at `from` needs for `to` to fall `seconds` later, to six
+    /// places, as when syncing a beat to the audio. Stops, delays and warps keep their lengths.
+    /// `None` when `to` is not after `from`, or the pauses in between already take `seconds` or
+    /// longer.
     #[must_use]
     pub fn tempo_for(&self, from: Tick, to: Tick, seconds: f64) -> Option<Bpm> {
         self.part
