@@ -1644,6 +1644,83 @@ mod tests {
     }
 
     #[test]
+    fn expanded_chart_settings_and_samples_show_their_values() {
+        let mut document: serde_json::Value =
+            serde_json::from_slice(&charter_editor::demo::song().to_json().unwrap()).unwrap();
+        document["charts"][0]["settings"] = serde_json::json!({"level": 7});
+        document["samples"]["drum"] = serde_json::json!("kick.wav");
+        let song = Song::open(&serde_json::to_vec(&document).unwrap(), &[]).unwrap();
+        let mut harness =
+            Harness::builder().build_ui_state(|ui, song: &mut Song| details(ui, song), song);
+        harness.run();
+        harness.get_by_label("Chart settings").click();
+        harness.run();
+        harness.get_by_label("Samples").click();
+        harness.run();
+        assert!(harness.query_by_label("7").is_some());
+        assert!(harness.query_by_label("kick.wav").is_some());
+    }
+
+    #[test]
+    fn a_recent_path_without_a_filename_is_shown_as_its_full_path() {
+        let mut harness = Harness::builder().build_ui_state(
+            |ui, actions: &mut Vec<Action>| {
+                open_recent(ui, &[std::path::PathBuf::from("/")], actions);
+            },
+            Vec::new(),
+        );
+        harness.run();
+        harness.get_by_label("Open recent").click();
+        harness.run();
+        harness.get_by_label_contains("/").click();
+        harness.run();
+        assert_eq!(
+            harness.state().as_slice(),
+            [Action::OpenRecent(std::path::PathBuf::from("/"))]
+        );
+    }
+
+    #[test]
+    fn the_welcome_page_can_open_a_recent_path_without_a_filename() {
+        let mut harness = Harness::builder().build_ui_state(
+            |ui, actions: &mut Vec<Action>| {
+                style::apply(ui.ctx(), &[]);
+                empty(ui, (false, &[std::path::PathBuf::from("/")]), actions);
+            },
+            Vec::new(),
+        );
+        harness.run();
+        harness.get_by_label("/").click();
+        harness.run();
+        assert_eq!(
+            harness.state().as_slice(),
+            [Action::OpenRecent(std::path::PathBuf::from("/"))]
+        );
+    }
+
+    #[test]
+    fn a_chart_without_lanes_is_named_as_such_in_the_song_panel() {
+        let mut document: serde_json::Value =
+            serde_json::from_slice(&charter_editor::demo::song().to_json().unwrap()).unwrap();
+        document["charts"][0]["lanes"] = serde_json::Value::Null;
+        document["charts"][0]["objects"] = serde_json::json!([]);
+        let song = Song::open(&serde_json::to_vec(&document).unwrap(), &[]).unwrap();
+        let mut harness = Harness::builder().build_ui_state(
+            |ui, song: &mut Song| {
+                song_panel(
+                    ui,
+                    song,
+                    (&mut SongDrafts::default(), None),
+                    &mut Vec::new(),
+                );
+            },
+            song,
+        );
+        harness.run();
+        assert!(harness.query_by_label("no lanes").is_some());
+    }
+
+    #[test]
     fn adding_a_marker_keeps_the_notefield_wide_enough_for_eight_lanes_at_800() {
         const PLUGINS: &[&dyn RulesetPlugin] = &[&charter_stepmania::Plugin];
         let game = &charter_stepmania::Plugin;
@@ -1845,6 +1922,66 @@ mod tests {
             Some("cover.png")
         );
         assert_eq!(harness.state().1.artwork, None);
+    }
+
+    #[test]
+    fn clearing_preview_length_keeps_the_preview_start_and_ends_with_the_audio() {
+        let mut harness = editable_panel();
+        let field = harness.get_by_role_and_label(Role::TextInput, "Preview length");
+        field.focus();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.key_press(egui::Key::Backspace);
+        harness.run();
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+        let [Action::SetMetadata(metadata)] = harness.state().2.as_slice() else {
+            panic!("expected a preview length edit");
+        };
+        let preview = metadata.preview.unwrap();
+        assert!((f64::from(preview.start_seconds) - 1.0).abs() < f64::EPSILON);
+        assert_eq!(preview.length_seconds, None);
+    }
+
+    #[test]
+    fn leaving_a_changed_preview_length_submits_it_without_enter() {
+        let mut harness = editable_panel();
+        let field = harness.get_by_role_and_label(Role::TextInput, "Preview length");
+        field.focus();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        field.type_text("4");
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::TextInput, "Title")
+            .focus();
+        harness.run();
+        let [Action::SetMetadata(metadata)] = harness.state().2.as_slice() else {
+            panic!("expected one preview edit on leaving the field");
+        };
+        assert_eq!(
+            metadata.preview.unwrap().length_seconds.map(f64::from),
+            Some(4.0)
+        );
+    }
+
+    #[test]
+    fn escape_leaves_a_typed_preview_length_uncommitted() {
+        let mut harness = editable_panel();
+        let field = harness.get_by_role_and_label(Role::TextInput, "Preview length");
+        field.focus();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        field.type_text("4");
+        harness.run();
+        harness.key_press(egui::Key::Escape);
+        harness.run();
+        assert!(harness.state().2.is_empty());
+        assert_eq!(harness.state().1.length, None);
+        assert_eq!(
+            harness
+                .get_by_role_and_label(Role::TextInput, "Preview length")
+                .value()
+                .as_deref(),
+            Some("2")
+        );
     }
 
     #[test]

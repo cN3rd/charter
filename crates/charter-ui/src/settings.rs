@@ -1371,6 +1371,32 @@ mod tests {
     }
 
     #[test]
+    fn snapshots_show_the_chosen_folder_and_default_restores_the_data_folder() {
+        let mut harness = Harness::builder().build_ui_state(
+            |ui, (settings, open, asked): &mut (Settings, bool, Option<Asked>)| {
+                *asked = show(
+                    ui.ctx(),
+                    settings,
+                    open,
+                    Some(std::path::Path::new("/data/charter")),
+                );
+            },
+            (Settings::default(), true, None),
+        );
+        harness.run();
+        harness.get_by_label("Autosave").click();
+        harness.run();
+        assert!(harness.query_by_label("/data/charter/snapshots").is_some());
+        harness.state_mut().0.snapshot_folder = Some("/music/copies".into());
+        harness.run();
+        assert!(harness.query_by_label("/music/copies").is_some());
+        harness.get_by_label("Default").click();
+        harness.run();
+        assert_eq!(harness.state().0.snapshot_folder, None);
+        assert!(harness.query_by_label("/data/charter/snapshots").is_some());
+    }
+
+    #[test]
     fn sound_preview_and_calibration_buttons_ask_for_their_distinct_actions() {
         let mut harness = Harness::builder().build_ui_state(
             |ui, (settings, open, asked): &mut (Settings, bool, Option<Asked>)| {

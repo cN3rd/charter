@@ -500,6 +500,7 @@ fn milliseconds_of(seconds: f64) -> String {
 
 #[cfg(test)]
 mod tests {
+    use egui::accesskit::Role;
     use egui_kittest::Harness;
     use egui_kittest::kittest::Queryable;
 
@@ -639,5 +640,60 @@ mod tests {
     fn a_tiny_negative_offset_is_shown_as_zero_not_negative_zero() {
         assert_eq!(milliseconds_of(-0.000_000_01), "0");
         assert_eq!(milliseconds_of(-0.001), "-1");
+    }
+
+    #[test]
+    fn an_invalid_timing_point_time_keeps_the_edit_for_correction() {
+        const PLUGINS: &[&dyn charter_core::RulesetPlugin] = &[&charter_stepmania::Plugin];
+        let song = Song::new(charter_editor::demo::song(), PLUGINS);
+        let mut harness =
+            Harness::builder().build_ui_state(
+                |ui,
+                 (song, drafts, actions, refused): &mut (
+                    Song,
+                    Drafts,
+                    Vec<Action>,
+                    Option<String>,
+                )| {
+                    *refused = point_fields(ui, song, Tick::new(0), drafts, actions)
+                        .or_else(|| refused.take());
+                },
+                (song, Drafts::default(), Vec::new(), None),
+            );
+        harness.run();
+        let time = harness.get_by_role_and_label(Role::TextInput, "Time");
+        time.focus();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        time.type_text("soon");
+        harness.run();
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+        assert!(harness.state().3.as_deref().unwrap().contains("soon"));
+        assert_eq!(harness.state().1.time.as_deref(), Some("soon"));
+        assert!(harness.state().2.is_empty());
+    }
+
+    #[test]
+    fn lowering_a_timing_points_bpm_requests_a_one_bpm_change() {
+        const PLUGINS: &[&dyn charter_core::RulesetPlugin] = &[&charter_stepmania::Plugin];
+        let song = Song::new(charter_editor::demo::song(), PLUGINS);
+        let mut harness = Harness::builder().build_ui_state(
+            |ui, (song, drafts, actions): &mut (Song, Drafts, Vec<Action>)| {
+                point_fields(ui, song, Tick::new(0), drafts, actions);
+            },
+            (song, Drafts::default(), Vec::new()),
+        );
+        harness.run();
+        harness.get_by_label("Lower the BPM by 1").click();
+        harness.run();
+        assert!(
+            matches!(
+                harness.state().2.as_slice(),
+                [Action::SetBpmAt(at, bpm)] if *at == Tick::new(0)
+                    && (f64::from(*bpm) - 149.0).abs() < 1e-9
+            ),
+            "{:?}",
+            harness.state().2
+        );
     }
 }

@@ -833,6 +833,17 @@ mod tests {
         }));
     }
 
+    #[test]
+    fn no_recovery_location_or_file_does_not_offer_a_missing_autosave() {
+        let mut host = host(Memory::default());
+        host.recover();
+        assert_eq!(host.window.message(), None);
+        host.recovery = None;
+        host.recover();
+        assert_eq!(host.window.message(), None);
+        assert_eq!(host.window.title(), "charter");
+    }
+
     /// A PNG of `width` by `height` red pixels.
     fn png(width: u32, height: u32) -> Vec<u8> {
         let image = image::RgbaImage::from_pixel(width, height, image::Rgba([255, 0, 0, 255]));
@@ -1115,6 +1126,81 @@ mod tests {
     }
 
     #[test]
+    fn tagged_audio_offers_its_embedded_cover_beside_the_song() {
+        let comment = b"TITLE=Track";
+        let mut vorbis = Vec::new();
+        vorbis.extend_from_slice(&0_u32.to_le_bytes());
+        vorbis.extend_from_slice(&1_u32.to_le_bytes());
+        vorbis.extend_from_slice(&u32::try_from(comment.len()).unwrap().to_le_bytes());
+        vorbis.extend_from_slice(comment);
+        let mut audio = b"fLaC".to_vec();
+        audio.extend_from_slice(&[0, 0, 0, 34]);
+        let mut info = [0; 34];
+        info[..2].copy_from_slice(&4096_u16.to_be_bytes());
+        info[2..4].copy_from_slice(&4096_u16.to_be_bytes());
+        info[10..18].copy_from_slice(&((8000_u64 << 44) | (15_u64 << 36)).to_be_bytes());
+        audio.extend_from_slice(&info);
+        audio.extend_from_slice(&[4, 0, 0, u8::try_from(vorbis.len()).unwrap()]);
+        audio.extend(vorbis);
+        let cover = png(2, 3);
+        let mut picture_block = 3_u32.to_be_bytes().to_vec();
+        picture_block.extend_from_slice(&9_u32.to_be_bytes());
+        picture_block.extend_from_slice(b"image/png");
+        picture_block.extend_from_slice(&0_u32.to_be_bytes());
+        picture_block.extend_from_slice(&[0; 16]);
+        picture_block.extend_from_slice(&u32::try_from(cover.len()).unwrap().to_be_bytes());
+        picture_block.extend_from_slice(&cover);
+        let length = u32::try_from(picture_block.len()).unwrap().to_be_bytes();
+        audio.extend_from_slice(&[0x86, length[1], length[2], length[3]]);
+        audio.extend(picture_block);
+        let mut frame = vec![0xFF, 0xF8, 0x60, 0x08, 0x00, 15];
+        let crc8 = frame.iter().fold(0_u8, |crc, byte| {
+            (0..8).fold(crc ^ byte, |crc, _| {
+                if crc & 0x80 == 0 {
+                    crc << 1
+                } else {
+                    (crc << 1) ^ 0x07
+                }
+            })
+        });
+        frame.push(crc8);
+        frame.extend_from_slice(&[0, 0, 0]);
+        let crc16 = frame.iter().fold(0_u16, |crc, byte| {
+            (0..8).fold(crc ^ (u16::from(*byte) << 8), |crc, _| {
+                if crc & 0x8000 == 0 {
+                    crc << 1
+                } else {
+                    (crc << 1) ^ 0x8005
+                }
+            })
+        });
+        frame.extend_from_slice(&crc16.to_be_bytes());
+        audio.extend(frame);
+        assert_eq!(
+            charter_audio::tags(audio.clone(), Some("flac"))
+                .artwork
+                .map(|artwork| artwork.bytes),
+            Some(cover.clone())
+        );
+        let mut host = host(Memory::with(&[("/m/track.flac", &audio)]));
+        host.window = Window::new(PLUGINS);
+        host.window.open(Path::new("/s/Song/Song.json"), &sm_song());
+        host.window.use_audio(Path::new("/m/track.flac"));
+        host.window.take_requests();
+
+        host.answer(Request::ReadTags {
+            file: PathBuf::from("/m/track.flac"),
+        });
+
+        assert_eq!(
+            host.window
+                .artwork_write_for(Path::new("/s/Song/Song.json")),
+            Some((PathBuf::from("/s/Song/cover.png"), cover))
+        );
+        assert_eq!(host.window.message(), None);
+    }
+
+    #[test]
     fn a_song_read_from_the_disk_opens_and_one_missing_says_why() {
         let mut host = host(Memory::with(&[("/s/song.json", SONG)]));
         host.read(Path::new("/s/song.json"));
@@ -1145,6 +1231,22 @@ mod tests {
                 .message()
                 .unwrap()
                 .contains("cannot name a song")
+        );
+    }
+
+    #[test]
+    fn saving_as_when_the_project_folder_cannot_be_made_preserves_the_song() {
+        let mut host = host(Memory {
+            uncreatable: vec![PathBuf::from("/s/Song")],
+            ..Memory::default()
+        });
+        host.save_as(Path::new("/s/Song.json"), b"new");
+        assert!(!files(&host, "/s/Song/Song.json"));
+        assert!(
+            host.window
+                .message()
+                .unwrap()
+                .contains("folder cannot be created")
         );
     }
 

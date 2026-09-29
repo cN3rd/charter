@@ -4262,6 +4262,31 @@ mod tests {
     }
 
     #[test]
+    fn right_clicking_an_already_selected_note_keeps_that_selection() {
+        let mut harness = editable_four_taps();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.run();
+        assert_eq!(
+            harness.state().song.as_ref().unwrap().selection().count(),
+            4
+        );
+        let pos = on_line(&harness, lane_x(&harness, 2), 480);
+        harness.hover_at(pos);
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        harness.run();
+        assert!(harness.query_by_label("4 notes selected").is_some());
+        let selected = harness.state().song.as_ref().unwrap().selection().count();
+        assert_eq!(selected, 4);
+    }
+
+    #[test]
     fn what_the_menu_places_here_goes_where_it_was_opened_though_the_cursor_moved() {
         let mut harness = editable_four_taps();
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
@@ -6696,6 +6721,28 @@ mod tests {
     }
 
     #[test]
+    fn the_timing_window_uses_only_the_open_songs_waveform() {
+        let mut harness = syncing();
+        let waiting = "The waveform shows once the song's audio loads.";
+        assert!(harness.query_by_label(waiting).is_some());
+        harness
+            .state_mut()
+            .waveform_ready(Path::new("other.ogg"), peaks());
+        harness.run();
+        assert!(harness.query_by_label(waiting).is_some());
+        harness
+            .state_mut()
+            .waveform_ready(Path::new("a.ogg"), peaks());
+        harness.run();
+        assert!(harness.query_by_label(waiting).is_none());
+        assert!(harness.output().shapes.iter().any(|shape| matches!(
+            &shape.shape,
+            egui::Shape::LineSegment { stroke, .. }
+                if stroke.color == egui::Color32::from_rgb(118, 158, 210)
+        )));
+    }
+
+    #[test]
     fn the_timing_windows_start_bpm_sets_the_first_anchors_tempo() {
         let mut harness = syncing();
         let start = harness.get_by_role_and_label(Role::TextInput, "Start BPM");
@@ -8799,6 +8846,56 @@ mod tests {
             facts(&harness),
             ("Starlight".to_owned(), "The Lanes".to_owned())
         );
+    }
+
+    #[test]
+    fn artist_tags_are_offered_even_when_the_song_title_is_unchanged() {
+        let mut harness = editable_four_taps();
+        drop_file(&mut harness, "/music/track.ogg");
+        read_tags(&mut harness, "/music/track.ogg", "Four", "New artist");
+        assert!(harness.query_by_label_contains(OFFER).is_some());
+        harness.get_by_label("Import").click();
+        harness.run();
+        assert_eq!(
+            facts(&harness),
+            ("Four".to_owned(), "New artist".to_owned())
+        );
+    }
+
+    #[test]
+    fn fallback_fonts_are_installed_in_the_windows_text_families() {
+        let bytes = include_bytes!("../../charter-style/assets/fonts/Inter-Regular.ttf");
+        let app =
+            Window::default().with_fallback_fonts(vec![("fallback".to_owned(), bytes.to_vec())]);
+        let harness = window(app);
+        harness.ctx.fonts(|fonts| {
+            let definitions = fonts.definitions();
+            assert!(definitions.font_data.contains_key("fallback"));
+            for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+                assert!(
+                    definitions.families[&family]
+                        .iter()
+                        .any(|name| name == "fallback")
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn the_notefield_identifies_an_empty_chart_without_lanes() {
+        let mut document = serde_json::to_value(charter_editor::demo::song().document()).unwrap();
+        document["charts"][0]["objects"] = serde_json::json!([]);
+        document["charts"][0]["lanes"] = serde_json::Value::Null;
+        let mut app = Window::default().with_settings(Settings {
+            song_panel: false,
+            ..Settings::default()
+        });
+        app.open(
+            Path::new("/songs/without-lanes.json"),
+            &serde_json::to_vec(&document).unwrap(),
+        );
+        let harness = window(app);
+        assert!(harness.query_by_label("no lanes").is_some());
     }
 
     #[test]

@@ -212,6 +212,12 @@ mod tests {
     }
 
     #[test]
+    fn stretched_audio_keeps_the_source_sample_rate() {
+        let stretched = Stretched::new(tone(440.0, 0.1, 0.0), 0.5).unwrap();
+        assert_eq!(stretched.sample_rate(), RATE);
+    }
+
+    #[test]
     fn half_speed_lasts_twice_as_long_at_the_same_pitch() {
         let mut stretched = Stretched::new(tone(440.0, 3.0, 0.0), 0.5).unwrap();
         assert_eq!(stretched.num_frames(), 6 * 44_100);

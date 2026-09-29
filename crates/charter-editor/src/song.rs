@@ -3604,6 +3604,19 @@ pub(crate) mod tests {
         song.finer_snap();
         assert_eq!(song.snap(), note(16));
     }
+
+    #[test]
+    fn a_song_whose_resolution_cannot_hold_the_default_snap_opens_on_its_first_whole_snap() {
+        let value = json!({
+            "format_version": 0,
+            "ticks_per_beat": 1,
+            "ruleset": { "id": "test", "version": "1" },
+            "metadata": { "title": "t", "artist": "a", "audio": "song.ogg" },
+            "timing": { "offset_seconds": 0.0, "events": [bpm_event(0, 120.0)] }
+        });
+        let song = Song::open(&serde_json::to_vec(&value).unwrap(), &[]).unwrap();
+        assert_eq!(song.snap(), note(4));
+    }
 }
 
 /// Proofs for Kani, run with `cargo kani -p charter-editor`.

@@ -164,6 +164,8 @@ pub mod memory {
         pub unwritable: Vec<PathBuf>,
         /// Files that refuse reads.
         pub unreadable: Vec<PathBuf>,
+        /// Folders that refuse creation.
+        pub uncreatable: Vec<PathBuf>,
         /// Whether every move fails.
         pub stuck: bool,
         /// Whether a copy writes half its bytes before failing.
@@ -254,7 +256,13 @@ pub mod memory {
             self.write(to, &bytes)
         }
 
-        fn make_folder(&self, _: &Path) -> io::Result<()> {
+        fn make_folder(&self, path: &Path) -> io::Result<()> {
+            if self.uncreatable.iter().any(|refused| refused == path) {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "folder cannot be created",
+                ));
+            }
             Ok(())
         }
 
@@ -349,6 +357,54 @@ mod tests {
             Some(&b"same audio"[..])
         );
         assert_eq!(disk.get("/s/audio.ogg.partial"), None);
+    }
+
+    #[test]
+    fn copying_audio_never_reuses_a_destination_when_the_source_is_missing() {
+        let disk = Memory::with(&[("/s/audio.ogg", b"earlier audio")]);
+        let error = copy_whole(
+            &disk,
+            Path::new("/m/missing.ogg"),
+            Path::new("/s/audio.ogg"),
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+        assert_eq!(
+            disk.get("/s/audio.ogg").as_deref(),
+            Some(&b"earlier audio"[..])
+        );
+    }
+
+    #[test]
+    fn copying_audio_never_replaces_an_existing_unreadable_destination() {
+        let disk = Memory {
+            unreadable: vec![PathBuf::from("/s/audio.ogg")],
+            ..Memory::with(&[
+                ("/m/audio.ogg", b"new audio"),
+                ("/s/audio.ogg", b"earlier audio"),
+            ])
+        };
+        let error =
+            copy_whole(&disk, Path::new("/m/audio.ogg"), Path::new("/s/audio.ogg")).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(
+            disk.get("/s/audio.ogg").as_deref(),
+            Some(&b"earlier audio"[..])
+        );
+    }
+
+    #[test]
+    fn copying_audio_into_an_uncreatable_folder_leaves_no_partial_file() {
+        let disk = Memory {
+            uncreatable: vec![PathBuf::from("/s")],
+            ..Memory::with(&[("/m/audio.ogg", b"audio")])
+        };
+        let error =
+            copy_whole(&disk, Path::new("/m/audio.ogg"), Path::new("/s/audio.ogg")).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(disk.get("/s/audio.ogg"), None);
+        assert_eq!(disk.get("/s/audio.ogg.partial"), None);
+        assert_eq!(disk.get("/m/audio.ogg").as_deref(), Some(&b"audio"[..]));
     }
 
     #[test]

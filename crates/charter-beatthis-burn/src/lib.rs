@@ -468,6 +468,20 @@ mod tests {
     }
 
     #[test]
+    fn pieces_shorter_than_the_border_still_start_with_silent_padding() {
+        assert_eq!(chunk_starts(2), [-6]);
+        assert_eq!(chunk_starts(5), [-6]);
+        let (input, count) = chunk(&[[1.0; mel::BINS]; 2], -6);
+        assert_eq!(count, 14);
+        assert!(input[..6 * mel::BINS].iter().all(|sample| *sample == 0.0));
+        assert!(
+            input[6 * mel::BINS..8 * mel::BINS]
+                .iter()
+                .all(|sample| (*sample - 1.0).abs() < f32::EPSILON)
+        );
+    }
+
+    #[test]
     fn empty_short_and_exact_chunk_length_audio_have_their_edges_padded() {
         assert!(chunk_starts(0).is_empty());
         assert_eq!(chunk_starts(1), [-6]);

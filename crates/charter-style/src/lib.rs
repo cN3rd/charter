@@ -570,6 +570,7 @@ mod tests {
             let names = &fonts.families[&family];
             assert_eq!(names.last().map(String::as_str), Some("cjk"), "{family:?}");
         }
+
         let text = &fonts.families[&FontFamily::Proportional];
         assert_eq!(text.first().map(String::as_str), Some("inter"));
         assert!(!fonts.families[&icons()].contains(&"cjk".to_owned()));

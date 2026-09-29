@@ -1966,6 +1966,7 @@ const POINTS_PER_STEP: f32 = 40.0;
 
 #[cfg(test)]
 mod tests {
+    use charter_core::RulesetPlugin;
     use egui::{Modifiers, MouseWheelUnit, TouchPhase, Vec2};
     use egui_kittest::Harness;
     use egui_kittest::kittest::{NodeT, Queryable};
@@ -2333,6 +2334,57 @@ mod tests {
             Zoom::START,
             false,
         )
+    }
+
+    #[test]
+    fn events_at_one_tick_draw_one_timing_point_with_both_details() {
+        let mut document = serde_json::to_value(demo::song().document()).unwrap();
+        let timing_events = document["timing"]["events"].as_array_mut().unwrap();
+        timing_events.insert(0, serde_json::json!({"tick": 0, "kind": {"stop": 0.25}}));
+        timing_events.insert(1, serde_json::json!({"tick": 0, "kind": {"delay": 0.125}}));
+        let document =
+            charter_core::ValidDocument::from_json(&serde_json::to_vec(&document).unwrap())
+                .unwrap();
+        let song = Song::new(document, &[]);
+        let field = field(&song);
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let area = Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0));
+            let canvas = Canvas::new(
+                ui.painter_at(area),
+                Flip {
+                    area,
+                    direction: Direction::Up,
+                },
+            );
+            events(
+                &canvas,
+                &field.columns,
+                &song,
+                field.view,
+                Rangef::new(0.0, 600.0),
+                (Tick::new(0), Tick::new(960)),
+            );
+        });
+        let labels: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| {
+                let egui::Shape::Text(text) = &shape.shape else {
+                    return None;
+                };
+                Some(text.galley.text().to_owned())
+            })
+            .collect();
+        output.textures_delta.clear();
+        assert!(
+            labels.iter().any(|label| label == "stop 0.25 s"),
+            "{labels:?}"
+        );
+        assert!(
+            labels.iter().any(|label| label == "delay 0.125 s"),
+            "{labels:?}"
+        );
     }
 
     #[test]
@@ -2786,6 +2838,49 @@ mod tests {
                 .accesskit_node()
                 .is_disabled()
         );
+    }
+
+    #[test]
+    fn changing_a_selected_ttr_note_uses_the_rulesets_requested_change() {
+        let game = &charter_ttr::Plugin;
+        let mut document: serde_json::Value = serde_json::from_slice(
+            &game
+                .new_song(&charter_core::NewSong {
+                    metadata: demo::song().document().metadata.clone(),
+                    layout: 0,
+                    charts: vec![charter_core::NewChart::named("Hard")],
+                })
+                .unwrap()
+                .to_json()
+                .unwrap(),
+        )
+        .unwrap();
+        document["charts"][0]["objects"] = serde_json::json!([{
+            "tick": 0,
+            "position": {"lane": {"index": 0}},
+            "kind": "tap",
+            "shape": "instant"
+        }]);
+        let document =
+            charter_core::ValidDocument::from_json(&serde_json::to_vec(&document).unwrap())
+                .unwrap();
+        let mut song = Song::new(document, &[game]);
+        song.select_all();
+        let mut harness = Harness::builder().build_ui_state(
+            move |ui, actions: &mut Vec<Action>| {
+                menu_items(ui, &song, (LaneIndex::new(0), Tick::new(0)), actions);
+            },
+            Vec::new(),
+        );
+        harness.run();
+        harness.get_by_label("Change to").click();
+        harness.run();
+        harness.get_by_label("Arrow").click();
+        harness.run();
+        assert!(matches!(
+            harness.state().as_slice(),
+            [Action::ChangeNotes(id)] if id == "arrow"
+        ));
     }
 
     #[test]

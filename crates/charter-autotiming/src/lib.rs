@@ -471,6 +471,52 @@ mod tests {
     }
 
     #[test]
+    fn a_nearby_onset_refines_the_beat_even_when_a_louder_onset_is_farther_away() {
+        let heard = [
+            Onset {
+                seconds: 1.012,
+                strength: 0.1,
+            },
+            Onset {
+                seconds: 1.020,
+                strength: 1.0,
+            },
+        ];
+        assert_eq!(refined(&[1.0], &[], &heard), [(1.012, 1.0, false)]);
+    }
+
+    #[test]
+    fn the_typical_lag_uses_the_nearest_onset_to_each_beat() {
+        let heard = [
+            Onset {
+                seconds: 0.02,
+                strength: 1.0,
+            },
+            Onset {
+                seconds: 0.06,
+                strength: 1.0,
+            },
+            Onset {
+                seconds: 1.02,
+                strength: 1.0,
+            },
+            Onset {
+                seconds: 1.06,
+                strength: 1.0,
+            },
+            Onset {
+                seconds: 2.02,
+                strength: 1.0,
+            },
+            Onset {
+                seconds: 2.06,
+                strength: 1.0,
+            },
+        ];
+        assert!((lag(&[0.0, 1.0, 2.0], &heard) - 0.02).abs() < 1e-9);
+    }
+
+    #[test]
     fn a_steady_song_is_one_snapped_section_on_its_first_downbeat() {
         let (beats, downbeats) = beats(0.371, 128.0, 200, 4);
         let found = estimate(

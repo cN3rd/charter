@@ -2521,6 +2521,199 @@ mod tests {
         ));
         assert!(harness.state().window.preview.is_none());
     }
+
+    #[test]
+    fn looping_one_selected_anchor_ends_at_the_next_anchor() {
+        let mut harness = timing_harness();
+        let at = row_point(&harness, 960);
+        click(&mut harness, at, Modifiers::NONE);
+        harness.key_press_modifiers(Modifiers::SHIFT, Key::L);
+        harness.step();
+        assert_eq!(
+            harness.state().commands,
+            [Command::Loop {
+                from: Tick::new(960),
+                to: Tick::new(1920),
+            }]
+        );
+    }
+
+    #[test]
+    fn focusing_from_the_playhead_finds_the_next_anchor_and_moving_it_keeps_focus() {
+        let mut harness = timing_harness();
+        harness.state_mut().song.jump_to(Tick::new(1200));
+        harness.run();
+        let state = harness.state();
+        let cache = state.window.cache.as_ref().unwrap();
+        let frame = frame(&state.song, &[], (cache, Layout::Bars), 0.0);
+        let mut window = TimingWindow::default();
+        let mut commands = Vec::new();
+        act(&mut window, &frame, Intent::Focus(true), &mut commands);
+        assert_eq!(window.focus, Some(Tick::new(1920)));
+        act(&mut window, &frame, Intent::Move(1), &mut commands);
+        assert_eq!(window.focus, Some(Tick::new(2880)));
+        assert_eq!(window.selection, [Tick::new(2880)]);
+        assert_eq!(
+            commands,
+            [Command::Edit(Edit::MoveAnchors(vec![(
+                Tick::new(1920),
+                Tick::new(2880)
+            )]))]
+        );
+    }
+
+    #[test]
+    fn consecutive_tail_tempo_adjustments_ask_to_merge_into_one_edit() {
+        let harness = timing_harness();
+        let state = harness.state();
+        let cache = state.window.cache.as_ref().unwrap();
+        let frame = frame(&state.song, &[], (cache, Layout::Bars), 1.0);
+        let mut window = TimingWindow::default();
+        let mut commands = Vec::new();
+        act(&mut window, &frame, Intent::Tail(1.0), &mut commands);
+        act(&mut window, &frame, Intent::Tail(1.0), &mut commands);
+        assert_eq!(
+            commands,
+            [
+                Command::Edit(Edit::TailBpm {
+                    bpm: Bpm::try_from(121.0).unwrap(),
+                    merge: false,
+                }),
+                Command::Edit(Edit::TailBpm {
+                    bpm: Bpm::try_from(121.0).unwrap(),
+                    merge: true,
+                }),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_dragged_audio_anchor_shows_when_it_snaps_to_an_onset() {
+        let harness = timing_harness();
+        let state = harness.state();
+        let cache = state.window.cache.as_ref().unwrap();
+        let onsets = [Onset {
+            seconds: 0.75,
+            strength: 1.0,
+        }];
+        let frame = frame(&state.song, &onsets, (cache, Layout::Bars), 0.0);
+        let span = frame.bars.rows(BarsPerRow::One, SecondsPerRow::default())[0];
+        let row = Row {
+            from: span.from,
+            start: span.start,
+            to: span.to,
+            rect: egui::Rect::from_min_size(Pos2::ZERO, vec2(1000.0, ROW)),
+        };
+        let mut window = TimingWindow {
+            gesture: Gesture::DragAudio {
+                tick: Tick::new(960),
+                from: 0.5,
+                to: 0.75,
+                origin: 0.5,
+            },
+            ..TimingWindow::default()
+        };
+        let (at, snapped) = ghost(&window, &frame, &row, None, false).unwrap();
+        assert!((at - row.x(&frame.bars, Tick::new(1440))).abs() < 1.0);
+        assert!(snapped);
+        assert_eq!(ghost(&window, &frame, &row, None, true), Some((at, false)));
+        window.gesture = Gesture::Idle;
+        assert_eq!(
+            anchor_near(&frame, &row, row.x(&frame.bars, Tick::new(960))),
+            Some(Tick::new(960))
+        );
+    }
+
+    #[test]
+    fn middle_click_auditions_an_anchor_but_plays_from_empty_audio() {
+        let mut harness = timing_harness();
+        for (tick, expected) in [
+            (960, Command::Audition(0.0)),
+            (2880, Command::PlayFrom(Tick::new(2880))),
+        ] {
+            let at = row_point(&harness, tick);
+            harness.hover_at(at);
+            for pressed in [true, false] {
+                harness.event(egui::Event::PointerButton {
+                    pos: at,
+                    button: egui::PointerButton::Middle,
+                    pressed,
+                    modifiers: Modifiers::NONE,
+                });
+            }
+            harness.step();
+            assert_eq!(harness.state().commands.last(), Some(&expected));
+        }
+    }
+
+    #[test]
+    fn a_refused_edit_capitalises_its_reason_and_accepts_an_empty_plugin_error() {
+        let harness = timing_harness();
+        let mut window = TimingWindow::default();
+        let edit = Edit::TailBpm {
+            bpm: Bpm::try_from(120.0).unwrap(),
+            merge: false,
+        };
+        window.refused(
+            &edit,
+            &Refusal::ReadOnly,
+            harness.state().song.timing(),
+            0.0,
+        );
+        assert_eq!(window.status.as_deref(), Some("The song is read only"));
+        let blank = Refusal::Game(Box::new(std::io::Error::other("")));
+        window.refused(&edit, &blank, harness.state().song.timing(), 0.0);
+        assert_eq!(window.status.as_deref(), Some(""));
+    }
+
+    #[test]
+    fn the_wide_keyboard_help_lists_timing_shortcuts() {
+        let mut harness = timing_harness();
+        harness.state_mut().window.help = true;
+        harness.run();
+        assert!(harness.query_by_label("Ctrl+wheel").is_some());
+    }
+
+    #[test]
+    fn the_anchor_menu_plays_from_one_beat_before_the_chosen_anchor() {
+        let mut harness = timing_harness();
+        let at = row_point(&harness, 960);
+        harness.hover_at(at);
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            });
+        }
+        harness.step();
+        harness.get_by_label("Play from a beat before").click();
+        harness.step();
+        assert_eq!(harness.state().commands, [Command::Audition(0.0)]);
+    }
+
+    #[test]
+    fn an_anchor_menu_can_select_every_anchor_up_to_its_target() {
+        let mut harness = timing_harness();
+        let at = row_point(&harness, 960);
+        harness.hover_at(at);
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            });
+        }
+        harness.step();
+        harness.get_by_label("Select to the start").click();
+        harness.step();
+        assert_eq!(
+            harness.state().window.selection,
+            [Tick::new(0), Tick::new(960)]
+        );
+    }
 }
 
 /// Proofs for Kani, run with `cargo kani -p charter-timing`.

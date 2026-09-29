@@ -655,6 +655,8 @@ fn overview(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
 
     #[test]
     fn later_beats_move_the_way_the_ruleset_scrolls() {
@@ -663,5 +665,102 @@ mod tests {
         let up = View::new(rows, Direction::Up);
         assert!(down.now_y < 500.0 && down.y(Beat(3.0)) > down.now_y);
         assert!(up.now_y > 500.0 && up.y(Beat(3.0)) < up.now_y);
+    }
+
+    #[test]
+    fn labels_follow_the_scroll_direction_and_lanes_cover_their_requested_width() {
+        let rows = Rangef::new(0.0, 1000.0);
+        for (direction, expected_y, vertical) in [
+            (Direction::Down, 102.0, Align::Min),
+            (Direction::Up, 98.0, Align::Max),
+        ] {
+            let view = View::new(rows, direction);
+            let (at, anchor) = view.after(50.0, 100.0, Align::Min);
+            assert_eq!(at, pos2(50.0, expected_y));
+            assert_eq!(anchor, Align2([Align::Min, vertical]));
+            let lanes = Lanes {
+                playfield: Rangef::new(40.0, 240.0),
+                side: None,
+                rows,
+                left: 40.0,
+                lane_w: 50.0,
+                count: 4,
+                view,
+            };
+            assert_eq!(lanes.span(1, 2), Rangef::new(90.0, 190.0));
+            assert!((lanes.y(Beat(3.0)) - view.y(Beat(3.0))).abs() < f32::EPSILON);
+        }
+    }
+
+    #[test]
+    fn the_mock_window_shows_each_games_song_chart_and_inspector() {
+        for mock in rulesets::ALL {
+            let mut harness = Harness::builder()
+                .with_size(vec2(1280.0, 800.0))
+                .build_ui_state(|ui, open: &mut &'static Mock| window(ui, open), mock);
+            harness.run();
+            assert!(
+                harness.query_by_label(mock.title).is_some(),
+                "{}",
+                mock.game
+            );
+            assert!(
+                harness.query_by_label(mock.selected).is_some(),
+                "{}",
+                mock.game
+            );
+            if let Some(problem) = mock.problem {
+                assert!(harness.query_by_label(problem).is_some(), "{}", mock.game);
+            } else {
+                assert!(
+                    harness.query_by_label("No problems").is_some(),
+                    "{}",
+                    mock.game
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_chart_columns_shrink_the_timing_and_waveform_before_the_playfield() {
+        let wide = Columns::laid_out(Rangef::new(0.0, 1200.0), 300.0);
+        let narrow = Columns::laid_out(Rangef::new(0.0, 500.0), 300.0);
+        assert!((wide.timing.span() - 160.0).abs() < 1e-3);
+        assert!((wide.wave.span() - 160.0).abs() < 1e-3);
+        assert!((narrow.ruleset.span() - 300.0).abs() < 1e-3);
+        assert!(narrow.timing.span() < wide.timing.span());
+        assert!(narrow.wave.span() < wide.wave.span());
+        assert!((narrow.timeline().max - narrow.wave.max).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn switching_rulesets_changes_the_song_drawn_in_the_mock_window() {
+        let mut harness = Harness::builder()
+            .with_size(vec2(1280.0, 800.0))
+            .build_ui_state(
+                |ui, open: &mut &'static Mock| window(ui, open),
+                &rulesets::STEPMANIA,
+            );
+        harness.run();
+        harness.get_by_label("Arcaea").click();
+        harness.run();
+        assert_eq!(harness.state().game, "Arcaea");
+        assert!(harness.query_by_label("Anthem").is_none());
+        assert!(harness.query_by_label("Skyline").is_some());
+    }
+
+    #[test]
+    fn the_file_menu_lists_its_placeholder_actions() {
+        let mut harness = Harness::builder()
+            .with_size(vec2(1280.0, 800.0))
+            .build_ui_state(
+                |ui, open: &mut &'static Mock| window(ui, open),
+                &rulesets::STEPMANIA,
+            );
+        harness.run();
+        harness.get_by_label("File").click();
+        harness.run();
+        assert!(harness.query_by_label("New song...").is_some());
+        assert!(harness.query_by_label("Open...").is_some());
     }
 }

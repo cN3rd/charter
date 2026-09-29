@@ -260,4 +260,34 @@ mod tests {
         );
         sectioned(&[section(0.0, 0.0, 4)], DEFAULT_TICKS_PER_BEAT).unwrap_err();
     }
+
+    #[test]
+    fn sections_refuse_ticks_that_overflow_while_placing_later_sections() {
+        let sections = [
+            section(0.0, 60.0, 4),
+            section(9_000_000_000_000_000.0, 60.0, 4),
+            section(18_000_000_000_000_000.0, 60.0, 4),
+        ];
+        assert_eq!(
+            sectioned(&sections, DEFAULT_TICKS_PER_BEAT),
+            Err(SectionError::OutOfRange(
+                "a section's tick is out of range".into()
+            ))
+        );
+    }
+
+    #[test]
+    fn sections_refuse_audio_times_and_ticks_outside_the_format() {
+        let far_tick = sectioned(
+            &[section(0.0, 60.0, 4), section(3_000_000.0, 60.0, 4)],
+            DEFAULT_TICKS_PER_BEAT,
+        )
+        .unwrap_err();
+        assert!(matches!(far_tick, SectionError::OutOfRange(message) if message.contains("tick")));
+
+        let far_time = sectioned(&[section(1e30, 120.0, 4)], DEFAULT_TICKS_PER_BEAT).unwrap_err();
+        assert!(
+            matches!(far_time, SectionError::OutOfRange(message) if message.contains("s is out of range"))
+        );
+    }
 }

@@ -170,6 +170,13 @@ mod tests {
     }
 
     #[test]
+    fn before_the_first_timing_point_the_first_point_is_in_effect() {
+        let song = timed(&json!([bpm_event(480, 90.0)]), None);
+        assert_eq!(song.cursor(), Tick::new(0));
+        assert_eq!(song.timing_point(), Some(Tick::new(480)));
+    }
+
+    #[test]
     fn a_point_takes_a_tempo_or_a_meter_beside_what_it_has() {
         let mut song = timed(&json!([bpm_event(0, 120.0), meter_event(480, 3, 4)]), None);
         song.set_bpm_at(Tick::new(480), tempo(150.0)).unwrap();

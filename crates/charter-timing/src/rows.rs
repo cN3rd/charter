@@ -786,7 +786,9 @@ pub fn row_at(rows: &[Row], pos: Pos2) -> Option<&Row> {
 
 #[cfg(test)]
 mod tests {
+    use charter_audio::Track;
     use charter_core::ValidDocument;
+    use egui_kittest::Harness;
     use proptest::prelude::*;
 
     use super::*;
@@ -800,6 +802,49 @@ mod tests {
             "charts": []
         });
         ValidDocument::from_json(&serde_json::to_vec(&value).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn a_non_silent_envelope_draws_visible_waveform_strokes() {
+        let document = song(&serde_json::json!([{ "tick": 0, "kind": { "bpm": 120.0 } }]));
+        let peaks = Peaks::of(&Track::from_frames(64, vec![[0.8, -0.8]; 128]));
+        let mut harness = Harness::builder()
+            .with_size(vec2(130.0, 100.0))
+            .build_ui_state(
+                |ui, (document, peaks): &mut (ValidDocument, Peaks)| {
+                    let envelope = &*peaks;
+                    let timing = document.timing();
+                    let bars = Bars::new(timing, Tick::new(0), Tick::new(3840), 0);
+                    let row = Row {
+                        from: -0.1,
+                        start: 0.0,
+                        to: 1.0,
+                        rect: Rect::from_min_size(pos2(0.0, 0.0), vec2(110.0, ROW)),
+                    };
+                    let scene = Scene {
+                        timing,
+                        bars: &bars,
+                        grid: Grid::default(),
+                        peaks: Some(envelope),
+                        onsets: &[],
+                        sensitivity: 0.1,
+                        residuals: &[],
+                        anchors: &[],
+                        cursor: Tick::new(0),
+                        ghost: None,
+                        reach: None,
+                    };
+                    waveform(ui.painter(), &row, row.rect, &scene, envelope);
+                },
+                (document, peaks),
+            );
+        harness.run();
+        assert!(harness.output().shapes.iter().any(|shape| {
+            matches!(
+                &shape.shape,
+                egui::Shape::LineSegment { stroke, .. } if stroke.color == WAVE
+            )
+        }));
     }
 
     #[test]

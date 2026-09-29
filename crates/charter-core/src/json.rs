@@ -762,6 +762,36 @@ mod tests {
     }
 
     #[test]
+    fn a_format_0_warp_skips_ticks_without_moving_the_next_tempo_change_in_audio() {
+        let timing = json!({
+            "offset_seconds": 0.0,
+            "events": [
+                { "tick": 0, "kind": { "bpm": 120.0 } },
+                { "tick": 480, "kind": { "warp": 960 } },
+                { "tick": 1920, "kind": { "bpm": 60.0 } }
+            ]
+        });
+        let migrated = ValidDocument::from_json(&v0(&timing)).unwrap();
+        assert_eq!(
+            migrated.timing().anchors[1].seconds,
+            Origin::try_from(0.5).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_format_0_tempo_change_whose_audio_time_cannot_fit_is_refused() {
+        let timing = json!({
+            "offset_seconds": 0.0,
+            "events": [
+                { "tick": 0, "kind": { "bpm": 0.000_001 } },
+                { "tick": 2_147_483_647, "kind": { "bpm": 120.0 } }
+            ]
+        });
+        let refused = ValidDocument::from_json(&v0(&timing)).unwrap_err();
+        assert!(refused.to_string().contains("tick 2147483647"), "{refused}");
+    }
+
+    #[test]
     fn a_format_0_song_without_chart_timing_migrates_only_its_song_timing() {
         let mut value = minimal();
         value["format_version"] = json!(0);
@@ -959,6 +989,23 @@ mod tests {
         );
         assert!((timing.time_at(Tick::new(1440)).seconds() - 2.5).abs() < 1e-10);
         assert_eq!(timing.latest_tick_by(1.5), Tick::new(960));
+    }
+
+    #[test]
+    #[expect(
+        clippy::clone_on_copy,
+        reason = "the explicit Clone impl is a coverage target"
+    )]
+    fn a_valid_timing_view_can_be_copied_and_derives_tempo_for_a_synchronised_beat() {
+        let doc = read(&minimal()).unwrap();
+        let timing = doc.timing();
+        let copy = timing.clone();
+        assert_eq!(copy.anchors, timing.anchors);
+        assert_eq!(
+            copy.tempo_for(Tick::new(0), Tick::new(960), 1.0),
+            Bpm::try_from(60.0).ok()
+        );
+        assert_eq!(copy.tempo_for(Tick::new(960), Tick::new(0), 1.0), None);
     }
 
     proptest! {
