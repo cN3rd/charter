@@ -300,22 +300,24 @@ fn chunk(spect: &[[f32; mel::BINS]], start: isize) -> (Vec<f32>, usize) {
 #[must_use]
 pub fn peaks(beat_logits: Vec<f32>, downbeat_logits: Vec<f32>) -> Beats {
     let beats = merged(&peak_frames(&beat_logits));
-    let mut downbeats: Vec<f64> = merged(&peak_frames(&downbeat_logits))
+    let mut downbeats: Vec<PredictionFrame> = merged(&peak_frames(&downbeat_logits))
         .into_iter()
         .filter_map(|downbeat| {
             beats
                 .iter()
                 .copied()
-                .min_by(|a, b| (a - downbeat).abs().total_cmp(&(b - downbeat).abs()))
+                .min_by(|a, b| a.distance(downbeat).total_cmp(&b.distance(downbeat)))
         })
         .collect();
     downbeats.dedup();
-    let fps = f64::from(FPS);
     Beats {
         beat_logits,
         downbeat_logits,
-        beats: beats.into_iter().map(|frame| frame / fps).collect(),
-        downbeats: downbeats.into_iter().map(|frame| frame / fps).collect(),
+        beats: beats.into_iter().map(PredictionFrame::seconds).collect(),
+        downbeats: downbeats
+            .into_iter()
+            .map(PredictionFrame::seconds)
+            .collect(),
     }
 }
 
@@ -337,9 +339,25 @@ fn peak_frames(logits: &[f32]) -> Vec<usize> {
         .collect()
 }
 
+/// A fractional frame in the network's prediction stream.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+struct PredictionFrame(f64);
+
+impl PredictionFrame {
+    /// Distance from another prediction frame, in frames.
+    fn distance(self, other: Self) -> f64 {
+        (self.0 - other.0).abs()
+    }
+
+    /// Position in seconds from the start of the audio.
+    fn seconds(self) -> f64 {
+        self.0 / f64::from(FPS)
+    }
+}
+
 /// `frames` with each run of peaks at most a frame apart replaced by their mean.
-fn merged(frames: &[usize]) -> Vec<f64> {
-    let mut merged: Vec<f64> = Vec::new();
+fn merged(frames: &[usize]) -> Vec<PredictionFrame> {
+    let mut merged: Vec<PredictionFrame> = Vec::new();
     let mut run: Vec<usize> = Vec::new();
     for &frame in frames {
         if run
@@ -358,10 +376,10 @@ fn merged(frames: &[usize]) -> Vec<f64> {
 }
 
 /// Mean frame position of a run of neighbouring peaks.
-fn mean(frames: &[usize]) -> f64 {
+fn mean(frames: &[usize]) -> PredictionFrame {
     let sum: f64 = frames.iter().map(|frame| frame_float(*frame)).sum();
     let count = frame_float(frames.len());
-    sum / count
+    PredictionFrame(sum / count)
 }
 
 #[expect(
