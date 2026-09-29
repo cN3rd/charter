@@ -149,11 +149,16 @@ fn lag(beats: &[f64], onsets: &[Onset]) -> f64 {
                 .min_by(|a, b| a.abs().total_cmp(&b.abs()))
         })
         .collect();
-    shifts.sort_by(f64::total_cmp);
-    shifts
-        .get(shifts.len().div_euclid(2))
+    median_or(&mut shifts, 0.0)
+}
+
+/// The middle value after sorting `values`, or `default` when there are none.
+fn median_or(values: &mut [f64], default: f64) -> f64 {
+    values.sort_by(f64::total_cmp);
+    values
+        .get(values.len().div_euclid(2))
         .copied()
-        .unwrap_or(0.0)
+        .unwrap_or(default)
 }
 
 /// The beats counted against the song's typical gap between them: a gap of about two counts as
@@ -167,11 +172,7 @@ fn counted(beats: &[(f64, f64, bool)]) -> Vec<Beat> {
             _ => 0.0,
         })
         .collect();
-    gaps.sort_by(f64::total_cmp);
-    let period = gaps
-        .get(gaps.len().div_euclid(2))
-        .copied()
-        .unwrap_or(f64::INFINITY);
+    let period = median_or(&mut gaps, f64::INFINITY);
     let mut counted: Vec<Beat> = Vec::with_capacity(beats.len());
     for &(seconds, weight, downbeat) in beats {
         let index = match counted.last() {
@@ -515,6 +516,13 @@ mod tests {
             },
         ];
         assert!((lag(&[0.0, 1.0, 2.0], &heard) - 0.02).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_median_is_the_sorted_middle_or_the_default_for_no_values() {
+        let mut values = [3.0, 1.0, 2.0];
+        assert!((median_or(&mut values, 0.0) - 2.0).abs() < f64::EPSILON);
+        assert!((median_or(&mut [], 7.0) - 7.0).abs() < f64::EPSILON);
     }
 
     #[test]
