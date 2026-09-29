@@ -143,7 +143,7 @@ pub struct Settings {
     pub metronome_grid: bool,
     /// The alternate playback speed, as a factor, that R switches to in the timing window.
     pub rate_b: f64,
-    /// Whether audio played slower or faster than its speed keeps its pitch, from a quarter to
+    /// Whether audio played slower or faster than its speed keeps its pitch, from a tenth to
     /// twice its speed.
     pub keep_pitch: bool,
     /// How much later than it plays a sound is heard, in milliseconds, as the calibration's flash
@@ -806,7 +806,7 @@ fn sounds(ui: &mut egui::Ui, settings: &mut Settings) -> Option<Asked> {
         switch(ui, &mut settings.metronome_grid, grid_name);
     });
     let pitch_name = "Keep pitch at other speeds";
-    let pitch_about = "Slowed or sped-up audio keeps its pitch from 25% to 200%; outside that, and with \
+    let pitch_about = "Slowed or sped-up audio keeps its pitch from 10% to 200%; outside that, and with \
         this off, its pitch follows its speed.";
     row(ui, pitch_name, pitch_about, |ui, _| {
         switch(ui, &mut settings.keep_pitch, pitch_name);

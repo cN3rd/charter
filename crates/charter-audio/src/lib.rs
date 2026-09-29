@@ -72,7 +72,7 @@ mod cast {
     }
 }
 
-pub use click::{Gain, Kit, Tick, Tone, Volumes, mix, render};
+pub use click::{Clicks, Gain, Kit, Tick, Tone, Volumes, mix, render};
 pub use onsets::{Onset, onsets, onsets_from_bytes, onsets_to_bytes};
 pub use peaks::{Extent, Peaks, fingerprint};
 pub use spectrum::Spectrum;

@@ -103,11 +103,15 @@ cursor follows the playback, and moving the cursor while playing seeks. A lane k
 playing places its note on the snap line nearest the audio and leaves the playback where it is;
 held past 200 ms, the tap grows into a hold with the playback, ending on the snap line nearest
 where the key comes up, all one step. Shift+Left and Shift+Right,
-or the Playback menu, play slower or faster from 10% to 400%, leaving the chart alone. From 25% to
+or the Playback menu, play slower or faster from 10% to 400%, leaving the chart alone. From 10% to
 200% the audio keeps its pitch, stretched as it plays by timestretch's wide-range keylock, a phase
-vocoder, with the clicks mixed in before it and so stretched with it; a new speed plays on from the
-cursor. Outside that range, or with Keep pitch at other speeds off on the Sounds page, its pitch
-follows its speed. The status bar says whether the audio is ready, loading,
+vocoder; a new speed plays on from the cursor. One stretcher reaches down to 50%, so slower speeds
+pass the audio through several in turn, and since stretching moves the audio by a few milliseconds
+that depend on the speed, a click is played through when playback starts to measure by how much,
+and the audio is fed that much sooner or later so it stays on the cursor. Outside that range, or
+with Keep pitch at other speeds off on the Sounds page, its pitch follows its speed. Either way the
+metronome and note ticks are mixed in after, each at its time scaled to the speed but at its own
+speed and pitch, so a tick at 25% sounds as crisp as at 100%. The status bar says whether the audio is ready, loading,
 missing or unreadable; if playback is tried after a load failure, a message points to choosing
 another audio file. Every message has a Dismiss button. The Edit, Timing and Playback menus
 carry the selection, tempo, marker and playback commands with their keys, F1 lists every key by

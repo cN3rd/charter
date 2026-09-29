@@ -4,13 +4,13 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError};
 
-use charter_audio::{Onset, Peaks, Spectrum, Track};
+use charter_audio::{Clicks, Onset, Peaks, Spectrum, Track};
 use charter_ui::{Request, Window};
 use kira::sound::PlaybackState;
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle, StaticSoundSettings};
 use kira::sound::streaming::{StreamingSoundData, StreamingSoundHandle, StreamingSoundSettings};
 
-use crate::stretch::{self, Stretched};
+use crate::stretch::{self, Pitch, Stretched};
 use kira::{AudioManager, AudioManagerSettings, Decibels, DefaultBackend, Frame, Tween};
 
 /// What the loading thread sends: kept peaks as soon as they are read, then the audio, with its
@@ -82,7 +82,27 @@ impl Playing {
     }
 }
 
-/// Source seconds corresponding to `stretched_seconds` of pitched-preserving playback.
+/// `track` at `rate` with `pitch`, `clicks` mixed over it at their volumes in `volumes`, and
+/// the volume kira plays it at: the music's without clicks, else none, the clicks carrying it.
+fn stretched(
+    track: &Arc<Track>,
+    (rate, pitch): (f64, Pitch),
+    clicks: &[(f64, charter_audio::Tone)],
+    volumes: charter_audio::Volumes,
+) -> (Option<Stretched>, Option<Decibels>) {
+    let volume = clicks.is_empty().then(|| decibels(volumes.music));
+    let music = if volume.is_some() {
+        charter_audio::Gain::default()
+    } else {
+        volumes.music
+    };
+    let clicks = Clicks::new(clicks, volumes, track.rate().get(), rate);
+    let stretched = Stretched::new(Arc::clone(track), rate, pitch)
+        .map(|stretched| stretched.with_clicks(clicks, music));
+    (stretched, volume)
+}
+
+/// Source seconds corresponding to `stretched_seconds` of stretched playback.
 fn source_position(stretched_seconds: f64, rate: f64) -> f64 {
     stretched_seconds * rate
 }
@@ -249,17 +269,18 @@ impl Player {
                     window.playback_ended();
                     return;
                 };
-                if keep_pitch && stretch::keeps_pitch(rate) {
-                    // Mixed clicks carry the music's volume; alone, kira sets it.
-                    // ponytail: the clicks are stretched with the music, which softens them;
-                    // play them as sounds of their own at the scaled times if that is heard.
-                    let (track, volume) = if clicks.is_empty() {
-                        (Arc::clone(track), Some(decibels(volumes.music)))
-                    } else {
-                        (Arc::new(charter_audio::mix(track, clicks, volumes)), None)
-                    };
+                let pitch = if keep_pitch && stretch::keeps_pitch(rate) {
+                    Some(Pitch::Kept)
+                } else if (rate - 1.0).abs() > 1e-9 && !clicks.is_empty() {
+                    // Clicks keep their own speed and pitch, so they go in after the song's.
+                    Some(Pitch::FollowsSpeed)
+                } else {
+                    None
+                };
+                if let Some(pitch) = pitch {
+                    let (stretched, volume) = stretched(track, (rate, pitch), clicks, volumes);
                     let path = path.clone();
-                    self.play_stretched(&path, track, (from, rate, looping, volume), window);
+                    self.play_stretched(&path, stretched, (from, rate, looping, volume), window);
                     return;
                 }
                 let settings = StaticSoundSettings::new()
@@ -350,18 +371,18 @@ impl Player {
         }
     }
 
-    /// Plays `track`, the audio of `path` with any clicks mixed in, from `from` seconds at `rate`
-    /// times its speed with its pitch kept, looping between `looping`'s seconds when given, at
-    /// `volume` unless the clicks mixed in carry it.
+    /// Plays `stretched`, the audio of `path` at `rate` times its speed, from `from` seconds,
+    /// looping between `looping`'s seconds when given, at `volume` unless the clicks mixed in
+    /// carry it.
     fn play_stretched(
         &mut self,
         path: &Path,
-        track: Arc<Track>,
+        stretched: Option<Stretched>,
         (from, rate, looping, volume): (f64, f64, Option<(f64, f64)>, Option<Decibels>),
         window: &mut Window,
     ) {
-        let Some(stretched) = Stretched::new(track, rate) else {
-            window.audio_failed(path, "its sample rate cannot be slowed keeping its pitch");
+        let Some(stretched) = stretched else {
+            window.audio_failed(path, "its sample rate cannot be played at another speed");
             window.playback_ended();
             return;
         };

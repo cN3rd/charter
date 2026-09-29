@@ -328,37 +328,95 @@ fn resample_by(frames: &[[f32; 2]], step: f64) -> Vec<[f32; 2]> {
 /// either end are left out.
 #[must_use]
 pub fn mix(track: &Track, clicks: &[(f64, Tone)], volumes: Volumes) -> Track {
-    let rate = track.rate().get();
-    let mut tones: Vec<(Tone, Vec<[f32; 2]>)> = Vec::new();
     let music = volumes.music.amplitude();
     let mut frames: Vec<[f32; 2]> = track
         .frames()
         .iter()
         .map(|&[left, right]| [left * music, right * music])
         .collect();
-    for &(at, tone) in clicks {
-        if !tones.iter().any(|(kind, _)| *kind == tone) {
-            tones.push((tone, render(tone, rate)));
+    Clicks::new(clicks, volumes, track.rate().get(), 1.0).mix_into(&mut frames, 0);
+    Track::from_frames(track.rate().get(), frames)
+}
+
+/// Tones ready to mix into audio as it plays at `speed` times its own, each where its time in
+/// the audio falls in what is heard, and each at its own speed and pitch whatever the audio's.
+#[derive(Clone, Debug, Default)]
+pub struct Clicks {
+    /// Each kind of tone once, rendered.
+    sounds: Vec<(Tone, Vec<[f32; 2]>)>,
+    /// Each tone's first frame in what is heard, which sound it is, and its gain, by start.
+    placed: Vec<(usize, usize, f32)>,
+    /// Frames in the longest sound.
+    longest: usize,
+}
+
+impl Clicks {
+    /// `clicks`, each at its time in seconds into the audio, at their volumes in `volumes`,
+    /// heard at `rate` frames a second from audio played at `speed` times its own. Tones before
+    /// the start or at a time that is not a number are left out.
+    #[must_use]
+    pub fn new(clicks: &[(f64, Tone)], volumes: Volumes, rate: u32, speed: f64) -> Self {
+        let mut sounds: Vec<(Tone, Vec<[f32; 2]>)> = Vec::new();
+        let mut placed = Vec::with_capacity(clicks.len());
+        for &(at, tone) in clicks {
+            let start = at / speed * f64::from(rate);
+            if !start.is_finite() || start < 0.0 {
+                continue;
+            }
+            let index = if let Some(index) = sounds.iter().position(|(kind, _)| *kind == tone) {
+                index
+            } else {
+                sounds.push((tone, render(tone, rate)));
+                sounds.len().saturating_sub(1)
+            };
+            placed.push((
+                cast::f64_usize(start.round()),
+                index,
+                volumes.of(tone).amplitude(),
+            ));
         }
-        let Some((_, sound)) = tones.iter().find(|(kind, _)| *kind == tone) else {
-            continue;
-        };
-        let start = at * f64::from(rate);
-        if !start.is_finite() || start < 0.0 {
-            continue;
+        placed.sort_by_key(|&(start, _, _)| start);
+        let longest = sounds
+            .iter()
+            .map(|(_, sound)| sound.len())
+            .max()
+            .unwrap_or(0);
+        Self {
+            sounds,
+            placed,
+            longest,
         }
-        let start = cast::f64_usize(start.round());
-        let Some(under) = frames.get_mut(start..) else {
-            continue;
-        };
-        let gain = volumes.of(tone).amplitude();
-        for (frame, added) in under.iter_mut().zip(sound) {
-            for (sample, add) in frame.iter_mut().zip(added) {
-                *sample = (*sample + add * gain).clamp(-1.0, 1.0);
+    }
+
+    /// Whether there are no tones to mix.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.placed.is_empty()
+    }
+
+    /// Adds the tones sounding in `frames`, whose first is frame `first` of what is heard.
+    pub fn mix_into(&self, frames: &mut [[f32; 2]], first: usize) {
+        let end = first.saturating_add(frames.len());
+        let from = self
+            .placed
+            .partition_point(|&(start, _, _)| start.saturating_add(self.longest) <= first);
+        let until = self.placed.partition_point(|&(start, _, _)| start < end);
+        for &(start, index, gain) in self.placed.get(from..until).unwrap_or_default() {
+            let Some((_, sound)) = self.sounds.get(index) else {
+                continue;
+            };
+            let skip = first.saturating_sub(start);
+            let into = start.saturating_sub(first);
+            let Some(under) = frames.get_mut(into..) else {
+                continue;
+            };
+            for (frame, added) in under.iter_mut().zip(sound.iter().skip(skip)) {
+                for (sample, add) in frame.iter_mut().zip(added) {
+                    *sample = (*sample + add * gain).clamp(-1.0, 1.0);
+                }
             }
         }
     }
-    Track::from_frames(rate, frames)
 }
 
 #[cfg(test)]
@@ -576,5 +634,49 @@ mod tests {
         assert_eq!(silent.frames().len(), 800);
         assert_eq!(&mixed.frames()[..798], &silent.frames()[..798]);
         assert!(mixed.frames()[799][0].abs() > 0.1);
+    }
+
+    #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "mixing into silence adds the samples exactly"
+    )]
+    fn clicks_land_at_their_time_for_the_speed_and_keep_their_own_length() {
+        let sound = render(Tone::Beat(Kit::ToneGate), 1000);
+        let volumes = Volumes::default();
+        let clicks = Clicks::new(&[(1.0, Tone::Beat(Kit::ToneGate))], volumes, 1000, 0.5);
+        let mut heard = vec![[0.0; 2]; 2000 + sound.len() + 10];
+        clicks.mix_into(&mut heard, 0);
+        assert!(heard[..2000].iter().all(|frame| *frame == [0.0; 2]));
+        assert_eq!(&heard[2000..2000 + sound.len()], sound.as_slice());
+        assert!(
+            heard[2000 + sound.len()..]
+                .iter()
+                .all(|frame| *frame == [0.0; 2])
+        );
+    }
+
+    #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "the same sums in the same order are equal exactly"
+    )]
+    fn clicks_mixed_a_piece_at_a_time_match_them_mixed_at_once() {
+        let tone = Tone::Beat(Kit::ToneGate);
+        let clicks = Clicks::new(
+            &[(0.01, tone), (0.02, tone), (-1.0, tone), (f64::NAN, tone)],
+            Volumes::default(),
+            1000,
+            1.5,
+        );
+        let mut whole = vec![[0.0; 2]; 400];
+        clicks.mix_into(&mut whole, 0);
+        let mut pieces = vec![[0.0; 2]; 400];
+        for (index, piece) in pieces.chunks_mut(7).enumerate() {
+            clicks.mix_into(piece, index * 7);
+        }
+        assert_eq!(whole, pieces);
+        assert!(whole.iter().any(|frame| *frame != [0.0; 2]));
+        assert!(Clicks::new(&[(-1.0, tone)], Volumes::default(), 1000, 1.0).is_empty());
     }
 }

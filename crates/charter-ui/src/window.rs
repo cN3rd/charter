@@ -1122,12 +1122,13 @@ impl Window {
         }
     }
 
-    /// Changes playback speed, replaying stretched audio when its pitch is kept.
+    /// Changes playback speed, replaying stretched audio when its pitch is kept or clicks play.
     fn set_rate(&mut self, rate: Rate) {
         self.rate = rate;
-        // Audio that keeps its pitch, or played keeping it, is stretched for its speed, so a new
-        // speed plays it again.
-        if self.playing && (self.settings.keep_pitch || self.played_pitch) {
+        // Audio that keeps its pitch, or played keeping it, is stretched for its speed, and so is
+        // audio under clicks, which keep their own; a new speed plays it again.
+        let clicked = self.played.is_some_and(|(_, mixed)| mixed);
+        if self.playing && (self.settings.keep_pitch || self.played_pitch || clicked) {
             self.replay();
         } else if self.playing {
             self.requests.push(Request::Rate(rate.factor()));
@@ -5676,6 +5677,27 @@ mod tests {
             panic!("expected a seek");
         };
         assert!((to - 2.0).abs() < 1e-9, "{to}");
+    }
+
+    #[test]
+    fn audio_under_clicks_plays_again_at_a_new_speed_even_letting_its_pitch_follow() {
+        let mut harness = playable_with(Settings {
+            keep_pitch: false,
+            metronome: true,
+            ..Settings::default()
+        });
+        space(&mut harness);
+        let Request::Play { clicks, .. } = request(&mut harness) else {
+            panic!("expected playback");
+        };
+        assert!(!clicks.is_empty());
+        harness.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::ArrowLeft);
+        harness.run();
+        let requests = harness.state_mut().take_requests();
+        let Some(Request::Play { rate, .. }) = requests.last() else {
+            panic!("expected playback again, got {requests:?}");
+        };
+        assert!((rate - 0.9).abs() < 1e-9, "{rate}");
     }
 
     #[test]
