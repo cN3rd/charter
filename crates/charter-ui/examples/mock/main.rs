@@ -14,13 +14,7 @@ use rulesets::Mock;
 const MENUS: [(&str, &[&str]); 7] = [
     (
         "File",
-        &[
-            "New song...",
-            "Open...",
-            "Save",
-            "Export...",
-            "Preferences...",
-        ],
+        &["New song...", "Open...", "Save", "Export...", "Settings..."],
     ),
     ("Edit", &["Undo", "Redo", "Cut", "Copy", "Paste"]),
     (
@@ -33,7 +27,7 @@ const MENUS: [(&str, &[&str]); 7] = [
         &["Adjust sync...", "Adjust tempo...", "Detect BPM..."],
     ),
     ("View", &["C-mod", "X-mod"]),
-    ("Help", &["Commands"]),
+    ("Help", &["Keyboard shortcuts"]),
 ];
 
 /// A position in a mock chart, in beats from the start of measure 12.
@@ -249,7 +243,7 @@ fn menu_bar(ui: &mut Ui, open: &mut &'static Mock) {
             }
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            drop(ui.button("Commands  Ctrl+K"));
+            drop(ui.button("Shortcuts  F1"));
         });
     });
 }
@@ -762,5 +756,20 @@ mod tests {
         harness.run();
         assert!(harness.query_by_label("New song...").is_some());
         assert!(harness.query_by_label("Open...").is_some());
+    }
+
+    #[test]
+    fn the_mock_names_the_current_shortcut_help() {
+        let mut harness = Harness::builder()
+            .with_size(vec2(1280.0, 800.0))
+            .build_ui_state(
+                |ui, open: &mut &'static Mock| window(ui, open),
+                &rulesets::STEPMANIA,
+            );
+        harness.run();
+        assert!(harness.query_by_label("Shortcuts  F1").is_some());
+        harness.get_by_label("Help").click();
+        harness.run();
+        assert!(harness.query_by_label("Keyboard shortcuts").is_some());
     }
 }

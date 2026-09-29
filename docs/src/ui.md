@@ -176,7 +176,7 @@ of an eight-lane chart at 800 pixels wide; a long marker name shows in full when
 
 ```text
 +--------------------------------------------------------------------------------------+
-| File  Edit  Select  Transform  Timing  View  Help                 [Ctrl+K  commands] |
+| File  Edit  Select  Transform  Timing  View  Help                  [F1  shortcuts]   |
 +-------------------+--------------------------------------------------+---------------+
 | SONG              | Hard   dance-single   4 lanes                    | INSPECTOR     |
 | Title   Anthem    |------+---------+----+----+----+----+---------+---| 2 taps        |
@@ -226,9 +226,9 @@ dark playfield, often in a dim room, and notes read best as bright shapes on dar
 - There is no inspector panel; the notefield keeps the width. The status bar counts the selection,
   the song panel sets the tempo, offset and sections at the cursor, and what keys cannot express
   on a note, such as a keysound, is still to find a place.
-- Every action is a named command with a rebindable key. Menus carry the common ones, and
-  `Ctrl+K` searches all of them and shows each binding. All four major editors surveyed ship
-  customizable shortcuts, and Tempora's drag modifiers stay invisible until learned
+- Menus carry the common actions, and `F1` opens a searchable keyboard shortcut sheet. Rebindable
+  keys and a command palette are still planned; all four major editors surveyed ship customizable
+  shortcuts, and Tempora's drag modifiers stay invisible until learned
   ([shortcuts](research/topics/shortcuts.md)).
 - There is no toolbar or tool palette. Entry is modeless, as in ArrowVortex: lane keys place notes
   at the cursor, and the mouse selects, with Shift adding to a marquee and Alt subtracting. Ctrl

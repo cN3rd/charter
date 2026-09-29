@@ -6,14 +6,14 @@ use super::{
 };
 
 impl Window {
-    /// Handles this window operation.
+    /// Marks the song's audio decoded and ready to play.
     pub fn audio_ready(&mut self, file: &Path, seconds: f64) {
         self.playback.audio = Some(AudioStatus {
             file: file.to_path_buf(),
             loaded: Loaded::Ready(seconds),
         });
     }
-    /// Handles this window operation.
+    /// Marks the song's audio unreadable and shows why.
     pub fn audio_failed(&mut self, file: &Path, why: &str) {
         self.playback.audio = Some(AudioStatus {
             file: file.to_path_buf(),
@@ -21,7 +21,7 @@ impl Window {
         });
         self.failure = Some(format!("{} cannot play: {why}", file.display()));
     }
-    /// Handles this window operation.
+    /// Moves the cursor to the audio position the host says is playing.
     pub fn playhead(&mut self, seconds: f64) {
         if !self.playback.playing {
             return;
@@ -41,7 +41,7 @@ impl Window {
             }
         }
     }
-    /// Handles this private window operation.
+    /// Click track used by the latency calibration window.
     pub(super) fn calibration_beat(&self) -> latency::Beat {
         let Some(song) = &self.song else {
             return latency::Beat::default();
@@ -57,13 +57,13 @@ impl Window {
             .map_or(4, |measure| measure.meter.numerator.get());
         latency::Beat::of(timing.tempo_at(first), per_measure)
     }
-    /// Handles this private window operation.
+    /// Input latency as playback-speed-adjusted seconds.
     pub(super) fn input_latency(&self) -> f64 {
         self.settings
             .input_latency_ms
             .seconds_at(self.playback.rate.factor())
     }
-    /// Handles this private window operation.
+    /// User-facing audio load or timing-discovery status.
     #[expect(
         clippy::non_ascii_literal,
         reason = "the audio-analysis status shows an ellipsis while running"
@@ -84,7 +84,7 @@ impl Window {
         }
         .to_owned()
     }
-    /// Handles this private window operation.
+    /// Loaded state for the currently selected audio file.
     pub(super) fn loaded(&self) -> Option<&Loaded> {
         let wanted = self.audio_file()?;
         self.playback
@@ -93,7 +93,7 @@ impl Window {
             .filter(|status| status.file == wanted)
             .map(|status| &status.loaded)
     }
-    /// Handles this private window operation.
+    /// Sends live volume changes to the host, or restarts mixed-click playback after dragging.
     pub(super) fn follow_volumes(&mut self, ui: &Ui) {
         let (Some(played), true) = (self.playback.played, self.playback.playing) else {
             return;
@@ -115,12 +115,12 @@ impl Window {
             self.toggle_play();
         }
     }
-    /// Handles this private window operation.
+    /// Plays from `from` with the metronome on to hear a timing edit.
     pub(super) fn audition(&mut self, from: f64) {
         self.playback.looping = None;
         self.start(from, None, true);
     }
-    /// Handles this private window operation.
+    /// Starts or stops looping the requested tick span.
     pub(super) fn toggle_loop(&mut self, from: Tick, to: Tick) {
         if self.playback.looping == Some((from, to)) && self.playback.playing {
             self.playback.looping = None;
@@ -131,7 +131,7 @@ impl Window {
         self.playback.looping = Some((from, to));
         self.play_loop();
     }
-    /// Handles this private window operation.
+    /// Starts playback for the current loop span.
     pub(super) fn play_loop(&mut self) {
         let (Some(song), Some((from, to))) = (&self.song, self.playback.looping) else {
             return;
@@ -140,7 +140,7 @@ impl Window {
         let span = (timing.time_at(from).seconds(), timing.time_at(to).seconds());
         self.start(span.0, Some(span), true);
     }
-    /// Handles this private window operation.
+    /// Restarts playback from the cursor or loop start after a setting changes.
     pub(super) fn replay(&mut self) {
         if !self.playback.playing {
             return;
@@ -152,7 +152,7 @@ impl Window {
             self.start(from, None, false);
         }
     }
-    /// Handles this private window operation.
+    /// Asks the host to play the song from an audio time, optionally looping.
     pub(super) fn start(&mut self, from: f64, looping: Option<(f64, f64)>, metronome: bool) {
         let (Some(song), Some(&Loaded::Ready(seconds))) = (&self.song, self.loaded()) else {
             return;
@@ -187,7 +187,7 @@ impl Window {
         self.playback.played_pitch = self.settings.keep_pitch;
         self.playback.played_sounds = Some(Sounds::of(&self.settings));
     }
-    /// Handles this private window operation.
+    /// Switches between the usual speed and the alternate playback speed.
     pub(super) fn toggle_rate(&mut self) {
         if let Some(usual) = self.playback.usual_rate.take() {
             self.set_rate(usual);
@@ -196,7 +196,7 @@ impl Window {
             self.set_rate(Rate::of(self.settings.rate_b));
         }
     }
-    /// Handles this private window operation.
+    /// Starts playback at the cursor, or pauses if already playing.
     #[expect(
         clippy::non_ascii_literal,
         reason = "the playback error names the Choose audio menu label with its ellipsis"
@@ -241,7 +241,7 @@ impl Window {
             None => self.failure = Some("The audio is still loading.".to_owned()),
         }
     }
-    /// Handles this private window operation.
+    /// Sets the playback rate and keeps already-playing audio in sync.
     pub(super) fn set_rate(&mut self, rate: Rate) {
         self.playback.rate = rate;
         // Audio that keeps its pitch, or played keeping it, is stretched for its speed, and so is

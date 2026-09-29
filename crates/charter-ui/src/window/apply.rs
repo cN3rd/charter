@@ -6,7 +6,7 @@ use super::{
 };
 
 impl Window {
-    /// Handles this private window operation.
+    /// Applies actions that affect the window state rather than the open song.
     #[expect(
         clippy::wildcard_enum_match_arm,
         reason = "this dispatcher handles only window-global actions; song actions are ignored here"
@@ -61,7 +61,7 @@ impl Window {
             _ => {}
         }
     }
-    /// Handles this private window operation.
+    /// Applies one action, closing any open lane-key chord first when needed.
     pub(super) fn apply(&mut self, action: Action) {
         // A chord's notes undo as one, but anything else done while it is held is its own step.
         let chord = matches!(

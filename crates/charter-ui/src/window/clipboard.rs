@@ -3,7 +3,7 @@
 use super::{Clipped, Window, refused};
 
 impl Window {
-    /// Handles this private window operation.
+    /// Copies selected notes to the app-local clipboard and system clipboard request.
     pub(super) fn copy(&mut self) {
         let Some(song) = &self.song else {
             return;
@@ -18,7 +18,7 @@ impl Window {
         self.clipboard.out = serde_json::to_string(&clipped).ok();
         self.clipboard.clip = clipped.charter_notes;
     }
-    /// Handles this private window operation.
+    /// Pastes notes from text when present, otherwise from the app-local clipboard.
     pub(super) fn paste(&mut self, text: Option<&str>) {
         let external = if let Some(text) = text {
             let Ok(clipped) = serde_json::from_str::<Clipped>(text) else {
@@ -44,7 +44,7 @@ impl Window {
             Err(why) => self.failure = Some(refused(&why)),
         }
     }
-    /// Handles this private window operation.
+    /// Duplicates selected notes just after the selection.
     pub(super) fn duplicate(&mut self) {
         let Some(song) = &mut self.song else {
             return;

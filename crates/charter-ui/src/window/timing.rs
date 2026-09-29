@@ -3,16 +3,16 @@
 use super::{Finding, Request, Window, found_message};
 
 impl Window {
-    /// Handles this window operation.
+    /// Loads pasted timing text from a file into the import window.
     pub fn timing_file_read(&mut self, text: &str) {
         text.clone_into(&mut self.import.text);
         self.import.set_open(true);
     }
-    /// Handles this window operation.
+    /// Shows why the chosen timing file could not be read.
     pub fn timing_file_failed(&mut self, why: &str) {
         self.failure = Some(format!("Could not read the timing: {why}"));
     }
-    /// Handles this private window operation.
+    /// Starts automatic timing, or asks for tracker weights before it can.
     pub(super) fn find_timing(&mut self) {
         let (Some(song), Some(file)) = (&self.song, self.audio_file()) else {
             self.failure = Some("Finding the timing needs the song's audio".to_owned());
@@ -25,7 +25,7 @@ impl Window {
         });
         self.dialogs.finding = Finding::Running;
     }
-    /// Handles this window operation.
+    /// Accepts automatic timing from the host or shows why it failed.
     pub fn timing_found(&mut self, found: Result<charter_core::Timing, String>) {
         self.dialogs.finding = Finding::Idle;
         let Some(song) = &mut self.song else {

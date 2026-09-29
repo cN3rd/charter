@@ -7,11 +7,11 @@ use super::{
 };
 
 impl Window {
-    /// Handles this window operation.
+    /// Folder containing the open song's chart file.
     pub fn song_folder(&self) -> Option<PathBuf> {
         self.path.as_ref()?.parent().map(Path::to_path_buf)
     }
-    /// Handles this window operation.
+    /// Accepts the host's answer to a save request.
     pub fn saved(&mut self, saved: Saved) {
         match saved {
             Saved::To(path) => {
@@ -37,7 +37,7 @@ impl Window {
             }
         }
     }
-    /// Handles this window operation.
+    /// Reads an autosave and offers to restore it.
     pub fn recover(&mut self, bytes: &[u8]) {
         self.autosave.kept = true;
         match recovery::read(bytes, self.plugins) {
@@ -62,7 +62,7 @@ impl Window {
             }
         }
     }
-    /// Handles this window operation.
+    /// Audio file that should be used for the open song, if one is known.
     pub fn audio_file(&self) -> Option<PathBuf> {
         let song = self.song.as_ref()?;
         let audio = song.document().document().metadata.audio.as_str();
@@ -78,7 +78,7 @@ impl Window {
             Some(folder.join(audio))
         })
     }
-    /// Handles this window operation.
+    /// Uses a chosen or dropped audio file, either in the new-song dialog or the open song.
     pub fn use_audio(&mut self, file: &Path) {
         if self.dialogs.new_song.is_some() {
             self.draft_audio(file);
@@ -86,7 +86,7 @@ impl Window {
             self.add_audio(file);
         }
     }
-    /// Handles this window operation.
+    /// Applies audio tags to untouched title and artist fields, or asks before replacing them.
     pub fn tags_read(&mut self, file: &Path, title: Option<String>, artist: Option<String>) {
         if title.is_none() && artist.is_none() {
             return;
@@ -131,7 +131,7 @@ impl Window {
             });
         }
     }
-    /// Handles this private window operation.
+    /// Applies accepted title and artist tags.
     pub(super) fn take_tags(&mut self, draft: bool, title: Option<&str>, artist: Option<&str>) {
         if draft {
             if let Some(new_song_draft) = &mut self.dialogs.new_song {
@@ -151,7 +151,7 @@ impl Window {
             .as_ref()
             .map(refused);
     }
-    /// Handles this private window operation.
+    /// Sets the new-song dialog's audio file and asks the host for its tags.
     pub(super) fn draft_audio(&mut self, file: &Path) {
         if let Some(draft) = &mut self.dialogs.new_song {
             draft.set_audio(Some(file.to_path_buf()));
@@ -160,34 +160,34 @@ impl Window {
             });
         }
     }
-    /// Handles this window operation.
+    /// Stores waveform peaks decoded for `file`.
     pub fn waveform_ready(&mut self, file: &Path, peaks: Arc<Peaks>) {
         self.analysis.waveform = Some(OfFile {
             file: file.to_path_buf(),
             value: peaks,
         });
     }
-    /// Handles this window operation.
+    /// Stores spectrum frames decoded for `file`.
     pub fn spectrum_ready(&mut self, file: &Path, spectrum: Arc<Spectrum>) {
         self.analysis.spectrum = Some(OfFile {
             file: file.to_path_buf(),
             value: notefield::Tiles::new(spectrum),
         });
     }
-    /// Handles this window operation.
+    /// Stores onset detections for `file`.
     pub fn onsets_ready(&mut self, file: &Path, onsets: Arc<[charter_audio::Onset]>) {
         self.analysis.onsets = Some(OfFile {
             file: file.to_path_buf(),
             value: onsets,
         });
     }
-    /// Handles this window operation.
+    /// Onsets for the currently selected audio file.
     pub fn onsets(&self) -> Option<&[charter_audio::Onset]> {
         let file = self.audio_file();
         let onsets = self.analysis.onsets.as_ref()?;
         (Some(onsets.file.as_path()) == file.as_deref()).then_some(onsets.value.as_ref())
     }
-    /// Handles this window operation.
+    /// Waveform or spectrum strip matching the current display settings.
     pub fn strip(&self) -> Option<notefield::Strip<'_>> {
         shown_strip(
             &self.settings,
@@ -196,15 +196,15 @@ impl Window {
             self.audio_file().as_deref(),
         )
     }
-    /// Handles this window operation.
+    /// Last user-facing message, if any.
     pub fn message(&self) -> Option<&str> {
         self.failure.as_deref()
     }
-    /// Handles this window operation.
+    /// Shows why the host could not copy audio beside a saved song.
     pub fn audio_not_copied(&mut self, why: &str) {
         self.failure = Some(format!("Audio not copied: {why}"));
     }
-    /// Handles this window operation.
+    /// Source and destination audio paths needed when saving the song to `path`.
     pub fn audio_copy_for(&self, path: &Path) -> Option<(PathBuf, PathBuf)> {
         let song = self.song.as_ref()?;
         let from = self.audio_file()?;
@@ -213,7 +213,7 @@ impl Window {
             .join(song.document().document().metadata.audio.as_str());
         (from != to).then_some((from, to))
     }
-    /// Handles this private window operation.
+    /// Drops playback state that belongs to a no-longer-current audio file.
     pub(super) fn forget_stale_audio(&mut self) {
         let wanted = self.audio_file();
         if self
@@ -228,7 +228,7 @@ impl Window {
             }
         }
     }
-    /// Handles this private window operation.
+    /// Names `path` as the open song's audio.
     pub(super) fn add_audio(&mut self, path: &Path) {
         let Some(song) = &mut self.song else {
             self.failure = Some("Open or start a song before adding its audio.".to_owned());
@@ -253,7 +253,7 @@ impl Window {
             });
         }
     }
-    /// Handles this private window operation.
+    /// Creates a new song through its ruleset plugin, after unsaved-change checks.
     pub(super) fn create(
         &mut self,
         plugin: &dyn charter_core::RulesetPlugin,
@@ -283,12 +283,12 @@ impl Window {
             }
         }
     }
-    /// Handles this window operation.
+    /// Shows why autosaving failed and schedules the next edit for another try.
     pub fn autosave_failed(&mut self, why: &str) {
         self.autosave.autosaved = None;
         self.failure = Some(format!("Autosave failed: {why}"));
     }
-    /// Handles this private window operation.
+    /// Removes the kept autosave, if one exists.
     pub(super) fn drop_autosave(&mut self) {
         self.autosave.autosaved = None;
         self.autosave.due = None;
@@ -296,7 +296,7 @@ impl Window {
             self.requests.push(Request::DropAutosave);
         }
     }
-    /// Handles this private window operation.
+    /// Writes an autosave when the open song has stayed dirty long enough.
     pub(super) fn autosave(&mut self, ctx: &egui::Context) {
         if self.dialogs.leaving != Leaving::Staying || self.dialogs.restoring.is_some() {
             return;
@@ -346,7 +346,7 @@ impl Window {
             Err(error) => self.failure = Some(format!("Autosave failed: {error}")),
         }
     }
-    /// Handles this private window operation.
+    /// Restores or discards the autosave offered at startup.
     pub(super) fn answer_restore(&mut self, restore: bool) {
         let Some(Restoring {
             path,
@@ -370,7 +370,7 @@ impl Window {
             self.drop_autosave();
         }
     }
-    /// Handles this window operation.
+    /// Title the host should show for the window.
     pub fn title(&self) -> String {
         let Some(song) = &self.song else {
             return "charter".to_owned();
@@ -378,11 +378,11 @@ impl Window {
         let star = if self.modified() { "*" } else { "" };
         format!("{star}{} - charter", self.file_name(song))
     }
-    /// Handles this private window operation.
+    /// Display name for a song, from its file path or title.
     pub(super) fn file_name(&self, song: &Song) -> String {
         file_name(self.path.as_deref(), song)
     }
-    /// Handles this private window operation.
+    /// Asks the host to save the open song in place or elsewhere.
     pub(super) fn save(&mut self, saving: Saving) {
         // An undo in this frame may have named other artwork since the frame began.
         self.follow_artwork();
@@ -408,7 +408,7 @@ impl Window {
         };
         self.requests.push(request);
     }
-    /// Handles this window operation.
+    /// Opens a song document from bytes supplied by the host.
     pub fn open(&mut self, path: &Path, bytes: &[u8]) {
         match Song::open(bytes, self.plugins) {
             Ok(song) => self.after_asking(Discard::Open {
@@ -420,23 +420,23 @@ impl Window {
             Err(error) => self.refuse(path, &error),
         }
     }
-    /// Handles this window operation.
+    /// Shows why opening `path` failed and removes it from recent songs.
     pub fn refuse(&mut self, path: &Path, why: &dyn std::fmt::Display) {
         self.failure = Some(format!("{} did not open: {why}", path.display()));
         // A song that no longer opens leaves the recent list.
         self.settings.recent.retain(|recent| recent != path);
     }
-    /// Handles this window operation.
+    /// Uses `folder` as the global snapshot destination.
     pub fn use_snapshot_folder(&mut self, folder: &Path) {
         self.settings.snapshot_folder = Some(folder.to_path_buf());
         self.settings.snapshots_in_folder = true;
     }
-    /// Handles this window operation.
+    /// Shows why a snapshot write failed and allows another try.
     pub fn snapshot_failed(&mut self, why: &str) {
         self.autosave.snapshotted = None;
         self.failure = Some(format!("Snapshot failed: {why}"));
     }
-    /// Handles this window operation.
+    /// Returns this window with the host's data folder configured.
     #[must_use]
     pub fn with_data_folder(self, folder: PathBuf) -> Self {
         Self {
@@ -447,14 +447,14 @@ impl Window {
             ..self
         }
     }
-    /// Handles this private window operation.
+    /// Moves `path` to the front of the recent-song list.
     pub(super) fn remember(&mut self, path: &Path) {
         let recent = &mut self.settings.recent;
         recent.retain(|recent| recent != path);
         recent.insert(0, path.to_path_buf());
         recent.truncate(RECENT);
     }
-    /// Handles this private window operation.
+    /// Writes dated snapshot copies when snapshot settings say one is due.
     pub(super) fn snapshot(&mut self, ctx: &egui::Context) {
         let Some(song) = &self.song else {
             return;
@@ -512,7 +512,7 @@ impl Window {
             Err(error) => self.failure = Some(format!("Snapshot failed: {error}")),
         }
     }
-    /// Handles this window operation.
+    /// Opens the built-in demo song after unsaved-change checks.
     pub fn open_demo(&mut self) {
         let song = Box::new(Song::new(demo::song(), self.plugins));
         self.after_asking(Discard::Open {
@@ -522,7 +522,7 @@ impl Window {
             audio: None,
         });
     }
-    /// Handles this private window operation.
+    /// Asks before replacing unsaved work, otherwise continues immediately.
     pub(super) fn after_asking(&mut self, discard: Discard) {
         if self.modified() {
             self.dialogs.discard = Some(discard);
@@ -530,7 +530,7 @@ impl Window {
             self.carry_on(discard);
         }
     }
-    /// Handles this private window operation.
+    /// Continues an open or close operation after changes are dealt with.
     pub(super) fn carry_on(&mut self, discard: Discard) {
         match discard {
             Discard::Close => {
@@ -591,7 +591,7 @@ impl Window {
             }
         }
     }
-    /// Handles this private window operation.
+    /// Applies the answer to the unsaved-changes question.
     pub(super) fn answer(&mut self, answer: panels::Answer) {
         let Some(discard) = self.dialogs.discard.take() else {
             return;

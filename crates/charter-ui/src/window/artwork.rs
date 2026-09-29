@@ -3,7 +3,7 @@
 use super::{Artwork, EmbeddedArtwork, Path, PathBuf, Picture, Request, Song, Window, refused};
 
 impl Window {
-    /// Handles this window operation.
+    /// Takes a chosen PNG or JPEG picture as the song's artwork.
     pub fn use_artwork(&mut self, file: &Path, picture: Option<Picture>) {
         let Some(picture) = picture else {
             self.failure = Some(format!(
@@ -17,7 +17,7 @@ impl Window {
             .map(|name| name.to_string_lossy().into_owned());
         self.take_artwork(name.unwrap_or_default(), picture);
     }
-    /// Handles this window operation.
+    /// Stores cover art embedded in a chosen audio file, or applies it to a song without artwork.
     pub fn artwork_embedded(&mut self, file: &Path, extension: &str, picture: Picture) {
         if self
             .dialogs
@@ -40,7 +40,7 @@ impl Window {
             self.take_artwork(format!("cover.{extension}"), picture);
         }
     }
-    /// Handles this window operation.
+    /// Restores artwork bytes kept in an autosave.
     pub fn artwork_restored(&mut self, picture: Option<Picture>) {
         let named = self.song.as_ref().and_then(|song| {
             let artwork = song.document().document().metadata.artwork.as_ref();
@@ -50,11 +50,11 @@ impl Window {
             self.artwork.current = Some(Artwork::taken(name, self.artwork_file(), picture));
         }
     }
-    /// Handles this window operation.
+    /// Whether saving may overwrite `file` because it is the song's current artwork.
     pub fn may_replace(&self, file: &Path) -> bool {
         self.artwork.on_disk.as_deref() == Some(file)
     }
-    /// Handles this private window operation.
+    /// Whether the song JSON or chosen-but-unsaved artwork has changed.
     pub(super) fn modified(&self) -> bool {
         self.song.as_ref().is_some_and(Song::is_modified)
             || self
@@ -64,7 +64,7 @@ impl Window {
                 .and_then(Artwork::unsaved)
                 .is_some()
     }
-    /// Handles this window operation.
+    /// Accepts the host's decoded picture for the artwork file currently named by the song.
     pub fn artwork_read(&mut self, file: &Path, picture: Option<Picture>) {
         if self.artwork_file().as_deref() == Some(file)
             && let Some(artwork) = &mut self.artwork.current
@@ -72,14 +72,14 @@ impl Window {
             artwork.read(picture);
         }
     }
-    /// Handles this window operation.
+    /// Artwork bytes to write beside the song when saving to `path`.
     pub fn artwork_write_for(&self, path: &Path) -> Option<(PathBuf, Vec<u8>)> {
         self.artwork
             .current
             .as_ref()?
             .write_for(path, self.artwork_file().as_deref())
     }
-    /// Handles this private window operation.
+    /// Absolute path for the artwork named by the open song, beside its chart file.
     pub(super) fn artwork_file(&self) -> Option<PathBuf> {
         let name = self
             .song
@@ -91,7 +91,7 @@ impl Window {
             .as_ref()?;
         Some(self.song_folder()?.join(name.as_str()))
     }
-    /// Handles this private window operation.
+    /// Names `picture` in the song metadata and keeps it pending until saved.
     pub(super) fn take_artwork(&mut self, name: String, picture: Picture) {
         let Some(song) = &mut self.song else {
             self.failure = Some("Open or start a song before adding its artwork.".to_owned());
@@ -121,7 +121,7 @@ impl Window {
             self.autosave.autosaved = None;
         }
     }
-    /// Handles this private window operation.
+    /// Keeps the preview in step with undo, redo and artwork metadata changes.
     pub(super) fn follow_artwork(&mut self) {
         let named = self.song.as_ref().and_then(|song| {
             let artwork = song.document().document().metadata.artwork.as_ref();
@@ -165,7 +165,7 @@ impl Window {
             self.requests.push(Request::ReadArtwork { file });
         }
     }
-    /// Handles this private window operation.
+    /// Sets aside unsaved artwork so undo and redo can bring it back.
     pub(super) fn park_artwork(&mut self) {
         let Some(artwork) = self.artwork.current.take() else {
             return;

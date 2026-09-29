@@ -29,9 +29,9 @@ pub(crate) const SETTINGS: KeyboardShortcut = KeyboardShortcut::new(Modifiers::C
 pub(crate) const NEW_SONG: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::N);
 /// Add or remove a bookmark at the cursor.
 pub(crate) const BOOKMARK: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::B);
-/// Show the timing window.
+/// Toggle the timing window.
 pub(crate) const SYNC: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::T);
-/// Show the keyboard shortcut help.
+/// Toggle the keyboard shortcut help.
 pub(crate) const HELP: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE, Key::F1);
 
 /// The keys that place notes on lanes 1 to 10, as StepMania and ArrowVortex bind them.

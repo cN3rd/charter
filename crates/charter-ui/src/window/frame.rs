@@ -7,7 +7,7 @@ use super::{
 };
 
 impl Window {
-    /// Handles this private window operation.
+    /// Opens dropped chart files and assigns dropped audio files to the open song.
     pub(super) fn open_dropped(&mut self, ui: &Ui) {
         // Taken out of the input first, so no song is parsed while egui's context is locked.
         let dropped = ui.input(|input| input.raw.dropped_files.clone());
@@ -25,7 +25,7 @@ impl Window {
             }
         }
     }
-    /// Handles this private window operation.
+    /// Draws modal questions and answers their choices.
     pub(super) fn dialogs(&mut self, ui: &Ui) {
         if let Some(draft) = &mut self.dialogs.new_song {
             match new_song::show(ui, self.plugins, draft, self.no_drops) {
@@ -58,7 +58,7 @@ impl Window {
             }
         }
     }
-    /// Handles this private window operation.
+    /// Filters raw key actions through focused text fields, modals and the timing window.
     pub(super) fn keyboard(&mut self, ui: &Ui) -> Vec<Action> {
         let lanes = if self.calibration.is_open() {
             0
@@ -114,7 +114,7 @@ impl Window {
             })
             .collect()
     }
-    /// Handles this window operation.
+    /// Draws one editor frame and applies the actions its controls produce.
     #[expect(
         clippy::too_many_lines,
         clippy::cognitive_complexity,
