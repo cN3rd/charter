@@ -193,24 +193,33 @@ impl Song {
             let old = i64::from(tick);
             let mut new = old;
             for &(start, end) in &segments {
-                let span = end - start;
-                let grown = if double { span } else { -span / 2 };
-                if !double && span % 2 != 0 {
+                let span = end.saturating_sub(start);
+                let grown = if double {
+                    span
+                } else {
+                    span.div_euclid(2).saturating_neg()
+                };
+                if !double && span.rem_euclid(2) != 0 {
                     return Err(Refusal::NotWhole);
                 }
                 if old >= end {
-                    new += grown;
+                    new = new.saturating_add(grown);
                 } else if old > start {
-                    let within = old - start;
-                    if !double && within % 2 != 0 {
+                    let within = old.saturating_sub(start);
+                    if !double && within.rem_euclid(2) != 0 {
                         return Err(Refusal::NotWhole);
                     }
-                    new += if double { within } else { -within / 2 };
+                    new = new.saturating_add(if double {
+                        within
+                    } else {
+                        within.div_euclid(2).saturating_neg()
+                    });
+                } else {
                 }
             }
             i32::try_from(new)
                 .map(Tick::new)
-                .map_err(|_| Refusal::NotWhole)
+                .map_err(|_out_of_range| Refusal::NotWhole)
         };
         let (_, timing) = self.edited_timing();
         let mut base = timing.clone();
@@ -278,7 +287,7 @@ impl Song {
                 Ok(Anchor {
                     tick: pin.tick,
                     seconds: Origin::try_from(micro(pin.seconds).ok_or(Refusal::NotWhole)?)
-                        .map_err(|_| Refusal::NotWhole)?,
+                        .map_err(|_invalid_origin| Refusal::NotWhole)?,
                 })
             })
             .collect::<Result<Vec<_>, Refusal>>()?;
@@ -288,9 +297,10 @@ impl Song {
     }
 
     /// The tempo after the last anchor now.
+    #[expect(clippy::expect_used, reason = "120 BPM is a valid tempo")]
     fn tail(&self) -> Bpm {
         self.tail_bpm()
-            .unwrap_or_else(|| Bpm::try_from(120.0).unwrap_or_else(|_| unreachable!()))
+            .unwrap_or_else(|| Bpm::try_from(120.0).expect("120 BPM is valid"))
     }
 
     /// The song with `timing` in place of the one tempo edits go to, checked as an edit would be.

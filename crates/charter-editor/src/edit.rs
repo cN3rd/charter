@@ -111,17 +111,21 @@ impl Edit {
                     chart: None, new, ..
                 } => document.settings.clone_from(new),
                 Op::Settings {
-                    chart: Some(chart),
+                    chart: Some(chart_index),
                     new,
                     ..
                 } => {
-                    let Some(edited) = document.charts.get_mut(*chart) else {
+                    let Some(edited) = document.charts.get_mut(*chart_index) else {
                         return false;
                     };
                     edited.settings.clone_from(new);
                 }
-                Op::Objects { chart, new, .. } => {
-                    let Some(edited) = document.charts.get_mut(*chart) else {
+                Op::Objects {
+                    chart: chart_index,
+                    new,
+                    ..
+                } => {
+                    let Some(edited) = document.charts.get_mut(*chart_index) else {
                         return false;
                     };
                     edited.objects.clone_from(new);

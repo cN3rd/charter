@@ -194,12 +194,12 @@ impl Song {
     }
 
     #[must_use]
-    pub fn document(&self) -> &ValidDocument {
+    pub const fn document(&self) -> &ValidDocument {
         &self.document
     }
 
     #[must_use]
-    pub fn chart_index(&self) -> usize {
+    pub const fn chart_index(&self) -> usize {
         self.chart
     }
 
@@ -225,12 +225,12 @@ impl Song {
     }
 
     #[must_use]
-    pub fn cursor(&self) -> Tick {
+    pub const fn cursor(&self) -> Tick {
         self.cursor
     }
 
     #[must_use]
-    pub fn snap(&self) -> NonZeroU16 {
+    pub const fn snap(&self) -> NonZeroU16 {
         self.snap
     }
 
@@ -419,14 +419,14 @@ impl Song {
                 charter_core::Anchor {
                     tick: at,
                     seconds: charter_core::Origin::try_from((seconds * 1e6).round() / 1e6)
-                        .map_err(|_| Refusal::NotWhole)?,
+                        .map_err(|_invalid_origin| Refusal::NotWhole)?,
                 },
             );
             index
         };
         let (Some(from), next) = (
             new.anchors.get(index).cloned(),
-            new.anchors.get(index + 1).cloned(),
+            new.anchors.get(index.saturating_add(1)).cloned(),
         ) else {
             return Ok(());
         };
@@ -438,7 +438,7 @@ impl Song {
             (KeepNotes::OnBeats, Some(next)) => self.on_beats(&from, &next, bpm)?,
             (KeepNotes::InTime, next) => self.in_time(&from, next.as_ref(), bpm)?,
         };
-        for anchor in new.anchors.iter_mut().skip(index + 1) {
+        for anchor in new.anchors.iter_mut().skip(index.saturating_add(1)) {
             anchor.tick = map(anchor.tick)?;
         }
         for event in &mut new.events {
@@ -475,16 +475,17 @@ impl Song {
         // it is found again until it settles; each pass can only drop events, so it soon does.
         let mut to = i64::from(next.tick);
         for _ in 0..8 {
-            #[allow(clippy::cast_possible_truncation)] // a tick of the song
-            let end = Tick::new(to.min(i64::from(next.tick)) as i32);
+            let end = Tick::new(
+                i32::try_from(to.min(i64::from(next.tick)))
+                    .map_err(|_out_of_range| Refusal::NotWhole)?,
+            );
             let span =
                 TimedSpan::between(self.timing(), from.tick, end).ok_or(Refusal::NotWhole)?;
             let timed = span.timed_beats(resolution) * per_beat;
-            #[allow(clippy::cast_precision_loss)] // ticks of a song
-            let warped = (i64::from(end) - i64::from(from.tick)) as f64 - timed;
+            let warped = tick_delta_as_f64(end, from.tick) - timed;
             let beats = (apart - span.paused_seconds()) * f64::from(bpm) / 60.0;
-            #[allow(clippy::cast_possible_truncation)] // checked into a tick below
-            let settled = i64::from(from.tick) + (beats * per_beat + warped).round() as i64;
+            let settled =
+                i64::from(from.tick).saturating_add(rounded_tick_delta(beats * per_beat + warped));
             if settled == to {
                 break;
             }
@@ -494,7 +495,7 @@ impl Song {
             return Err(Refusal::Crosses(next.tick));
         }
         let old_next = next.tick;
-        let by = to - i64::from(old_next);
+        let by = to.saturating_sub(i64::from(old_next));
         Ok(Box::new(move |tick: Tick| {
             if tick < old_next {
                 return Ok(tick);
@@ -524,10 +525,8 @@ impl Song {
             }
             let span = TimedSpan::between(timing, start, tick).ok_or(Refusal::NotWhole)?;
             let timed = span.timed_beats(resolution) * per_beat;
-            #[allow(clippy::cast_precision_loss)] // ticks of a song
-            let warped = (i64::from(tick) - i64::from(start)) as f64 - timed;
-            #[allow(clippy::cast_possible_truncation)] // checked into a tick
-            moved(start, (timed * ratio + warped).round() as i64)
+            let warped = tick_delta_as_f64(tick, start) - timed;
+            moved(start, rounded_tick_delta(timed * ratio + warped))
         };
         let Some(next) = next else {
             return Ok(Box::new(stretched));
@@ -537,7 +536,7 @@ impl Song {
         if to <= start {
             return Err(Refusal::Crosses(old_next));
         }
-        let by = i64::from(to) - i64::from(old_next);
+        let by = i64::from(to).saturating_sub(i64::from(old_next));
         Ok(Box::new(move |tick: Tick| {
             if tick < old_next {
                 stretched(tick)
@@ -618,7 +617,7 @@ impl Song {
             seconds: charter_core::Origin::try_from(
                 (self.timing().time_at(at).seconds() * 1e6).round() / 1e6,
             )
-            .map_err(|_| Refusal::NotWhole)?,
+            .map_err(|_invalid_origin| Refusal::NotWhole)?,
         };
         new.anchors.insert(index, change);
         self.retime(own, new)
@@ -696,10 +695,10 @@ impl Song {
         if new.get(index).is_none_or(|marker| marker.tick == to) {
             return Ok(());
         }
-        let mut marker = new.remove(index);
-        marker.tick = to;
+        let mut moved_marker = new.remove(index);
+        moved_marker.tick = to;
         let at = new.partition_point(|marker| marker.tick <= to);
-        new.insert(at, marker);
+        new.insert(at, moved_marker);
         self.remark(new)
     }
 
@@ -735,7 +734,7 @@ impl Song {
         for anchor in &mut new.anchors {
             let seconds = charter_core::ResolvedTime::from(anchor.seconds).seconds() + delta;
             anchor.seconds = charter_core::Origin::try_from((seconds * 1e6).round() / 1e6)
-                .map_err(|_| Refusal::NotWhole)?;
+                .map_err(|_invalid_origin| Refusal::NotWhole)?;
         }
         self.retime(own, new)
     }
@@ -774,7 +773,7 @@ impl Song {
             **kept = new;
         }
         self.document = document;
-        self.revision += 1;
+        self.revision = self.revision.saturating_add(1);
         Ok(())
     }
 
@@ -807,7 +806,7 @@ impl Song {
     }
 
     /// Puts the cursor on `tick`, such as a marker's.
-    pub fn jump_to(&mut self, tick: Tick) {
+    pub const fn jump_to(&mut self, tick: Tick) {
         self.cursor = tick;
     }
 
@@ -942,7 +941,7 @@ impl Song {
                 .position
                 .lanes()
                 .is_some_and(|span| span.overlaps(key));
-            covers.then_some((from + offset, object))
+            covers.then_some((from.saturating_add(offset), object))
         })
     }
 
@@ -950,7 +949,7 @@ impl Song {
     /// could have been redone. An edit that only changes what the step before placed joins that
     /// step.
     fn record(&mut self, edit: Edit) {
-        self.revision += 1;
+        self.revision = self.revision.saturating_add(1);
         self.history.truncate(self.done);
         if self.saved.is_some_and(|saved| saved > self.done) {
             self.saved = None;
@@ -1025,7 +1024,7 @@ impl Song {
         };
         self.document = self.edited(change.chart, &change.edit)?;
         let (chart, cursor) = (change.chart, change.cursor);
-        self.done += 1;
+        self.done = self.done.saturating_add(1);
         self.return_to(chart, cursor);
         Ok(())
     }
@@ -1037,20 +1036,20 @@ impl Song {
     }
 
     /// Takes the song as it stands to be what its file holds.
-    pub fn mark_saved(&mut self) {
+    pub const fn mark_saved(&mut self) {
         self.saved = Some(self.done);
     }
 
     /// Takes the song to differ from what its file holds, as a song restored from an autosave
     /// does.
-    pub fn mark_unsaved(&mut self) {
+    pub const fn mark_unsaved(&mut self) {
         self.saved = None;
     }
 
     /// A count of the changes made to the song's notes, edits, undos and redos alike, so two
     /// equal revisions of one song hold the same notes.
     #[must_use]
-    pub fn revision(&self) -> u64 {
+    pub const fn revision(&self) -> u64 {
         self.revision
     }
 
@@ -1081,7 +1080,7 @@ impl Song {
         let (first, last) = (u16::from(*lanes.start()), u16::from(*lanes.end()));
         let width = last
             .checked_sub(first)
-            .and_then(|span| LaneCount::new(span + 1));
+            .and_then(|span| LaneCount::new(span.saturating_add(1)));
         let found: Vec<_> = match (width, self.chart()) {
             (Some(width), Some(chart)) => {
                 let area = LaneSpan::new(LaneIndex::new(first), width);
@@ -1176,10 +1175,11 @@ impl Song {
                 Step::Earlier => end.previous_on(length),
             };
             let mut new = old.clone();
-            (new.kind, new.shape) = match moved.and_then(|end| old.tick.ticks_until(end)) {
-                Some(duration) => (Kind::Hold, Shape::Sustain { duration }),
-                None => (Kind::Tap, Shape::Instant),
-            };
+            (new.kind, new.shape) =
+                match moved.and_then(|moved_end| old.tick.ticks_until(moved_end)) {
+                    Some(duration) => (Kind::Hold, Shape::Sustain { duration }),
+                    None => (Kind::Tap, Shape::Instant),
+                };
             if new != *old {
                 let old = old.clone();
                 ops.push(Op::Replace { index, old, new });
@@ -1228,8 +1228,12 @@ impl Song {
         let step = i64::from(u32::from(step));
         self.replace_selection(&|object| {
             let tick = i64::from(object.tick);
-            let nearest = (tick + step / 2).div_euclid(step) * step;
-            let by = i32::try_from(nearest - tick).map_err(|_| Refusal::OffTheChart)?;
+            let nearest = tick
+                .saturating_add(step.div_euclid(2))
+                .div_euclid(step)
+                .saturating_mul(step);
+            let by = i32::try_from(nearest.saturating_sub(tick))
+                .map_err(|_out_of_range| Refusal::OffTheChart)?;
             shifted(object, by, 0).ok_or(Refusal::OffTheChart)
         })
     }
@@ -1244,7 +1248,7 @@ impl Song {
         let width = self.lane_count();
         let flip = |position: Position| match position {
             Position::Lane { index, width: span } => {
-                let right = u16::from(index) + u16::from(span);
+                let right = u16::from(index).saturating_add(u16::from(span));
                 Some(Position::Lane {
                     index: LaneIndex::new(width.checked_sub(right)?),
                     width: span,
@@ -1291,9 +1295,9 @@ impl Song {
             return Vec::new();
         };
         let back = |tick: Tick| {
-            i32::try_from(i64::from(tick) - first)
+            i32::try_from(i64::from(tick).saturating_sub(first))
                 .map(Tick::new)
-                .map_err(|_| Refusal::NotWhole)
+                .map_err(|_out_of_range| Refusal::NotWhole)
         };
         selected
             .into_iter()
@@ -1312,9 +1316,9 @@ impl Song {
     pub fn paste(&mut self, clip: &[Object], at: Tick) -> Result<usize, Refusal> {
         let offset = i64::from(at);
         let on = |tick: Tick| {
-            i32::try_from(i64::from(tick) + offset)
+            i32::try_from(i64::from(tick).saturating_add(offset))
                 .map(Tick::new)
-                .map_err(|_| Refusal::OffTheChart)
+                .map_err(|_out_of_range| Refusal::OffTheChart)
         };
         let placed: Vec<Object> = clip
             .iter()
@@ -1470,7 +1474,7 @@ impl Song {
 
     /// Opens `chart` with the cursor on `cursor`, where an undone or redone edit was made.
     fn return_to(&mut self, chart: usize, cursor: Tick) {
-        self.revision += 1;
+        self.revision = self.revision.saturating_add(1);
         self.open_chart(chart);
         self.cursor = cursor;
         self.prune_selection();
@@ -1504,10 +1508,12 @@ impl Song {
                 edit: Edit(ops),
             },
         );
-        self.done -= merged - 1;
+        self.done = self.done.saturating_sub(merged.saturating_sub(1));
         self.saved = match self.saved {
             Some(saved) if saved <= step => Some(saved),
-            Some(saved) if saved >= step + merged => Some(saved - (merged - 1)),
+            Some(saved) if saved >= step.saturating_add(merged) => {
+                Some(saved.saturating_sub(merged.saturating_sub(1)))
+            }
             _ => None,
         };
     }
@@ -1515,17 +1521,17 @@ impl Song {
     /// How many steps of the history are done: where undo and redo have left the song, so
     /// state kept beside it, such as a picture not yet saved, can follow them.
     #[must_use]
-    pub fn history_step(&self) -> usize {
+    pub const fn history_step(&self) -> usize {
         self.done
     }
 
     #[must_use]
-    pub fn can_undo(&self) -> bool {
+    pub const fn can_undo(&self) -> bool {
         self.done > 0
     }
 
     #[must_use]
-    pub fn can_redo(&self) -> bool {
+    pub const fn can_redo(&self) -> bool {
         self.done < self.history.len()
     }
 
@@ -1566,13 +1572,14 @@ impl Song {
         }
     }
 
+    /// Moves to the next finer snap supported by this song's tick resolution.
     pub fn finer_snap(&mut self) {
         let finer = self.snaps().find(|snap| *snap > self.snap);
         self.snap = finer.unwrap_or(self.snap);
     }
 
     /// Sets what a BPM set from now on keeps of the notes it times.
-    pub fn keep_notes(&mut self, keep: KeepNotes) {
+    pub const fn keep_notes(&mut self, keep: KeepNotes) {
         self.keep = keep;
     }
 
@@ -1623,13 +1630,15 @@ fn taken(objects: &[Object], object: &Object) -> bool {
 /// Whether `object` sits within `lanes` lanes, as a note on the plane always does.
 fn fits(object: &Object, lanes: u16) -> bool {
     match object.position {
-        Position::Lane { index, width } => u16::from(index) + u16::from(width) <= lanes,
+        Position::Lane { index, width } => {
+            u16::from(index).saturating_add(u16::from(width)) <= lanes
+        }
         Position::Plane { .. } => true,
     }
 }
 
 /// The note an object is, when it sits on lanes.
-fn note_at(object: &Object) -> Option<NoteAt> {
+const fn note_at(object: &Object) -> Option<NoteAt> {
     match object.position {
         Position::Lane { index, .. } => Some(NoteAt {
             tick: object.tick,
@@ -1643,13 +1652,13 @@ fn note_at(object: &Object) -> Option<NoteAt> {
 /// leaves the ticks or the lanes.
 fn shifted(object: &Object, ticks: i32, lanes: i32) -> Option<Object> {
     let tick = |tick: Tick| {
-        i32::try_from(i64::from(tick) + i64::from(ticks))
+        i32::try_from(i64::from(tick).saturating_add(i64::from(ticks)))
             .ok()
             .map(Tick::new)
     };
     let position = |position: Position| match position {
         Position::Lane { index, width } => {
-            let index = u16::try_from(i32::from(u16::from(index)) + lanes).ok()?;
+            let index = u16::try_from(i32::from(u16::from(index)).saturating_add(lanes)).ok()?;
             Some(Position::Lane {
                 index: LaneIndex::new(index),
                 width,
@@ -1706,11 +1715,31 @@ fn mapped_shape(
 /// Where a timing edit sends each tick.
 type Shift<'a> = Box<dyn Fn(Tick) -> Result<Tick, Refusal> + 'a>;
 
+/// The floating-point tick span used in tempo interpolation.
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_precision_loss,
+    reason = "tempo math uses floating-point tick spans"
+)]
+fn tick_delta_as_f64(to: Tick, from: Tick) -> f64 {
+    i64::from(to).saturating_sub(i64::from(from)) as f64
+}
+
+/// Rounded tempo interpolation, checked as a tick by the caller.
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    reason = "the caller checks the resulting tick range"
+)]
+fn rounded_tick_delta(value: f64) -> i64 {
+    value.round() as i64
+}
+
 /// `tick` moved `by` ticks, if that is still a tick.
 fn moved(tick: Tick, by: i64) -> Result<Tick, Refusal> {
-    i32::try_from(i64::from(tick) + by)
+    i32::try_from(i64::from(tick).saturating_add(by))
         .map(Tick::new)
-        .map_err(|_| Refusal::NotWhole)
+        .map_err(|_out_of_range| Refusal::NotWhole)
 }
 
 /// `object` with every tick it holds, its children's and its path's, and its end, moved by
@@ -1755,14 +1784,15 @@ fn shifted_shape(
                 })
                 .collect::<Result<Vec<_>, Refusal>>()?;
             Shape::Path {
-                points: charter_core::Points::new(moved_points).map_err(|_| Refusal::NotWhole)?,
+                points: charter_core::Points::new(moved_points)
+                    .map_err(|_invalid_points| Refusal::NotWhole)?,
             }
         }
     })
 }
 
 /// An instant note of `kind` on `lane` at `tick`.
-fn note(tick: Tick, lane: LaneIndex, kind: Kind) -> Object {
+const fn note(tick: Tick, lane: LaneIndex, kind: Kind) -> Object {
     Object {
         tick,
         position: Position::Lane {
@@ -1799,7 +1829,7 @@ impl TimedSpan {
 
     /// Seconds spent stopped or delayed in this span.
     #[must_use]
-    pub fn paused_seconds(self) -> f64 {
+    pub const fn paused_seconds(self) -> f64 {
         self.paused_seconds
     }
 
@@ -2306,7 +2336,7 @@ pub(crate) mod tests {
         let clip = song.copied();
         assert_eq!(song.paste(&clip, at(960)).unwrap(), 1);
         let pasted = objects(&song);
-        let child = &pasted.get(1).unwrap()["children"][0];
+        let child = &pasted[1]["children"][0];
         assert_eq!(child["shape"]["path"]["points"][0]["tick"], 1200);
     }
 
@@ -2420,7 +2450,7 @@ pub(crate) mod tests {
     fn a_hold_that_started_earlier_leaves_the_lane_free_at_the_cursor() {
         let hold = json!({ "tick": 0, "position": { "lane": { "index": 0 } },
                            "kind": "hold", "shape": { "sustain": { "duration": 960 } } });
-        let mut song = Song::new(document(json!([hold.clone()])), EDITABLE);
+        let mut song = Song::new(document(json!([hold])), EDITABLE);
         song.step(Step::Later);
         assert_eq!(
             song.toggle(song.cursor(), lane(0), Kind::Tap).unwrap(),
@@ -2904,14 +2934,14 @@ pub(crate) mod tests {
     #[test]
     fn a_bpm_set_between_changes_changes_the_one_in_effect_undo_takes_back() {
         let meter = json!({ "tick": 960, "kind": { "time_signature": [3, 4] } });
-        let events = json!([bpm_event(0, 120.0), meter.clone(), bpm_event(1920, 90.0)]);
+        let events = json!([bpm_event(0, 120.0), meter, bpm_event(1920, 90.0)]);
         let mut song = timed(&events, None);
         song.keep_notes(KeepNotes::OnBeats);
         song.step(Step::Later);
         assert_eq!(song.cursor(), Tick::new(240));
         song.set_bpm(tempo(150.0)).unwrap();
         // The 90 BPM point stays a second in, now two and a half beats at 150 BPM from the start.
-        let expected = json!([bpm_event(0, 150.0), meter.clone(), bpm_event(2400, 90.0)]);
+        let expected = json!([bpm_event(0, 150.0), meter, bpm_event(2400, 90.0)]);
         assert_eq!(song_events(&song), expected);
         assert_eq!(song.bpm(), Some((Tick::new(0), tempo(150.0))));
         song.undo().unwrap();
@@ -2985,8 +3015,8 @@ pub(crate) mod tests {
         song.set_bpm(tempo(150.0)).unwrap();
 
         assert_eq!(song.bpm(), Some((Tick::new(0), tempo(150.0))));
-        let events = &song.document().document().timing.events;
-        assert_eq!(events[0].tick, Tick::new(600));
+        let shifted_events = &song.document().document().timing.events;
+        assert_eq!(shifted_events[0].tick, Tick::new(600));
         assert!((seconds(&song, 600) - stop_at).abs() < 1e-9);
         assert!((seconds(&song, 1200) - inside).abs() < 1e-9);
         assert!((seconds(&song, 2400) - point).abs() < 1e-9);
@@ -3252,7 +3282,7 @@ pub(crate) mod tests {
     fn a_timing_event_moved_lands_in_order_and_undo_puts_it_back() {
         let meter = json!({ "tick": 960, "kind": { "time_signature": [3, 4] } });
         let mut song = timed(
-            &json!([bpm_event(0, 120.0), bpm_event(480, 150.0), meter.clone()]),
+            &json!([bpm_event(0, 120.0), bpm_event(480, 150.0), meter]),
             None,
         );
         song.move_timing_at(Tick::new(480), Tick::new(1920))
@@ -3388,8 +3418,9 @@ pub(crate) mod tests {
             .unwrap();
         assert_eq!(offset(&song), json!(0.0));
         let chart = &song.document().document().charts[1];
-        let own = serde_json::to_value(chart.timing.as_ref().unwrap().anchors[0].seconds).unwrap();
-        assert_eq!(own, json!(-0.5));
+        let own_seconds =
+            serde_json::to_value(chart.timing.as_ref().unwrap().anchors[0].seconds).unwrap();
+        assert_eq!(own_seconds, json!(-0.5));
     }
 
     #[test]
@@ -3413,9 +3444,9 @@ pub(crate) mod tests {
     fn the_revision_moves_with_every_change_to_the_notes_and_nothing_else() {
         let mut song = Song::new(document(json!([])), EDITABLE);
         let mut seen = vec![song.revision()];
-        let mut changed = |song: &Song| {
-            let new = !seen.contains(&song.revision());
-            seen.push(song.revision());
+        let mut changed = |current_song: &Song| {
+            let new = !seen.contains(&current_song.revision());
+            seen.push(current_song.revision());
             new
         };
         song.toggle(at(0), lane(0), Kind::Tap).unwrap();
@@ -3499,11 +3530,11 @@ pub(crate) mod tests {
 
     #[test]
     fn a_chosen_snap_stands_only_if_the_menu_has_it_and_the_resolution_holds_it() {
-        let mut song = Song::new(document(json!([])), &[]);
-        song.set_snap(note(12));
-        assert_eq!(song.snap(), note(12));
-        song.set_snap(note(7));
-        assert_eq!(song.snap(), note(12));
+        let mut original_song = Song::new(document(json!([])), &[]);
+        original_song.set_snap(note(12));
+        assert_eq!(original_song.snap(), note(12));
+        original_song.set_snap(note(7));
+        assert_eq!(original_song.snap(), note(12));
         let coarse = json!({
             "format_version": 0,
             "ticks_per_beat": 100,
@@ -3511,9 +3542,9 @@ pub(crate) mod tests {
             "metadata": { "title": "t", "artist": "a", "audio": "song.ogg" },
             "timing": { "offset_seconds": 0.0, "events": [ { "tick": 0, "kind": { "bpm": 120.0 } } ] }
         });
-        let mut song = Song::open(&serde_json::to_vec(&coarse).unwrap(), &[]).unwrap();
-        song.set_snap(note(12));
-        assert_eq!(song.snap(), note(16));
+        let mut coarse_song = Song::open(&serde_json::to_vec(&coarse).unwrap(), &[]).unwrap();
+        coarse_song.set_snap(note(12));
+        assert_eq!(coarse_song.snap(), note(16));
     }
 
     #[test]

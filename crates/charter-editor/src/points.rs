@@ -40,7 +40,7 @@ impl Song {
         let later = seconds - self.timing().time_at(tick).seconds();
         let start = self.timing().time_at(Tick::new(0)).seconds() + later;
         let offset = charter_core::Origin::try_from((start * 1e6).round() / 1e6)
-            .map_err(|_| Refusal::NotWhole)?;
+            .map_err(|_invalid_offset| Refusal::NotWhole)?;
         self.set_offset(offset)
     }
 

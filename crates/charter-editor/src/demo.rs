@@ -23,7 +23,7 @@ const END: i64 = OUTRO + 4 * MEASURE;
 ///
 /// Never: the demo is fixed data, and a test checks that it validates.
 #[must_use]
-#[allow(clippy::expect_used)] // see Panics
+#[expect(clippy::expect_used, reason = "fixed demo data is checked by a test")]
 pub fn song() -> ValidDocument {
     let document = json!({
         "format_version": 1,
@@ -65,8 +65,8 @@ pub fn song() -> ValidDocument {
 /// Quarter notes walking across the lanes, with a hold at each section.
 fn easy() -> Vec<Value> {
     let mut chart = Placer::default();
-    for tick in (0..END).filter(|tick| tick % (4 * SIXTEENTH) == 0) {
-        let beat = tick / (4 * SIXTEENTH);
+    for tick in (0..END).filter(|tick| tick.rem_euclid(4 * SIXTEENTH) == 0) {
+        let beat = tick.div_euclid(4 * SIXTEENTH);
         if [0, VERSE, CHORUS, BRIDGE, OUTRO].contains(&tick) {
             chart.place(tick, 3, "hold", 8 * SIXTEENTH, false);
         } else {
@@ -80,29 +80,46 @@ fn easy() -> Vec<Value> {
 /// the bridge.
 fn hard() -> Vec<Value> {
     let mut chart = Placer::default();
-    for tick in (0..END).filter(|tick| tick % SIXTEENTH == 0) {
-        let step = tick / SIXTEENTH;
+    for tick in (0..END).filter(|tick| tick.rem_euclid(SIXTEENTH) == 0) {
+        let step = tick.div_euclid(SIXTEENTH);
         if (CHORUS..BRIDGE).contains(&tick) {
-            let lane = walk(step * 3 + step / 4, &[0, 1, 2, 3]);
-            chart.place(tick, lane, "tap", 0, step % 16 == 0);
+            let lane = walk(
+                step.saturating_mul(3).saturating_add(step.div_euclid(4)),
+                &[0, 1, 2, 3],
+            );
+            chart.place(tick, lane, "tap", 0, step.rem_euclid(16) == 0);
         } else if (BRIDGE..OUTRO).contains(&tick) {
-            if step % 2 == 0 {
-                chart.place(tick, walk(step / 2, &[0, 3, 1, 2]), "tap", 0, false);
-            } else if step % 4 == 3 {
-                chart.place(tick, walk(step / 4, &[0, 1, 2, 3]), "mine", 0, false);
+            if step.rem_euclid(2) == 0 {
+                chart.place(
+                    tick,
+                    walk(step.div_euclid(2), &[0, 3, 1, 2]),
+                    "tap",
+                    0,
+                    false,
+                );
+            } else if step.rem_euclid(4) == 3 {
+                chart.place(
+                    tick,
+                    walk(step.div_euclid(4), &[0, 1, 2, 3]),
+                    "mine",
+                    0,
+                    false,
+                );
+            } else {
             }
-        } else if step % 2 == 0 {
-            let lane = walk(step / 2, &[0, 2, 1, 3]);
+        } else if step.rem_euclid(2) == 0 {
+            let lane = walk(step.div_euclid(2), &[0, 2, 1, 3]);
             chart.place(tick, lane, "tap", 0, false);
-            if (VERSE..CHORUS).contains(&tick) && step % 16 == 0 {
-                chart.place(tick, 3 - lane, "tap", 0, false);
+            if (VERSE..CHORUS).contains(&tick) && step.rem_euclid(16) == 0 {
+                chart.place(tick, 3_usize.saturating_sub(lane), "tap", 0, false);
             }
-            if step % 32 == 8 {
+            if step.rem_euclid(32) == 8 {
                 chart.place(tick, 3, "hold", 2 * SIXTEENTH, false);
             }
-            if step % 64 == 40 {
+            if step.rem_euclid(64) == 40 {
                 chart.place(tick, 1, "roll", 3 * SIXTEENTH, false);
             }
+        } else {
         }
     }
     chart.objects
@@ -110,14 +127,18 @@ fn hard() -> Vec<Value> {
 
 /// The lane `step` lands on when walking `lanes` over and over.
 fn walk(step: i64, lanes: &[usize]) -> usize {
-    let at = usize::try_from(step).unwrap_or(0) % lanes.len().max(1);
+    let at = usize::try_from(step)
+        .unwrap_or(0)
+        .rem_euclid(lanes.len().max(1));
     lanes.get(at).copied().unwrap_or(0)
 }
 
 /// Notes in tick order, skipping any lane that a sustain still covers so no two share a lane.
 #[derive(Default)]
 struct Placer {
+    /// Objects already placed, in tick order.
     objects: Vec<Value>,
+    /// First available tick on each of the four demo lanes.
     free_from: [i64; 4],
 }
 
@@ -144,7 +165,7 @@ impl Placer {
             object.insert("sample".into(), json!("clap"));
         }
         self.objects.push(Value::Object(object));
-        *free_from = tick + length + 1;
+        *free_from = tick.saturating_add(length).saturating_add(1);
     }
 }
 
