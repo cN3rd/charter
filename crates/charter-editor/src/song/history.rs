@@ -231,7 +231,7 @@ impl Song {
         let Rules::Checked(plugin) = self.rules else {
             return Err(Refusal::ReadOnly);
         };
-        // ponytail: every edit clones, validates and plugin-checks the whole document, about 3 ms
+        // ponytail: every edit still validates and plugin-checks the whole document, about 3 ms
         // at 10,000 notes in a release build; check only the edited chart once live recording or
         // bulk edits need it faster.
         let mut document = self.document.document().clone();

@@ -143,97 +143,15 @@ impl Edit {
     /// Makes the edit to `document`, whose chart `chart` its object changes go to. It must be
     /// the document the edit was made against. Says whether the chart was there.
     pub(crate) fn apply(&self, document: &mut Document, chart: usize) -> bool {
-        let mut edited = document.clone();
-        if !self.apply_to(&mut edited, chart) {
-            return false;
-        }
-        *document = edited;
-        true
-    }
-
-    /// Applies this edit without rollback.
-    fn apply_to(&self, document: &mut Document, chart: usize) -> bool {
+        let mut undo = Vec::with_capacity(self.0.len());
         for op in &self.0 {
-            match op {
-                Op::Metadata { new, .. } => document.metadata = (**new).clone(),
-                Op::Markers { new, .. } => document.markers.clone_from(new),
-                Op::Settings {
-                    chart: None, new, ..
-                } => document.settings.clone_from(new),
-                Op::Settings {
-                    chart: Some(chart_index),
-                    new,
-                    ..
-                } => {
-                    let Some(edited) = document.charts.get_mut(*chart_index) else {
-                        return false;
-                    };
-                    edited.settings.clone_from(new);
+            if !apply_op(document, chart, op) {
+                for rollback in undo.iter().rev() {
+                    apply_op(document, chart, rollback);
                 }
-                Op::Objects {
-                    chart: chart_index,
-                    new,
-                    ..
-                } => {
-                    let Some(edited) = document.charts.get_mut(*chart_index) else {
-                        return false;
-                    };
-                    edited.objects.clone_from(new);
-                }
-                Op::Layers {
-                    chart: chart_index,
-                    new,
-                    ..
-                } => {
-                    let Some(edited) = document.charts.get_mut(*chart_index) else {
-                        return false;
-                    };
-                    edited.layers.clone_from(new);
-                }
-                Op::Timing {
-                    own: false, new, ..
-                } => document.timing = (**new).clone(),
-                Op::Timing { new, .. } => {
-                    let Some(edited) = document.charts.get_mut(chart) else {
-                        return false;
-                    };
-                    edited.timing = Some((**new).clone());
-                }
-                Op::Insert { .. } | Op::Remove { .. } | Op::Replace { .. } => {
-                    let Some(edited) = document.charts.get_mut(chart) else {
-                        return false;
-                    };
-                    let objects = &mut edited.objects;
-                    match op {
-                        Op::Insert { index, object } => {
-                            if *index > objects.len() {
-                                return false;
-                            }
-                            objects.insert(*index, object.clone());
-                        }
-                        Op::Remove { index, object } => {
-                            if objects.get(*index) != Some(object) {
-                                return false;
-                            }
-                            objects.remove(*index);
-                        }
-                        Op::Replace {
-                            index, old, new, ..
-                        } => {
-                            if objects.get(*index) != Some(old) {
-                                return false;
-                            }
-                            objects.splice(*index..=*index, [new.clone()]);
-                        }
-                        Op::Metadata { .. }
-                        | Op::Markers { .. }
-                        | Op::Objects { .. }
-                        | Op::Layers { .. }
-                        | Op::Settings { .. }
-                        | Op::Timing { .. } => {}
-                    }
-                }
+                return false;
             }
+            undo.push(op.inverse());
         }
         true
     }
@@ -259,6 +177,91 @@ impl Edit {
         }
         false
     }
+}
+
+/// Applies one operation, leaving rollback to [`Edit::apply`].
+fn apply_op(document: &mut Document, chart: usize, op: &Op) -> bool {
+    match op {
+        Op::Metadata { new, .. } => document.metadata = (**new).clone(),
+        Op::Markers { new, .. } => document.markers.clone_from(new),
+        Op::Settings {
+            chart: None, new, ..
+        } => document.settings.clone_from(new),
+        Op::Settings {
+            chart: Some(chart_index),
+            new,
+            ..
+        } => {
+            let Some(edited) = document.charts.get_mut(*chart_index) else {
+                return false;
+            };
+            edited.settings.clone_from(new);
+        }
+        Op::Objects {
+            chart: chart_index,
+            new,
+            ..
+        } => {
+            let Some(edited) = document.charts.get_mut(*chart_index) else {
+                return false;
+            };
+            edited.objects.clone_from(new);
+        }
+        Op::Layers {
+            chart: chart_index,
+            new,
+            ..
+        } => {
+            let Some(edited) = document.charts.get_mut(*chart_index) else {
+                return false;
+            };
+            edited.layers.clone_from(new);
+        }
+        Op::Timing {
+            own: false, new, ..
+        } => document.timing = (**new).clone(),
+        Op::Timing { new, .. } => {
+            let Some(edited) = document.charts.get_mut(chart) else {
+                return false;
+            };
+            edited.timing = Some((**new).clone());
+        }
+        Op::Insert { .. } | Op::Remove { .. } | Op::Replace { .. } => {
+            let Some(edited) = document.charts.get_mut(chart) else {
+                return false;
+            };
+            let objects = &mut edited.objects;
+            match op {
+                Op::Insert { index, object } => {
+                    if *index > objects.len() {
+                        return false;
+                    }
+                    objects.insert(*index, object.clone());
+                }
+                Op::Remove { index, object } => {
+                    if objects.get(*index) != Some(object) {
+                        return false;
+                    }
+                    objects.remove(*index);
+                }
+                Op::Replace {
+                    index, old, new, ..
+                } => {
+                    if objects.get(*index) != Some(old) {
+                        return false;
+                    }
+                    objects.splice(*index..=*index, [new.clone()]);
+                }
+                Op::Metadata { .. }
+                | Op::Markers { .. }
+                | Op::Objects { .. }
+                | Op::Layers { .. }
+                | Op::Settings { .. }
+                | Op::Timing { .. } => {}
+            }
+        }
+    }
+    true
 }
 
 #[cfg(test)]
@@ -318,6 +321,24 @@ mod tests {
         assert!(edit.apply(&mut document, 0));
         assert_eq!(document.charts[0].objects, [hold(240, 240), tap(720)]);
         assert!(edit.inverse().apply(&mut document, 0));
+        assert_eq!(document.charts[0].objects, before);
+    }
+
+    #[test]
+    fn a_later_failed_operation_rolls_back_earlier_operations() {
+        let before = vec![tap(0), tap(240)];
+        let edit = Edit(vec![
+            Op::Remove {
+                index: 0,
+                object: tap(0),
+            },
+            Op::Remove {
+                index: 4,
+                object: tap(240),
+            },
+        ]);
+        let mut document = song(before.clone());
+        assert!(!edit.apply(&mut document, 0));
         assert_eq!(document.charts[0].objects, before);
     }
 

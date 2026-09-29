@@ -96,6 +96,15 @@ impl Song {
                 notes: chart.objects.len(),
             }];
         }
+        let mut notes: Vec<usize> = vec![0; chart.layers.len()];
+        for object in &chart.objects {
+            if let Some(count) = chart
+                .layer_index(object)
+                .and_then(|index| notes.get_mut(index))
+            {
+                *count = (*count).saturating_add(1);
+            }
+        }
         chart
             .layers
             .iter()
@@ -105,13 +114,18 @@ impl Song {
                 colour: layer.colour,
                 view: layer.view,
                 locked: layer.locked,
-                notes: chart
-                    .objects
-                    .iter()
-                    .filter(|object| chart.layer_index(object) == Some(index))
-                    .count(),
+                notes: notes.get(index).copied().unwrap_or(0),
             })
             .collect()
+    }
+
+    /// Number of rows in the open chart, including the implicit legacy row.
+    fn layer_count(&self) -> usize {
+        self.document
+            .document()
+            .charts
+            .get(self.chart)
+            .map_or(0, |chart| chart.layers.len().max(1))
     }
 
     /// Active row of the open chart, clamped to a row that exists.
@@ -121,12 +135,12 @@ impl Song {
             .get(self.chart)
             .map_or(LayerIndex::ZERO, |state| state.active_layer)
             .get()
-            .min(self.layers().len().saturating_sub(1))
+            .min(self.layer_count().saturating_sub(1))
     }
 
     /// Choose the row where subsequently placed notes go; out-of-range indices clamp.
     pub fn set_active_layer(&mut self, index: usize) {
-        let len = self.layers().len();
+        let len = self.layer_count();
         if let Some(state) = self.chart_state.get_mut(self.chart) {
             state.active_layer = LayerIndex::clamped(index, len);
         }
@@ -295,7 +309,7 @@ impl Song {
     /// # Errors
     /// Refuses a missing row, read-only song or plugin rejection.
     pub fn move_layer(&mut self, from: usize, to: usize) -> Result<(), Refusal> {
-        if from == to && from < self.layers().len() {
+        if from == to && from < self.layer_count() {
             return Ok(());
         }
         let active = self.active_layer();
