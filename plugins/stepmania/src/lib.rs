@@ -28,30 +28,36 @@ pub const ID: &str = "sm";
 
 /// A song, checked against this ruleset and every document rule when built, and unchangeable
 /// after.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Song {
+    /// Header values shared by all charts.
     metadata: Metadata,
+    /// Number of ticks per quarter-note beat.
     ticks_per_beat: TicksPerBeat,
+    /// Keysounds available to notes across the song.
     samples: BTreeMap<SampleId, ResourcePath>,
+    /// Song-wide timing, used unless a chart overrides it.
     timing: Timing,
+    /// Song-wide section and bookmark positions.
     markers: Vec<Marker>,
+    /// Charts checked against this ruleset.
     charts: Vec<Chart>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Timing {
     pub anchors: Vec<Anchor>,
     pub tempo: Bpm,
     pub events: Vec<TimingEvent>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TimingEvent {
     pub tick: Tick,
     pub kind: TimingKind,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TimingKind {
     Stop(Seconds),
     Delay(Seconds),
@@ -75,14 +81,14 @@ pub struct Combo {
     pub miss: u32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Speed {
     pub ratio: Decimal,
     pub length: SpeedLength,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum SpeedLength {
     /// The new speed applies at once.
@@ -91,7 +97,7 @@ pub enum SpeedLength {
     Seconds(Seconds),
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Chart {
     pub name: String,
     pub style: Style,
@@ -177,10 +183,11 @@ styles! {
 /// Routine styles, where two players share one set of panels, get a full set of lanes per
 /// player, player 1 first.
 const fn routine(columns: u16) -> u16 {
-    columns * 2
+    columns.saturating_mul(2)
 }
 
 impl Style {
+    /// The steps type with StepMania's `name`, if supported.
     #[must_use]
     pub fn named(name: &str) -> Option<Self> {
         Self::ALL.iter().copied().find(|style| style.name() == name)
@@ -189,6 +196,10 @@ impl Style {
 
 /// `n` lanes, for the styles' own column counts.
 const fn lanes(n: u16) -> LaneCount {
+    #[expect(
+        clippy::unreachable,
+        reason = "only positive constant style widths call this"
+    )]
     match LaneCount::new(n) {
         Some(lanes) => lanes,
         None => unreachable!(),
@@ -288,7 +299,7 @@ impl Song {
             .enumerate()
             .find_map(|(m, marker)| match &marker.kind {
                 MarkerKind::Other(key) if key.namespace().as_str() == ID => Some((m, key)),
-                _ => None,
+                MarkerKind::Other(_) | MarkerKind::Section | MarkerKind::Bookmark => None,
             });
         if let Some((m, key)) = own {
             return Err(Error::UnknownKey {
@@ -314,27 +325,31 @@ impl Song {
         Ok(song)
     }
 
+    /// Header values shared by the song's charts.
     #[must_use]
-    pub fn metadata(&self) -> &Metadata {
+    pub const fn metadata(&self) -> &Metadata {
         &self.metadata
     }
 
+    /// Number of ticks per quarter-note beat.
     #[must_use]
-    pub fn ticks_per_beat(&self) -> TicksPerBeat {
+    pub const fn ticks_per_beat(&self) -> TicksPerBeat {
         self.ticks_per_beat
     }
 
     /// Keysounds.
     #[must_use]
-    pub fn samples(&self) -> &BTreeMap<SampleId, ResourcePath> {
+    pub const fn samples(&self) -> &BTreeMap<SampleId, ResourcePath> {
         &self.samples
     }
 
+    /// Song-wide timing, before any chart override.
     #[must_use]
-    pub fn timing(&self) -> &Timing {
+    pub const fn timing(&self) -> &Timing {
         &self.timing
     }
 
+    /// Charts in this song.
     #[must_use]
     pub fn charts(&self) -> &[Chart] {
         &self.charts
@@ -352,11 +367,12 @@ impl Song {
     ///
     /// Never: [`Song::new`] checked the same document, and a song cannot change.
     #[must_use]
-    #[allow(clippy::expect_used)] // see Panics
+    #[expect(clippy::expect_used, reason = "Song::new checked the immutable song")]
     pub fn to_document(&self) -> ValidDocument {
         self.build().expect("a song was checked when built")
     }
 
+    /// Validates and writes the song using only StepMania data.
     fn build(&self) -> Result<ValidDocument, Error> {
         let charts = self
             .charts
@@ -426,7 +442,11 @@ impl Chart {
         })?;
         let settings = match settings {
             Value::Object(map) => map.into_iter().collect(),
-            _ => Settings::new(),
+            Value::Null
+            | Value::Bool(_)
+            | Value::Number(_)
+            | Value::String(_)
+            | Value::Array(_) => Settings::new(),
         };
         Ok(CoreChart {
             name: self.name.clone(),
@@ -469,6 +489,10 @@ impl Note {
     }
 }
 
+#[expect(
+    clippy::error_impl_error,
+    reason = "public error type is part of the plugin API"
+)]
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("ruleset is \"{0}\", not {ID:?}")]
@@ -788,8 +812,13 @@ mod tests {
         json!({ "tick": tick, "position": { "lane": { "index": lane } }, "kind": kind, "shape": "instant" })
     }
 
+    #[expect(
+        clippy::unwrap_in_result,
+        reason = "test fixture bytes always form a valid core document"
+    )]
     fn read(value: &Value) -> Result<Song, Error> {
-        Song::try_from(&ValidDocument::from_json(&serde_json::to_vec(value).unwrap()).unwrap())
+        let valid = ValidDocument::from_json(&serde_json::to_vec(value).unwrap()).unwrap();
+        Song::try_from(&valid)
     }
 
     #[test]
@@ -829,7 +858,7 @@ mod tests {
             |value: &Value| ValidDocument::from_json(&serde_json::to_vec(value).unwrap()).unwrap();
         assert_eq!(Plugin.id(), ID);
         let song = valid(&document(json!([lane_object(0, 3, "tap")])));
-        assert!(Plugin.check(&song).is_ok());
+        Plugin.check(&song).unwrap();
         let plane = json!([{ "tick": 0, "position": { "plane": { "x": 0.5, "y": 0.5 } },
                              "kind": "tap", "shape": "instant" }]);
         let not_a_song = valid(&document(plane));
@@ -1196,7 +1225,7 @@ mod tests {
         for zero in [json!({ "ticks": 0 }), json!({ "seconds": 0.0 })] {
             let mut speed = json!({ "ratio": 2.0 });
             speed["length"] = zero;
-            assert!(read(&with_events(&[other(960, "sm.speed", speed)])).is_err());
+            read(&with_events(&[other(960, "sm.speed", speed)])).unwrap_err();
         }
     }
 
@@ -1356,10 +1385,8 @@ mod tests {
 
     #[test]
     fn a_new_song_refuses_a_style_it_does_not_have() {
-        assert!(
-            Plugin
-                .new_song(&new_song(Style::ALL.len(), &["Easy"]))
-                .is_err()
-        );
+        Plugin
+            .new_song(&new_song(Style::ALL.len(), &["Easy"]))
+            .unwrap_err();
     }
 }
