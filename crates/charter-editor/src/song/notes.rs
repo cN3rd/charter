@@ -587,9 +587,6 @@ pub(super) fn mapped_shape(
     })
 }
 
-/// Where a timing edit sends each tick.
-pub(super) type Shift<'a> = Box<dyn Fn(Tick) -> Result<Tick, Refusal> + 'a>;
-
 /// The floating-point tick span used in tempo interpolation.
 #[expect(
     clippy::as_conversions,

@@ -1,6 +1,6 @@
 //! Timing, tempo and timed spans.
 
-use super::notes::{Shift, moved, rounded_tick_delta, shifted_at, tick_delta_as_f64};
+use super::notes::{moved, rounded_tick_delta, shifted_at, tick_delta_as_f64};
 #[cfg_attr(
     not(test),
     expect(
@@ -9,6 +9,69 @@ use super::notes::{Shift, moved, rounded_tick_delta, shifted_at, tick_delta_as_f
     )
 )]
 use super::*;
+
+/// Where a tempo edit sends each tick.
+enum TempoShift<'a> {
+    /// Ticks before `old_next` stay put; ticks after it move together.
+    After {
+        /// Old start of the following segment.
+        old_next: Tick,
+        /// Tick delta for `old_next` and everything after it.
+        by: i64,
+    },
+    /// Timed ticks after `start` are stretched until `next`; ticks after it move together.
+    Stretch {
+        /// Timing map whose pauses and warps decide what stretches.
+        timing: Valid<'a, Timing>,
+        /// Tick count in one beat.
+        resolution: TicksPerBeat,
+        /// Floating-point copy of `resolution`.
+        per_beat: f64,
+        /// New tempo divided by old tempo.
+        ratio: f64,
+        /// First tick of the edited segment.
+        start: Tick,
+        /// Old start of the next segment, when there is one.
+        next: Option<Tick>,
+        /// Tick delta for `next` and everything after it.
+        by: i64,
+    },
+}
+
+impl TempoShift<'_> {
+    /// The new tick for `tick`.
+    fn apply(&self, tick: Tick) -> Result<Tick, Refusal> {
+        match *self {
+            Self::After { old_next, by } => {
+                if tick < old_next {
+                    Ok(tick)
+                } else {
+                    moved(tick, by)
+                }
+            }
+            Self::Stretch {
+                timing,
+                resolution,
+                per_beat,
+                ratio,
+                start,
+                next,
+                by,
+            } => {
+                if next.is_some_and(|old_next| tick >= old_next) {
+                    return moved(tick, by);
+                }
+                if tick <= start {
+                    return Ok(tick);
+                }
+                let span = TimedSpan::between(timing, start, tick).ok_or(Refusal::NotWhole)?;
+                let timed = span.timed_beats(resolution) * per_beat;
+                let warped = tick_delta_as_f64(tick, start) - timed;
+                moved(start, rounded_tick_delta(timed * ratio + warped))
+            }
+        }
+    }
+}
 
 impl Song {
     /// The timing tempo edits go to: the open chart's own when it has one, and whether it is.
@@ -83,12 +146,12 @@ impl Song {
             (KeepNotes::InTime, next) => self.in_time(&from, next.as_ref(), bpm)?,
         };
         for anchor in new.anchors.iter_mut().skip(index.saturating_add(1)) {
-            anchor.tick = map(anchor.tick)?;
+            anchor.tick = map.apply(anchor.tick)?;
         }
         for event in &mut new.events {
-            let tick = map(event.tick)?;
+            let tick = map.apply(event.tick)?;
             if let TimingKind::Warp(length) = &mut event.kind {
-                let end = map(event.tick.checked_add(*length).ok_or(Refusal::NotWhole)?)?;
+                let end = map.apply(event.tick.checked_add(*length).ok_or(Refusal::NotWhole)?)?;
                 *length = tick.ticks_until(end).ok_or(Refusal::Crosses(event.tick))?;
             }
             event.tick = tick;
@@ -99,8 +162,7 @@ impl Song {
             old: Box::new(timing.clone()),
             new: Box::new(new),
         }];
-        ops.extend(self.shifted_along(own, &*map)?);
-        drop(map);
+        ops.extend(self.shifted_along(own, &map)?);
         let edit = Edit(ops);
         self.document = self.edited(self.chart, &edit)?;
         self.record(edit);
@@ -110,7 +172,7 @@ impl Song {
     /// Where each tick goes when `bpm` is set from `from`, keeping everything on its beats up to
     /// `next`: every anchor keeps its seconds, so `bpm` sets how many ticks fit before `next`,
     /// and everything from there on moves by the difference to stay on its audio.
-    fn on_beats(&self, from: &Anchor, next: &Anchor, bpm: Bpm) -> Result<Shift<'static>, Refusal> {
+    fn on_beats(&self, from: &Anchor, next: &Anchor, bpm: Bpm) -> Result<TempoShift<'_>, Refusal> {
         let resolution = self.timing().ticks_per_beat();
         let per_beat = f64::from(u16::from(resolution));
         let apart = charter_core::ResolvedTime::from(next.seconds).seconds()
@@ -140,12 +202,7 @@ impl Song {
         }
         let old_next = next.tick;
         let by = to.saturating_sub(i64::from(old_next));
-        Ok(Box::new(move |tick: Tick| {
-            if tick < old_next {
-                return Ok(tick);
-            }
-            moved(tick, by)
-        }))
+        Ok(TempoShift::After { old_next, by })
     }
 
     /// Where each tick goes when `bpm` is set from `from`, keeping everything where it sounds:
@@ -157,47 +214,45 @@ impl Song {
         from: &Anchor,
         next: Option<&Anchor>,
         bpm: Bpm,
-    ) -> Result<Shift<'_>, Refusal> {
+    ) -> Result<TempoShift<'_>, Refusal> {
         let timing = self.timing();
         let resolution = timing.ticks_per_beat();
         let per_beat = f64::from(u16::from(resolution));
         let ratio = f64::from(bpm) / timing.tempo_at(from.tick);
         let start = from.tick;
-        let stretched = move |tick: Tick| -> Result<Tick, Refusal> {
-            if tick <= start {
-                return Ok(tick);
-            }
-            let span = TimedSpan::between(timing, start, tick).ok_or(Refusal::NotWhole)?;
-            let timed = span.timed_beats(resolution) * per_beat;
-            let warped = tick_delta_as_f64(tick, start) - timed;
-            moved(start, rounded_tick_delta(timed * ratio + warped))
+        let stretched = TempoShift::Stretch {
+            timing,
+            resolution,
+            per_beat,
+            ratio,
+            start,
+            next: None,
+            by: 0,
         };
         let Some(next) = next else {
-            return Ok(Box::new(stretched));
+            return Ok(stretched);
         };
         let old_next = next.tick;
-        let to = stretched(old_next)?;
+        let to = stretched.apply(old_next)?;
         if to <= start {
             return Err(Refusal::Crosses(old_next));
         }
         let by = i64::from(to).saturating_sub(i64::from(old_next));
-        Ok(Box::new(move |tick: Tick| {
-            if tick < old_next {
-                stretched(tick)
-            } else {
-                moved(tick, by)
-            }
-        }))
+        Ok(TempoShift::Stretch {
+            timing,
+            resolution,
+            per_beat,
+            ratio,
+            start,
+            next: Some(old_next),
+            by,
+        })
     }
 
     /// The edits that move by `shift` the objects of every chart the timing tempo edits go to
     /// times, the open chart's own when `own` and otherwise every chart on the song's, and the
     /// song's markers along with the song's timing.
-    fn shifted_along(
-        &self,
-        own: bool,
-        shift: &dyn Fn(Tick) -> Result<Tick, Refusal>,
-    ) -> Result<Vec<Op>, Refusal> {
+    fn shifted_along(&self, own: bool, shift: &TempoShift<'_>) -> Result<Vec<Op>, Refusal> {
         let document = self.document.document();
         let mut ops = Vec::new();
         for (chart, edited) in document.charts.iter().enumerate() {
@@ -212,7 +267,7 @@ impl Song {
             let mut objects = edited
                 .objects
                 .iter()
-                .map(|object| shifted_at(object, shift))
+                .map(|object| shifted_at(object, &|tick| shift.apply(tick)))
                 .collect::<Result<Vec<_>, _>>()?;
             objects.sort_by_key(|object| object.tick);
             if objects != edited.objects {
@@ -226,7 +281,7 @@ impl Song {
         if !own {
             let mut markers = document.markers.clone();
             for marker in &mut markers {
-                marker.tick = shift(marker.tick)?;
+                marker.tick = shift.apply(marker.tick)?;
             }
             markers.sort_by_key(|marker| marker.tick);
             if markers != document.markers {
