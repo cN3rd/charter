@@ -1,0 +1,1351 @@
+#![expect(
+    clippy::mod_module_files,
+    reason = "the window refactor deliberately uses a module directory"
+)]
+//! The editor window's state and action routing.
+//!
+//! `mod.rs` keeps the public window types and shared helpers. Concern modules add
+//! focused `Window` impl blocks for files, playback, typing actions, clipboard,
+//! artwork, timing, action dispatch, and per-frame UI drawing.
+
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use charter_audio::{Peaks, Spectrum};
+
+use charter_core::{Kind, LaneIndex, RulesetPlugin, Tick};
+use egui::Ui;
+
+use charter_editor::{KeepNotes, NoteAt, Refusal, Selecting, Song, Step, Toggled, demo};
+
+use crate::artwork::{Artwork, Picture};
+use crate::flip::Direction;
+use crate::new_song::{self, NO_AUDIO};
+use crate::notefield::{self, Zoom};
+use crate::settings::{self, Settings};
+use crate::{import, keys, latency, minimap, panels, recovery, style, timing_panel};
+
+/// The extensions of the audio files a song can play.
+const AUDIO: [&str; 4] = ["ogg", "mp3", "wav", "flac"];
+
+/// Something only the program hosting the window can do. The host answers a save through
+/// [`Window::saved`], and an open by passing the file to [`Window::open`].
+#[derive(Debug, PartialEq)]
+pub enum Request {
+    /// Write `bytes`, the song as it stands, to `path`.
+    Write {
+        /// Destination file of the open song.
+        path: PathBuf,
+        /// Serialised chart document to write.
+        bytes: Vec<u8>,
+    },
+    /// Ask where to save the song, suggesting the file name `name`, then write `bytes` there.
+    SaveAs {
+        /// Suggested file name for the save dialog.
+        name: String,
+        /// Serialised chart document to write at the chosen location.
+        bytes: Vec<u8>,
+    },
+    /// Ask for a song to open.
+    Open,
+    /// Read the song at `path` and pass it to [`Window::open`], or say why with
+    /// [`Window::refuse`]: a song opened before.
+    OpenPath {
+        /// File last used to open this song.
+        path: PathBuf,
+    },
+    /// Write `bytes`, the song as its file holds it, as a dated copy named after `name` into each
+    /// of `folders`, keeping the newest `kept` copies of it there; say what fails with
+    /// [`Window::snapshot_failed`].
+    Snapshot {
+        /// Name used for the dated copies.
+        name: String,
+        /// Serialised song to preserve.
+        bytes: Vec<u8>,
+        /// Destinations for the copies.
+        folders: Vec<PathBuf>,
+        /// Maximum number of copies to retain per destination.
+        kept: u32,
+    },
+    /// Ask the user for a folder to keep snapshots in, and pass it to
+    /// [`Window::use_snapshot_folder`].
+    ChooseSnapshotFolder,
+    /// Keep `bytes`, the song's unsaved changes, where the next run finds them, in place of any
+    /// kept before. The host passes them to [`Window::recover`] when it starts, and says through
+    /// [`Window::autosave_failed`] if they could not be kept.
+    Autosave {
+        /// Serialised autosave and its original file path.
+        bytes: Vec<u8>,
+    },
+    /// Remove the kept changes: they were saved or thrown away.
+    DropAutosave,
+    /// Copy the song's audio from `from` to `to`, beside the song, unless a file is there. The
+    /// host says through [`Window::audio_not_copied`] if it could not.
+    CopyAudio {
+        /// Original audio file.
+        from: PathBuf,
+        /// Destination beside the chart file.
+        to: PathBuf,
+    },
+    /// Play the song's audio from `from` seconds, at `rate` times its speed. The host reports
+    /// where it is through [`Window::playhead`], and says when it ends through
+    /// [`Window::playback_ended`].
+    /// `clicks` are the tones to mix over it, each at its time in seconds into the audio.
+    /// `volumes` say how loud the audio and each kind of click play, and `looping` the stretch
+    /// to play over and over, in seconds, if any.
+    Play {
+        /// Position in the audio where playback starts, in seconds.
+        from: f64,
+        /// Playback speed relative to the audio's usual speed.
+        rate: f64,
+        /// Tones timed from the start of the audio, in seconds.
+        clicks: Vec<(f64, charter_audio::Tone)>,
+        /// Levels for the music and each kind of click.
+        volumes: charter_audio::Volumes,
+        /// Interval in the audio to repeat, in seconds.
+        looping: Option<(f64, f64)>,
+        /// Whether audio played faster or slower than its speed keeps its pitch.
+        keep_pitch: bool,
+    },
+    /// Carry on playing with the audio at this volume.
+    Volume(charter_audio::Gain),
+    /// Pause the song's audio at its current position.
+    Pause,
+    /// Carry on playing from this many seconds into the audio.
+    Seek(f64),
+    /// Carry on playing at this many times the audio's speed.
+    Rate(f64),
+    /// Play `clicks` over silence, each at its time in seconds from now, alongside anything
+    /// playing: a taste of a metronome sound.
+    Preview {
+        /// Tones timed from now, in seconds.
+        clicks: Vec<(f64, charter_audio::Tone)>,
+        /// Levels for the preview's tones.
+        volumes: charter_audio::Volumes,
+    },
+    /// Ask the user to choose an audio file for the open song, and pass it to
+    /// [`Window::use_audio`].
+    ChooseAudio,
+    /// Ask the user to choose a picture for the open song's artwork, and pass it to
+    /// [`Window::use_artwork`].
+    ChooseArtwork,
+    /// Decode `bytes`, the artwork an autosave kept, and pass the picture to
+    /// [`Window::artwork_restored`].
+    DecodeArtwork {
+        /// Picture bytes kept in the autosave.
+        bytes: Vec<u8>,
+    },
+    /// Read and decode the picture at `file`, the song's artwork, and pass it to
+    /// [`Window::artwork_read`].
+    ReadArtwork {
+        /// Artwork file named by the song.
+        file: PathBuf,
+    },
+    /// Ask the user to choose a file holding timing in another program's format, such as a
+    /// `.osu` file, and pass its text to [`Window::timing_file_read`].
+    ChooseTimingFile,
+    /// Read the tags of the audio file at `file`, and pass them to [`Window::tags_read`].
+    ReadTags {
+        /// Audio file whose title and artist tags should be read.
+        file: PathBuf,
+    },
+    /// Find the timing of the audio in `file` at `ticks_per_beat` and pass it to
+    /// [`Window::timing_found`], or call [`Window::weights_needed`] when the beat tracker's
+    /// weights are not there yet.
+    FindTiming {
+        /// Audio to analyse for beats.
+        file: PathBuf,
+        /// Resolution of the song receiving the timing.
+        ticks_per_beat: charter_core::TicksPerBeat,
+    },
+    /// Download the beat tracker's weights, the user having agreed, telling
+    /// [`Window::weights_progress`] how far it has got, then find the timing asked for.
+    DownloadWeights,
+}
+
+/// Where finding the song's timing from its audio has got to.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+enum Finding {
+    /// No automatic timing operation is pending.
+    #[default]
+    Idle,
+    /// Waiting on the user to agree to download the beat tracker's weights.
+    Asking,
+    /// Downloading the weights, this share of them so far.
+    Downloading(f32),
+    /// The host is finding it.
+    Running,
+}
+
+/// What tags read from an audio file would change, waiting on whether to take them.
+#[derive(Debug)]
+struct Offer {
+    /// Whether they go to the new-song dialog rather than the open song.
+    draft: bool,
+    /// Title from the audio tags, if it would change the song's title.
+    title: Option<String>,
+    /// Artist from the audio tags, if it would change the song's artist.
+    artist: Option<String>,
+}
+
+/// How fast the audio plays, as a factor of its own speed. The chart is untouched by it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Rate(f64);
+
+impl Default for Rate {
+    fn default() -> Self {
+        Self(1.0)
+    }
+}
+
+impl Rate {
+    /// Lowest allowed playback speed as a factor of the audio's own speed.
+    const SLOWEST: f64 = 0.1;
+    /// Highest allowed playback speed as a factor of the audio's own speed.
+    const FASTEST: f64 = 4.0;
+
+    /// This rate changed by `step`, to the nearest percent, and kept between a tenth and four
+    /// times the audio's speed, as ArrowVortex allows.
+    #[must_use]
+    pub fn by(self, step: f64) -> Self {
+        Self::of(self.0 + step)
+    }
+
+    /// The nearest whole-percent speed to `factor`, between one tenth and four times normal.
+    #[must_use]
+    pub fn of(factor: f64) -> Self {
+        let percent = (factor * 100.0).round() / 100.0;
+        Self(percent.clamp(Self::SLOWEST, Self::FASTEST))
+    }
+
+    /// The audio's current speed as a factor of its own speed.
+    #[must_use]
+    pub const fn factor(self) -> f64 {
+        self.0
+    }
+
+    /// The audio's current speed as a whole percentage of its own speed.
+    #[must_use]
+    pub fn percent(self) -> f64 {
+        (self.0 * 100.0).round()
+    }
+}
+
+/// How the audio the song wants stands with the host.
+#[derive(Debug, PartialEq)]
+enum Loaded {
+    /// Ready to play, this many seconds long.
+    Ready(f64),
+    /// The host could not load the audio file for playback.
+    Failed,
+}
+
+/// How a save the window asked for went.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Saved {
+    /// The song and any audio it needs are in place at this file now.
+    To(PathBuf),
+    /// No file was chosen.
+    Cancelled,
+    /// The file could not be written, for this reason.
+    Failed(String),
+}
+
+/// What would lose the open song's unsaved changes, waiting on whether to save them first.
+#[derive(Debug)]
+enum Discard {
+    /// Closing the window.
+    Close,
+    /// Opening another song, read from `path` unless it is the demo.
+    Open {
+        /// The opened song's file, or none for the demo.
+        path: Option<PathBuf>,
+        /// The replacement song, held until the current song can be discarded.
+        song: Box<Song>,
+        /// Whether the song is the autosave, restored.
+        restored: bool,
+        /// The audio file dropped on the song, when an autosave kept it.
+        audio: Option<PathBuf>,
+    },
+}
+
+/// Unsaved changes from an earlier run, waiting on whether to restore them.
+#[derive(Debug)]
+struct Restoring {
+    /// File the autosaved song belongs to, if one was chosen.
+    path: Option<PathBuf>,
+    /// Audio file dropped onto the autosaved song, if any.
+    audio: Option<PathBuf>,
+    /// The autosaved song to offer for restoration.
+    song: Box<Song>,
+    /// Artwork bytes not yet saved beside the song, if any.
+    artwork: Option<Vec<u8>>,
+}
+
+/// Where a save the user asked for goes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Saving {
+    /// To the song's file, or wherever the user chooses when it has none.
+    InPlace,
+    /// Wherever the user chooses.
+    Elsewhere,
+}
+
+/// How far the window is in closing, once the user chose to.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Leaving {
+    /// No close request is under way.
+    #[default]
+    Staying,
+    /// The host's window is to be told to close.
+    Now,
+    /// Closing, whatever changes are left: a close request goes through.
+    Going,
+}
+
+/// A note a lane key places.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Note {
+    /// A note that starts and ends at its tick.
+    Tap,
+    /// A mine placed at its tick rather than a playable note.
+    Mine,
+}
+
+impl Note {
+    /// The chart's note kind to store for this lane-key choice.
+    const fn kind(self) -> Kind {
+        match self {
+            Self::Tap => Kind::Tap,
+            Self::Mine => Kind::Mine,
+        }
+    }
+}
+
+/// Something a panel, key or gesture asks the editor to do.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Action {
+    /// Make a layer above the active one.
+    AddLayer,
+    /// Choose the layer at this row.
+    SetActiveLayer(usize),
+    /// Choose the adjacent row.
+    StepLayer(Step),
+    /// Move the selected notes onto this row.
+    MoveSelectionToLayer(usize),
+    /// Select the notes on this row.
+    SelectLayer(usize),
+    /// Set the view of this row.
+    SetLayerView(usize, charter_core::LayerView),
+    /// Solo this row, or restore the preceding views.
+    SoloLayer(usize),
+    /// Set the lock on this row.
+    SetLayerLocked(usize, bool),
+    /// Set the palette colour of this row.
+    RecolourLayer(usize, charter_core::LayerColour),
+    /// Give this row a new name.
+    RenameLayer(usize, String),
+    /// Drag a row to a new position.
+    MoveLayer(usize, usize),
+    /// Merge the active row into the next row.
+    MergeActiveLayer,
+    /// Merge this row into the next row.
+    MergeLayer(usize),
+    /// Remove the row, either discarding or moving its notes.
+    DeleteLayer(usize, charter_editor::LayerNotes),
+    /// Copy this row into another chart.
+    CopyLayerToChart(usize, usize),
+    /// Show or hide the active row.
+    ToggleActiveLayerView,
+    /// Switch between note-kind and layer-colour tinting.
+    ToggleLayerColours,
+    /// Replace the open song with the built-in demo.
+    OpenDemo,
+    /// Show the chart at this index in the open song.
+    OpenChart(usize),
+    /// Move the cursor by a snap in the given direction.
+    Move(Step),
+    /// Move the cursor by a measure in the given direction.
+    MoveMeasure(Step),
+    /// Increase the snap's denominator to reach finer lines.
+    FinerSnap,
+    /// Decrease the snap's denominator to reach coarser lines.
+    CoarserSnap,
+    /// Multiply the notefield zoom by this factor.
+    ZoomBy(f32),
+    /// Places a note on the lane at the cursor, or removes what starts there.
+    Toggle(LaneIndex, Note),
+    /// The lane key of a lane that toggled came up.
+    LaneUp(LaneIndex),
+    /// Every lane key that toggled is up again.
+    LanesReleased,
+    /// Places a note at `tick` on `lane`, or removes what starts there.
+    Place {
+        /// Position along the chart where the note starts.
+        tick: Tick,
+        /// Lane on which the note is placed.
+        lane: LaneIndex,
+        /// Kind of note placed on that lane.
+        note: Note,
+    },
+    /// Makes the tap or hold starting on `lane` at `from` end at `to`.
+    Stretch {
+        /// Lane whose tap or hold is stretched.
+        lane: LaneIndex,
+        /// Tick where the note starts.
+        from: Tick,
+        /// Tick where the note ends.
+        to: Tick,
+    },
+    /// Meets the selection with a note, or with none: nothing was under the pointer.
+    Select(Option<NoteAt>, Selecting),
+    /// Moves the selected notes this many ticks later and lanes right, earlier and left when
+    /// negative.
+    MoveSelection {
+        /// Signed distance to move along the chart, in ticks.
+        ticks: i32,
+        /// Signed distance to move across lanes.
+        lanes: i32,
+    },
+    /// Meets the selection with the notes starting within `ticks` on a lane within `lanes`.
+    SelectBetween {
+        /// Inclusive range of ticks covered by the selection.
+        ticks: (Tick, Tick),
+        /// Inclusive range of lanes covered by the selection.
+        lanes: (LaneIndex, LaneIndex),
+        /// Whether to replace, add to or remove from the existing selection.
+        how: Selecting,
+    },
+    /// Revert the latest editing step.
+    Undo,
+    /// Reapply the latest reverted editing step.
+    Redo,
+    /// Select every note in the open chart.
+    SelectAll,
+    /// Leave no notes selected.
+    ClearSelection,
+    /// Remove the selected notes from the open chart.
+    DeleteSelection,
+    /// Moves the end of the selected notes, or those at the cursor, a snap later or earlier.
+    ResizeNotes(Step),
+    /// Copies the selected notes.
+    Copy,
+    /// Copies the selected notes and removes them.
+    Cut,
+    /// Pastes the copied notes at the cursor: those the clipboard's text holds, when it holds
+    /// some, and otherwise those copied last.
+    Paste(Option<String>),
+    /// Copies the selected notes to just after themselves.
+    Duplicate,
+    /// Moves the selected notes this many snap lines later and lanes right, back and left when
+    /// negative.
+    ShiftSelection {
+        /// Signed number of snap lines to move the notes.
+        snaps: i32,
+        /// Signed number of lanes to move the notes.
+        lanes: i32,
+    },
+    /// Flips the selected notes across the lanes.
+    Mirror,
+    /// Moves the selected notes to the snap's nearest lines.
+    Quantize,
+    /// Makes the selected notes what the song's game makes them by the change named.
+    ChangeNotes(String),
+    /// Places taps from the cursor on, one `per_beat`th of a beat apart, on the lanes `steps`
+    /// counts from `lane`, wrapping past the last.
+    Pattern {
+        /// Lane offsets of the pattern, wrapping at the last lane.
+        steps: &'static [u16],
+        /// Number of pattern positions per beat.
+        per_beat: u16,
+        /// First lane of the pattern.
+        lane: LaneIndex,
+    },
+    /// Selects every note on the lane.
+    SelectLane(LaneIndex),
+    /// Moves the cursor to the tick and then does the action there, for what a menu opened on
+    /// that tick places.
+    Here(Tick, Box<Self>),
+    /// Pastes what the system clipboard holds at the tick, or with no text there the notes
+    /// copied last.
+    PasteHere(Tick),
+    /// Asks the host for a song to open.
+    Open,
+    /// Opens a song opened before.
+    OpenRecent(PathBuf),
+    /// Forgets the songs opened before.
+    ClearRecent,
+    /// Saves the song to its file, or asks where when it has none.
+    Save,
+    /// Asks where to save the song.
+    SaveAs,
+    /// Shows or hides the settings window.
+    Settings,
+    /// Opens the latency calibration.
+    Calibrate,
+    /// Shows the dialog that starts a song.
+    NewSong,
+    /// Plays the audio from the cursor, or pauses it.
+    TogglePlay,
+    /// Asks the host to let the user choose the song's audio.
+    ChooseAudio,
+    /// Asks the host to let the user choose a picture for the song's artwork.
+    ChooseArtwork,
+    /// Makes the audio play this much faster, or slower when negative.
+    NudgeRate(f64),
+    /// Makes the audio play at this factor of its speed.
+    SetRate(f64),
+    /// Apply the user's playback volume settings.
+    SetVolumes(charter_audio::Volumes),
+    /// Gives the timing point on the tick this tempo.
+    SetBpmAt(Tick, charter_core::Bpm),
+    /// Gives the song this title, artist, audio and preview.
+    SetMetadata(Box<charter_core::Metadata>),
+    /// Sets a text setting of the song or the open chart, or takes it away without a value.
+    SetSetting {
+        /// Whether the setting belongs to the song or its open chart.
+        scope: charter_core::SettingScope,
+        /// The game's key for the text setting.
+        key: String,
+        /// Replacement text, or none to remove the setting.
+        value: Option<String>,
+    },
+    /// Moves the tempo point on the tick to this many seconds into the audio, the first one
+    /// taking the whole grid along.
+    MovePointTo(Tick, f64),
+    /// Gives the timing point on the tick this meter.
+    SetMeterAt(Tick, charter_core::TimeSignature),
+    /// Removes the timing point on the tick.
+    RemoveTimingAt(Tick),
+    /// Puts tick 0 of the open timing this far into the audio.
+    SetOffset(charter_core::Origin),
+    /// Starts a BPM change at the cursor, at the tempo in effect there.
+    AddBpm,
+    /// Moves the offset by this many seconds, later in the audio when positive.
+    NudgeOffset(f64),
+    /// Show the timing window for editing audio anchors.
+    ShowSync,
+    /// Show the dialog for reading another program's timing.
+    ShowImport,
+    /// Ask the host to choose a file to import timing from.
+    ChooseTimingFile,
+    /// Puts this timing in place of the one tempo edits go to.
+    ImportTiming(Box<charter_core::Timing>),
+    /// Puts the cursor on this tick.
+    JumpTo(Tick),
+    /// Names the section at the cursor this, starting one there if none does.
+    SetSection(String),
+    /// Removes the song's marker at this index.
+    RemoveMarker(usize),
+    /// Puts the cursor where the open chart's last note ends.
+    JumpEnd,
+    /// An edit the timing window asks for.
+    Timing(charter_timing::Edit),
+    /// Play from this many seconds into the audio with the metronome on, to hear an edit.
+    Audition(f64),
+    /// Ask whether to reset the open chart's timing.
+    AskResetTiming,
+    /// Put 120 BPM in 4/4 from 0 ms in place of the open chart's timing.
+    ResetTiming,
+    /// Loop the ticks from `from` to `to` with the metronome, or stop looping them.
+    Loop {
+        /// Tick at which the playback loop starts.
+        from: Tick,
+        /// Tick at which the playback loop ends.
+        to: Tick,
+    },
+    /// Switch between the usual playback speed and the alternate one.
+    ToggleRate,
+    /// Mute the metronome, or unmute it, while a key is held.
+    MuteMetronome(bool),
+    /// Show or hide the timing window.
+    ToggleSync,
+    /// Moves every timing event at `from` to `to`, as one timing point.
+    MoveTiming {
+        /// Tick holding the events to move.
+        from: Tick,
+        /// Tick to which those events move.
+        to: Tick,
+    },
+    /// Moves the song's marker at `index` to `to`.
+    MoveMarker {
+        /// Index of the marker in the song.
+        index: usize,
+        /// Tick at which to put the marker.
+        to: Tick,
+    },
+    /// Puts the cursor on the nearest section that way.
+    JumpSection(Step),
+    /// Adds a bookmark at the cursor, or removes the one there.
+    ToggleBookmark,
+    /// Raises the tempo at the cursor by this many BPM, or lowers it when negative.
+    NudgeBpm(f64),
+    /// Shows or hides the keyboard shortcuts.
+    Help,
+    /// Shows or hides the song panel.
+    ToggleSongPanel,
+    /// Turns the metronome on or off.
+    ToggleMetronome,
+    /// Turns the tick on each note on or off.
+    ToggleTicks,
+    /// Tunes each lane's note ticks to a pitch of its own, or back.
+    ToggleTunedLanes,
+    /// Finds the song's timing from its audio.
+    FindTiming,
+    /// Draws the notefield's grid down to this note value.
+    SetGrid(std::num::NonZeroU16),
+}
+
+/// The editor window's state.
+#[derive(Debug, Default)]
+pub struct Window {
+    /// The ruleset plugins every song is checked against.
+    plugins: &'static [&'static dyn RulesetPlugin],
+    /// The song whose chart and metadata the window currently draws.
+    song: Option<Song>,
+    /// The file the open song was read from or last saved to.
+    path: Option<PathBuf>,
+    /// What the host has yet to do.
+    requests: Vec<Request>,
+    /// The title last given to the host's window.
+    shown_title: String,
+    /// A save asked for this frame, made once every edit of the frame is in.
+    saving: Option<Saving>,
+    /// The user's editor choices, kept by the host between runs.
+    settings: Settings,
+    /// Whether the settings window is showing.
+    settings_open: bool,
+    /// The timing window.
+    sync: charter_timing::TimingWindow,
+    /// The frame clock this frame, in seconds.
+    frame_time: f64,
+    /// The latency calibration window.
+    calibration: latency::Calibration,
+    /// The import timing window.
+    import: import::Import,
+    /// How tall a second of the open song is on screen.
+    zoom: Zoom,
+    /// Why the last file failed to open, or the last edit was refused.
+    failure: Option<String>,
+    /// A drag across the notefield in progress.
+    gesture: Option<notefield::Gesture>,
+    /// What is being typed into the timing section of the song panel.
+    timing_drafts: timing_panel::Drafts,
+    /// What is being typed into the song panel's song fields.
+    song_drafts: panels::SongDrafts,
+    /// A section name being typed, while its field has the keyboard.
+    section_draft: Option<String>,
+    /// Whether the keyboard shortcuts are showing.
+    help_open: bool,
+    /// Fonts for what the bundled ones cannot draw, such as CJK titles, named.
+    fallback_fonts: Vec<(String, Arc<egui::FontData>)>,
+    /// Whether files dropped on the window never arrive, as under Wayland, so the window offers
+    /// only choosing them.
+    no_drops: bool,
+    /// What the keyboard shortcuts are filtered to.
+    help_filter: String,
+    /// Playback state and audio host status.
+    playback: Playback,
+    /// Lane-key typing state.
+    typing: Typing,
+    /// Clipboard and pending paste state.
+    clipboard: Clipboard,
+    /// Waveform, spectrum and onset analysis state.
+    analysis: Analysis,
+    /// Artwork and dropped-audio state.
+    artwork: ArtworkState,
+    /// Autosave and snapshot bookkeeping.
+    autosave: Autosave,
+    /// Dialogs and pending answers.
+    dialogs: Dialogs,
+}
+
+/// Playback state and audio host status.
+#[derive(Debug, Default)]
+struct Playback {
+    /// The ticks being looped, while a loop plays.
+    looping: Option<(Tick, Tick)>,
+    /// The usual playback speed, while the alternate one plays.
+    usual_rate: Option<Rate>,
+    /// Whether the metronome is muted for as long as a key is held.
+    muted: bool,
+    /// The volumes the playback under way plays at, and whether clicks are mixed into it, which
+    /// bakes every volume in.
+    played: Option<(charter_audio::Volumes, bool)>,
+    /// The audio file the host last reported on, and how it went.
+    audio: Option<(PathBuf, Loaded)>,
+    /// Whether the audio is playing.
+    playing: bool,
+    /// Current playback speed relative to the audio's own speed.
+    rate: Rate,
+    /// Whether the audio playing was asked to keep its pitch.
+    played_pitch: bool,
+    /// The settings the audio playing was mixed with, so a change to them plays it again.
+    played_sounds: Option<Sounds>,
+}
+
+/// Lane-key typing state.
+#[derive(Debug, Default)]
+struct Typing {
+    /// Touchpad scrolling not yet turned into cursor steps, and into measures under Shift.
+    scrolled: [f32; 2],
+    /// Which lane keys are down, and which of those placed or removed a note.
+    lane_keys: keys::LaneKeys,
+    /// Whether a lane key placed a note that the cursor has not moved on from, which it does once
+    /// every lane key is up, so the keys of a chord place it on one tick.
+    placed: bool,
+    /// Taps placed by lane keys still down, by lane and tick. Each stretches into a hold to the
+    /// cursor as it moves.
+    holding: Vec<(LaneIndex, Tick)>,
+    /// When, in seconds into the audio, each lane key held down while playing went down: held
+    /// long enough, its tap grows into a hold with the playback.
+    pressed: Vec<(LaneIndex, f64)>,
+    /// The history step before the lane keys held now placed their first note.
+    chord_since: Option<usize>,
+}
+
+/// Clipboard and pending paste state.
+#[derive(Debug, Default)]
+struct Clipboard {
+    /// The notes copied last, their ticks counted from the earliest's.
+    clip: Vec<charter_core::Object>,
+    /// Where the menu's paste goes, and how many frames are left to wait for the clipboard.
+    pasting: Option<(Tick, u8)>,
+    /// Whether to ask the host for the clipboard's text this frame.
+    request_paste: bool,
+    /// Text to put on the system clipboard this frame.
+    out: Option<String>,
+}
+
+/// Waveform, spectrum and onset analysis state.
+#[derive(Debug, Default)]
+struct Analysis {
+    /// The waveform of an audio file, once the host has summarized it.
+    waveform: Option<(PathBuf, Arc<Peaks>)>,
+    /// The frequencies of an audio file, once the host has analysed them.
+    spectrum: Option<(PathBuf, notefield::Tiles)>,
+    /// The onsets of an audio file the host found, and which file.
+    onsets: Option<(PathBuf, Arc<[charter_audio::Onset]>)>,
+}
+
+/// Artwork and dropped-audio state.
+#[derive(Debug, Default)]
+struct ArtworkState {
+    /// The audio file dropped on the song, which is copied beside the song when it is saved
+    /// elsewhere.
+    audio_file: Option<PathBuf>,
+    /// The song's cover artwork, as read, chosen or taken from its audio.
+    current: Option<Artwork>,
+    /// The artwork file the song named when it was last opened or saved, which a save may write
+    /// over; any other file there is someone else's.
+    on_disk: Option<PathBuf>,
+    /// The artwork an autosave kept, to decode once its song opens.
+    restored: Option<Vec<u8>>,
+    /// Pictures chosen but not saved whose names an undo took away, until another song opens.
+    parked: Vec<Artwork>,
+    /// The artwork the audio of the song being started holds, and which file, to take when the
+    /// song starts.
+    embedded: Option<(PathBuf, String, Picture)>,
+}
+
+/// Autosave and snapshot bookkeeping.
+#[derive(Debug, Default)]
+struct Autosave {
+    /// Whether the host may be keeping an autosave.
+    kept: bool,
+    /// The revision of the open song the autosave holds, when it holds one.
+    autosaved: Option<u64>,
+    /// When the open song's changes are next autosaved, in seconds on the frame clock.
+    due: Option<f64>,
+    /// Charter's data folder, where snapshots go by default, when the host has one.
+    data_folder: Option<PathBuf>,
+    /// When the next snapshot of the changed song is due, on the frame clock.
+    snapshot_due: Option<f64>,
+    /// The revision of the song last copied, or opened, so an unchanged song is not copied.
+    snapshotted: Option<u64>,
+}
+
+/// Dialogs and pending answers.
+#[derive(Debug, Default)]
+struct Dialogs {
+    /// What waits on the answer to whether to save the open song's changes.
+    discard: Option<Discard>,
+    /// What to do once the save the user asked for is done.
+    after_save: Option<Discard>,
+    /// How far the window is in closing.
+    leaving: Leaving,
+    /// Whether the window asks whether to reset the timing.
+    resetting: bool,
+    /// Where finding the timing from the audio has got to.
+    finding: Finding,
+    /// Unsaved changes from an earlier run, waiting on whether to restore them.
+    restoring: Option<Restoring>,
+    /// The dialog that starts a song, while it shows.
+    new_song: Option<new_song::Draft>,
+    /// Tags that would change the title and artist, waiting on whether to take them.
+    offer: Option<Offer>,
+}
+
+mod apply;
+mod artwork;
+mod clipboard;
+mod files;
+mod frame;
+mod playback;
+mod timing;
+
+impl Window {
+    /// This window with the user's choices from an earlier run.
+    #[must_use]
+    pub fn with_settings(self, settings: Settings) -> Self {
+        Self { settings, ..self }
+    }
+
+    /// This window drawing what its own fonts cannot, such as CJK song titles, in `fonts`: each
+    /// a name and a font file's bytes, tried in order. The host finds them among the system's.
+    #[must_use]
+    pub fn with_fallback_fonts(self, fonts: Vec<(String, Vec<u8>)>) -> Self {
+        let fallback_fonts = fonts
+            .into_iter()
+            .map(|(name, bytes)| (name, Arc::new(egui::FontData::from_owned(bytes))))
+            .collect();
+        Self {
+            fallback_fonts,
+            ..self
+        }
+    }
+
+    /// This window where files dropped on it never arrive, as under Wayland, which winit does
+    /// not take drops from yet: it offers choosing files instead, and says why.
+    #[must_use]
+    pub fn without_file_drops(self) -> Self {
+        Self {
+            no_drops: true,
+            ..self
+        }
+    }
+
+    /// The user's current editor choices, to be kept by the host between runs.
+    #[must_use]
+    pub const fn settings(&self) -> &Settings {
+        &self.settings
+    }
+
+    /// A window with no song open, which checks songs against `plugins`.
+    #[must_use]
+    pub fn new(plugins: &'static [&'static dyn RulesetPlugin]) -> Self {
+        Self {
+            plugins,
+            ..Self::default()
+        }
+    }
+
+    /// What the window needs its host to do, oldest first. A host takes these after every frame.
+    pub fn take_requests(&mut self) -> Vec<Request> {
+        std::mem::take(&mut self.requests)
+    }
+
+    /// Takes that the audio played to its end.
+    pub const fn playback_ended(&mut self) {
+        self.playback.playing = false;
+    }
+
+    /// Takes that the beat tracker's weights are not downloaded yet, so the user is asked.
+    pub const fn weights_needed(&mut self) {
+        self.dialogs.finding = Finding::Asking;
+    }
+
+    /// Takes that `share` of the beat tracker's weights has downloaded.
+    pub const fn weights_progress(&mut self, share: f32) {
+        self.dialogs.finding = Finding::Downloading(share.clamp(0.0, 1.0));
+    }
+
+    /// Whether the window takes the audio to be playing.
+    #[must_use]
+    pub const fn is_playing(&self) -> bool {
+        self.playback.playing
+    }
+}
+
+/// The file name of `song`, read from `path`, or one made from its title when it has no file.
+fn file_name(path: Option<&Path>, song: &Song) -> String {
+    path.and_then(Path::file_name).map_or_else(
+        || format!("{}.json", song.document().document().metadata.title),
+        |name| name.to_string_lossy().into_owned(),
+    )
+}
+
+/// How many lanes of the open chart lane keys can edit: none when the song is read-only.
+fn editable_lanes(song: &Song) -> u16 {
+    if song.read_only().is_some() {
+        return 0;
+    }
+    song.chart()
+        .and_then(|chart| chart.lanes)
+        .map_or(0, u16::from)
+}
+
+/// Stretches each tap a held lane key placed into a hold to the cursor, and says why if the song
+/// refuses one.
+/// Where a lane key places a note: at the cursor, or while playing, on the snap line nearest
+/// where the cursor was `input_latency` seconds of audio ago, when the key was meant.
+fn placing_at(song: &Song, input_latency: Option<f64>) -> Tick {
+    let step = song
+        .document()
+        .document()
+        .ticks_per_beat
+        .note_length(song.snap());
+    match step {
+        Some(step) if let Some(input_latency) = input_latency => {
+            let timing = song.timing();
+            let now = timing.time_at(song.cursor()).seconds() - input_latency;
+            notefield::nearest_line(timing, now, step)
+        }
+        _ => song.cursor(),
+    }
+}
+
+/// How long a lane key stays down while playing, in seconds of audio, before its tap becomes a
+/// hold: longer than a quick tap lasts.
+const HOLD_AFTER: f64 = 0.2;
+
+/// Stretches each tap in `holding` whose key went down, as `pressed` says, at least
+/// [`HOLD_AFTER`] before `now` into a hold ending on the snap line nearest `now`, so holds grow
+/// with the playback. A stretch that changes nothing is no edit.
+fn grow(
+    song: &mut Song,
+    holding: &[(LaneIndex, Tick)],
+    pressed: &[(LaneIndex, f64)],
+    now: f64,
+) -> Option<String> {
+    let step = song
+        .document()
+        .document()
+        .ticks_per_beat
+        .note_length(song.snap())?;
+    let to = notefield::nearest_line(song.timing(), now, step);
+    let long = |lane: LaneIndex| {
+        pressed
+            .iter()
+            .any(|&(held, since)| held == lane && now - since >= HOLD_AFTER)
+    };
+    let refusals: Vec<_> = holding
+        .iter()
+        .filter(|(lane, _)| long(*lane))
+        .filter_map(|&(lane, from)| song.stretch(lane, from, to.max(from)).err())
+        .collect();
+    refusals.last().map(refused)
+}
+
+/// Extends held lane-key notes to the cursor, or gives the last reason an edit failed.
+fn stretch(song: &mut Song, holding: &[(LaneIndex, Tick)]) -> Option<String> {
+    let cursor = song.cursor();
+    let refusals = holding
+        .iter()
+        .filter_map(|&(lane, from)| song.stretch(lane, from, cursor).err());
+    refusals.last().as_ref().map(refused)
+}
+
+// ponytail: the clicks are worked out once, when playback starts, so notes placed while playing
+// click from the next play; schedule them live if that gets in the way of recording.
+/// The tones `settings` ask for over the open chart of `song`, playing from `from` seconds to
+/// `until`: a tick on each note, and the metronome on each beat.
+/// How many songs opened before the File menu offers.
+const RECENT: usize = 10;
+
+/// Frames the menu's paste waits for the clipboard's text before pasting the notes copied last.
+const PASTE_WAIT: u8 = 3;
+
+/// The settings playback is mixed and stretched with: a change to any of them plays again.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent settings compared as a whole"
+)]
+struct Sounds {
+    /// Whether changing playback speed preserves audio pitch.
+    keep_pitch: bool,
+    /// Whether note heads make a sound as playback passes them.
+    note_ticks: bool,
+    /// Which sound note heads play when note ticks are on.
+    tick_sound: settings::Sound,
+    /// Whether note ticks are pitched by their lane.
+    tuned_lanes: bool,
+    /// Whether the playback includes beat clicks.
+    metronome: bool,
+    /// Which set of sounds supplies accented and unaccented clicks.
+    metronome_sound: charter_audio::Kit,
+    /// Whether clicks play on the timing grid rather than just on beats.
+    metronome_grid: bool,
+}
+
+impl Sounds {
+    /// The playback settings that require a replay when changed.
+    const fn of(settings: &Settings) -> Self {
+        Self {
+            keep_pitch: settings.keep_pitch,
+            note_ticks: settings.note_ticks,
+            tick_sound: settings.tick_sound,
+            tuned_lanes: settings.tuned_lanes,
+            metronome: settings.metronome,
+            metronome_sound: settings.metronome_sound,
+            metronome_grid: settings.metronome_grid,
+        }
+    }
+}
+
+/// What the system clipboard holds of copied notes: their JSON under a key of their own, so
+/// other text is not taken for notes.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Clipped {
+    /// Copied chart objects under a key distinct from ordinary clipboard text.
+    charter_notes: Vec<charter_core::Object>,
+}
+
+/// Places the taps of a pattern from `song`'s cursor on, `per_beat` to a beat, on the lanes
+/// `steps` counts from `lane`, and moves the cursor to the line after the last. Says why if the
+/// song refuses them.
+fn pattern(song: &mut Song, steps: &[u16], per_beat: u16, lane: LaneIndex) -> Option<String> {
+    let lanes = song
+        .chart()
+        .and_then(|chart| chart.lanes)
+        .map_or(0, u16::from);
+    let note_value = per_beat.checked_mul(4).and_then(std::num::NonZeroU16::new);
+    let resolution = song.document().document().ticks_per_beat;
+    let Some(gap) = note_value.and_then(|value| resolution.note_length(value)) else {
+        return Some(format!(
+            "The song's resolution has no 1/{per_beat} of a beat"
+        ));
+    };
+    if lanes == 0 {
+        return None;
+    }
+    let start = i64::from(song.cursor());
+    let gap = i64::from(u32::from(gap));
+    let at = |index: usize| {
+        let index = i64::try_from(index).ok()?;
+        i32::try_from(start.checked_add(index.checked_mul(gap)?)?)
+            .ok()
+            .map(Tick::new)
+    };
+    let taps: Vec<(Tick, LaneIndex)> = steps
+        .iter()
+        .enumerate()
+        .filter_map(|(index, step)| {
+            let on = u16::from(lane).checked_add(*step)?.checked_rem(lanes)?;
+            Some((at(index)?, LaneIndex::new(on)))
+        })
+        .collect();
+    let why = song.add_taps(taps).err().as_ref().map(refused);
+    if why.is_none()
+        && let Some(after) = at(steps.len())
+    {
+        song.jump_to(after);
+    }
+    why
+}
+
+/// The notefield grid's finest lines for the chosen `grid` at `snap`: the coarsest lines holding
+/// both the grid's and the snap's, so the cursor never steps onto a line the grid leaves out and
+/// the grid keeps every line it was chosen for. Past 192nds, the snap's alone.
+fn shown_grid(grid: std::num::NonZeroU16, snap: std::num::NonZeroU16) -> std::num::NonZeroU16 {
+    let (a, b) = (
+        std::num::NonZeroU32::from(grid).get(),
+        std::num::NonZeroU32::from(snap).get(),
+    );
+    let (mut x, mut y) = (a, b);
+    while y != 0 {
+        (x, y) = (y, x.rem_euclid(y));
+    }
+    let both = a.div_euclid(x).saturating_mul(b);
+    u16::try_from(both)
+        .ok()
+        .filter(|both| *both <= 192)
+        .and_then(std::num::NonZeroU16::new)
+        .unwrap_or(snap)
+}
+
+/// How far above its own pitch a note on `position` ticks with tuned lanes, in cents: a whole tone
+/// a lane either side of the chart's middle, or closer on a chart too wide for an octave across,
+/// so every chart spans an octave at most. A note across lanes ticks at their middle.
+fn lane_cents(position: charter_core::Position, lanes: u16) -> i16 {
+    let charter_core::Position::Lane { index, width } = position else {
+        return 0;
+    };
+    let Some(gaps) = lanes.checked_sub(1).filter(|gaps| *gaps > 0) else {
+        return 0;
+    };
+    let step = (1200.0 / f64::from(gaps)).min(200.0);
+    let at = f64::from(u16::from(index)) + (f64::from(u16::from(width)) - 1.0) / 2.0;
+    let cents = ((at - f64::from(gaps) / 2.0) * step)
+        .round()
+        .clamp(-1200.0, 1200.0);
+
+    crate::cast::f64_i16(cents)
+}
+
+/// Note ticks and metronome clicks between `from` and `until` seconds, as the playback settings
+/// request them.
+fn clicks(
+    song: &Song,
+    settings: &Settings,
+    metronome: bool,
+    (from, until): (f64, f64),
+    grid: charter_timing::grid::Grid,
+) -> Vec<(f64, charter_audio::Tone)> {
+    use charter_audio::Tone;
+    use charter_timing::grid::Line;
+    let timing = song.timing();
+    let mut clicks = Vec::new();
+    let tick = settings.note_ticks.then(|| settings.tick_sound.tick());
+    if let (Some(tick), Some(chart)) = (tick, song.chart()) {
+        let lanes = chart.lanes.map_or(0, u16::from);
+        let heads = chart
+            .objects()
+            .filter(|object| song.layer_look(object).0 == charter_core::LayerView::Shown)
+            .map(|object| {
+                let cents = if settings.tuned_lanes {
+                    lane_cents(object.position, lanes)
+                } else {
+                    0
+                };
+                (timing.time_at(object.tick).seconds(), tick.pitched(cents))
+            });
+        clicks.extend(heads.filter(|(at, _)| (from..=until).contains(at)));
+    }
+    if metronome {
+        let kit = settings.metronome_sound;
+        // On the beats, or on every line of the timing window's grid.
+        let grid = if settings.metronome_grid {
+            grid
+        } else {
+            charter_timing::grid::Grid::default()
+        };
+        let resolution = timing.ticks_per_beat();
+        let first = timing.latest_tick_by(from);
+        'measures: for measure in timing.measures_from(first) {
+            for (line_tick, line) in grid.lines(&measure, resolution) {
+                let at = timing.time_at(line_tick).seconds();
+                if at > until {
+                    break 'measures;
+                }
+                if at >= from {
+                    let tone = match line {
+                        Line::Downbeat => Tone::Accent(kit),
+                        Line::Beat => Tone::Beat(kit),
+                        Line::Sub { .. } => Tone::Sub(kit),
+                    };
+                    clicks.push((at, tone));
+                }
+            }
+        }
+    }
+    clicks.sort_by(|a, b| a.0.total_cmp(&b.0));
+    clicks
+}
+
+/// What the audio strip draws of `file`, the audio the song plays, when `settings` want the
+/// strip: its frequencies if they ask for those and they are ready, else its waveform.
+fn shown_strip<'a>(
+    settings: &Settings,
+    waveform: Option<&'a (PathBuf, Arc<Peaks>)>,
+    spectrum: Option<&'a (PathBuf, notefield::Tiles)>,
+    file: Option<&Path>,
+) -> Option<notefield::Strip<'a>> {
+    let of_file = |of: &PathBuf| settings.waveform && Some(of.as_path()) == file;
+    let frequencies = spectrum
+        .filter(|(of, _)| settings.frequencies && of_file(of))
+        .map(|(_, tiles)| notefield::Strip::Frequencies(tiles));
+    frequencies.or_else(|| {
+        waveform
+            .filter(|(of, _)| of_file(of))
+            .map(|(_, peaks)| notefield::Strip::Waveform(peaks))
+    })
+}
+
+/// The timing a reset leaves: 120 BPM in 4/4 from 0 ms, as a new song starts with.
+fn fresh_timing() -> charter_core::Timing {
+    let fresh = serde_json::json!({
+        "anchors": [ { "tick": 0, "seconds": 0.0 } ],
+        "tempo": 120.0,
+        "events": []
+    });
+    #[expect(
+        clippy::unreachable,
+        reason = "the constant default timing is valid JSON"
+    )]
+    serde_json::from_value(fresh).unwrap_or_else(|_| unreachable!("the fresh timing reads"))
+}
+
+/// What the timing found and put in place is: how many sections, at what tempo from when.
+fn found_message(song: &Song) -> String {
+    let timing = song.timing();
+    let Some(first) = timing.anchors.first() else {
+        return "Timing found".to_owned();
+    };
+    let bpm = timing
+        .bpm_at(first.tick)
+        .map_or_else(String::new, |bpm| format!("{bpm} BPM "));
+    let from = style::clock(charter_core::ResolvedTime::from(first.seconds).seconds());
+    let sections = match timing.anchors.len() {
+        1 => "one section".to_owned(),
+        count => format!("{count} sections"),
+    };
+    format!("Timing found: {bpm}from {from}, {sections}. Ctrl+Z undoes it.")
+}
+
+/// Makes the timing edit `action` asks for, and says why if it cannot.
+#[expect(clippy::too_many_lines, reason = "one match arm per timing action")]
+fn retime(song: &mut Song, action: &Action) -> Option<String> {
+    let done = match action {
+        Action::SetBpmAt(tick, bpm) => song.set_bpm_at(*tick, *bpm),
+        Action::MovePointTo(tick, seconds) => song.move_point_to(*tick, *seconds),
+        Action::SetMetadata(metadata) => song.set_metadata(metadata.as_ref().clone()),
+        Action::SetSetting { scope, key, value } => song.set_setting(*scope, key, value.clone()),
+        Action::SetMeterAt(tick, meter) => song.set_meter_at(*tick, *meter),
+        Action::RemoveTimingAt(tick) => song.remove_timing_at(*tick),
+        Action::SetOffset(offset) => song.set_offset(*offset),
+        Action::AddBpm => song.add_bpm_change(),
+        Action::ImportTiming(timing) => song.replace_timing(timing.as_ref().clone()),
+        Action::ResetTiming => song.replace_timing(fresh_timing()),
+        Action::NudgeOffset(by) => {
+            let moved = song.timing().time_at(charter_core::Tick::new(0)).seconds() + by;
+            let micros = (moved * 1e6).round() / 1e6;
+            match charter_core::Origin::try_from(micros) {
+                Ok(offset) => song.set_offset(offset),
+                Err(_) => return Some(format!("{moved} s is not an offset")),
+            }
+        }
+        Action::MoveTiming { from, to } => song.move_timing_at(*from, *to),
+        Action::OpenDemo
+        | Action::OpenChart(_)
+        | Action::Move(_)
+        | Action::MoveMeasure(_)
+        | Action::FinerSnap
+        | Action::CoarserSnap
+        | Action::ZoomBy(_)
+        | Action::Toggle(..)
+        | Action::LaneUp(_)
+        | Action::LanesReleased
+        | Action::Place { .. }
+        | Action::Stretch { .. }
+        | Action::Select(..)
+        | Action::MoveSelection { .. }
+        | Action::SelectBetween { .. }
+        | Action::Undo
+        | Action::Redo
+        | Action::SelectAll
+        | Action::ClearSelection
+        | Action::DeleteSelection
+        | Action::ResizeNotes(_)
+        | Action::Copy
+        | Action::Cut
+        | Action::Paste(_)
+        | Action::Duplicate
+        | Action::ShiftSelection { .. }
+        | Action::Mirror
+        | Action::Quantize
+        | Action::ChangeNotes(_)
+        | Action::Pattern { .. }
+        | Action::SelectLane(_)
+        | Action::Here(..)
+        | Action::PasteHere(_)
+        | Action::Open
+        | Action::OpenRecent(_)
+        | Action::ClearRecent
+        | Action::Save
+        | Action::SaveAs
+        | Action::Settings
+        | Action::Calibrate
+        | Action::NewSong
+        | Action::TogglePlay
+        | Action::ChooseAudio
+        | Action::ChooseArtwork
+        | Action::NudgeRate(_)
+        | Action::SetRate(_)
+        | Action::SetVolumes(_)
+        | Action::ShowSync
+        | Action::ShowImport
+        | Action::ChooseTimingFile
+        | Action::JumpTo(_)
+        | Action::SetSection(_)
+        | Action::RemoveMarker(_)
+        | Action::JumpEnd
+        | Action::Timing(_)
+        | Action::Audition(_)
+        | Action::AskResetTiming
+        | Action::Loop { .. }
+        | Action::ToggleRate
+        | Action::MuteMetronome(_)
+        | Action::ToggleSync
+        | Action::MoveMarker { .. }
+        | Action::JumpSection(_)
+        | Action::ToggleBookmark
+        | Action::NudgeBpm(_)
+        | Action::Help
+        | Action::ToggleSongPanel
+        | Action::ToggleMetronome
+        | Action::ToggleTicks
+        | Action::ToggleTunedLanes
+        | Action::FindTiming
+        | Action::SetGrid(_)
+        | Action::AddLayer
+        | Action::SetActiveLayer(_)
+        | Action::StepLayer(_)
+        | Action::MoveSelectionToLayer(_)
+        | Action::SelectLayer(_)
+        | Action::SetLayerView(..)
+        | Action::SoloLayer(_)
+        | Action::SetLayerLocked(..)
+        | Action::RecolourLayer(..)
+        | Action::RenameLayer(..)
+        | Action::MoveLayer(..)
+        | Action::MergeActiveLayer
+        | Action::MergeLayer(_)
+        | Action::DeleteLayer(..)
+        | Action::CopyLayerToChart(..)
+        | Action::ToggleActiveLayerView
+        | Action::ToggleLayerColours => Ok(()),
+    };
+    done.err().as_ref().map(refused)
+}
+
+/// Raises the tempo at the cursor by `by` BPM, and says why if it cannot.
+fn nudge_bpm(song: &mut Song, by: f64) -> Option<String> {
+    let (_, bpm) = song.bpm()?;
+    let nudged = f64::from(bpm) + by;
+    match charter_core::Bpm::try_from(nudged) {
+        Ok(new_bpm) => song.set_bpm(new_bpm).err().as_ref().map(refused),
+        Err(_) => Some(format!("{nudged} is not a tempo")),
+    }
+}
+
+/// What to say about a refused edit.
+fn refused(refusal: &Refusal) -> String {
+    format!("Refused: {refusal}")
+}
+
+#[cfg(test)]
+pub(crate) mod tests;
+
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+    use std::num::NonZeroU16;
+
+    #[kani::proof]
+    #[kani::unwind(34)]
+    fn the_shown_grid_holds_both_requested_lines_or_falls_back_to_snap() {
+        let a: u16 = u16::from(kani::any::<u8>());
+        let b: u16 = u16::from(kani::any::<u8>());
+        kani::assume(a > 0 && a <= 192 && b > 0 && b <= 192);
+        let grid = NonZeroU16::new(a).expect("positive");
+        let snap = NonZeroU16::new(b).expect("positive");
+        let shown = shown_grid(grid, snap).get();
+        if shown != b {
+            assert!(shown <= 192);
+            assert_eq!(shown % a, 0);
+            assert_eq!(shown % b, 0);
+        }
+    }
+}
