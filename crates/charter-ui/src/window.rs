@@ -1771,6 +1771,7 @@ impl Window {
 
     /// Takes why a snapshot could not be written.
     pub fn snapshot_failed(&mut self, why: &str) {
+        self.snapshotted = None;
         self.failure = Some(format!("Snapshot failed: {why}"));
     }
 
@@ -1814,7 +1815,6 @@ impl Window {
             return;
         }
         self.snapshot_due = None;
-        self.snapshotted = Some(revision);
         let name = self.file_name(song);
         let name = name.strip_suffix(".json").unwrap_or(&name).to_owned();
         let mut folders = Vec::new();
@@ -1833,12 +1833,15 @@ impl Window {
             return;
         }
         match song.document().to_json() {
-            Ok(bytes) => self.requests.push(Request::Snapshot {
-                name,
-                bytes,
-                folders,
-                kept: self.settings.snapshots_kept(),
-            }),
+            Ok(bytes) => {
+                self.requests.push(Request::Snapshot {
+                    name,
+                    bytes,
+                    folders,
+                    kept: self.settings.snapshots_kept(),
+                });
+                self.snapshotted = Some(revision);
+            }
             Err(error) => self.failure = Some(format!("Snapshot failed: {error}")),
         }
     }
@@ -7686,6 +7689,50 @@ mod tests {
             panic!("one snapshot, got {taken:?}");
         };
         assert_eq!(folders, &[PathBuf::from("/backups").join(name)]);
+    }
+
+    #[test]
+    fn an_unavailable_snapshot_folder_does_not_consume_the_songs_revision() {
+        let mut harness = four_taps_with(Settings {
+            snapshots_in_folder: true,
+            snapshots_beside_song: false,
+            snapshot_minutes: 1,
+            ..Settings::default()
+        });
+        harness.key_press(egui::Key::Num4);
+        at_time(&mut harness, 1.0);
+        at_time(&mut harness, 70.0);
+        assert!(snapshots(&mut harness).is_empty());
+
+        harness.state_mut().data_folder = Some(PathBuf::from("/data"));
+        at_time(&mut harness, 71.0);
+        at_time(&mut harness, 133.0);
+        assert_eq!(
+            snapshots(&mut harness),
+            [(
+                "four".to_owned(),
+                vec![PathBuf::from("/data/snapshots/four")]
+            )]
+        );
+    }
+
+    #[test]
+    fn a_failed_snapshot_is_retried_after_the_wait_without_another_edit() {
+        let mut harness = four_taps_with(Settings {
+            snapshots_in_folder: false,
+            snapshots_beside_song: true,
+            snapshot_minutes: 1,
+            ..Settings::default()
+        });
+        harness.key_press(egui::Key::Num4);
+        at_time(&mut harness, 1.0);
+        at_time(&mut harness, 70.0);
+        assert_eq!(snapshots(&mut harness).len(), 1);
+
+        harness.state_mut().snapshot_failed("disk full");
+        at_time(&mut harness, 71.0);
+        at_time(&mut harness, 133.0);
+        assert_eq!(snapshots(&mut harness).len(), 1);
     }
 
     #[test]
