@@ -53,7 +53,9 @@ impl Playing {
     fn position(&self) -> f64 {
         match self {
             Self::Plain(sound) => sound.position(),
-            Self::Stretched { sound, rate } => source_position(sound.position(), *rate),
+            Self::Stretched { sound, rate } => {
+                source_position(StretchedSeconds(sound.position()), PlaybackRate(*rate)).get()
+            }
         }
     }
 
@@ -69,7 +71,9 @@ impl Playing {
     fn seek_to(&mut self, to: f64) {
         match self {
             Self::Plain(sound) => sound.seek_to(to),
-            Self::Stretched { sound, rate } => sound.seek_to(stretched_position(to, *rate)),
+            Self::Stretched { sound, rate } => {
+                sound.seek_to(stretched_position(SourceSeconds(to), PlaybackRate(*rate)).get());
+            }
         }
     }
 
@@ -102,14 +106,52 @@ fn stretched(
     (stretched, volume)
 }
 
+/// Seconds on the original audio clock.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct SourceSeconds(f64);
+
+impl SourceSeconds {
+    /// Raw seconds for audio APIs.
+    const fn get(self) -> f64 {
+        self.0
+    }
+
+    /// Not before the audio starts.
+    const fn start(self) -> Self {
+        Self(self.0.max(0.0))
+    }
+}
+
+/// Seconds on the stretched playback stream's clock.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct StretchedSeconds(f64);
+
+impl StretchedSeconds {
+    /// Raw seconds for kira APIs.
+    const fn get(self) -> f64 {
+        self.0
+    }
+}
+
+/// Ratio of source seconds to stretched playback seconds.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct PlaybackRate(f64);
+
+impl PlaybackRate {
+    /// Raw rate for player handles that keep public floats.
+    const fn get(self) -> f64 {
+        self.0
+    }
+}
+
 /// Source seconds corresponding to `stretched_seconds` of stretched playback.
-fn source_position(stretched_seconds: f64, rate: f64) -> f64 {
-    stretched_seconds * rate
+fn source_position(stretched_seconds: StretchedSeconds, rate: PlaybackRate) -> SourceSeconds {
+    SourceSeconds(stretched_seconds.0 * rate.0)
 }
 
 /// Playback seconds corresponding to `source_seconds` of the original audio.
-fn stretched_position(source_seconds: f64, rate: f64) -> f64 {
-    source_seconds / rate
+fn stretched_position(source_seconds: SourceSeconds, rate: PlaybackRate) -> StretchedSeconds {
+    StretchedSeconds(source_seconds.0 / rate.0)
 }
 
 /// A file being decoded, and where its results arrive.
@@ -378,15 +420,17 @@ impl Player {
             window.playback_ended();
             return;
         };
-        let settings =
-            StreamingSoundSettings::new().start_position(stretched_position(from.max(0.0), rate));
+        let rate = PlaybackRate(rate);
+        let settings = StreamingSoundSettings::new()
+            .start_position(stretched_position(SourceSeconds(from).start(), rate).get());
         let settings = match volume {
             Some(volume) => settings.volume(volume),
             None => settings,
         };
         let settings = match looping {
             Some((start, end)) if end > start => settings.loop_region(
-                stretched_position(start.max(0.0), rate)..stretched_position(end, rate),
+                stretched_position(SourceSeconds(start).start(), rate).get()
+                    ..stretched_position(SourceSeconds(end), rate).get(),
             ),
             _ => settings,
         };
@@ -395,7 +439,12 @@ impl Player {
             .device()
             .and_then(|device| device.play(data).map_err(|error| error.to_string()));
         match played {
-            Ok(sound) => self.playing = Some(Playing::Stretched { sound, rate }),
+            Ok(sound) => {
+                self.playing = Some(Playing::Stretched {
+                    sound,
+                    rate: rate.get(),
+                });
+            }
             Err(why) => {
                 window.audio_failed(path, &why);
                 window.playback_ended();
@@ -808,14 +857,19 @@ mod tests {
     #[test]
     fn stretched_positions_seeks_and_loop_bounds_use_the_audio_clock() {
         // At 1.6x, the stretched sound's clock runs for 2.5s over 4s of source.
-        assert!((source_position(2.5, 1.6) - 4.0).abs() < 1e-12);
-        assert!((stretched_position(4.0, 1.6) - 2.5).abs() < 1e-12);
-        assert!((stretched_position(8.0, 1.6) - 5.0).abs() < 1e-12);
+        let fast = PlaybackRate(1.6);
+        assert!((source_position(StretchedSeconds(2.5), fast).get() - 4.0).abs() < 1e-12);
+        assert!((stretched_position(SourceSeconds(4.0), fast).get() - 2.5).abs() < 1e-12);
+        assert!((stretched_position(SourceSeconds(8.0), fast).get() - 5.0).abs() < 1e-12);
         // The seek and loop start are clamped in source seconds before conversion.
-        assert!(stretched_position((-2.0_f64).max(0.0), 1.6).abs() < 1e-12);
-        assert!((source_position(8.0, 0.75) - 6.0).abs() < 1e-12);
-        assert!((stretched_position(6.0, 0.75) - 8.0).abs() < 1e-12);
-        assert!((stretched_position(13.7, 1.37) - 10.0).abs() < 1e-12);
+        assert!(stretched_position(SourceSeconds(-2.0).start(), fast).get() < 1e-12);
+        let slow = PlaybackRate(0.75);
+        assert!((source_position(StretchedSeconds(8.0), slow).get() - 6.0).abs() < 1e-12);
+        assert!((stretched_position(SourceSeconds(6.0), slow).get() - 8.0).abs() < 1e-12);
+        assert!(
+            (stretched_position(SourceSeconds(13.7), PlaybackRate(1.37)).get() - 10.0).abs()
+                < 1e-12
+        );
     }
 
     #[expect(clippy::unnecessary_wraps, reason = "matches the loader signature")]
