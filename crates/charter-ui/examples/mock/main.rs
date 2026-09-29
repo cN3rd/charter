@@ -83,13 +83,15 @@ const MARKERS: [(Beat, &str, Color32); 2] = [
 /// Which way later beats go on screen. A ruleset scrolls the way its game does.
 #[derive(Clone, Copy)]
 enum Direction {
+    /// Later beats appear lower on screen.
     Down,
+    /// Later beats appear higher on screen.
     Up,
 }
 
 impl Direction {
     /// 1 when later beats sit lower on screen, -1 when they sit higher.
-    fn sign(self) -> f32 {
+    const fn sign(self) -> f32 {
         match self {
             Self::Down => 1.0,
             Self::Up => -1.0,
@@ -97,7 +99,7 @@ impl Direction {
     }
 
     /// The edge of `rows` the chart starts from.
-    fn start(self, rows: Rangef) -> f32 {
+    const fn start(self, rows: Rangef) -> f32 {
         match self {
             Self::Down => rows.min,
             Self::Up => rows.max,
@@ -139,26 +141,32 @@ struct Lanes {
     playfield: Rangef,
     /// The strip for a second view, when the ruleset has one.
     side: Option<Rangef>,
+    /// The vertical part of the chart below the key header.
     rows: Rangef,
     /// The left edge of lane 0.
     left: f32,
+    /// Width of each playable lane, in points.
     lane_w: f32,
+    /// Number of playable lanes in this chart.
     count: u16,
+    /// Mapping from mock beats to screen positions.
     view: View,
 }
 
 impl Lanes {
     /// The `width` lanes starting at `lane`.
     fn span(&self, lane: u16, width: u16) -> Rangef {
-        let edge = |lane: u16| self.left + f32::from(lane) * self.lane_w;
-        Rangef::new(edge(lane), edge(lane + width))
+        let edge = |column: u16| self.left + f32::from(column) * self.lane_w;
+        Rangef::new(edge(lane), edge(lane.saturating_add(width)))
     }
 
+    /// Screen height of `at` in this playfield.
     fn y(&self, at: Beat) -> f32 {
         self.view.y(at)
     }
 }
 
+/// Opens the static egui window on the StepMania mock.
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([1280.0, 800.0]),
@@ -193,12 +201,13 @@ fn style(ctx: &egui::Context) {
     });
 }
 
+/// Shows placeholder menus and the ruleset switcher.
 fn menu_bar(ui: &mut Ui, open: &mut &'static Mock) {
     egui::MenuBar::new().ui(ui, |ui| {
         for (title, items) in MENUS {
             ui.menu_button(title, |ui| {
                 for item in items {
-                    let _ = ui.button(*item);
+                    drop(ui.button(*item));
                 }
             });
         }
@@ -213,11 +222,12 @@ fn menu_bar(ui: &mut Ui, open: &mut &'static Mock) {
             }
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let _ = ui.button("Commands  Ctrl+K");
+            drop(ui.button("Commands  Ctrl+K"));
         });
     });
 }
 
+/// Shows the mock transport, cursor position and editor controls.
 fn status_bar(ui: &mut Ui) {
     ui.horizontal(|ui| {
         play_button(ui);
@@ -225,17 +235,21 @@ fn status_bar(ui: &mut Ui) {
         ui.monospace("00:16.667");
         ui.separator();
         for control in ["Rate 100%", "Snap 16th", "Zoom 100%"] {
-            let _ = ui.button(control);
+            drop(ui.button(control));
         }
         ui.separator();
         for (on, toggle) in [(true, "C-mod"), (false, "X-mod"), (false, "Metronome")] {
-            let _ = ui.selectable_label(on, toggle);
+            drop(ui.selectable_label(on, toggle));
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| ui.strong("Edit"));
     });
 }
 
 /// The transport button, drawn rather than typed so it matches the notefield's shapes.
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "egui positions are offset by vectors"
+)]
 fn play_button(ui: &mut Ui) {
     let (rect, response) = ui.allocate_exact_size(vec2(24.0, 20.0), Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Play"));
@@ -253,21 +267,23 @@ fn play_button(ui: &mut Ui) {
         look.fg_stroke.color,
         Stroke::NONE,
     ));
-    let _ = response.on_hover_text("Play");
+    drop(response.on_hover_text("Play"));
 }
 
+/// Shows the selected song's problem, or its empty state.
 fn problems(ui: &mut Ui, mock: &Mock) {
     ui.horizontal(|ui| {
         ui.label(title("Problems"));
         if let Some(problem) = mock.problem {
             let warning = RichText::new(problem).color(ui.visuals().warn_fg_color);
-            let _ = ui.link(warning);
+            drop(ui.link(warning));
         } else {
             ui.weak("No problems");
         }
     });
 }
 
+/// Draws the song metadata, charts, settings and sample lists.
 fn song(ui: &mut Ui, mock: &Mock) {
     heading(ui, "Song");
     fields(
@@ -284,14 +300,14 @@ fn song(ui: &mut Ui, mock: &Mock) {
     heading(ui, "Charts");
     table(ui, "charts", |ui| {
         for &(name, lanes, open) in mock.charts {
-            let _ = ui.selectable_label(open, name);
+            drop(ui.selectable_label(open, name));
             ui.weak(lanes);
             ui.end_row();
         }
     });
     ui.horizontal(|ui| {
         for action in ["New", "Copy", "Delete"] {
-            let _ = ui.small_button(action);
+            drop(ui.small_button(action));
         }
     });
     heading(ui, "Chart settings");
@@ -511,10 +527,10 @@ fn grid(painter: &Painter, columns: &Columns, view: View, timing: &[(Beat, &str)
         painter.hline(columns.timeline(), y, Stroke::new(1.0, BEAT_LINE));
     }
     for measure in -2_i16..=7 {
-        let y = view.y(Beat(f32::from(measure * 4)));
+        let y = view.y(Beat(f32::from(measure.saturating_mul(4))));
         painter.hline(columns.timeline(), y, Stroke::new(1.0, MEASURE_LINE));
         let (at, anchor) = view.after(columns.ruler.max - 14.0, y, Align::Max);
-        let number = (12 + measure).to_string();
+        let number = (12_i16.saturating_add(measure)).to_string();
         ruler.text(at, anchor, number, FontId::monospace(12.0), TEXT);
     }
     for (beat, name, colour) in MARKERS {
@@ -532,6 +548,10 @@ fn grid(painter: &Painter, columns: &Columns, view: View, timing: &[(Beat, &str)
 }
 
 /// The cursor: a line across every column on the time axis, with a handle on the ruler.
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "egui positions are offset by vectors"
+)]
 fn now_line(painter: &Painter, columns: &Columns, now_y: f32) {
     painter.hline(columns.timeline(), now_y, Stroke::new(2.0, NOW_LINE));
     let tip = pos2(columns.ruler.max, now_y);
@@ -558,6 +578,10 @@ fn waveform(painter: &Painter, column: Rangef, rows: Rangef, view: View) {
 }
 
 /// The whole chart at once: density, a section, a bookmark, any warning and the visible range.
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "egui positions are offset by vectors"
+)]
 fn overview(
     painter: &Painter,
     column: Rangef,

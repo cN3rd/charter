@@ -16,7 +16,7 @@ use crate::style::{self, fields, heading, icon, table};
 use crate::window::Rate;
 
 /// The menu bar. `recent` is the songs opened before, the latest first.
-#[allow(clippy::too_many_lines)] // one menu after another, as they read left to right
+#[expect(clippy::too_many_lines, reason = "menus read left to right")]
 pub fn menu_bar(
     ui: &mut Ui,
     (song, recent): (Option<&Song>, &[std::path::PathBuf]),
@@ -27,10 +27,10 @@ pub fn menu_bar(
     let editable = song.is_some_and(|song| song.read_only().is_none());
     egui::MenuBar::new().ui(ui, |ui| {
         ui.menu_button("File", |ui| {
-            let item = |ui: &mut Ui, label, shortcut, enabled| {
-                let item =
-                    egui::Button::new(label).shortcut_text(ui.ctx().format_shortcut(&shortcut));
-                ui.add_enabled(enabled, item).clicked()
+            let item = |item_ui: &mut Ui, label, shortcut, enabled| {
+                let item = egui::Button::new(label)
+                    .shortcut_text(item_ui.ctx().format_shortcut(&shortcut));
+                item_ui.add_enabled(enabled, item).clicked()
             };
             if item(ui, "New song…", NEW_SONG, true) {
                 actions.push(Action::NewSong);
@@ -335,15 +335,15 @@ pub fn shortcuts(ctx: &egui::Context, open: &mut bool, filter: &mut String) {
                     }
                     heading(ui, group);
                     if compact {
-                        for (keys, does) in keys {
-                            ui.monospace(*keys);
+                        for (shortcut, does) in keys {
+                            ui.monospace(*shortcut);
                             ui.label(*does);
                             ui.add_space(8.0);
                         }
                     } else {
                         table(ui, group, |ui| {
-                            for (keys, does) in keys {
-                                ui.monospace(*keys);
+                            for (shortcut, does) in keys {
+                                ui.monospace(*shortcut);
                                 ui.label(*does);
                                 ui.end_row();
                             }
@@ -523,7 +523,7 @@ const WIDE: f32 = 180.0;
 
 /// The song's title, artist, audio, preview and ruleset, each that can change a field of its
 /// own. Says why something typed is not a value.
-#[allow(clippy::too_many_lines)] // one row a fact, top to bottom
+#[expect(clippy::too_many_lines, reason = "one row per fact")]
 fn song_rows(
     ui: &mut Ui,
     song: &Song,
@@ -535,20 +535,20 @@ fn song_rows(
     let editable = song.read_only().is_none();
     let changed = |change: &dyn Fn(&mut Metadata)| changed(metadata, change);
     let mut refused = None;
-    let mut text_row = |ui: &mut Ui,
+    let mut text_row = |row_ui: &mut Ui,
                         label: &str,
                         current: &str,
                         draft: &mut Option<String>,
                         set: fn(&mut Metadata, &str)| {
-        let caption = ui.weak(label);
+        let caption = row_ui.weak(label);
         if editable {
             let read = |typed: &str| Ok(changed(&|new| set(new, typed)));
-            let offered = entry_sized(ui, (caption.id, WIDE), current, draft, read, actions);
+            let offered = entry_sized(row_ui, (caption.id, WIDE), current, draft, read, actions);
             refused = refused.take().or(offered);
         } else {
-            ui.label(current);
+            row_ui.label(current);
         }
-        ui.end_row();
+        row_ui.end_row();
     };
     text_row(
         ui,
@@ -602,7 +602,7 @@ fn song_rows(
                 return Ok(changed(&|new| new.artwork = None));
             }
             let path = ResourcePath::new(typed)
-                .map_err(|_| format!("{typed} is not a file beside the song"))?;
+                .map_err(|_invalid_path| format!("{typed} is not a file beside the song"))?;
             Ok(changed(&|new| new.artwork = Some(path.clone())))
         };
         ui.horizontal(|ui| {
@@ -653,10 +653,11 @@ fn song_rows(
         document.ruleset.id, document.ruleset.version
     ));
     ui.end_row();
-    let offered = setting_rows(ui, song, SettingScope::Song, drafts, actions);
-    refused.take().or(offered)
+    let settings_offered = setting_rows(ui, song, SettingScope::Song, drafts, actions);
+    refused.take().or(settings_offered)
 }
 
+/// The display name of `audio`, substituting a label for the new-song placeholder.
 fn audio_name(audio: &str) -> &str {
     if audio == crate::new_song::NO_AUDIO {
         "None yet"
@@ -741,13 +742,13 @@ fn preview_rows(
             if typed.is_empty() {
                 return Ok(changed(&|new| new.preview = None));
             }
-            let start = crate::timing_panel::moment(typed)
+            let new_start = crate::timing_panel::moment(typed)
                 .and_then(|at| charter_core::AudioTime::try_from((at * 1e6).round() / 1e6).ok())
                 .ok_or_else(|| format!("{typed} is not a time in the audio, such as 00:45.000"))?;
             Ok(changed(&|new| {
                 let length_seconds = new.preview.and_then(|preview| preview.length_seconds);
                 new.preview = Some(charter_core::Preview {
-                    start_seconds: start,
+                    start_seconds: new_start,
                     length_seconds,
                 });
             }))
@@ -770,7 +771,7 @@ fn preview_rows(
     }
     ui.end_row();
     if let Some(preview) = metadata.preview {
-        let caption = ui.weak("Preview length");
+        let length_caption = ui.weak("Preview length");
         let length = preview
             .length_seconds
             .map_or_else(String::new, |length| length.to_string());
@@ -785,21 +786,21 @@ fn preview_rows(
                             });
                         }));
                     }
-                    let length = typed
+                    let new_length = typed
                         .parse::<f64>()
                         .ok()
                         .and_then(|seconds| charter_core::Seconds::try_from(seconds).ok())
                         .ok_or_else(|| format!("{typed} is not a length in seconds"))?;
                     Ok(changed(&|new| {
                         new.preview = Some(charter_core::Preview {
-                            length_seconds: Some(length),
+                            length_seconds: Some(new_length),
                             ..preview
                         });
                     }))
                 };
                 let offered = entry_sized(
                     ui,
-                    (caption.id, 72.0),
+                    (length_caption.id, 72.0),
                     &length,
                     &mut drafts.length,
                     read,
@@ -873,6 +874,7 @@ fn markers_body(ui: &mut Ui, song: &Song, draft: &mut Option<String>, actions: &
                 *draft = Some(text);
             } else if entered {
                 actions.push(Action::SetSection(text.trim().to_owned()));
+            } else {
             }
             ui.end_row();
         });
@@ -988,11 +990,13 @@ pub(crate) fn entry_sized(
         && !ui.input(|input| input.key_pressed(egui::Key::Escape))
     {
         *draft = Some(text);
+    } else {
     }
     None
 }
 
-#[allow(clippy::too_many_lines)] // the toolbar's groups in the order they show
+/// Draws the playback and editing controls, sending their choices as `actions`.
+#[expect(clippy::too_many_lines, reason = "toolbar groups in display order")]
 pub fn transport_bar(
     ui: &mut Ui,
     song: Option<&Song>,
@@ -1017,13 +1021,13 @@ pub fn transport_bar(
                 if style::tool(ui, icon::SKIP_BACK, "Jump to the start", "Home", false).clicked() {
                     actions.push(start);
                 }
-                let (symbol, name) = if playing {
+                let (symbol, playback_name) = if playing {
                     (icon::PAUSE, "Pause")
                 } else {
                     (icon::PLAY, "Play")
                 };
-                let tip = format!("{name} from the cursor (Space)");
-                if style::tool(ui, symbol, name, &tip, playing).clicked() {
+                let playback_tip = format!("{playback_name} from the cursor (Space)");
+                if style::tool(ui, symbol, playback_name, &playback_tip, playing).clicked() {
                     actions.push(Action::TogglePlay);
                 }
                 if style::tool(ui, icon::SKIP_FORWARD, "Jump to the end", "End", false).clicked() {
@@ -1177,17 +1181,17 @@ pub fn transport_bar(
                 let button = style::tool(ui, icon::SPEAKER_HIGH, "Volume", "Volume", false);
                 let popup = egui::Popup::menu(&button)
                     .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
-                popup.show(|ui| {
+                popup.show(|popup_ui| {
                     let mut changed = volumes;
-                    style::table(ui, "volumes", |ui| {
-                        for (name, gain) in [
+                    style::table(popup_ui, "volumes", |volume_ui| {
+                        for (volume_name, gain) in [
                             ("Music volume", &mut changed.music),
                             ("Note tick volume", &mut changed.ticks),
                             ("Metronome volume", &mut changed.metronome),
                         ] {
-                            let caption = ui.weak(name);
-                            crate::settings::volume(ui, gain).labelled_by(caption.id);
-                            ui.end_row();
+                            let caption = volume_ui.weak(volume_name);
+                            crate::settings::volume(volume_ui, gain).labelled_by(caption.id);
+                            volume_ui.end_row();
                         }
                     });
                     if changed != volumes {
@@ -1417,7 +1421,7 @@ pub fn ask_to_save(ui: &Ui, name: &str) -> Option<Answer> {
             }
         });
     });
-    answer.or(modal.should_close().then_some(Answer::Cancel))
+    answer.or_else(|| modal.should_close().then_some(Answer::Cancel))
 }
 
 /// Asks whether to take the title and artist an audio file's tags carry over the song's own:
@@ -1529,6 +1533,10 @@ pub fn ask_to_reset_timing(ui: &Ui) -> Option<bool> {
 
 /// Why the last file did not open, or the last edit was refused, floating at the foot of the
 /// area `ui` fills. Says whether the user dismissed it.
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "egui position offsets use vector subtraction"
+)]
 pub fn toast(ui: &Ui, message: &str) -> bool {
     let area = ui.max_rect();
     let width = (area.width() - 32.0).clamp(160.0, 640.0);
@@ -1691,12 +1699,8 @@ mod tests {
 
     #[test]
     fn each_confirmation_button_returns_the_answer_it_names() {
-        for (dialog, yes, no) in [
-            (
-                (|ui: &Ui| ask_to_restore(ui, "Demo")) as fn(&Ui) -> Option<bool>,
-                "Restore",
-                "Discard",
-            ),
+        let dialogs: [(fn(&Ui) -> Option<bool>, &str, &str); 4] = [
+            (|ui: &Ui| ask_to_restore(ui, "Demo"), "Restore", "Discard"),
             (
                 |ui: &Ui| offer_tags(ui, Some("New title"), Some("Artist")),
                 "Import",
@@ -1704,7 +1708,8 @@ mod tests {
             ),
             (ask_to_download_weights, "Download", "Cancel"),
             (ask_to_reset_timing, "Reset", "Cancel"),
-        ] {
+        ];
+        for (dialog, yes, no) in dialogs {
             answer_dialog(dialog, yes, true);
             answer_dialog(dialog, no, false);
         }
@@ -1748,7 +1753,8 @@ mod tests {
                     Vec<Action>,
                     Option<String>,
                 )| {
-                    *refused = song_panel(ui, song, (drafts, None), actions).or(refused.take());
+                    *refused =
+                        song_panel(ui, song, (drafts, None), actions).or_else(|| refused.take());
                 },
                 (song, SongDrafts::default(), Vec::new(), None),
             );
@@ -1792,9 +1798,9 @@ mod tests {
     #[test]
     fn correcting_a_refused_artwork_path_submits_only_the_corrected_value() {
         let mut harness = editable_panel();
-        let field = harness.get_by_role_and_label(Role::TextInput, "Artwork");
-        field.focus();
-        field.type_text("../outside.png");
+        let artwork_field = harness.get_by_role_and_label(Role::TextInput, "Artwork");
+        artwork_field.focus();
+        artwork_field.type_text("../outside.png");
         harness.run();
         harness.key_press(egui::Key::Enter);
         harness.run();
@@ -1806,10 +1812,10 @@ mod tests {
                 .as_deref(),
             Some("../outside.png")
         );
-        let field = harness.get_by_role_and_label(Role::TextInput, "Artwork");
-        field.focus();
+        let corrected_field = harness.get_by_role_and_label(Role::TextInput, "Artwork");
+        corrected_field.focus();
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
-        field.type_text("cover.png");
+        corrected_field.type_text("cover.png");
         harness.run();
         harness.key_press(egui::Key::Enter);
         harness.run();
@@ -2001,18 +2007,14 @@ mod tests {
 
     #[test]
     fn status_distinguishes_no_song_playback_and_read_only_charts() {
+        let plugin: &dyn RulesetPlugin = &charter_stepmania::Plugin;
         let mut empty = Harness::builder()
             .build_ui_state(|ui, (): &mut ()| status_bar(ui, None, ("", false)), ());
         empty.run();
         assert!(empty.query_by_label("No song open").is_some());
 
         for (plugins, playing, expected_state, expected_mode) in [
-            (
-                &[&charter_stepmania::Plugin as &dyn RulesetPlugin][..],
-                true,
-                "Playing",
-                "Editing",
-            ),
+            (&[plugin][..], true, "Playing", "Editing"),
             (&[][..], false, "Paused", "Read only"),
         ] {
             let song =

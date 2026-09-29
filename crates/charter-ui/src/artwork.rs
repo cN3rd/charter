@@ -100,7 +100,7 @@ impl Artwork {
     }
 
     /// Takes that the song was saved, with the artwork beside it.
-    pub fn saved(&mut self) {
+    pub const fn saved(&mut self) {
         self.unsaved = false;
     }
 
@@ -170,7 +170,7 @@ mod tests {
         );
         let mut taken = Artwork::taken("cover.png".to_owned(), None, picture(b"png"));
         taken.read(None);
-        assert!(taken.shown(&ctx).is_ok());
+        taken.shown(&ctx).unwrap();
         let unsaved = Artwork::named("art.png", None).shown(&ctx).err();
         assert_eq!(unsaved, Some("Shown once the song is saved"));
     }
@@ -227,7 +227,7 @@ mod tests {
         assert_eq!(artwork.unsaved(), None);
         assert_eq!(artwork.write_for(Path::new("/new/song.json"), None), None);
         artwork.read(Some(picture(b"found")));
-        assert!(artwork.shown(&ctx).is_ok());
+        artwork.shown(&ctx).unwrap();
         assert_eq!(
             artwork.write_for(
                 Path::new("/new/song.json"),

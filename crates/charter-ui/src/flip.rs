@@ -20,11 +20,12 @@ pub enum Direction {
 }
 
 impl Direction {
+    /// Directions offered in the display settings, in menu order.
     pub const ALL: [Self; 4] = [Self::Up, Self::Down, Self::Left, Self::Right];
 
     /// What the settings call it.
     #[must_use]
-    pub fn name(self) -> &'static str {
+    pub const fn name(self) -> &'static str {
         match self {
             Self::Up => "Vertical, notes travel up",
             Self::Down => "Vertical, notes travel down",
@@ -34,16 +35,18 @@ impl Direction {
     }
 
     /// Whether time runs across the screen rather than down it.
-    fn across(self) -> bool {
+    const fn across(self) -> bool {
         matches!(self, Self::Left | Self::Right)
     }
 }
 
 /// Turns the notefield's own layout, lanes across and later notes lower, onto `area` of the
 /// screen, and back.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Flip {
+    /// The screen area receiving the turned notefield.
     pub area: Rect,
+    /// The direction in which notes travel on screen.
     pub direction: Direction,
 }
 
@@ -96,7 +99,7 @@ impl Flip {
     #[must_use]
     pub fn align(self, align: Align2) -> Align2 {
         let [x, y] = align.0;
-        let flip = |align: Align| match align {
+        let flip = |edge: Align| match edge {
             Align::Min => Align::Max,
             Align::Center => Align::Center,
             Align::Max => Align::Min,
@@ -112,13 +115,16 @@ impl Flip {
 
 /// A painter that takes the notefield's layout, and draws it turned onto the screen.
 pub struct Canvas {
+    /// The painter whose clip rectangle is in screen coordinates.
     painter: Painter,
+    /// The transform from notefield coordinates to screen coordinates.
     flip: Flip,
 }
 
 impl Canvas {
+    /// A painter for drawing through `flip` into the screen.
     #[must_use]
-    pub fn new(painter: Painter, flip: Flip) -> Self {
+    pub const fn new(painter: Painter, flip: Flip) -> Self {
         Self { painter, flip }
     }
 
@@ -427,10 +433,10 @@ mod tests {
                 pos2(1.0, 1.0),
                 pos2(0.0, 1.0),
             ];
-            for ((vertex, position), uv) in mesh.vertices.iter().zip(positions).zip(uv) {
+            for ((vertex, position), texel) in mesh.vertices.iter().zip(positions).zip(uv) {
                 assert_eq!(
                     (vertex.pos, vertex.uv, vertex.color),
-                    (position, uv, Color32::WHITE),
+                    (position, texel, Color32::WHITE),
                     "{direction:?}"
                 );
             }
@@ -459,7 +465,17 @@ mod tests {
             output.textures_delta.clear();
             let circle = output.shapes.iter().find_map(|shape| match &shape.shape {
                 Shape::Circle(circle) => Some(circle),
-                _ => None,
+                Shape::Noop
+                | Shape::Vec(_)
+                | Shape::Ellipse(_)
+                | Shape::LineSegment { .. }
+                | Shape::Path(_)
+                | Shape::Rect(_)
+                | Shape::Text(_)
+                | Shape::Mesh(_)
+                | Shape::QuadraticBezier(_)
+                | Shape::CubicBezier(_)
+                | Shape::Callback(_) => None,
             });
             let circle = circle.expect("the canvas paints a circle");
             assert_eq!(

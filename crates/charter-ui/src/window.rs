@@ -173,17 +173,20 @@ impl Rate {
         Self::of(self.0 + step)
     }
 
+    /// The nearest whole-percent speed to `factor`, between one tenth and four times normal.
     #[must_use]
     pub fn of(factor: f64) -> Self {
         let percent = (factor * 100.0).round() / 100.0;
         Self(percent.clamp(Self::SLOWEST, Self::FASTEST))
     }
 
+    /// The audio's current speed as a factor of its own speed.
     #[must_use]
-    pub fn factor(self) -> f64 {
+    pub const fn factor(self) -> f64 {
         self.0
     }
 
+    /// The audio's current speed as a whole percentage of its own speed.
     #[must_use]
     pub fn percent(self) -> f64 {
         (self.0 * 100.0).round()
@@ -257,12 +260,15 @@ enum Leaving {
 /// A note a lane key places.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Note {
+    /// A note that starts and ends at its tick.
     Tap,
+    /// A mine placed at its tick rather than a playable note.
     Mine,
 }
 
 impl Note {
-    fn kind(self) -> Kind {
+    /// The chart's note kind to store for this lane-key choice.
+    const fn kind(self) -> Kind {
         match self {
             Self::Tap => Kind::Tap,
             Self::Mine => Kind::Mine,
@@ -343,15 +349,18 @@ pub(crate) enum Action {
     /// Places taps from the cursor on, one `per_beat`th of a beat apart, on the lanes `steps`
     /// counts from `lane`, wrapping past the last.
     Pattern {
+        /// Lane offsets of the pattern, wrapping at the last lane.
         steps: &'static [u16],
+        /// Number of pattern positions per beat.
         per_beat: u16,
+        /// First lane of the pattern.
         lane: LaneIndex,
     },
     /// Selects every note on the lane.
     SelectLane(LaneIndex),
     /// Moves the cursor to the tick and then does the action there, for what a menu opened on
     /// that tick places.
-    Here(Tick, Box<Action>),
+    Here(Tick, Box<Self>),
     /// Pastes what the system clipboard holds at the tick, or with no text there the notes
     /// copied last.
     PasteHere(Tick),
@@ -470,10 +479,14 @@ pub(crate) enum Action {
 
 /// The editor window's state.
 #[derive(Debug, Default)]
-#[allow(clippy::struct_excessive_bools)] // independent flags, not a state machine
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent flags, not a state machine"
+)]
 pub struct Window {
     /// The ruleset plugins every song is checked against.
     plugins: &'static [&'static dyn RulesetPlugin],
+    /// The song whose chart and metadata the window currently draws.
     song: Option<Song>,
     /// The file the open song was read from or last saved to.
     path: Option<PathBuf>,
@@ -658,7 +671,7 @@ impl Window {
     }
 
     #[must_use]
-    pub fn settings(&self) -> &Settings {
+    pub const fn settings(&self) -> &Settings {
         &self.settings
     }
 
@@ -804,7 +817,7 @@ impl Window {
     }
 
     /// Takes that the audio played to its end.
-    pub fn playback_ended(&mut self) {
+    pub const fn playback_ended(&mut self) {
         self.playing = false;
     }
 
@@ -841,12 +854,12 @@ impl Window {
     }
 
     /// Takes that the beat tracker's weights are not downloaded yet, so the user is asked.
-    pub fn weights_needed(&mut self) {
+    pub const fn weights_needed(&mut self) {
         self.finding = Finding::Asking;
     }
 
     /// Takes that `share` of the beat tracker's weights has downloaded.
-    pub fn weights_progress(&mut self, share: f32) {
+    pub const fn weights_progress(&mut self, share: f32) {
         self.finding = Finding::Downloading(share.clamp(0.0, 1.0));
     }
 
@@ -894,6 +907,7 @@ impl Window {
         } else if !ui.input(|input| input.pointer.any_down()) {
             self.toggle_play();
             self.toggle_play();
+        } else {
         }
     }
 
@@ -938,6 +952,7 @@ impl Window {
         } else if let Some(song) = &self.song {
             let from = song.timing().time_at(song.cursor()).seconds();
             self.start(from, None, false);
+        } else {
         }
     }
 
@@ -1032,6 +1047,7 @@ impl Window {
             self.replay();
         } else if self.playing {
             self.requests.push(Request::Rate(rate.factor()));
+        } else {
         }
     }
 
@@ -1157,7 +1173,7 @@ impl Window {
             artwork: Some(path),
             ..old.clone()
         };
-        self.failure = refused(song.set_metadata(metadata).err());
+        self.failure = song.set_metadata(metadata).err().as_ref().map(refused);
         if self.failure.is_none() {
             // The picture it replaces comes back with an undo.
             self.park_artwork();
@@ -1183,7 +1199,7 @@ impl Window {
         };
         let file = self.artwork_file();
         let step = self.song.as_ref().map_or(0, Song::history_step);
-        let parked_here = self
+        let restored_position = self
             .parked
             .iter()
             .position(|parked| parked.name == named && parked.step == step);
@@ -1191,18 +1207,18 @@ impl Window {
         let current = self.artwork.as_ref().is_some_and(|artwork| {
             artwork.name == named
                 && artwork.file == file
-                && (artwork.step == step || parked_here.is_none())
+                && (artwork.step == step || restored_position.is_none())
         });
         if current {
             return;
         }
         self.park_artwork();
         // A picture chosen but not saved, which an undo took away, comes back at its step.
-        let parked_here = self
+        let parked_after_park = self
             .parked
             .iter()
             .position(|parked| parked.name == named && parked.step == step);
-        if let Some(at) = parked_here {
+        if let Some(at) = parked_after_park {
             let mut artwork = self.parked.swap_remove(at);
             artwork.file = file;
             self.artwork = Some(artwork);
@@ -1267,7 +1283,7 @@ impl Window {
         match song.paste(&clip, song.cursor()) {
             Ok(0) => self.failure = Some("Nothing pasted: every place is taken.".to_owned()),
             Ok(_) => {}
-            Err(why) => self.failure = refused(Some(why)),
+            Err(why) => self.failure = Some(refused(&why)),
         }
     }
 
@@ -1300,7 +1316,7 @@ impl Window {
         self.failure = match song.paste(&copied, at) {
             Ok(0) => Some("Nothing duplicated: every place is taken.".to_owned()),
             Ok(_) => None,
-            Err(why) => refused(Some(why)),
+            Err(why) => Some(refused(&why)),
         };
     }
 
@@ -1356,8 +1372,8 @@ impl Window {
     /// given.
     fn take_tags(&mut self, draft: bool, title: Option<&str>, artist: Option<&str>) {
         if draft {
-            if let Some(draft) = &mut self.new_song {
-                draft.fill(title, artist);
+            if let Some(new_song_draft) = &mut self.new_song {
+                new_song_draft.fill(title, artist);
             }
             return;
         }
@@ -1367,7 +1383,11 @@ impl Window {
         let metadata = &song.document().document().metadata;
         let title = title.unwrap_or(&metadata.title).to_owned();
         let artist = artist.unwrap_or(&metadata.artist).to_owned();
-        self.failure = refused(song.set_song_facts(&title, &artist).err());
+        self.failure = song
+            .set_song_facts(&title, &artist)
+            .err()
+            .as_ref()
+            .map(refused);
     }
 
     /// Gives the song being started the audio at `file`, and asks for its tags.
@@ -1419,7 +1439,7 @@ impl Window {
 
     /// Whether the window takes the audio to be playing.
     #[must_use]
-    pub fn is_playing(&self) -> bool {
+    pub const fn is_playing(&self) -> bool {
         self.playing
     }
 
@@ -1478,7 +1498,7 @@ impl Window {
                 return;
             }
         };
-        self.failure = refused(song.set_audio(audio).err());
+        self.failure = song.set_audio(audio).err().as_ref().map(refused);
         if self.failure.is_none() {
             self.audio_file = Some(path.to_path_buf());
             self.requests.push(Request::ReadTags {
@@ -1492,10 +1512,10 @@ impl Window {
         match plugin.new_song(song) {
             Ok(document) => {
                 let audio = self.new_song.as_ref().and_then(|draft| draft.audio.clone());
-                let song = Box::new(Song::new(document, self.plugins));
+                let created_song = Box::new(Song::new(document, self.plugins));
                 self.after_asking(Discard::Open {
                     path: None,
-                    song,
+                    song: created_song,
                     restored: false,
                     audio,
                 });
@@ -1875,11 +1895,64 @@ impl Window {
             Action::NewSong => {
                 self.new_song.get_or_insert_default();
             }
-            _ => {}
+            Action::OpenChart(_)
+            | Action::Move(_)
+            | Action::MoveMeasure(_)
+            | Action::FinerSnap
+            | Action::CoarserSnap
+            | Action::ZoomBy(_)
+            | Action::Toggle(..)
+            | Action::LaneUp(_)
+            | Action::LanesReleased
+            | Action::Place { .. }
+            | Action::Stretch { .. }
+            | Action::Select(..)
+            | Action::MoveSelection { .. }
+            | Action::SelectBetween { .. }
+            | Action::Undo
+            | Action::Redo
+            | Action::SelectAll
+            | Action::ClearSelection
+            | Action::DeleteSelection
+            | Action::ResizeNotes(_)
+            | Action::Copy
+            | Action::Cut
+            | Action::Paste(_)
+            | Action::Duplicate
+            | Action::ShiftSelection { .. }
+            | Action::Mirror
+            | Action::Quantize
+            | Action::ChangeNotes(_)
+            | Action::Pattern { .. }
+            | Action::SelectLane(_)
+            | Action::Here(..)
+            | Action::PasteHere(_)
+            | Action::SetBpmAt(..)
+            | Action::SetMetadata(_)
+            | Action::SetSetting { .. }
+            | Action::MovePointTo(..)
+            | Action::SetMeterAt(..)
+            | Action::RemoveTimingAt(_)
+            | Action::SetOffset(_)
+            | Action::AddBpm
+            | Action::NudgeOffset(_)
+            | Action::ImportTiming(_)
+            | Action::JumpTo(_)
+            | Action::SetSection(_)
+            | Action::RemoveMarker(_)
+            | Action::JumpEnd
+            | Action::Timing(_)
+            | Action::ResetTiming
+            | Action::MoveTiming { .. }
+            | Action::MoveMarker { .. }
+            | Action::JumpSection(_)
+            | Action::ToggleBookmark
+            | Action::NudgeBpm(_) => {}
         }
     }
 
-    #[allow(clippy::too_many_lines)] // one arm for every action
+    /// Applies `action` to the song and window state, reporting refused edits.
+    #[expect(clippy::too_many_lines, reason = "one arm per action")]
     fn apply(&mut self, action: Action) {
         // A chord's notes undo as one, but anything else done while it is held is its own step.
         let chord = matches!(
@@ -1932,11 +2005,11 @@ impl Window {
             }
             Action::Move(step) => {
                 song.step(step);
-                self.failure = stretch(song, &self.holding).or(self.failure.take());
+                self.failure = stretch(song, &self.holding).or_else(|| self.failure.take());
             }
             Action::MoveMeasure(step) => {
                 song.step_measure(step);
-                self.failure = stretch(song, &self.holding).or(self.failure.take());
+                self.failure = stretch(song, &self.holding).or_else(|| self.failure.take());
             }
             Action::FinerSnap => song.finer_snap(),
             Action::CoarserSnap => song.coarser_snap(),
@@ -1948,7 +2021,7 @@ impl Window {
                 }
                 let at = placing_at(song, self.playing.then_some(input_latency));
                 let toggled = song.toggle(at, lane, note.kind());
-                if let Ok(Toggled::Placed) = toggled {
+                if matches!(toggled, Ok(Toggled::Placed)) {
                     self.placed = true;
                     if note == Note::Tap {
                         self.holding.push((lane, at));
@@ -1958,7 +2031,7 @@ impl Window {
                         }
                     }
                 }
-                self.failure = refused(toggled.err());
+                self.failure = toggled.err().as_ref().map(refused);
             }
             Action::LaneUp(lane) => {
                 if self.playing {
@@ -1970,7 +2043,8 @@ impl Window {
                         .copied()
                         .filter(|(held, _)| *held == lane)
                         .collect();
-                    self.failure = grow(song, &held, &self.pressed, now).or(self.failure.take());
+                    self.failure =
+                        grow(song, &held, &self.pressed, now).or_else(|| self.failure.take());
                 }
                 self.holding.retain(|(held, _)| *held != lane);
                 self.pressed.retain(|(held, _)| *held != lane);
@@ -1989,19 +2063,23 @@ impl Window {
                 self.placed = false;
                 self.holding.clear();
                 self.pressed.clear();
-                self.failure = refused(song.undo().err());
+                self.failure = song.undo().err().as_ref().map(refused);
             }
             Action::Redo => {
                 self.placed = false;
                 self.holding.clear();
                 self.pressed.clear();
-                self.failure = refused(song.redo().err());
+                self.failure = song.redo().err().as_ref().map(refused);
             }
             Action::Place { tick, lane, note } => {
-                self.failure = refused(song.toggle(tick, lane, note.kind()).err());
+                self.failure = song
+                    .toggle(tick, lane, note.kind())
+                    .err()
+                    .as_ref()
+                    .map(refused);
             }
             Action::Stretch { lane, from, to } => {
-                self.failure = refused(song.stretch(lane, from, to).err());
+                self.failure = song.stretch(lane, from, to).err().as_ref().map(refused);
             }
             Action::Select(Some(note), how) => song.select([note], how),
             Action::Select(None, Selecting::Replace) | Action::ClearSelection => {
@@ -2069,24 +2147,32 @@ impl Window {
             Action::JumpTo(tick) => song.jump_to(tick),
             Action::JumpEnd => song.jump_to(song.end()),
             Action::MoveMarker { index, to } => {
-                self.failure = refused(song.move_marker(index, to).err());
+                self.failure = song.move_marker(index, to).err().as_ref().map(refused);
             }
             Action::JumpSection(step) => {
                 if let Some(tick) = song.section_from(step) {
                     song.jump_to(tick);
                 }
             }
-            Action::ToggleBookmark => self.failure = refused(song.toggle_bookmark().err()),
+            Action::ToggleBookmark => {
+                self.failure = song.toggle_bookmark().err().as_ref().map(refused);
+            }
             Action::NudgeBpm(by) => self.failure = nudge_bpm(song, by),
-            Action::SetSection(text) => self.failure = refused(song.set_section(&text).err()),
-            Action::RemoveMarker(index) => self.failure = refused(song.remove_marker(index).err()),
+            Action::SetSection(text) => {
+                self.failure = song.set_section(&text).err().as_ref().map(refused);
+            }
+            Action::RemoveMarker(index) => {
+                self.failure = song.remove_marker(index).err().as_ref().map(refused);
+            }
             Action::SelectAll => song.select_all(),
-            Action::DeleteSelection => self.failure = refused(song.delete_selection().err()),
+            Action::DeleteSelection => {
+                self.failure = song.delete_selection().err().as_ref().map(refused);
+            }
             Action::Copy => self.copy(),
             Action::Cut => {
                 self.copy();
-                if let Some(song) = &mut self.song {
-                    self.failure = refused(song.delete_selection().err());
+                if let Some(open_song) = &mut self.song {
+                    self.failure = open_song.delete_selection().err().as_ref().map(refused);
                 }
             }
             Action::Paste(text) => self.paste(text.as_deref()),
@@ -2098,13 +2184,20 @@ impl Window {
                     .ticks_per_beat
                     .note_length(song.snap())
                     .map_or(0, |step| i64::from(u32::from(step)));
-                let ticks = i32::try_from(i64::from(snaps) * step).unwrap_or(i32::MAX);
-                self.failure = refused(song.move_selection(ticks, lanes).err());
+                let ticks =
+                    i32::try_from(i64::from(snaps).saturating_mul(step)).unwrap_or(i32::MAX);
+                self.failure = song
+                    .move_selection(ticks, lanes)
+                    .err()
+                    .as_ref()
+                    .map(refused);
             }
-            Action::Mirror => self.failure = refused(song.mirror_selection().err()),
-            Action::Quantize => self.failure = refused(song.quantize_selection().err()),
+            Action::Mirror => self.failure = song.mirror_selection().err().as_ref().map(refused),
+            Action::Quantize => {
+                self.failure = song.quantize_selection().err().as_ref().map(refused);
+            }
             Action::ChangeNotes(change) => {
-                self.failure = refused(song.change_selection(&change).err());
+                self.failure = song.change_selection(&change).err().as_ref().map(refused);
             }
             Action::Pattern {
                 steps,
@@ -2118,9 +2211,15 @@ impl Window {
                     Selecting::Replace,
                 );
             }
-            Action::ResizeNotes(step) => self.failure = refused(song.resize_notes(step).err()),
+            Action::ResizeNotes(step) => {
+                self.failure = song.resize_notes(step).err().as_ref().map(refused);
+            }
             Action::MoveSelection { ticks, lanes } => {
-                self.failure = refused(song.move_selection(ticks, lanes).err());
+                self.failure = song
+                    .move_selection(ticks, lanes)
+                    .err()
+                    .as_ref()
+                    .map(refused);
             }
         }
     }
@@ -2242,7 +2341,11 @@ impl Window {
     }
 
     /// Draws the window into `ui` and answers this frame's input.
-    #[allow(clippy::too_many_lines)] // one frame, panel by panel in the order they draw
+    #[expect(
+        clippy::too_many_lines,
+        clippy::cognitive_complexity,
+        reason = "one frame, panels in drawing order"
+    )]
     pub fn ui(&mut self, ui: &mut Ui) {
         style::apply(ui.ctx(), &self.fallback_fonts);
         self.frame_time = ui.input(|input| input.time);
@@ -2328,13 +2431,13 @@ impl Window {
                 self.apply(Action::Here(tick, Box::new(Action::Paste(None))));
             }
             Some((tick, left)) => {
-                self.pasting = Some((tick, left - 1));
+                self.pasting = Some((tick, left.saturating_sub(1)));
                 ui.ctx().request_repaint();
             }
             None => {}
         }
         let artwork = self.artwork.as_mut().map(|artwork| artwork.shown(ui.ctx()));
-        if let Some(song) = self.song.as_ref().filter(|_| self.settings.song_panel) {
+        if let Some(panel_song) = self.song.as_ref().filter(|_| self.settings.song_panel) {
             let timing = &mut self.timing_drafts;
             let facts = &mut self.song_drafts;
             let section = &mut self.section_draft;
@@ -2346,11 +2449,12 @@ impl Window {
                     egui::ScrollArea::vertical()
                         .show(ui, |ui| {
                             let named =
-                                panels::song_panel(ui, song, (facts, artwork), &mut actions);
-                            let refused = timing_panel::section(ui, song, timing, &mut actions);
+                                panels::song_panel(ui, panel_song, (facts, artwork), &mut actions);
+                            let refused =
+                                timing_panel::section(ui, panel_song, timing, &mut actions);
                             let refused = named.or(refused);
-                            panels::markers(ui, song, section, &mut actions);
-                            panels::details(ui, song);
+                            panels::markers(ui, panel_song, section, &mut actions);
+                            panels::details(ui, panel_song);
                             refused
                         })
                         .inner
@@ -2371,12 +2475,12 @@ impl Window {
                 if let Some(why) = self.song.as_ref().and_then(Song::read_only) {
                     panels::read_only(ui, why);
                 }
-                if self.song.as_ref().is_some_and(|song| {
-                    song.document().document().metadata.audio.as_str() == NO_AUDIO
+                if self.song.as_ref().is_some_and(|open_song| {
+                    open_song.document().document().metadata.audio.as_str() == NO_AUDIO
                 }) {
                     panels::no_audio(ui, self.no_drops, &mut actions);
                 }
-                if let Some(song) = &self.song {
+                if let Some(active_song) = &self.song {
                     let shown = notefield::Shown {
                         zoom: self.zoom,
                         direction: self.settings.direction,
@@ -2386,9 +2490,9 @@ impl Window {
                             self.spectrum.as_ref(),
                             self.audio_file().as_deref(),
                         ),
-                        grid: shown_grid(self.settings.grid, song.snap()),
+                        grid: shown_grid(self.settings.grid, active_song.snap()),
                     };
-                    let map = self.settings.minimap && song.chart().is_some();
+                    let map = self.settings.minimap && active_song.chart().is_some();
                     let length = match self.loaded() {
                         Some(Loaded::Ready(seconds)) => Some(*seconds),
                         _ => None,
@@ -2408,7 +2512,7 @@ impl Window {
                         let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(field));
                         let visible = notefield::show(
                             &mut inner,
-                            song,
+                            active_song,
                             shown,
                             scrolled,
                             gesture,
@@ -2418,7 +2522,7 @@ impl Window {
                             minimap::show(
                                 ui,
                                 beside,
-                                song,
+                                active_song,
                                 (visible, length, reversed),
                                 &mut actions,
                             );
@@ -2468,12 +2572,12 @@ impl Window {
                 actions.push(Action::ResetTiming);
             }
         }
-        if let Some(settings::Asked::Preview(kit)) = asked {
+        if let Some(settings::Asked::Preview(preview_kit)) = asked {
             let clicks = (0..4u8).map(|beat| {
                 let tone = if beat == 0 {
-                    charter_audio::Tone::Accent(kit)
+                    charter_audio::Tone::Accent(preview_kit)
                 } else {
-                    charter_audio::Tone::Beat(kit)
+                    charter_audio::Tone::Beat(preview_kit)
                 };
                 (f64::from(beat) * 0.5, tone)
             });
@@ -2544,10 +2648,13 @@ impl Window {
             self.apply(action);
         }
         if self.playing
-            && let Some(song) = &self.song
-            && Some(song.cursor()) != before
+            && let Some(playing_song) = &self.song
+            && Some(playing_song.cursor()) != before
         {
-            let to = song.timing().time_at(song.cursor()).seconds();
+            let to = playing_song
+                .timing()
+                .time_at(playing_song.cursor())
+                .seconds();
             self.requests.push(Request::Seek(to));
         }
         self.follow_volumes(ui);
@@ -2632,15 +2739,16 @@ fn grow(
         .filter(|(lane, _)| long(*lane))
         .filter_map(|&(lane, from)| song.stretch(lane, from, to.max(from)).err())
         .collect();
-    refused(refusals.into_iter().last())
+    refusals.last().map(refused)
 }
 
+/// Extends held lane-key notes to the cursor, or gives the last reason an edit failed.
 fn stretch(song: &mut Song, holding: &[(LaneIndex, Tick)]) -> Option<String> {
     let cursor = song.cursor();
     let refusals = holding
         .iter()
         .filter_map(|&(lane, from)| song.stretch(lane, from, cursor).err());
-    refused(refusals.last())
+    refusals.last().as_ref().map(refused)
 }
 
 // ponytail: the clicks are worked out once, when playback starts, so notes placed while playing
@@ -2655,19 +2763,30 @@ const PASTE_WAIT: u8 = 3;
 
 /// The settings playback is mixed and stretched with: a change to any of them plays again.
 #[derive(Clone, Copy, Debug, PartialEq)]
-#[allow(clippy::struct_excessive_bools)] // a copy of independent settings, compared whole
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent settings compared as a whole"
+)]
 struct Sounds {
+    /// Whether changing playback speed preserves audio pitch.
     keep_pitch: bool,
+    /// Whether note heads make a sound as playback passes them.
     note_ticks: bool,
+    /// Which sound note heads play when note ticks are on.
     tick_sound: settings::Sound,
+    /// Whether note ticks are pitched by their lane.
     tuned_lanes: bool,
+    /// Whether the playback includes beat clicks.
     metronome: bool,
+    /// Which set of sounds supplies accented and unaccented clicks.
     metronome_sound: charter_audio::Kit,
+    /// Whether clicks play on the timing grid rather than just on beats.
     metronome_grid: bool,
 }
 
 impl Sounds {
-    fn of(settings: &Settings) -> Self {
+    /// The playback settings that require a replay when changed.
+    const fn of(settings: &Settings) -> Self {
         Self {
             keep_pitch: settings.keep_pitch,
             note_ticks: settings.note_ticks,
@@ -2709,17 +2828,19 @@ fn pattern(song: &mut Song, steps: &[u16], per_beat: u16, lane: LaneIndex) -> Op
     let gap = i64::from(u32::from(gap));
     let at = |index: usize| {
         let index = i64::try_from(index).ok()?;
-        i32::try_from(start + index * gap).ok().map(Tick::new)
+        i32::try_from(start.checked_add(index.checked_mul(gap)?)?)
+            .ok()
+            .map(Tick::new)
     };
     let taps: Vec<(Tick, LaneIndex)> = steps
         .iter()
         .enumerate()
         .filter_map(|(index, step)| {
-            let on = (u16::from(lane) + step) % lanes;
+            let on = u16::from(lane).checked_add(*step)?.checked_rem(lanes)?;
             Some((at(index)?, LaneIndex::new(on)))
         })
         .collect();
-    let why = refused(song.add_taps(taps).err());
+    let why = song.add_taps(taps).err().as_ref().map(refused);
     if why.is_none()
         && let Some(after) = at(steps.len())
     {
@@ -2732,12 +2853,15 @@ fn pattern(song: &mut Song, steps: &[u16], per_beat: u16, lane: LaneIndex) -> Op
 /// both the grid's and the snap's, so the cursor never steps onto a line the grid leaves out and
 /// the grid keeps every line it was chosen for. Past 192nds, the snap's alone.
 fn shown_grid(grid: std::num::NonZeroU16, snap: std::num::NonZeroU16) -> std::num::NonZeroU16 {
-    let (a, b) = (u32::from(grid.get()), u32::from(snap.get()));
+    let (a, b) = (
+        std::num::NonZeroU32::from(grid).get(),
+        std::num::NonZeroU32::from(snap).get(),
+    );
     let (mut x, mut y) = (a, b);
     while y != 0 {
-        (x, y) = (y, x % y);
+        (x, y) = (y, x.rem_euclid(y));
     }
-    let both = a / x * b;
+    let both = a.div_euclid(x).saturating_mul(b);
     u16::try_from(both)
         .ok()
         .filter(|both| *both <= 192)
@@ -2760,11 +2884,12 @@ fn lane_cents(position: charter_core::Position, lanes: u16) -> i16 {
     let cents = ((at - f64::from(gaps) / 2.0) * step)
         .round()
         .clamp(-1200.0, 1200.0);
-    #[allow(clippy::cast_possible_truncation)] // within an octave either way
-    let cents = cents as i16;
+    let cents = crate::cast::f64_i16(cents);
     cents
 }
 
+/// Note ticks and metronome clicks between `from` and `until` seconds, as the playback settings
+/// request them.
 fn clicks(
     song: &Song,
     settings: &Settings,
@@ -2799,8 +2924,8 @@ fn clicks(
         let resolution = timing.ticks_per_beat();
         let first = timing.latest_tick_by(from);
         'measures: for measure in timing.measures_from(first) {
-            for (tick, line) in grid.lines(&measure, resolution) {
-                let at = timing.time_at(tick).seconds();
+            for (line_tick, line) in grid.lines(&measure, resolution) {
+                let at = timing.time_at(line_tick).seconds();
                 if at > until {
                     break 'measures;
                 }
@@ -2845,6 +2970,10 @@ fn fresh_timing() -> charter_core::Timing {
         "tempo": 120.0,
         "events": []
     });
+    #[expect(
+        clippy::unreachable,
+        reason = "the constant default timing is valid JSON"
+    )]
     serde_json::from_value(fresh).unwrap_or_else(|_| unreachable!("the fresh timing reads"))
 }
 
@@ -2887,9 +3016,80 @@ fn retime(song: &mut Song, action: &Action) -> Option<String> {
             }
         }
         Action::MoveTiming { from, to } => song.move_timing_at(*from, *to),
-        _ => Ok(()),
+        Action::OpenDemo
+        | Action::OpenChart(_)
+        | Action::Move(_)
+        | Action::MoveMeasure(_)
+        | Action::FinerSnap
+        | Action::CoarserSnap
+        | Action::ZoomBy(_)
+        | Action::Toggle(..)
+        | Action::LaneUp(_)
+        | Action::LanesReleased
+        | Action::Place { .. }
+        | Action::Stretch { .. }
+        | Action::Select(..)
+        | Action::MoveSelection { .. }
+        | Action::SelectBetween { .. }
+        | Action::Undo
+        | Action::Redo
+        | Action::SelectAll
+        | Action::ClearSelection
+        | Action::DeleteSelection
+        | Action::ResizeNotes(_)
+        | Action::Copy
+        | Action::Cut
+        | Action::Paste(_)
+        | Action::Duplicate
+        | Action::ShiftSelection { .. }
+        | Action::Mirror
+        | Action::Quantize
+        | Action::ChangeNotes(_)
+        | Action::Pattern { .. }
+        | Action::SelectLane(_)
+        | Action::Here(..)
+        | Action::PasteHere(_)
+        | Action::Open
+        | Action::OpenRecent(_)
+        | Action::ClearRecent
+        | Action::Save
+        | Action::SaveAs
+        | Action::Settings
+        | Action::Calibrate
+        | Action::NewSong
+        | Action::TogglePlay
+        | Action::ChooseAudio
+        | Action::ChooseArtwork
+        | Action::NudgeRate(_)
+        | Action::SetRate(_)
+        | Action::SetVolumes(_)
+        | Action::ShowSync
+        | Action::ShowImport
+        | Action::ChooseTimingFile
+        | Action::JumpTo(_)
+        | Action::SetSection(_)
+        | Action::RemoveMarker(_)
+        | Action::JumpEnd
+        | Action::Timing(_)
+        | Action::Audition(_)
+        | Action::AskResetTiming
+        | Action::Loop { .. }
+        | Action::ToggleRate
+        | Action::MuteMetronome(_)
+        | Action::ToggleSync
+        | Action::MoveMarker { .. }
+        | Action::JumpSection(_)
+        | Action::ToggleBookmark
+        | Action::NudgeBpm(_)
+        | Action::Help
+        | Action::ToggleSongPanel
+        | Action::ToggleMetronome
+        | Action::ToggleTicks
+        | Action::ToggleTunedLanes
+        | Action::FindTiming
+        | Action::SetGrid(_) => Ok(()),
     };
-    refused(done.err())
+    done.err().as_ref().map(refused)
 }
 
 /// Raises the tempo at the cursor by `by` BPM, and says why if it cannot.
@@ -2897,14 +3097,14 @@ fn nudge_bpm(song: &mut Song, by: f64) -> Option<String> {
     let (_, bpm) = song.bpm()?;
     let nudged = f64::from(bpm) + by;
     match charter_core::Bpm::try_from(nudged) {
-        Ok(bpm) => refused(song.set_bpm(bpm).err()),
+        Ok(new_bpm) => song.set_bpm(new_bpm).err().as_ref().map(refused),
         Err(_) => Some(format!("{nudged} is not a tempo")),
     }
 }
 
-/// What to say about a refused edit, or nothing when the edit went through.
-fn refused(refusal: Option<Refusal>) -> Option<String> {
-    refusal.map(|refusal| format!("Refused: {refusal}"))
+/// What to say about a refused edit.
+fn refused(refusal: &Refusal) -> String {
+    format!("Refused: {refusal}")
 }
 
 #[cfg(test)]
@@ -2933,8 +3133,16 @@ mod tests {
 
     /// The format chapter's full example song.
     fn example() -> &'static [u8] {
-        let start = SPEC.rfind("```json\n").unwrap() + "```json\n".len();
-        let end = start + SPEC[start..].find("```").unwrap();
+        let start = SPEC
+            .rfind("```json\n")
+            .unwrap()
+            .saturating_add("```json\n".len());
+        let end = start.saturating_add(
+            SPEC.as_bytes()[start..]
+                .windows(3)
+                .position(|part| part == b"```")
+                .unwrap(),
+        );
         &SPEC.as_bytes()[start..end]
     }
 
@@ -3308,8 +3516,8 @@ mod tests {
 
     /// What starts on `lane` at `tick` in the open chart, as the format writes it.
     fn note_at(harness: &Harness<'_, Window>, tick: i32, lane: u16) -> Option<serde_json::Value> {
-        let song = harness.state().song.as_ref().unwrap();
-        let chart = song.chart().unwrap();
+        let song = harness.state().song.as_ref()?;
+        let chart = song.chart()?;
         chart
             .objects
             .iter()
@@ -3430,8 +3638,8 @@ mod tests {
     #[test]
     fn brackets_lengthen_the_note_at_the_cursor_to_a_hold_and_shorten_it_back() {
         let mut harness = editable_four_taps();
-        let first = |harness: &Harness<'_, Window>| {
-            let song = harness.state().song.as_ref().unwrap();
+        let first = |view: &Harness<'_, Window>| {
+            let song = view.state().song.as_ref().unwrap();
             song.chart().unwrap().objects.first().unwrap().kind.clone()
         };
         harness.key_press(egui::Key::CloseBracket);
@@ -3459,8 +3667,8 @@ mod tests {
             ..Settings::default()
         });
         app.open(Path::new("four.json"), &four_taps());
-        let harness = window(app);
-        assert!(harness.query_by_label("Minimap").is_none());
+        let open_harness = window(app);
+        assert!(open_harness.query_by_label("Minimap").is_none());
     }
 
     #[test]
@@ -3688,8 +3896,8 @@ mod tests {
         let mut harness = window(app);
         retype(&mut harness, "Theme", "DeltaHeavyTheme");
         retype(&mut harness, "Chart theme", "Neon");
-        let song = harness.state().song.as_ref().unwrap();
-        let document = song.document().document();
+        let edited_song = harness.state().song.as_ref().unwrap();
+        let document = edited_song.document().document();
         assert_eq!(
             document.settings["theme"],
             serde_json::json!("DeltaHeavyTheme")
@@ -3699,8 +3907,8 @@ mod tests {
             serde_json::json!("Neon")
         );
         retype(&mut harness, "Theme", "");
-        let song = harness.state().song.as_ref().unwrap();
-        assert!(song.document().document().settings.is_empty());
+        let cleared_song = harness.state().song.as_ref().unwrap();
+        assert!(cleared_song.document().document().settings.is_empty());
         let sm = editable_demo();
         assert!(sm.query_by_label("Chart theme").is_none());
     }
@@ -3802,8 +4010,8 @@ mod tests {
         harness.event(egui::Event::ModifiersChanged(modifiers));
         press(harness, from, true, modifiers);
         for step in 1..=4 {
-            #[allow(clippy::cast_precision_loss)] // four steps
-            harness.hover_at(from.lerp(to, step as f32 / 4.0));
+            harness
+                .hover_at(from.lerp(to, f32::from(u16::try_from(step).unwrap_or(u16::MAX)) / 4.0));
         }
         press(harness, to, false, modifiers);
         harness.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
@@ -3915,8 +4123,8 @@ mod tests {
         harness.hover_at(from);
         harness.event(middle(from, true));
         for step in 1..=4 {
-            #[allow(clippy::cast_precision_loss)] // four steps
-            harness.hover_at(from.lerp(to, step as f32 / 4.0));
+            harness
+                .hover_at(from.lerp(to, f32::from(u16::try_from(step).unwrap_or(u16::MAX)) / 4.0));
         }
         harness.event(middle(to, false));
         harness.run();
@@ -3930,8 +4138,8 @@ mod tests {
             phase: egui::TouchPhase::Move,
         });
         harness.run();
-        let cursor = harness.state().song.as_ref().unwrap().cursor();
-        assert_eq!(cursor, Tick::new(3840));
+        let moved_cursor = harness.state().song.as_ref().unwrap().cursor();
+        assert_eq!(moved_cursor, Tick::new(3840));
     }
 
     #[test]
@@ -4686,9 +4894,9 @@ mod tests {
 
     /// The tick and BPM of the change in effect at the cursor.
     fn bpm_at_cursor(harness: &Harness<'_, Window>) -> Option<(i64, String)> {
-        let song = harness.state().song.as_ref().unwrap();
+        let song = harness.state().song.as_ref()?;
         let (tick, bpm) = song.bpm()?;
-        let tick = serde_json::to_value(tick).unwrap().as_i64().unwrap();
+        let tick = serde_json::to_value(tick).ok()?.as_i64()?;
         let value = f64::from(bpm);
         let one = (value * 10.0).round() / 10.0;
         let shown = if (value - one).abs() < 1e-5 {
@@ -4793,9 +5001,8 @@ mod tests {
     fn a_timing_point_is_added_at_the_cursor_and_removed_but_not_the_first() {
         let mut harness = editable_demo();
         assert!(harness.query_by_label("Remove this timing point").is_none());
-        let add = |harness: &Harness<'_, Window>| {
-            harness
-                .get_by_label("Add a timing point here")
+        let add = |view: &Harness<'_, Window>| {
+            view.get_by_label("Add a timing point here")
                 .accesskit_node()
                 .is_disabled()
         };
@@ -5065,9 +5272,8 @@ mod tests {
         let mut harness = editable_demo();
         harness.key_press(egui::Key::F1);
         harness.run();
-        let shown = |harness: &Harness<'_, Window>| {
-            harness
-                .query_all_by_label("Keyboard shortcuts")
+        let shown = |view: &Harness<'_, Window>| {
+            view.query_all_by_label("Keyboard shortcuts")
                 .next()
                 .is_some()
         };
@@ -5274,8 +5480,8 @@ mod tests {
         harness.key_up(egui::Key::Num1);
         harness.key_up(egui::Key::Num2);
         harness.run();
-        let bpm = |harness: &Harness<'_, Window>| {
-            let song = harness.state().song.as_ref().unwrap();
+        let bpm = |view: &Harness<'_, Window>| {
+            let song = view.state().song.as_ref().unwrap();
             song.timing().tempo_at(Tick::new(0))
         };
         let raised = bpm(&harness);
@@ -5383,10 +5589,10 @@ mod tests {
         let command = egui::Modifiers::COMMAND.plus(egui::Modifiers::SHIFT);
         harness.key_press_modifiers(command, egui::Key::ArrowRight);
         harness.run();
-        let Request::Rate(rate) = request(&mut harness) else {
+        let Request::Rate(requested_rate) = request(&mut harness) else {
             panic!("expected a rate");
         };
-        assert!((rate - 0.91).abs() < 1e-9, "{rate}");
+        assert!((requested_rate - 0.91).abs() < 1e-9, "{requested_rate}");
         let after = harness.state().song.as_ref().unwrap().document();
         assert_eq!(after.document(), before.document());
     }
@@ -5759,18 +5965,19 @@ mod tests {
 
     fn played(harness: &mut Harness<'_, Window>) -> Played {
         let requests = harness.state_mut().take_requests();
-        let play = requests
-            .into_iter()
-            .rev()
-            .find_map(|request| match request {
-                Request::Play {
-                    from,
-                    looping,
-                    clicks,
-                    ..
-                } => Some((from, looping, clicks)),
-                _ => None,
-            });
+        let play = requests.into_iter().rev().find_map(|request| {
+            if let Request::Play {
+                from,
+                looping,
+                clicks,
+                ..
+            } = request
+            {
+                Some((from, looping, clicks))
+            } else {
+                None
+            }
+        });
         play.expect("a play")
     }
 
@@ -5883,7 +6090,7 @@ mod tests {
             panic!("expected clicks, got {requests:?}");
         };
         assert_eq!(clicks.len(), 32);
-        let gap = clicks.get(1).unwrap().0 - clicks.first().unwrap().0;
+        let gap = clicks[1].0 - clicks[0].0;
         assert!(
             (gap - 0.4).abs() < 1e-9,
             "150 BPM, the demo's first tempo: {gap}"
@@ -6318,12 +6525,12 @@ mod tests {
     fn the_status_bar_says_how_the_audio_stands() {
         let harness = created();
         assert!(harness.query_by_label("No audio").is_some());
-        let harness = four_taps_at("/songs/four.json");
-        assert!(harness.query_by_label("Audio loading").is_some());
-        let mut harness = playable();
-        assert!(harness.query_by_label("Audio ready").is_some());
-        space(&mut harness);
-        assert!(harness.query_by_label("Playing").is_some());
+        let loading_harness = four_taps_at("/songs/four.json");
+        assert!(loading_harness.query_by_label("Audio loading").is_some());
+        let mut ready_harness = playable();
+        assert!(ready_harness.query_by_label("Audio ready").is_some());
+        space(&mut ready_harness);
+        assert!(ready_harness.query_by_label("Playing").is_some());
     }
 
     /// Four lanes at 120 BPM that change to 150 BPM at the second beat, with a section at the
@@ -6431,8 +6638,8 @@ mod tests {
             .get_by_label(&format!("Measure {}", measure.number))
             .rect();
         let lead = charter_timing::rows::LEAD_IN;
-        #[allow(clippy::cast_possible_truncation)] // a fraction of a row
-        let across = ((measure.fraction(Tick::new(tick)) + lead) / (1.0 + lead)) as f32;
+        let across =
+            crate::cast::f64_f32((measure.fraction(Tick::new(tick)) + lead) / (1.0 + lead));
         egui::pos2(row.left() + across * row.width(), row.top() + 30.0)
     }
 
@@ -6588,8 +6795,7 @@ mod tests {
         assert!(harness.query_by_label("Measure 0").is_none());
         let row = harness.get_by_label("Row at 0.0 s").rect();
         // Two seconds a row, a tenth of that from before it: 0.95 s is 1.15 of 2.2 across.
-        #[allow(clippy::cast_possible_truncation)]
-        let across = (1.15 / 2.2) as f32;
+        let across = crate::cast::f64_f32(1.15 / 2.2);
         let at = egui::pos2(row.left() + across * row.width(), row.top() + 30.0);
         click(&mut harness, at, egui::Modifiers::NONE);
         let seconds = anchor_seconds(&harness);
@@ -6656,9 +6862,12 @@ mod tests {
         assert_eq!(event_ticks(&harness)[2], Tick::new(1920));
         assert!((seconds[2] - 0.912).abs() < 1e-4, "{seconds:?}");
         let requests = harness.state_mut().take_requests();
-        let from = requests.iter().find_map(|request| match request {
-            Request::Play { from, .. } => Some(*from),
-            _ => None,
+        let from = requests.iter().find_map(|request| {
+            if let Request::Play { from, .. } = request {
+                Some(*from)
+            } else {
+                None
+            }
         });
         assert!((from.expect("an audition") - (0.912 - 0.4)).abs() < 1e-6);
     }
@@ -7334,9 +7543,12 @@ mod tests {
         let requests = harness.state_mut().take_requests();
         requests
             .into_iter()
-            .filter_map(|request| match request {
-                Request::Snapshot { name, folders, .. } => Some((name, folders)),
-                _ => None,
+            .filter_map(|request| {
+                if let Request::Snapshot { name, folders, .. } = request {
+                    Some((name, folders))
+                } else {
+                    None
+                }
             })
             .collect()
     }
@@ -7420,7 +7632,7 @@ mod tests {
             .state_mut()
             .saved(Saved::To(PathBuf::from("/songs/c.json")));
         harness.run();
-        let recent = |harness: &Harness<'_, Window>| harness.state().settings().recent.clone();
+        let recent = |view: &Harness<'_, Window>| view.state().settings().recent.clone();
         let paths = ["/songs/c.json", "/songs/b.json", "/songs/a.json"].map(PathBuf::from);
         assert_eq!(recent(&harness), paths);
         harness.get_by_label("File").click();
@@ -7620,8 +7832,8 @@ mod tests {
         restored.run();
         restored.get_by_label("Restore").click();
         restored.run();
-        let requests = restored.state_mut().take_requests();
-        assert!(requests.contains(&Request::DecodeArtwork {
+        let restored_requests = restored.state_mut().take_requests();
+        assert!(restored_requests.contains(&Request::DecodeArtwork {
             bytes: b"png".to_vec()
         }));
         restored.state_mut().artwork_restored(Some(picture(b"png")));
@@ -7665,8 +7877,8 @@ mod tests {
         let state = harness.state_mut();
         state.use_artwork(Path::new("/pictures/a.png"), Some(picture(b"a")));
         harness.run();
-        let state = harness.state_mut();
-        state.use_artwork(Path::new("/pictures/b.png"), Some(picture(b"b")));
+        let updated_state = harness.state_mut();
+        updated_state.use_artwork(Path::new("/pictures/b.png"), Some(picture(b"b")));
         harness.run();
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
         harness.run();
@@ -7693,15 +7905,12 @@ mod tests {
             harness.run();
         }
         let path = Path::new("/songs/Four/four.json");
-        let written = |harness: &Harness<'_, Window>| {
-            harness
-                .state()
-                .artwork_write_for(path)
-                .map(|(_, bytes)| bytes)
+        let written = |view: &Harness<'_, Window>| {
+            view.state().artwork_write_for(path).map(|(_, bytes)| bytes)
         };
-        let undo = |harness: &mut Harness<'_, Window>| {
-            harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
-            harness.run();
+        let undo = |view: &mut Harness<'_, Window>| {
+            view.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+            view.run();
         };
         undo(&mut harness);
         assert_eq!(written(&harness), Some(b"B".to_vec()));
@@ -7750,11 +7959,8 @@ mod tests {
             .use_artwork(Path::new("/q/cover.png"), Some(picture(b"B")));
         harness.run();
         let path = Path::new("/songs/Four/four.json");
-        let written = |harness: &Harness<'_, Window>| {
-            harness
-                .state()
-                .artwork_write_for(path)
-                .map(|(_, bytes)| bytes)
+        let written = |view: &Harness<'_, Window>| {
+            view.state().artwork_write_for(path).map(|(_, bytes)| bytes)
         };
         for _ in 0..2 {
             harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
@@ -7778,8 +7984,8 @@ mod tests {
             .use_artwork(chosen, Some(picture(b"one")));
         at_time(&mut harness, 100.0);
         at_time(&mut harness, 131.0);
-        let autosaves = |harness: &mut Harness<'_, Window>| {
-            let requests = harness.state_mut().take_requests();
+        let autosaves = |view: &mut Harness<'_, Window>| {
+            let requests = view.state_mut().take_requests();
             requests
                 .iter()
                 .filter(|request| matches!(request, Request::Autosave { .. }))
@@ -7938,9 +8144,8 @@ mod tests {
         let mut harness = editable_demo();
         harness.get_by_label("Edit").click();
         harness.run();
-        let disabled = |harness: &Harness<'_, Window>, item: &str| {
-            harness
-                .get_by_label_contains(item)
+        let disabled = |view: &Harness<'_, Window>, item: &str| {
+            view.get_by_label_contains(item)
                 .accesskit_node()
                 .is_disabled()
         };
@@ -8144,8 +8349,8 @@ mod tests {
             .get_by_role_and_label(Role::CheckBox, "Easy")
             .click();
         harness.run();
-        let preset = harness.get_by_role_and_label(Role::ComboBox, "Preset");
-        assert_eq!(preset.value().as_deref(), Some("Your own"));
+        let selected_preset = harness.get_by_role_and_label(Role::ComboBox, "Preset");
+        assert_eq!(selected_preset.value().as_deref(), Some("Your own"));
         harness.get_by_label("Create").click();
         harness.run();
         let named = |name: &str| (name.to_owned(), lanes(5));
@@ -8173,12 +8378,10 @@ mod tests {
     #[test]
     fn the_new_song_dialog_keeps_its_top_and_its_fields_one_edge() {
         let mut harness = new_song_dialog();
-        let top = |harness: &Harness<'_, Window>| {
-            harness.get_by_label_contains("Pick the game").rect().top()
-        };
-        let left = |harness: &Harness<'_, Window>, label: &str| {
-            harness
-                .get_by_role_and_label(Role::TextInput, label)
+        let top =
+            |view: &Harness<'_, Window>| view.get_by_label_contains("Pick the game").rect().top();
+        let left = |view: &Harness<'_, Window>, label: &str| {
+            view.get_by_role_and_label(Role::TextInput, label)
                 .rect()
                 .left()
         };

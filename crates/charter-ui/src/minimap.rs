@@ -55,8 +55,7 @@ impl Map {
     fn y_of(self, seconds: f64) -> f32 {
         let share = (seconds - self.from) / (self.to - self.from);
         let share = if self.reversed { 1.0 - share } else { share };
-        #[allow(clippy::cast_possible_truncation)] // a screen coordinate
-        let share = share as f32;
+        let share = crate::cast::f64_f32(share);
         self.rect.top() + share * self.rect.height()
     }
 
@@ -127,15 +126,15 @@ pub fn show(
     if response.is_pointer_button_down_on()
         && let Some(at) = response.interact_pointer_pos()
     {
-        let seconds = map.seconds_at(at.y);
+        let hovered_seconds = map.seconds_at(at.y);
         let step = song
             .document()
             .document()
             .ticks_per_beat
             .note_length(song.snap());
         let tick = step.map_or_else(
-            || timing.latest_tick_by(seconds),
-            |step| nearest_line(timing, seconds, step),
+            || timing.latest_tick_by(hovered_seconds),
+            |step| nearest_line(timing, hovered_seconds, step),
         );
         if tick != song.cursor() {
             actions.push(Action::JumpTo(tick));

@@ -276,7 +276,7 @@ pub fn show(
             }
         });
     });
-    answer.or(modal.should_close().then_some(Answer::Cancel))
+    answer.or_else(|| modal.should_close().then_some(Answer::Cancel))
 }
 
 /// The layout every chart shares, with a sketch of its lanes, and the title and artist.
@@ -360,8 +360,8 @@ fn choose_game(ui: &mut Ui, games: &[&'static dyn RulesetPlugin], draft: &mut Dr
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 3.0;
-                #[allow(clippy::cast_precision_loss)] // a handful of games
-                let each = (width - 6.0 - 3.0 * (games.len() as f32 - 1.0)) / games.len() as f32;
+                let count = f32::from(u16::try_from(games.len()).unwrap_or(u16::MAX));
+                let each = (width - 6.0 - 3.0 * (count - 1.0)) / count;
                 for (index, game) in games.iter().enumerate() {
                     let chosen = draft.game == index;
                     let text = RichText::new(game.name());
@@ -460,7 +460,7 @@ fn charts(ui: &mut Ui, draft: &mut Draft) {
     for (index, name) in draft.charts.iter_mut().enumerate() {
         row(
             ui,
-            |ui| ui.weak(format!("Chart {}", index + 1)).id,
+            |ui| ui.weak(format!("Chart {}", index.saturating_add(1))).id,
             |ui, caption| {
                 // The remove button is a glyph within the button padding at each side.
                 let icon = 14.0 + 2.0 * ui.spacing().button_padding.x;
@@ -489,7 +489,7 @@ fn charts(ui: &mut Ui, draft: &mut Draft) {
             if style::icon_button(ui, style::icon::PLUS, "Add a chart", false).clicked() {
                 draft
                     .charts
-                    .push(format!("Chart {}", draft.charts.len() + 1));
+                    .push(format!("Chart {}", draft.charts.len().saturating_add(1)));
             }
         },
     );

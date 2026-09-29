@@ -106,8 +106,8 @@ fn body(
             egui::ComboBox::from_id_salt("timing format")
                 .selected_text(name)
                 .show_ui(ui, |ui| {
-                    for (index, (name, _)) in formats.iter().enumerate() {
-                        ui.selectable_value(&mut import.format, index, *name);
+                    for (index, (format_name, _)) in formats.iter().enumerate() {
+                        ui.selectable_value(&mut import.format, index, *format_name);
                     }
                 });
         } else {
@@ -220,7 +220,7 @@ fn summary(ui: &mut Ui, imported: &ImportedTiming) {
         let changes = match tempos.len() {
             0 | 1 => "no changes".to_owned(),
             2 => "1 change".to_owned(),
-            count => format!("{} changes", count - 1),
+            count => format!("{} changes", count.saturating_sub(1)),
         };
         ui.label(format!("{first} BPM at the start, {changes}"));
         ui.end_row();

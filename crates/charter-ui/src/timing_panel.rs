@@ -98,7 +98,10 @@ fn meter_at(timing: &Timing, tick: Tick) -> TimeSignature {
         .filter(|event| event.tick <= tick)
         .filter_map(|event| match event.kind {
             TimingKind::TimeSignature(meter) => Some(meter),
-            _ => None,
+            TimingKind::Stop(_)
+            | TimingKind::Delay(_)
+            | TimingKind::Warp(_)
+            | TimingKind::Other { .. } => None,
         })
         .next_back()
         .unwrap_or(TimeSignature::COMMON)
@@ -148,12 +151,12 @@ fn body(
             actions,
         );
         if let Some(first) = first {
-            let caption = ui
+            let starting_caption = ui
                 .weak("Starting BPM")
                 .on_hover_text("The tempo from the first timing point on, until the next.");
             let offered = bpm_row(
                 ui,
-                (editable, caption.id, "starting BPM"),
+                (editable, starting_caption.id, "starting BPM"),
                 (first, tempo_at(timing, first)),
                 &mut drafts.start_bpm,
                 actions,
@@ -298,32 +301,32 @@ fn point_fields(
             ui.label(style::clock(seconds));
         }
         ui.end_row();
-        let caption = ui.weak("BPM");
-        let offered = bpm_row(
+        let bpm_caption = ui.weak("BPM");
+        let bpm_offered = bpm_row(
             ui,
-            (editable, caption.id, "BPM"),
+            (editable, bpm_caption.id, "BPM"),
             (tick, bpm),
             &mut drafts.bpm,
             actions,
         );
-        refused = refused.take().or(offered);
+        refused = refused.take().or(bpm_offered);
         ui.end_row();
-        let caption = ui.weak("Meter").on_hover_text("Beats a measure over the note that gets one, such as 3/4 or 7/8. Measures start over at the point.");
+        let meter_caption = ui.weak("Meter").on_hover_text("Beats a measure over the note that gets one, such as 3/4 or 7/8. Measures start over at the point.");
         if editable {
             let read = |typed: &str| {
                 meter(typed)
                     .map(|meter| Action::SetMeterAt(tick, meter))
                     .ok_or_else(|| format!("{typed} is not a meter, such as 3/4"))
             };
-            let offered = entry(
+            let meter_offered = entry(
                 ui,
-                caption.id,
+                meter_caption.id,
                 &meter_now.to_string(),
                 &mut drafts.meter,
                 read,
                 actions,
             );
-            refused = refused.take().or(offered);
+            refused = refused.take().or(meter_offered);
         } else {
             ui.label(meter_now.to_string());
         }
@@ -371,8 +374,8 @@ fn bpm_row(
             typed
                 .parse::<f64>()
                 .ok()
-                .and_then(|bpm| Bpm::try_from(bpm).ok())
-                .map(|bpm| Action::SetBpmAt(tick, bpm))
+                .and_then(|parsed_bpm| Bpm::try_from(parsed_bpm).ok())
+                .map(|valid_bpm| Action::SetBpmAt(tick, valid_bpm))
                 .ok_or_else(|| format!("{typed} is not a tempo"))
         };
         refused = entry(ui, caption, &bpm.to_string(), draft, tempo, actions);

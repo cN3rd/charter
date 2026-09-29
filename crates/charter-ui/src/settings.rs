@@ -40,7 +40,7 @@ impl Sound {
     ];
 
     /// What each note ticks with.
-    pub(crate) fn tick(self) -> charter_audio::Tick {
+    pub(crate) const fn tick(self) -> charter_audio::Tick {
         use charter_audio::Tick;
         match self {
             Self::Click => Tick::Click,
@@ -52,7 +52,8 @@ impl Sound {
         }
     }
 
-    fn name(self) -> &'static str {
+    /// The label used for this tick sound in the settings window.
+    const fn name(self) -> &'static str {
         match self {
             Self::Click => "Click",
             Self::Beep => "Beep",
@@ -68,7 +69,10 @@ impl Sound {
 /// kept, such as ones newer than it, take their defaults.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
-#[allow(clippy::struct_excessive_bools)] // independent choices, each its own switch
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent choices, each its own switch"
+)]
 pub struct Settings {
     /// Whether the cursor moves on a snap once the lane keys that placed a note are up.
     pub auto_jump: bool,
@@ -335,7 +339,7 @@ impl Settings {
     }
 
     /// The interface size, kept to what the window can draw.
-    pub(crate) fn scale(&self) -> f32 {
+    pub(crate) const fn scale(&self) -> f32 {
         if self.scale.is_finite() {
             self.scale.clamp(0.5, 3.0)
         } else {
@@ -346,24 +350,31 @@ impl Settings {
 
 /// How wide the sidebar, a page and a setting's control are.
 const SIDEBAR_W: f32 = 150.0;
+/// Width of a settings page, in pixels.
 const PAGE_W: f32 = 422.0;
+/// Width of a settings row's control, in pixels.
 const CONTROL_W: f32 = 200.0;
 
 /// A page of the settings window.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum Page {
+    /// Note placement and opening defaults.
     #[default]
     Editing,
+    /// Interface size and notefield orientation.
     Display,
+    /// Playback clicks and sound levels.
     Sounds,
+    /// Autosave and snapshot intervals.
     Autosave,
 }
 
 impl Page {
+    /// The pages in sidebar order.
     const ALL: [Self; 4] = [Self::Editing, Self::Display, Self::Sounds, Self::Autosave];
 
     /// Its name in the sidebar, its icon, its title and what it covers.
-    fn words(self) -> (&'static str, &'static str, &'static str, &'static str) {
+    const fn words(self) -> (&'static str, &'static str, &'static str, &'static str) {
         match self {
             Self::Editing => (
                 "Editing",
@@ -435,35 +446,39 @@ pub fn show(
         .default_pos(ctx.content_rect().center())
         .frame(egui::Frame::window(&ctx.global_style()).inner_margin(egui::Margin::same(0)))
         .fixed_size([width, height])
-        .show(ctx, |ui| {
-            let mut contents = |ui: &mut egui::Ui,
-                                page: &mut Page,
-                                preview: &mut Option<Asked>,
-                                open: &mut bool| {
+        .show(ctx, |window_ui| {
+            let mut contents = |content_ui: &mut egui::Ui,
+                                shown_page: &mut Page,
+                                asked_preview: &mut Option<Asked>,
+                                is_open: &mut bool| {
                 egui::Frame::new()
                     .inner_margin(egui::Margin::symmetric(if compact { 16 } else { 24 }, 18))
-                    .show(ui, |ui| {
-                        ui.vertical(|ui| {
+                    .show(content_ui, |page_ui| {
+                        page_ui.vertical(|ui| {
                             ui.spacing_mut().item_spacing = egui::vec2(8.0, 4.0);
                             ui.set_width(if compact { width - 32.0 } else { PAGE_W });
                             if compact {
                                 let caption = ui.weak("Page");
                                 egui::ComboBox::from_id_salt("settings page")
-                                    .selected_text(page.words().0)
+                                    .selected_text(shown_page.words().0)
                                     .show_ui(ui, |ui| {
                                         for choice in Page::ALL {
-                                            ui.selectable_value(page, choice, choice.words().0);
+                                            ui.selectable_value(
+                                                shown_page,
+                                                choice,
+                                                choice.words().0,
+                                            );
                                         }
                                     })
                                     .response
                                     .labelled_by(caption.id);
                             }
-                            let (_, _, title, about) = page.words();
+                            let (_, _, title, about) = shown_page.words();
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new(title).family(titles(ui)).size(16.0));
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| header_buttons(ui, settings, open),
+                                    |ui| header_buttons(ui, settings, is_open),
                                 );
                             });
                             ui.weak(about);
@@ -471,21 +486,21 @@ pub fn show(
                             crate::style::solid_scroll_bars(ui);
                             egui::ScrollArea::vertical()
                                 .max_height(page_height)
-                                .show(ui, |ui| match page {
+                                .show(ui, |ui| match shown_page {
                                     Page::Editing => editing(ui, settings),
                                     Page::Display => display(ui, settings),
-                                    Page::Sounds => *preview = sounds(ui, settings),
+                                    Page::Sounds => *asked_preview = sounds(ui, settings),
                                     Page::Autosave => {
-                                        *preview = autosave(ui, settings, data_folder);
+                                        *asked_preview = autosave(ui, settings, data_folder);
                                     }
                                 });
                         });
                     });
             };
             if compact {
-                contents(ui, &mut page, &mut preview, open);
+                contents(window_ui, &mut page, &mut preview, open);
             } else {
-                ui.horizontal_top(|ui| {
+                window_ui.horizontal_top(|ui| {
                     ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
                     sidebar(ui, &mut page);
                     contents(ui, &mut page, &mut preview, open);
@@ -502,9 +517,16 @@ fn header_buttons(ui: &mut egui::Ui, settings: &mut Settings, open: &mut bool) {
     if quiet_icon(ui, icon::X, "Close settings", tip).clicked() {
         *open = false;
     }
-    let tip = "Every setting on every page back to how charter starts, but the latency \
+    let defaults_tip = "Every setting on every page back to how charter starts, but the latency \
         calibration, which measures this computer";
-    if quiet_icon(ui, icon::ARROW_COUNTER_CLOCKWISE, "Restore defaults", tip).clicked() {
+    if quiet_icon(
+        ui,
+        icon::ARROW_COUNTER_CLOCKWISE,
+        "Restore defaults",
+        defaults_tip,
+    )
+    .clicked()
+    {
         // The calibration measures this computer, and the recent songs are history, not choices.
         *settings = Settings {
             audio_latency_ms: settings.audio_latency_ms,
@@ -593,13 +615,13 @@ fn editing(ui: &mut egui::Ui, settings: &mut Settings) {
             switch(ui, &mut settings.auto_jump, name);
         },
     );
-    let name = "Keep notes where they sound when a BPM changes";
+    let keep_time_name = "Keep notes where they sound when a BPM changes";
     row(
         ui,
-        name,
+        keep_time_name,
         "Off, the notes a changed BPM times stay on their beats and move with the grid.",
         |ui, _| {
-            switch(ui, &mut settings.notes_keep_time, name);
+            switch(ui, &mut settings.notes_keep_time, keep_time_name);
         },
     );
     row(
@@ -673,22 +695,22 @@ fn display(ui: &mut egui::Ui, settings: &mut Settings) {
             switch(ui, &mut settings.waveform, name);
         },
     );
-    let name = "Frequencies";
+    let frequencies_name = "Frequencies";
     row(
         ui,
-        name,
+        frequencies_name,
         "The strip shows how loud each pitch is, low to high, instead of the waveform.",
         |ui, _| {
-            switch(ui, &mut settings.frequencies, name);
+            switch(ui, &mut settings.frequencies, frequencies_name);
         },
     );
-    let name = "Minimap";
+    let minimap_name = "Minimap";
     row(
         ui,
-        name,
+        minimap_name,
         "The whole chart in a strip beside the notefield; click or drag it to jump there.",
         |ui, _| {
-            switch(ui, &mut settings.minimap, name);
+            switch(ui, &mut settings.minimap, minimap_name);
         },
     );
     row(
@@ -708,8 +730,8 @@ fn note_ticks(ui: &mut egui::Ui, settings: &mut Settings) {
     row(ui, "Note ticks", about, |ui, _| {
         switch(ui, &mut settings.note_ticks, "Note ticks");
     });
-    let about = "The click, the beep, or a synthesised hit sound, public domain.";
-    row(ui, "Note tick sound", about, |ui, caption| {
+    let sound_about = "The click, the beep, or a synthesised hit sound, public domain.";
+    row(ui, "Note tick sound", sound_about, |ui, caption| {
         let sound = &mut settings.tick_sound;
         egui::ComboBox::from_id_salt("note ticks")
             .selected_text(sound.name())
@@ -732,52 +754,58 @@ fn sounds(ui: &mut egui::Ui, settings: &mut Settings) -> Option<Asked> {
     row(ui, name, about, |ui, _| {
         switch(ui, &mut settings.tuned_lanes, name);
     });
-    let about = "A tick on each beat, accented on each measure's first. F3 turns it on and off.";
-    row(ui, "Metronome", about, |ui, _| {
+    let metronome_about =
+        "A tick on each beat, accented on each measure's first. F3 turns it on and off.";
+    row(ui, "Metronome", metronome_about, |ui, _| {
         switch(ui, &mut settings.metronome, "Metronome");
     });
     let mut preview = None;
-    let about = "Synthesised click pairs, public domain.";
-    row(ui, "Metronome sound", about, |ui, caption| {
-        let tip = "Play a measure of it";
-        if quiet_icon(ui, icon::PLAY, "Preview the metronome", tip).clicked() {
-            preview = Some(Asked::Preview(settings.metronome_sound));
-        }
-        let kit = &mut settings.metronome_sound;
-        egui::ComboBox::from_id_salt("metronome sound")
-            .selected_text(kit.name())
-            .height(f32::INFINITY)
-            .show_ui(ui, |ui| {
-                for choice in Kit::ALL {
-                    ui.selectable_value(kit, choice, choice.name());
-                }
-            })
-            .response
-            .labelled_by(caption);
-    });
-    let about = format!(
+    let metronome_sound_about = "Synthesised click pairs, public domain.";
+    row(
+        ui,
+        "Metronome sound",
+        metronome_sound_about,
+        |ui, caption| {
+            let tip = "Play a measure of it";
+            if quiet_icon(ui, icon::PLAY, "Preview the metronome", tip).clicked() {
+                preview = Some(Asked::Preview(settings.metronome_sound));
+            }
+            let kit = &mut settings.metronome_sound;
+            egui::ComboBox::from_id_salt("metronome sound")
+                .selected_text(kit.name())
+                .height(f32::INFINITY)
+                .show_ui(ui, |ui| {
+                    for choice in Kit::ALL {
+                        ui.selectable_value(kit, choice, choice.name());
+                    }
+                })
+                .response
+                .labelled_by(caption);
+        },
+    );
+    let latency_about = format!(
         "Audio {:+.0} ms, input {:+.0} ms. Align the flash to the click, then tap along.",
         settings.audio_latency_ms, settings.input_latency_ms
     );
-    row(ui, "Latency", &about, |ui, _| {
+    row(ui, "Latency", &latency_about, |ui, _| {
         if ui.button("Calibrate…").clicked() {
             preview = Some(Asked::Calibrate);
         }
     });
-    let name = "Metronome follows the grid";
-    let about =
+    let grid_name = "Metronome follows the grid";
+    let grid_about =
         "A click on every line of the timing window's grid, the ones between beats quieter.";
-    row(ui, name, about, |ui, _| {
-        switch(ui, &mut settings.metronome_grid, name);
+    row(ui, grid_name, grid_about, |ui, _| {
+        switch(ui, &mut settings.metronome_grid, grid_name);
     });
-    let name = "Keep pitch at other speeds";
-    let about = "Slowed or sped-up audio keeps its pitch from 25% to 200%; outside that, and with \
+    let pitch_name = "Keep pitch at other speeds";
+    let pitch_about = "Slowed or sped-up audio keeps its pitch from 25% to 200%; outside that, and with \
         this off, its pitch follows its speed.";
-    row(ui, name, about, |ui, _| {
-        switch(ui, &mut settings.keep_pitch, name);
+    row(ui, pitch_name, pitch_about, |ui, _| {
+        switch(ui, &mut settings.keep_pitch, pitch_name);
     });
-    let about = "The speed R switches to in the timing window, to hear flams slowed down.";
-    row(ui, "Alternate speed", about, |ui, caption| {
+    let speed_about = "The speed R switches to in the timing window, to hear flams slowed down.";
+    row(ui, "Alternate speed", speed_about, |ui, caption| {
         let mut percent = settings.rate_b * 100.0;
         let slider = egui::Slider::new(&mut percent, 25.0..=100.0)
             .suffix("%")
@@ -787,7 +815,7 @@ fn sounds(ui: &mut egui::Ui, settings: &mut Settings) -> Option<Asked> {
         }
     });
     let volumes = &mut settings.volumes;
-    for (name, about, gain) in [
+    for (volume_name, volume_about, gain) in [
         ("Music volume", "The song's audio.", &mut volumes.music),
         (
             "Note tick volume",
@@ -805,7 +833,7 @@ fn sounds(ui: &mut egui::Ui, settings: &mut Settings) -> Option<Asked> {
             &mut volumes.subdivision,
         ),
     ] {
-        row(ui, name, about, |ui, caption| {
+        row(ui, volume_name, volume_about, |ui, caption| {
             volume(ui, gain).labelled_by(caption);
         });
     }
@@ -899,10 +927,11 @@ fn snapshots(
             settings.snapshot_folder = None;
         }
     });
-    let name = "Snapshots beside the song";
-    let about = "The same copies in an autosaves folder beside the song's file, once it is saved.";
-    row(ui, name, about, |ui, _| {
-        switch(ui, &mut settings.snapshots_beside_song, name);
+    let beside_name = "Snapshots beside the song";
+    let beside_about =
+        "The same copies in an autosaves folder beside the song's file, once it is saved.";
+    row(ui, beside_name, beside_about, |ui, _| {
+        switch(ui, &mut settings.snapshots_beside_song, beside_name);
     });
     let on = settings.snapshots_in_folder || settings.snapshots_beside_song;
     row(

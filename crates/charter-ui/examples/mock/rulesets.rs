@@ -422,23 +422,27 @@ fn tap_tap_revenge(painter: &Painter, lanes: &Lanes) {
 /// Which way a shake or slice points.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Aim {
+    /// Gesture arrow points towards the first lane's left edge.
     Left,
+    /// Gesture arrow points towards the bottom of the screen.
     Down,
+    /// Gesture arrow points towards the last lane's right edge.
     Right,
 }
 
 /// Where a shake or slice points, which its lane decides: left in the first lane, right in the
 /// last, and down in between.
-fn aim(lane: u16, lanes: u16) -> Aim {
+const fn aim(lane: u16, lanes: u16) -> Aim {
     if lane == 0 {
         Aim::Left
-    } else if lane + 1 == lanes {
+    } else if lane.saturating_add(1) == lanes {
         Aim::Right
     } else {
         Aim::Down
     }
 }
 
+/// Draws a coloured Tap Tap Revenge note with a light outline.
 fn orb(painter: &Painter, centre: Pos2, colour: Color32) {
     painter.circle_filled(centre, 11.0, colour);
     painter.circle_stroke(centre, 11.0, Stroke::new(2.0, WHITE));
@@ -453,6 +457,10 @@ fn gesture(painter: &Painter, rect: Rect, aim: Aim, name: &str, colour: Color32)
         Aim::Down => [vec2(0.0, 5.0), vec2(-5.0, -4.0), vec2(5.0, -4.0)],
         Aim::Right => [vec2(5.0, 0.0), vec2(-4.0, 5.0), vec2(-4.0, -5.0)],
     };
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "egui position offsets use vector addition"
+    )]
     let arrow = corners.into_iter().map(|corner| tip + corner).collect();
     painter.add(Shape::convex_polygon(arrow, colour, Stroke::NONE));
     painter.text(
@@ -648,6 +656,10 @@ fn diamond(painter: &Painter, centre: Pos2, colour: Color32) {
         vec2(0.0, 6.0),
         vec2(-6.0, 0.0),
     ];
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "egui position offsets use vector addition"
+    )]
     let points = corners.into_iter().map(|corner| centre + corner).collect();
     painter.add(Shape::convex_polygon(points, colour, Stroke::NONE));
 }

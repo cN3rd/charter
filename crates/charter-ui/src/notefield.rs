@@ -26,12 +26,15 @@ pub struct Zoom(f32);
 impl Zoom {
     /// Where a song opens: a 16th stream at 150 BPM sits about 25 points apart.
     pub(crate) const START: Self = Self(240.0);
+    /// Highest permitted scale, in points per second.
     const CLOSEST: f32 = 3000.0;
+    /// Lowest permitted scale, in points per second.
     const FARTHEST: f32 = 30.0;
     /// How much one zoom step scales by.
     pub const STEP: f32 = 1.25;
 
-    pub fn points_per_second(self) -> f32 {
+    /// The vertical scale in screen points per audio second.
+    pub const fn points_per_second(self) -> f32 {
         self.0
     }
 
@@ -56,13 +59,17 @@ impl Default for Zoom {
 /// Where audio times fall on screen in one frame: later times lower, the cursor on the now line.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct View {
+    /// Screen height of the cursor's now line, in points.
     pub(crate) now_y: f32,
+    /// Cursor position in audio seconds.
     cursor: f64,
+    /// Vertical scale of the audio timeline.
     zoom: Zoom,
 }
 
 impl View {
-    pub fn new(now_y: f32, cursor: ResolvedTime, zoom: Zoom) -> Self {
+    /// A timeline with `cursor` aligned to `now_y`.
+    pub const fn new(now_y: f32, cursor: ResolvedTime, zoom: Zoom) -> Self {
         Self {
             now_y,
             cursor: cursor.seconds(),
@@ -78,8 +85,7 @@ impl View {
     /// Where audio `seconds` into the song is drawn.
     pub fn y_of(self, seconds: f64) -> f32 {
         let below = (seconds - self.cursor) * f64::from(self.zoom.points_per_second());
-        #[allow(clippy::cast_possible_truncation)] // a screen coordinate, far inside f32
-        let below = below as f32;
+        let below = crate::cast::f64_f32(below);
         self.now_y + below
     }
 
@@ -162,12 +168,12 @@ impl Columns {
         let left = (across.center() - total / 2.0).max(across.min);
         let ruler = Rangef::new(left, left + RULER_W);
         let timing = Rangef::new(ruler.max, ruler.max + timing);
-        let wave = Rangef::new(timing.max, timing.max + wave_w);
+        let waveform = Rangef::new(timing.max, timing.max + wave_w);
         Self {
             ruler,
             timing,
-            wave,
-            lanes: Rangef::new(wave.max, wave.max + lane_w * count),
+            wave: waveform,
+            lanes: Rangef::new(waveform.max, waveform.max + lane_w * count),
             lane_w,
         }
     }
@@ -205,28 +211,55 @@ impl Columns {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Gesture {
     /// A hold being drawn out of the tap Ctrl placed where the drag began.
-    Hold { lane: LaneIndex, from: Tick },
+    Hold {
+        /// Lane where the initial tap was placed.
+        lane: LaneIndex,
+        /// Tick where the hold begins.
+        from: Tick,
+    },
     /// A box selecting the notes whose heads it covers, from a corner kept in audio time so the
     /// box stays put if the chart scrolls under it.
     Marquee {
+        /// Whether covered notes replace or extend the current selection.
         how: Selecting,
+        /// Screen x of the fixed corner.
         x: f32,
+        /// Audio seconds at the fixed corner.
         seconds: f64,
     },
-    /// The event at `index` of the open timing, being dragged to another line.
-    MoveTiming { from: Tick },
-    /// The song's marker at `index`, being dragged to another line.
-    MoveMarker { index: usize },
+    /// The timing point being dragged to another line.
+    MoveTiming {
+        /// Tick shared by the events at this timing point.
+        from: Tick,
+    },
+    /// The song's marker being dragged to another line.
+    MoveMarker {
+        /// Index into the song's markers.
+        index: usize,
+    },
     /// The cursor's handle, dragged from `y` on screen while the cursor was at `seconds`.
-    Scrub { seconds: f64, y: f32 },
+    Scrub {
+        /// Cursor's audio time when the drag began, in seconds.
+        seconds: f64,
+        /// Screen height at the start of the drag, in points.
+        y: f32,
+    },
     /// The chart, grabbed with the middle button from `y` on screen while the cursor was at
     /// `seconds`, and dragged along as a page is.
-    Pan { seconds: f64, y: f32 },
+    Pan {
+        /// Cursor's audio time when the drag began, in seconds.
+        seconds: f64,
+        /// Screen height where the chart was grabbed, in points.
+        y: f32,
+    },
     /// The selected notes, grabbed on the snap line `tick` over `lane`. They can move `room.0`
     /// lanes left, a negative count, to `room.1` lanes right and stay on the lanes.
     MoveNotes {
+        /// Snap line where the notes were grabbed.
         tick: Tick,
+        /// Lane where the notes were grabbed.
         lane: LaneIndex,
+        /// Permitted lane offsets to the left and right.
         room: (i32, i32),
     },
 }
@@ -244,11 +277,11 @@ impl Gesture {
         let ticks = if keep_time {
             0
         } else {
-            i32::try_from(i64::from(to) - i64::from(tick)).ok()?
+            i32::try_from(i64::from(to).checked_sub(i64::from(tick))?).ok()?
         };
         let inside = field.columns.lanes;
         let over = field.lane_at(pos.x.clamp(inside.min, inside.max - 0.5))?;
-        let lanes = i32::from(u16::from(over)) - i32::from(u16::from(lane));
+        let lanes = i32::from(u16::from(over)).saturating_sub(i32::from(u16::from(lane)));
         Some((ticks, lanes.clamp(room.0, room.1.max(room.0))))
     }
 }
@@ -282,9 +315,18 @@ fn room(chart: Valid<'_, Chart>, song: &Song, note: NoteAt, lanes: u16) -> (bool
     for (index, width) in spans {
         let from = i32::from(u16::from(index));
         first = first.min(from);
-        last = last.max(from + i32::from(u16::from(width)) - 1);
+        last = last.max(
+            from.saturating_add(i32::from(u16::from(width)))
+                .saturating_sub(1),
+        );
     }
-    (selected, (-first, i32::from(lanes) - 1 - last))
+    (
+        selected,
+        (
+            first.saturating_neg(),
+            i32::from(lanes).saturating_sub(1).saturating_sub(last),
+        ),
+    )
 }
 
 /// The handle under `pos`, if one is: the cursor's on the ruler, a timing point (every event at one
@@ -359,8 +401,7 @@ impl Field {
             return None;
         }
         let across = ((x - lanes.min) / self.columns.lane_w).floor();
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // a lane of the chart
-        let lane = (across as u16).min(self.lanes - 1);
+        let lane = crate::cast::f32_u16(across).min(self.lanes.saturating_sub(1));
         Some(LaneIndex::new(lane))
     }
 
@@ -397,7 +438,10 @@ impl Field {
 
 /// Draws the open chart, and turns the wheel, zoom gestures, clicks and drags over it into
 /// actions. Gives the seconds of audio it shows, earliest first, when there is a chart.
-#[allow(clippy::too_many_lines)] // one pass over the frame, drawing in order
+#[expect(
+    clippy::too_many_lines,
+    reason = "one pass over the frame in drawing order"
+)]
 pub fn show(
     ui: &mut Ui,
     song: &Song,
@@ -448,27 +492,37 @@ pub fn show(
         }
     });
     // An id of its own, so a drag survives a message appearing above the notefield mid-drag.
-    let (_, area) = ui.allocate_space(ui.available_size());
-    let response = ui.interact(area, ui.id().with("notefield"), Sense::click_and_drag());
+    let (_, allocated_area) = ui.allocate_space(ui.available_size());
+    let response = ui.interact(
+        allocated_area,
+        ui.id().with("notefield"),
+        Sense::click_and_drag(),
+    );
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Other, true, "Notefield"));
     if response.hovered() {
-        let (steps, measures, zoom) = ui.input(|input| {
+        let (steps, measures, zoom_delta) = ui.input(|input| {
             let [steps_left, measures_left] = scrolled;
             let steps = wheel_steps(&input.events, steps_left);
             let measures = measure_steps(&input.events, measures_left);
             (steps, measures, input.zoom_delta())
         });
-        let way = |steps: i32| {
-            if steps > 0 {
+        let way = |amount: i32| {
+            if amount > 0 {
                 Step::Later
             } else {
                 Step::Earlier
             }
         };
-        actions.extend((0..steps.unsigned_abs()).map(|_| Action::Move(way(steps))));
-        actions.extend((0..measures.unsigned_abs()).map(|_| Action::MoveMeasure(way(measures))));
-        if (zoom - 1.0).abs() > f32::EPSILON {
-            actions.push(Action::ZoomBy(zoom));
+        actions.extend(std::iter::repeat_n(
+            Action::Move(way(steps)),
+            usize::try_from(steps.unsigned_abs()).unwrap_or(usize::MAX),
+        ));
+        actions.extend(std::iter::repeat_n(
+            Action::MoveMeasure(way(measures)),
+            usize::try_from(measures.unsigned_abs()).unwrap_or(usize::MAX),
+        ));
+        if (zoom_delta - 1.0).abs() > f32::EPSILON {
+            actions.push(Action::ZoomBy(zoom_delta));
         }
     }
     let flip = Flip {
@@ -593,12 +647,13 @@ pub fn show(
             .is_some_and(|at| grab(song, &field, at, (first, last), modifiers, &line).is_some())
     {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+    } else {
     }
     if gesture.is_some()
         || hovered.is_some_and(|at| response.hovered() && handle_at(song, &field, at).is_some())
     {
-        let across = matches!(direction, Direction::Left | Direction::Right);
-        let icon = if across {
+        let horizontal = matches!(direction, Direction::Left | Direction::Right);
+        let icon = if horizontal {
             egui::CursorIcon::ResizeHorizontal
         } else {
             egui::CursorIcon::ResizeVertical
@@ -651,19 +706,19 @@ fn menu(
             actions.push(Action::Select(Some(note), Selecting::Replace));
         }
         let lane = field.lane_at(pos.x).unwrap_or(LaneIndex::new(0));
-        let tick = tick.unwrap_or(song.cursor());
+        let tick = tick.unwrap_or_else(|| song.cursor());
         ui.data_mut(|data| data.insert_temp(spot_id, (lane, tick)));
     }
     // Where it was clicked, since playback moves the cursor on while the menu is open.
     let spot: (LaneIndex, Tick) = ui
         .data(|data| data.get_temp(spot_id))
-        .unwrap_or((LaneIndex::new(0), song.cursor()));
-    response.context_menu(|ui| menu_items(ui, song, spot, actions));
+        .unwrap_or_else(|| (LaneIndex::new(0), song.cursor()));
+    response.context_menu(|menu_ui| menu_items(menu_ui, song, spot, actions));
 }
 
 /// The right-click menu's items for `song`, with `lane` and `at` the lane and snap line clicked,
 /// where what it places goes.
-#[allow(clippy::too_many_lines)] // one line an item, top to bottom
+#[expect(clippy::too_many_lines, reason = "menu items in display order")]
 fn menu_items(ui: &mut Ui, song: &Song, (lane, at): (LaneIndex, Tick), actions: &mut Vec<Action>) {
     let editable = song.read_only().is_none();
     let selected = song.selection().next().is_some();
@@ -748,7 +803,7 @@ fn menu_items(ui: &mut Ui, song: &Song, (lane, at): (LaneIndex, Tick), actions: 
     }
     ui.separator();
     ui.add_enabled_ui(edits, |ui| patterns(ui, (lane, at), actions));
-    let lane_name = format!("Select lane {}", u16::from(lane) + 1);
+    let lane_name = format!("Select lane {}", u16::from(lane).saturating_add(1));
     item(
         ui,
         actions,
@@ -845,7 +900,7 @@ fn item(
 /// What clicks and drags over the notefield ask for. With Ctrl they place notes, a tap or under
 /// Shift a mine, and a drag draws a hold; otherwise a click selects the note under the pointer,
 /// Shift adding it and Alt taking it away, and a drag selects with a box.
-#[allow(clippy::too_many_lines)] // one branch a gesture
+#[expect(clippy::too_many_lines, reason = "one branch per gesture")]
 fn pointer(
     ui: &Ui,
     response: &egui::Response,
@@ -904,6 +959,7 @@ fn pointer(
                 Note::Tap
             };
             actions.push(Action::Place { tick, lane, note });
+        } else {
         }
     }
     let (middle, secondary) = ui.input(|input| {
@@ -1073,7 +1129,7 @@ fn let_go(
 }
 
 /// How a click or a box meets the selection: Shift adds to it and Alt takes from it.
-fn selecting(modifiers: egui::Modifiers) -> Selecting {
+const fn selecting(modifiers: egui::Modifiers) -> Selecting {
     if modifiers.alt {
         Selecting::Subtract
     } else if modifiers.shift {
@@ -1096,16 +1152,20 @@ fn hit(
 ) -> Option<NoteAt> {
     let under = reaching(objects, first, last).filter_map(|index| {
         let object = objects.get(index)?;
-        let Position::Lane { index, width } = object.position else {
+        let Position::Lane {
+            index: lane_index,
+            width,
+        } = object.position
+        else {
             return None;
         };
         let head = field.view.y(timing.time_at(object.tick));
         let tail = field.view.y(timing.time_at(object.shape.end(object.tick)?));
         let reach = Rangef::new(head.min(tail) - GRAB, head.max(tail) + GRAB);
-        let over = field.columns.span(index, width).contains(pos.x) && reach.contains(pos.y);
+        let over = field.columns.span(lane_index, width).contains(pos.x) && reach.contains(pos.y);
         let note = NoteAt {
             tick: object.tick,
-            lane: index,
+            lane: lane_index,
         };
         over.then_some((note, (pos.y - head).abs()))
     });
@@ -1146,10 +1206,11 @@ fn header(
     }
     for lane in 0..lanes {
         let span = columns.span(LaneIndex::new(lane), LaneCount::ONE);
-        caption(span.center(), (lane + 1).to_string());
+        caption(span.center(), lane.saturating_add(1).to_string());
     }
 }
 
+/// Fills the timeline columns and draws the borders between lanes and gutters.
 fn backdrop(painter: &Canvas, columns: &Columns, lanes: u16, rows: Rangef) {
     for column in [columns.ruler, columns.timing] {
         painter.rect_filled(Rect::from_x_y_ranges(column, rows), 0.0, style::COLUMN_BG);
@@ -1211,14 +1272,16 @@ const COARSEST: u32 = 8;
 /// twice as many frames as the one before, so zoomed out a short sound still shows; the GPU's
 /// own shrinking would skip it. Tiles are made the first time they show.
 pub struct Tiles {
+    /// Frequency frames shared by tiles at every level of detail.
     spectrum: std::sync::Arc<Spectrum>,
     /// Each level's tiles, by index, once made.
     made: std::cell::RefCell<Vec<Vec<Option<egui::TextureHandle>>>>,
 }
 
 impl Tiles {
+    /// Unrendered spectrum tiles, generated on demand as they come into view.
     #[must_use]
-    pub fn new(spectrum: std::sync::Arc<Spectrum>) -> Self {
+    pub const fn new(spectrum: std::sync::Arc<Spectrum>) -> Self {
         Self {
             spectrum,
             made: std::cell::RefCell::new(Vec::new()),
@@ -1230,11 +1293,11 @@ impl Tiles {
         let mut made = self.made.borrow_mut();
         let level_at = usize::try_from(level).ok()?;
         if made.len() <= level_at {
-            made.resize_with(level_at + 1, Vec::new);
+            made.resize_with(level_at.saturating_add(1), Vec::new);
         }
         let tiles = made.get_mut(level_at)?;
         if tiles.len() <= index {
-            tiles.resize_with(index + 1, || None);
+            tiles.resize_with(index.saturating_add(1), || None);
         }
         let slot = tiles.get_mut(index)?;
         if slot.is_none() {
@@ -1273,14 +1336,18 @@ fn tile_image(
         .map(|chunk| {
             let mut loudest = [0; Spectrum::BANDS];
             for frame in chunk {
-                for (most, level) in loudest.iter_mut().zip(frame) {
-                    *most = (*most).max(*level);
+                for (most, amplitude) in loudest.iter_mut().zip(frame) {
+                    *most = (*most).max(*amplitude);
                 }
             }
             loudest
         })
         .collect();
-    let pixels = rows.iter().flatten().map(|level| heat(*level)).collect();
+    let pixels = rows
+        .iter()
+        .flatten()
+        .map(|amplitude| heat(*amplitude))
+        .collect();
     Some(egui::ColorImage::new([Spectrum::BANDS, rows.len()], pixels))
 }
 
@@ -1288,8 +1355,10 @@ fn tile_image(
 /// frame, each frame centred on its time, to the end of its last.
 fn tile_span(level: u32, index: usize, rows: usize) -> (f64, f64) {
     let run = f64::from(1u32 << level.min(COARSEST));
-    #[allow(clippy::cast_precision_loss)] // frame counts of a song
-    let (first, rows) = (index as f64 * TILE as f64 * run, rows as f64);
+    let (first, rows) = (
+        crate::cast::usize_f64(index) * crate::cast::usize_f64(TILE) * run,
+        crate::cast::usize_f64(rows),
+    );
     let from = (first - 0.5) / Spectrum::PER_SECOND;
     (from, from + rows * run / Spectrum::PER_SECOND)
 }
@@ -1301,7 +1370,7 @@ fn level_for(pixels_per_second: f32) -> u32 {
     while level < COARSEST
         && Spectrum::PER_SECOND / f64::from(1u32 << level) > f64::from(pixels_per_second)
     {
-        level += 1;
+        level = level.saturating_add(1);
     }
     level
 }
@@ -1319,12 +1388,10 @@ fn frequencies(
     let level = level_for(pixels);
     let (top, bottom) = (view.seconds_at(rows.min), view.seconds_at(rows.max));
     let (from, to) = (top.min(bottom), top.max(bottom));
-    #[allow(clippy::cast_precision_loss)] // a thousand rows
-    let seconds = TILE as f64 * f64::from(1u32 << level) / Spectrum::PER_SECOND;
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // a tile index
+    let seconds = crate::cast::usize_f64(TILE) * f64::from(1u32 << level) / Spectrum::PER_SECOND;
     let (first, last) = (
-        (from / seconds).floor().max(0.0) as usize,
-        (to / seconds).floor().max(0.0) as usize,
+        crate::cast::f64_usize((from / seconds).floor().max(0.0)),
+        crate::cast::f64_usize((to / seconds).floor().max(0.0)),
     );
     for index in first..=last {
         let Some(texture) = tiles.tile(ctx, level, index) else {
@@ -1356,10 +1423,10 @@ fn heat(level: u8) -> egui::Color32 {
     )
 }
 
+/// A channel value between `low` and `high` at the clamped fraction `t`.
 fn mix(low: u8, high: u8, t: f32) -> u8 {
     let value = f32::from(low) + (f32::from(high) - f32::from(low)) * t.clamp(0.0, 1.0);
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // a channel
-    let value = value.round() as u8;
+    let value = crate::cast::f32_u8(value.round());
     value
 }
 
@@ -1417,7 +1484,9 @@ fn lines_in(measure: &Measure, resolution: TicksPerBeat, grid: NonZeroU16) -> Ve
         return Vec::new();
     };
     let (beat, step) = (i64::from(u32::from(beat)), u32::from(step));
-    let per_beat = usize::try_from(beat / i64::from(step)).unwrap_or(1).max(1);
+    let per_beat = usize::try_from(beat.checked_div(i64::from(step)).unwrap_or(1))
+        .unwrap_or(1)
+        .max(1);
     let Some(step) = Ticks::new(step) else {
         return Vec::new();
     };
@@ -1425,9 +1494,13 @@ fn lines_in(measure: &Measure, resolution: TicksPerBeat, grid: NonZeroU16) -> Ve
         tick.checked_add(step)
     })
     .take_while(|tick| *tick < end)
-    .take(MOST_BEATS * per_beat)
+    .take(MOST_BEATS.saturating_mul(per_beat))
     .map(|tick| {
-        let line = if (i64::from(tick) - i64::from(measure.start)) % beat == 0 {
+        let line = if i64::from(tick)
+            .saturating_sub(i64::from(measure.start))
+            .rem_euclid(beat)
+            == 0
+        {
             Line::Beat
         } else {
             Line::Between
@@ -1466,17 +1539,18 @@ fn grid(
             style::TEXT,
         );
         for (tick, line) in lines_in(&measure, resolution, finest) {
-            let y = view.y(timing.time_at(tick));
+            let line_y = view.y(timing.time_at(tick));
             let color = match line {
                 Line::Beat if finer => style::BEAT_LINE_STRONG,
                 Line::Beat => style::BEAT_LINE,
                 Line::Between => style::SIXTEENTH_LINE,
             };
-            painter.hline(columns.timeline(), y, Stroke::new(1.0, color));
+            painter.hline(columns.timeline(), line_y, Stroke::new(1.0, color));
         }
     }
 }
 
+/// Note spacing of one quarter note, used to distinguish beat lines from finer grid lines.
 const QUARTER: NonZeroU16 = NonZeroU16::new(4).unwrap();
 
 /// Sections, bookmarks and plugin markers as lines across the time axis, named in the ruler.
@@ -1530,8 +1604,8 @@ fn events(
         };
         let y = view.y(timing.time_at(event.tick));
         painter.hline(columns.timing, y, Stroke::new(2.0, style::TIMING_MARK));
-        for (row, event) in (0u8..).zip(point) {
-            let text = match &event.kind {
+        for (row, detail) in (0u8..).zip(point) {
+            let text = match &detail.kind {
                 TimingKind::Stop(pause) => format!("stop {pause} s"),
                 TimingKind::Delay(pause) => format!("delay {pause} s"),
                 TimingKind::Warp(ticks) => format!("warp {ticks} ticks"),
@@ -1592,9 +1666,13 @@ fn draw_object(
         Shape::Path { points } => {
             let mut line = vec![pos2(across.center(), start)];
             for point in points.as_slice() {
-                if let Position::Lane { index, width } = point.position {
+                if let Position::Lane {
+                    index: point_lane,
+                    width: point_width,
+                } = point.position
+                {
                     line.push(pos2(
-                        columns.span(index, width).center(),
+                        columns.span(point_lane, point_width).center(),
                         view.y(timing.time_at(point.tick)),
                     ));
                 }
@@ -1618,14 +1696,18 @@ fn draw_object(
         Kind::Lift => {
             painter.rect_stroke(rect, 3.0, Stroke::new(2.0, head), StrokeKind::Inside);
         }
-        _ => {
+        Kind::Tap | Kind::Hold | Kind::Roll | Kind::Fake | Kind::Other(_) => {
             painter.rect_filled(rect, 3.0, head);
         }
     }
     for child in object.children() {
-        if let Position::Lane { index, width } = child.position {
+        if let Position::Lane {
+            index: child_lane,
+            width: child_width,
+        } = child.position
+        {
             let centre = pos2(
-                columns.span(index, width).center(),
+                columns.span(child_lane, child_width).center(),
                 view.y(timing.time_at(child.tick)),
             );
             painter.circle_filled(centre, 3.0, style::TEXT);
@@ -1682,11 +1764,11 @@ fn ghost(
     let Position::Lane { index, width } = object.position else {
         return;
     };
-    let Ok(index) = u16::try_from(i32::from(u16::from(index)) + lanes) else {
+    let Ok(index) = u16::try_from(i32::from(u16::from(index)).saturating_add(lanes)) else {
         return;
     };
     let shift = |tick: Tick| {
-        i32::try_from(i64::from(tick) + i64::from(ticks))
+        i32::try_from(i64::from(tick).saturating_add(i64::from(ticks)))
             .ok()
             .map(Tick::new)
     };
@@ -1773,6 +1855,10 @@ fn between<T>(items: &[T], tick: impl Fn(&T) -> Tick, first: Tick, last: Tick) -
 }
 
 /// The cursor: a line across every column on the time axis, with a handle on the ruler.
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "egui positions are offset by vectors"
+)]
 fn now_line(painter: &Canvas, columns: &Columns, now_y: f32) {
     painter.hline(columns.timeline(), now_y, Stroke::new(2.0, style::NOW_LINE));
     let tip = pos2(columns.ruler.max, now_y);
@@ -1808,8 +1894,7 @@ pub fn wheel_steps(events: &[egui::Event], remainder: &mut f32) -> i32 {
         *remainder -= whole * POINTS_PER_STEP;
         steps += whole;
     }
-    #[allow(clippy::cast_possible_truncation)] // a handful of notches a frame
-    let steps = steps as i32;
+    let steps = crate::cast::f32_i32(steps);
     steps
 }
 
@@ -1832,14 +1917,30 @@ fn measure_steps(events: &[egui::Event], remainder: &mut f32) -> i32 {
                     egui::MouseWheelUnit::Line | egui::MouseWheelUnit::Page => -along,
                 })
             }
-            _ => None,
+            egui::Event::Copy
+            | egui::Event::Cut
+            | egui::Event::Paste(_)
+            | egui::Event::Text(_)
+            | egui::Event::Key { .. }
+            | egui::Event::ModifiersChanged(_)
+            | egui::Event::PointerMoved(_)
+            | egui::Event::MouseMoved(_)
+            | egui::Event::PointerButton { .. }
+            | egui::Event::PointerGone
+            | egui::Event::Zoom(_)
+            | egui::Event::Rotate(_)
+            | egui::Event::Ime(_)
+            | egui::Event::Touch { .. }
+            | egui::Event::MouseWheel { .. }
+            | egui::Event::WindowFocused(_)
+            | egui::Event::AccessKitActionRequest(_)
+            | egui::Event::Screenshot { .. } => None,
         })
         .sum();
     *remainder += notches;
     let whole = remainder.trunc();
     *remainder -= whole;
-    #[allow(clippy::cast_possible_truncation)] // a handful of notches a frame
-    let whole = whole as i32;
+    let whole = crate::cast::f32_i32(whole);
     whole
 }
 
@@ -1916,10 +2017,13 @@ mod tests {
     fn assert_fills(grid: u16, step: i32, per_beat: i32) {
         let resolution = charter_core::TicksPerBeat::new(960).unwrap();
         let lines = lines_in(&common_measure(), resolution, grid_of(grid));
-        assert_eq!(lines.len(), usize::try_from(4 * per_beat - 1).unwrap());
-        for (place, (tick, line)) in (1..).zip(&lines) {
-            assert_eq!(*tick, Tick::new(place * step));
-            let expected = if place % per_beat == 0 {
+        assert_eq!(
+            lines.len(),
+            usize::try_from(4_i32.saturating_mul(per_beat).saturating_sub(1)).unwrap()
+        );
+        for (place, (tick, line)) in (1_i32..).zip(&lines) {
+            assert_eq!(*tick, Tick::new(place.saturating_mul(step)));
+            let expected = if place.rem_euclid(per_beat) == 0 {
                 Line::Beat
             } else {
                 Line::Between
@@ -1977,9 +2081,10 @@ mod tests {
             phase: egui::TouchPhase::Move,
         };
         let mut remainder = 0.0;
-        let steps: Vec<i32> = (0..4)
-            .map(|_| measure_steps(std::slice::from_ref(&nudge), &mut remainder))
-            .collect();
+        let steps: Vec<i32> =
+            std::iter::repeat_with(|| measure_steps(std::slice::from_ref(&nudge), &mut remainder))
+                .take(4)
+                .collect();
         assert_eq!(steps, [0, 0, 0, 1]);
     }
 
@@ -2121,11 +2226,9 @@ mod tests {
     #[test]
     fn tiles_line_up_with_the_frames_times_and_the_zoom_picks_their_detail() {
         let (from, to) = tile_span(0, 1, TILE);
-        #[allow(clippy::cast_precision_loss)]
-        let expected = (TILE as f64 - 0.5) / Spectrum::PER_SECOND;
+        let expected = (crate::cast::usize_f64(TILE) - 0.5) / Spectrum::PER_SECOND;
         assert!((from - expected).abs() < 1e-12);
-        #[allow(clippy::cast_precision_loss)]
-        let long = TILE as f64 / Spectrum::PER_SECOND;
+        let long = crate::cast::usize_f64(TILE) / Spectrum::PER_SECOND;
         assert!((to - from - long).abs() < 1e-12);
         assert_eq!(level_for(400.0), 0);
         assert_eq!(level_for(200.0), 0);
@@ -2276,7 +2379,7 @@ mod tests {
             &mut actions,
         );
         assert!(matches!(box_drag, Some(Gesture::Marquee { .. })));
-        let line = |pos: Pos2| snap_line(&song, field.view, pos);
+        let line = |at: Pos2| snap_line(&song, field.view, at);
         let dropped = let_go(
             box_drag,
             (
@@ -2382,7 +2485,7 @@ mod tests {
         let song = song();
         let field = field(&song);
         let pos = pos2(field.columns.timing_x(), field.view.now_y + 98.0);
-        let line = |pos: Pos2| snap_line(&song, field.view, pos);
+        let line = |at: Pos2| snap_line(&song, field.view, at);
         let anchor = let_go(
             Some(Gesture::MoveTiming { from: Tick::new(0) }),
             (Some(pos), false),
@@ -2501,7 +2604,18 @@ mod tests {
                 egui::Shape::Rect(rect) if rect.fill == style::SELECTED.gamma_multiply(0.35) => {
                     Some(rect.rect)
                 }
-                _ => None,
+                egui::Shape::Noop
+                | egui::Shape::Vec(_)
+                | egui::Shape::Circle(_)
+                | egui::Shape::Ellipse(_)
+                | egui::Shape::LineSegment { .. }
+                | egui::Shape::Path(_)
+                | egui::Shape::Rect(_)
+                | egui::Shape::Text(_)
+                | egui::Shape::Mesh(_)
+                | egui::Shape::QuadraticBezier(_)
+                | egui::Shape::CubicBezier(_)
+                | egui::Shape::Callback(_) => None,
             })
             .collect();
         output.textures_delta.clear();
@@ -2537,7 +2651,18 @@ mod tests {
                 {
                     path.points.first().map(|point| point.y)
                 }
-                _ => None,
+                egui::Shape::Noop
+                | egui::Shape::Vec(_)
+                | egui::Shape::Circle(_)
+                | egui::Shape::Ellipse(_)
+                | egui::Shape::LineSegment { .. }
+                | egui::Shape::Path(_)
+                | egui::Shape::Rect(_)
+                | egui::Shape::Text(_)
+                | egui::Shape::Mesh(_)
+                | egui::Shape::QuadraticBezier(_)
+                | egui::Shape::CubicBezier(_)
+                | egui::Shape::Callback(_) => None,
             });
             output.textures_delta.clear();
             y

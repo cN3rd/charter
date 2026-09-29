@@ -50,7 +50,7 @@ pub(crate) fn write(
     document: &Document,
     artwork: Option<&[u8]>,
 ) -> Result<Vec<u8>, Error> {
-    let text = |path: Option<&Path>| path.and_then(Path::to_str).map(str::to_owned);
+    let text = |value: Option<&Path>| value.and_then(Path::to_str).map(str::to_owned);
     let autosave = Autosave {
         path: text(path),
         audio: text(audio),
@@ -137,12 +137,12 @@ mod tests {
         let bytes = write(None, None, song.document(), None).unwrap();
         let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         value["later"] = serde_json::json!(true);
-        assert!(read(&serde_json::to_vec(&value).unwrap(), &[]).is_err());
+        read(&serde_json::to_vec(&value).unwrap(), &[]).unwrap_err();
     }
 
     #[test]
     fn a_damaged_autosave_is_refused() {
-        assert!(read(b"", &[]).is_err());
-        assert!(read(br#"{ "path": null, "song": { "format_version": 0 } }"#, &[]).is_err());
+        read(b"", &[]).unwrap_err();
+        read(br#"{ "path": null, "song": { "format_version": 0 } }"#, &[]).unwrap_err();
     }
 }

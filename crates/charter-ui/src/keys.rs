@@ -112,6 +112,10 @@ impl LaneKeys {
 
 /// What this frame's keys ask for, in the order they went down and up. Lane keys edit the first
 /// `lanes` lanes of the open chart.
+#[expect(
+    clippy::wildcard_enum_match_arm,
+    reason = "other egui events do not trigger actions"
+)]
 pub fn key_actions(input: &egui::InputState, lanes: u16, keys: &mut LaneKeys) -> Vec<Action> {
     let mut actions = Vec::new();
     for event in &input.events {
@@ -150,6 +154,10 @@ pub fn key_actions(input: &egui::InputState, lanes: u16, keys: &mut LaneKeys) ->
 }
 
 /// What a key press asks for when the key is not placing a note.
+#[expect(
+    clippy::wildcard_enum_match_arm,
+    reason = "unmapped egui keys do not trigger shortcuts"
+)]
 fn command(key: Key, modifiers: Modifiers) -> Option<Action> {
     let is = |shortcut: KeyboardShortcut| {
         key == shortcut.logical_key && modifiers.matches_logically(shortcut.modifiers)

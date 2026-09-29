@@ -62,8 +62,7 @@ impl Beat {
     pub fn clicks(self) -> Vec<f64> {
         (0..CLICKS)
             .map(|at| {
-                #[allow(clippy::cast_precision_loss)] // a few dozen clicks
-                let at = at as f64;
+                let at = f64::from(u32::try_from(at).unwrap_or(u32::MAX));
                 LEAD + at * self.spacing
             })
             .collect()
@@ -109,13 +108,13 @@ pub fn latency(taps: &[f64], clicks: &[f64], spacing: f64) -> Option<f64> {
             (nearest.abs() < spacing / 2.0).then_some(nearest * 1000.0)
         })
         .collect();
-    if taps.len() < WANTED || offsets.len() * 2 <= taps.len() {
+    if taps.len() < WANTED || offsets.len().saturating_mul(2) <= taps.len() {
         return None;
     }
     offsets.sort_by(f64::total_cmp);
-    let middle = offsets.len() / 2;
+    let middle = offsets.len().div_euclid(2);
     if offsets.len().is_multiple_of(2) {
-        Some((offsets.get(middle - 1)? + offsets.get(middle)?) / 2.0)
+        Some((offsets.get(middle.checked_sub(1)?)? + offsets.get(middle)?) / 2.0)
     } else {
         offsets.get(middle).copied()
     }
@@ -144,7 +143,6 @@ pub struct Calibration {
 /// Draws the calibration window while it is open, at `now` on the frame clock, its clicks at
 /// `beat` in the sound of `kit`. Asks for the clicks to play when started, and keeps what it
 /// measures in `settings`.
-#[allow(clippy::too_many_lines)] // one window, top to bottom
 pub fn show(
     ctx: &egui::Context,
     calibration: &mut Calibration,
@@ -269,7 +267,7 @@ mod tests {
         let beat = Beat::of(150.0, 4);
         let clicks = beat.clicks();
         assert_eq!(clicks.len(), CLICKS);
-        let gap = clicks.get(1).unwrap() - clicks.first().unwrap();
+        let gap = clicks[1] - clicks[0];
         assert!((gap - 0.4).abs() < 1e-9);
         assert!((Beat::of(300.0, 4).spacing - 0.4).abs() < 1e-9);
         assert!((Beat::of(50.0, 4).spacing - 0.6).abs() < 1e-9);
@@ -299,8 +297,7 @@ mod tests {
             .iter()
             .enumerate()
             .map(|(at, click)| {
-                #[allow(clippy::cast_precision_loss)] // twenty taps
-                let jitter = ((at * 7) % 9) as f64 - 4.0;
+                let jitter = f64::from(u8::try_from((at * 7) % 9).unwrap_or_default()) - 4.0;
                 click + 0.030 + jitter / 1000.0
             })
             .collect();
