@@ -39,9 +39,15 @@ pub fn resample(samples: &[f32], rate: u32) -> Result<Vec<f32>, Error> {
     let why = |error: &dyn std::fmt::Display| Error::Resample(error.to_string());
     let input =
         InterleavedOwned::new_from(samples.to_vec(), 1, samples.len()).map_err(|e| why(&e))?;
-    let rate = usize::try_from(rate).map_err(|e| why(&e))?;
-    let mut resampler =
-        Fft::<f32>::new(rate, RATE as usize, 1024, 1, FixedSync::Input).map_err(|e| why(&e))?;
+    let input_rate = usize::try_from(rate).map_err(|e| why(&e))?;
+    let mut resampler = Fft::<f32>::new(
+        input_rate,
+        usize::try_from(RATE).map_err(|e| why(&e))?,
+        1024,
+        1,
+        FixedSync::Input,
+    )
+    .map_err(|e| why(&e))?;
     let output = resampler
         .process_all(&input, samples.len(), None)
         .map_err(|e| why(&e))?;
@@ -55,21 +61,20 @@ pub fn log_mel(samples: &[f32]) -> Vec<[f32; BINS]> {
     if samples.is_empty() {
         return Vec::new();
     }
-    let padded = reflected(samples, WINDOW / 2);
+    let padded = reflected(samples, WINDOW.div_euclid(2));
     let window = hann();
     // torch's "frame_length" normalisation, which torch.stft applies as normalized=True.
-    #[allow(clippy::cast_precision_loss)] // a window's length
-    let energy = (WINDOW as f64).sqrt();
+    let energy = count_float(WINDOW).sqrt();
     let bank = filterbank();
     let fft = FftPlanner::<f64>::new().plan_fft_forward(WINDOW);
-    let frames = 1 + samples.len() / HOP;
+    let frames = samples.len().div_euclid(HOP).saturating_add(1);
     let mut buffer = vec![Complex::new(0.0, 0.0); WINDOW];
     let mut spect = Vec::with_capacity(frames);
     for frame in 0..frames {
-        let start = frame * HOP;
+        let start = frame.saturating_mul(HOP);
         for (slot, (sample, weight)) in buffer.iter_mut().zip(
             padded
-                .get(start..start + WINDOW)
+                .get(start..start.saturating_add(WINDOW))
                 .unwrap_or_default()
                 .iter()
                 .zip(&window),
@@ -78,7 +83,7 @@ pub fn log_mel(samples: &[f32]) -> Vec<[f32; BINS]> {
         }
         fft.process(&mut buffer);
         let magnitudes: Vec<f64> = buffer
-            .get(..=WINDOW / 2)
+            .get(..=WINDOW.div_euclid(2))
             .unwrap_or_default()
             .iter()
             .map(|bin| bin.norm() / energy)
@@ -86,8 +91,7 @@ pub fn log_mel(samples: &[f32]) -> Vec<[f32; BINS]> {
         let mut row = [0.0; BINS];
         for (value, band) in row.iter_mut().zip(&bank) {
             let power: f64 = band.iter().zip(&magnitudes).map(|(w, m)| w * m).sum();
-            #[allow(clippy::cast_possible_truncation)] // a band's magnitude
-            let power = power as f32;
+            let power = narrow_float(power);
             *value = (LOG_MULTIPLIER * power).ln_1p();
         }
         spect.push(row);
@@ -95,39 +99,63 @@ pub fn log_mel(samples: &[f32]) -> Vec<[f32; BINS]> {
     spect
 }
 
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_precision_loss,
+    reason = "FFT and mel bin positions fit in a small integer"
+)]
+/// FFT and filterbank indices as floating-point positions.
+fn count_float(count: usize) -> f64 {
+    count as f64
+}
+
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    reason = "the network consumes the mel magnitudes as f32"
+)]
+/// An FFT magnitude at the precision consumed by the network.
+fn narrow_float(value: f64) -> f32 {
+    value as f32
+}
+
 /// `samples` with `pad` samples at each end mirrored from inside it, not repeating the end
 /// samples themselves, as torch's reflect padding does.
 fn reflected(samples: &[f32], pad: usize) -> Vec<f32> {
     let len = samples.len();
     let at = |index: isize| -> f32 {
-        let last = isize::try_from(len).unwrap_or(isize::MAX) - 1;
-        let mut index = index;
+        let last = isize::try_from(len).unwrap_or(isize::MAX).saturating_sub(1);
+        let mut reflected_index = index;
         // Very short signals reflect more than once.
-        while index < 0 || index > last {
-            index = if index < 0 { -index } else { 2 * last - index };
+        while reflected_index < 0 || reflected_index > last {
+            reflected_index = if reflected_index < 0 {
+                reflected_index.saturating_neg()
+            } else {
+                last.saturating_mul(2).saturating_sub(reflected_index)
+            };
             if last == 0 {
-                index = 0;
+                reflected_index = 0;
             }
         }
-        usize::try_from(index)
+        usize::try_from(reflected_index)
             .ok()
-            .and_then(|index| samples.get(index))
+            .and_then(|position| samples.get(position))
             .copied()
             .unwrap_or(0.0)
     };
     let pad = isize::try_from(pad).unwrap_or(0);
     let len = isize::try_from(len).unwrap_or(0);
-    (-pad..len + pad).map(at).collect()
+    (pad.saturating_neg()..len.saturating_add(pad))
+        .map(at)
+        .collect()
 }
 
 /// A periodic Hann window of [`WINDOW`] samples.
 fn hann() -> Vec<f64> {
-    #[allow(clippy::cast_precision_loss)] // a window's length
-    let size = WINDOW as f64;
+    let size = count_float(WINDOW);
     (0..WINDOW)
         .map(|n| {
-            #[allow(clippy::cast_precision_loss)]
-            let n = n as f64;
+            let n = count_float(n);
             0.5 - 0.5 * (2.0 * PI * n / size).cos()
         })
         .collect()
@@ -154,16 +182,16 @@ fn hz(mel: f64) -> f64 {
 /// Each band's weight for every FFT bin: triangles between band edges spaced evenly in mel, as
 /// torchaudio's `melscale_fbanks` makes them without normalisation.
 fn filterbank() -> Vec<Vec<f64>> {
-    let bins = WINDOW / 2 + 1;
+    let bins = WINDOW.div_euclid(2).saturating_add(1);
     let nyquist = f64::from(RATE) / 2.0;
-    #[allow(clippy::cast_precision_loss)] // small counts
     let freqs: Vec<f64> = (0..bins)
-        .map(|bin| nyquist * bin as f64 / (bins - 1) as f64)
+        .map(|bin| nyquist * count_float(bin) / count_float(bins.saturating_sub(1)))
         .collect();
     let (low, high) = (mel(F_MIN), mel(F_MAX));
-    #[allow(clippy::cast_precision_loss)]
-    let edges: Vec<f64> = (0..BINS + 2)
-        .map(|edge| hz(low + (high - low) * edge as f64 / (BINS + 1) as f64))
+    let edges: Vec<f64> = (0..BINS.saturating_add(2))
+        .map(
+            |edge| hz(low + (high - low) * count_float(edge) / count_float(BINS.saturating_add(1))),
+        )
         .collect();
     edges
         .windows(3)
@@ -198,12 +226,12 @@ mod tests {
             .collect();
         // The script's clicks start every rate // 4 samples.
         for start in (0..rate).step_by(5512) {
-            for n in start..(start + 32).min(rate) {
-                samples[usize::try_from(n).unwrap()] += 0.4 * (1.0 - f64::from(n - start) / 32.0);
+            for n in start..start.saturating_add(32).min(rate) {
+                samples[usize::try_from(n).unwrap()] +=
+                    0.4 * (1.0 - f64::from(n.saturating_sub(start)) / 32.0);
             }
         }
-        #[allow(clippy::cast_possible_truncation)]
-        samples.into_iter().map(|sample| sample as f32).collect()
+        samples.into_iter().map(narrow_float).collect()
     }
 
     #[test]
@@ -216,12 +244,12 @@ mod tests {
             .collect();
         let got = log_mel(&signal());
         assert_eq!(got.len() * BINS, want.len());
-        for (index, (got, want)) in got.iter().flatten().zip(&want).enumerate() {
+        for (index, (actual, expected)) in got.iter().flatten().zip(&want).enumerate() {
             assert!(
-                (got - want).abs() < 1e-3 * want.abs().max(1.0),
-                "frame {}, band {}: {got} vs {want}",
-                index / BINS,
-                index % BINS
+                (actual - expected).abs() < 1e-3 * expected.abs().max(1.0),
+                "frame {}, band {}: {actual} vs {expected}",
+                index.div_euclid(BINS),
+                index.rem_euclid(BINS)
             );
         }
     }

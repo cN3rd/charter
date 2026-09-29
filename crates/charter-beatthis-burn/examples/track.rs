@@ -11,6 +11,11 @@ use std::time::Instant;
 
 use charter_beatthis_burn::Tracker;
 
+#[expect(
+    clippy::print_stdout,
+    clippy::use_debug,
+    reason = "this interactive tracker example prints timing and beat results"
+)]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
     let (Some(weights), Some(audio)) = (args.get(1), args.get(2)) else {
@@ -19,15 +24,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let extension = Path::new(audio).extension().and_then(|ext| ext.to_str());
     let track = charter_audio::Track::decode(std::fs::read(audio)?, extension)?;
     let mono: Vec<f32> = track.frames().iter().map(|[l, r]| (l + r) / 2.0).collect();
-    let started = Instant::now();
+    let loaded_at = Instant::now();
     let tracker = Tracker::from_checkpoint(Path::new(weights))?;
-    println!("loaded in {:.2?}", started.elapsed());
-    let started = Instant::now();
+    println!("loaded in {:.2?}", loaded_at.elapsed());
+    let tracked_at = Instant::now();
     let found = tracker.track(&mono, track.rate().get())?;
     println!(
         "tracked {:.1} s of audio in {:.2?}",
         track.seconds(),
-        started.elapsed()
+        tracked_at.elapsed()
     );
     let first = |times: &[f64], count| times.iter().take(count).copied().collect::<Vec<_>>();
     println!(

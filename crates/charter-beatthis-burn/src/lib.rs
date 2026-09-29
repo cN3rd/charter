@@ -28,6 +28,10 @@ const CHUNK: usize = 1500;
 /// trained on its input's edges.
 const BORDER: usize = 6;
 
+#[expect(
+    clippy::error_impl_error,
+    reason = "this is the crate's recoverable error type for weights and resampling"
+)]
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("the weights would not load: {0}")]
@@ -122,6 +126,10 @@ impl Tracker {
         // Chunks are independent, so each runs on a thread of its own; the network's element-wise
         // work is otherwise one core's.
         let predictions: Vec<(Vec<f32>, Vec<f32>)> = std::thread::scope(|scope| {
+            #[expect(
+                clippy::needless_collect,
+                reason = "collecting spawns every chunk before the first join"
+            )]
             let running: Vec<_> = starts
                 .iter()
                 .map(|&start| {
@@ -142,7 +150,7 @@ impl Tracker {
         // Later chunks go first, so earlier ones overwrite them where they overlap.
         for (&start, (beats, downbeats)) in starts.iter().zip(&predictions).rev() {
             for index in BORDER..beats.len().saturating_sub(BORDER) {
-                let Ok(frame) = usize::try_from(start + as_signed(index)) else {
+                let Ok(frame) = usize::try_from(start.saturating_add(as_signed(index))) else {
                     continue;
                 };
                 if let (Some(slot), Some(value)) = (beat.get_mut(frame), beats.get(index)) {
@@ -212,18 +220,24 @@ fn floats(tensor: Tensor<Cpu, 1>) -> Vec<f32> {
 /// moved back to end at the end of the piece.
 fn chunk_starts(frames: usize) -> Vec<isize> {
     let (frames, chunk, border) = (as_signed(frames), as_signed(CHUNK), as_signed(BORDER));
-    let step = chunk - 2 * border;
-    let mut starts: Vec<isize> = std::iter::successors(Some(-border), |start| Some(start + step))
-        .take_while(|start| *start < frames - border)
-        .collect();
+    let step = chunk.saturating_sub(2_isize.saturating_mul(border));
+    let limit = frames
+        .checked_sub(border)
+        .unwrap_or_else(|| border.saturating_sub(frames).saturating_neg());
+    let mut starts: Vec<isize> = std::iter::successors(Some(border.saturating_neg()), |start| {
+        Some(start.saturating_add(step))
+    })
+    .take_while(|start| *start < limit)
+    .collect();
     if frames > step
         && let Some(last) = starts.last_mut()
     {
-        *last = frames - (chunk - border);
+        *last = frames.saturating_sub(chunk.saturating_sub(border));
     }
     starts
 }
 
+/// `count` as a signed chunk position, saturating if too large.
 fn as_signed(count: usize) -> isize {
     isize::try_from(count).unwrap_or(isize::MAX)
 }
@@ -234,29 +248,39 @@ fn chunk(spect: &[[f32; mel::BINS]], start: isize) -> (Vec<f32>, usize) {
     let frames = as_signed(spect.len());
     let (chunk, border) = (as_signed(CHUNK), as_signed(BORDER));
     let from = start.max(0);
-    let to = (start + chunk).min(frames);
-    let left = (-start).max(0);
-    let right = border.min(start + chunk - frames).max(0);
-    let len = usize::try_from(left + (to - from) + right).unwrap_or(0);
-    let mut input = Vec::with_capacity(len * mel::BINS);
+    let to = start.saturating_add(chunk).min(frames);
+    let left = start.saturating_neg().max(0);
+    let right = border
+        .min(start.saturating_add(chunk).saturating_sub(frames))
+        .max(0);
+    let len = usize::try_from(
+        left.saturating_add(to.saturating_sub(from))
+            .saturating_add(right),
+    )
+    .unwrap_or(0);
+    let mut input = Vec::with_capacity(len.saturating_mul(mel::BINS));
     let silence = [0.0; mel::BINS];
-    let rows = (0..left)
-        .map(|_| &silence)
+    let rows = std::iter::repeat_n(&silence, usize::try_from(left).unwrap_or(0))
         .chain(
             spect
                 .get(usize::try_from(from).unwrap_or(0)..usize::try_from(to).unwrap_or(0))
                 .unwrap_or_default(),
         )
-        .chain((0..right).map(|_| &silence));
+        .chain(std::iter::repeat_n(
+            &silence,
+            usize::try_from(right).unwrap_or(0),
+        ));
     for row in rows {
         input.extend_from_slice(row);
     }
     (input, len)
 }
 
-/// The beats and downbeats the logits peak at: frames whose logit is the largest within three
-/// frames either side and above 0, so a probability above one half, with runs of neighbouring
-/// peaks merged to their mean, each downbeat moved onto its nearest beat.
+/// The beats and downbeats the logits peak at.
+///
+/// A peak is a frame whose logit is the largest within three frames either side and above 0, so
+/// a probability above one half. Runs of neighbouring peaks merge to their mean, and each downbeat
+/// moves onto its nearest beat.
 #[must_use]
 pub fn peaks(beat_logits: Vec<f32>, downbeat_logits: Vec<f32>) -> Beats {
     let beats = merged(&peak_frames(&beat_logits));
@@ -285,7 +309,7 @@ fn peak_frames(logits: &[f32]) -> Vec<usize> {
         .iter()
         .enumerate()
         .filter(|&(frame, &value)| {
-            let near = frame.saturating_sub(3)..(frame + 4).min(logits.len());
+            let near = frame.saturating_sub(3)..frame.saturating_add(4).min(logits.len());
             value > 0.0
                 && logits
                     .get(near)
@@ -302,7 +326,10 @@ fn merged(frames: &[usize]) -> Vec<f64> {
     let mut merged: Vec<f64> = Vec::new();
     let mut run: Vec<usize> = Vec::new();
     for &frame in frames {
-        if run.last().is_some_and(|last| frame - last > 1) {
+        if run
+            .last()
+            .is_some_and(|last| frame.saturating_sub(*last) > 1)
+        {
             merged.push(mean(&run));
             run.clear();
         }
@@ -314,12 +341,21 @@ fn merged(frames: &[usize]) -> Vec<f64> {
     merged
 }
 
+/// Mean frame position of a run of neighbouring peaks.
 fn mean(frames: &[usize]) -> f64 {
-    #[allow(clippy::cast_precision_loss)] // frames of a song
-    let sum: f64 = frames.iter().map(|frame| *frame as f64).sum();
-    #[allow(clippy::cast_precision_loss)]
-    let count = frames.len() as f64;
+    let sum: f64 = frames.iter().map(|frame| frame_float(*frame)).sum();
+    let count = frame_float(frames.len());
     sum / count
+}
+
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_precision_loss,
+    reason = "song-length frame positions are converted for peak averaging"
+)]
+/// A frame index as a floating-point value for peak averaging.
+fn frame_float(frame: usize) -> f64 {
+    frame as f64
 }
 
 #[cfg(test)]
@@ -368,7 +404,7 @@ mod tests {
             .windows(key.len())
             .position(|window| window == key)
             .unwrap();
-        bytes[start + key.len() - 2] = b'X';
+        bytes[start.saturating_add(key.len()).saturating_sub(2)] = b'X';
         assert!(matches!(
             Tracker::from_safetensors(Dims::TINY, bytes),
             Err(Error::Weights(_))
@@ -400,8 +436,11 @@ mod tests {
             ),
         ] {
             assert_eq!(got.len(), want.len());
-            for (frame, (got, want)) in got.iter().zip(&want).enumerate() {
-                assert!((got - want).abs() < 1e-4, "frame {frame}: {got} vs {want}");
+            for (frame, (actual, expected)) in got.iter().zip(&want).enumerate() {
+                assert!(
+                    (actual - expected).abs() < 1e-4,
+                    "frame {frame}: {actual} vs {expected}"
+                );
             }
         }
     }
