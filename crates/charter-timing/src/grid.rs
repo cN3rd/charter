@@ -46,7 +46,7 @@ impl Grid {
 
     /// Whether the lines between beats come in threes.
     #[must_use]
-    pub fn triplet(self) -> bool {
+    pub const fn triplet(self) -> bool {
         self.resolution.get().is_multiple_of(3)
     }
 
@@ -61,13 +61,13 @@ impl Grid {
         let (start, step) = (i64::from(measure.start), i64::from(u32::from(step)));
         let length = i64::from(u32::from(measure.length));
         (0..=length.div_euclid(step.max(1)))
-            .map(|index| index * step)
+            .map(|index| index.saturating_mul(step))
             .take_while(|offset| *offset < length)
             .filter_map(|offset| {
-                let tick = Tick::new(i32::try_from(start + offset).ok()?);
+                let tick = Tick::new(i32::try_from(start.checked_add(offset)?).ok()?);
                 let line = if offset == 0 {
                     Line::Downbeat
-                } else if offset % beat == 0 {
+                } else if offset.rem_euclid(beat) == 0 {
                     Line::Beat
                 } else {
                     Line::Sub {
@@ -84,8 +84,8 @@ impl Grid {
     pub fn nearest(self, timing: Valid<'_, Timing>, tick: Tick) -> Tick {
         self.around(timing, tick).map_or(tick, |(below, above)| {
             let (from, to) = (
-                i64::from(tick) - i64::from(below),
-                i64::from(above) - i64::from(tick),
+                i64::from(tick).saturating_sub(i64::from(below)),
+                i64::from(above).saturating_sub(i64::from(tick)),
             );
             if to < from { above } else { below }
         })
@@ -123,7 +123,8 @@ impl Grid {
             let next = if forward {
                 self.around(timing, at).map(|(_, above)| above)
             } else {
-                let before = Tick::new(i32::try_from(i64::from(at) - 1).unwrap_or(i32::MIN));
+                let before =
+                    Tick::new(i32::try_from(i64::from(at).saturating_sub(1)).unwrap_or(i32::MIN));
                 self.around(timing, before).map(|(below, _)| below)
             };
             match next {
@@ -162,7 +163,7 @@ pub struct Near {
 }
 
 /// The resolution `timing` counts ticks at.
-fn timing_resolution(timing: Valid<'_, Timing>) -> TicksPerBeat {
+const fn timing_resolution(timing: Valid<'_, Timing>) -> TicksPerBeat {
     timing.ticks_per_beat()
 }
 
@@ -278,13 +279,13 @@ mod tests {
                 { "tick": 0, "kind": { "time_signature": [numerator, 8] } }
             ]));
             let timing = document.timing();
-            let at = tick(bar * i32::from(numerator) * 480);
+            let at = tick(bar.saturating_mul(i32::from(numerator)).saturating_mul(480));
             let measure = timing.measures_from(at).next().unwrap();
             let lines = grid(resolution).lines(&measure, timing.ticks_per_beat());
             prop_assert_eq!(lines.first(), Some(&(measure.start, Line::Downbeat)));
             let end = measure.start.checked_add(measure.length).unwrap();
             prop_assert!(lines.iter().all(|(line, _)| *line >= measure.start && *line < end));
-            prop_assert!(lines.windows(2).all(|pair| pair[0].0 < pair[1].0));
+            prop_assert!(lines.windows(2).all(|pair| pair.first().zip(pair.get(1)).is_some_and(|(first, second)| first.0 < second.0)));
         }
     }
 }

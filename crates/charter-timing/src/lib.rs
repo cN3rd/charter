@@ -105,12 +105,18 @@ const FINE: f64 = 10.0;
 /// The timing window: whether it shows, how it lays the song out, and what the user is doing in
 /// it.
 #[derive(Debug)]
-#[allow(clippy::struct_excessive_bools)] // settings the user turns on and off one by one
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "settings the user turns on and off individually"
+)]
 pub struct TimingWindow {
+    /// Whether the timing window is visible.
     pub open: bool,
+    /// Subdivision used for beat lines and snapping.
     pub grid: Grid,
     /// Whether the rows lay the song out by bar or by audio time.
     pub layout: Layout,
+    /// Number of bars displayed per row in the bar layout.
     pub bars_per_row: BarsPerRow,
     /// How many seconds a row holds in the time layout.
     pub seconds_per_row: SecondsPerRow,
@@ -248,7 +254,7 @@ pub struct Inputs<'a> {
 impl TimingWindow {
     /// Whether the window takes the keyboard's commands, so the editor window leaves them.
     #[must_use]
-    pub fn has_keyboard(&self) -> bool {
+    pub const fn has_keyboard(&self) -> bool {
         self.open && self.keys
     }
 
@@ -263,12 +269,21 @@ impl TimingWindow {
                     style::clock(timing.time_at(*tick).seconds())
                 )
             }
-            other => {
+            other @ (Refusal::ReadOnly
+            | Refusal::NoChart
+            | Refusal::Document(_)
+            | Refusal::Game(_)
+            | Refusal::OnlyTempo
+            | Refusal::NotWhole
+            | Refusal::FirstTempo
+            | Refusal::Occupied
+            | Refusal::OffTheChart) => {
                 let first = other.to_string();
                 let mut letters = first.chars();
-                letters.next().map_or(first.clone(), |letter| {
-                    letter.to_uppercase().chain(letters).collect()
-                })
+                letters.next().map_or_else(
+                    || first.clone(),
+                    |letter| letter.to_uppercase().chain(letters).collect(),
+                )
             }
         };
         if matches!(edit, Edit::Nudge { .. }) {
@@ -295,7 +310,7 @@ impl TimingWindow {
         match fitted {
             Some(fitted) => {
                 let before = frame.tail;
-                let about = if *range.end() + 1 == frame.pins.len() {
+                let about = if range.end().saturating_add(1) == frame.pins.len() {
                     format!("Tail {before} → {} BPM", fitted.tail)
                 } else {
                     format!("{} anchors fitted", range.count())
@@ -393,11 +408,11 @@ impl TimingWindow {
         let half = self
             .grid
             .step(frame.timing.ticks_per_beat())
-            .map_or(0, |step| i64::from(u32::from(step)) / 2);
+            .map_or(0, |step| i64::from(u32::from(step)).div_euclid(2));
         let close = frame
             .pins
             .iter()
-            .find(|pin| (i64::from(pin.tick) - i64::from(tick)).abs() < half.max(1));
+            .find(|pin| i64::from(pin.tick).saturating_sub(i64::from(tick)).abs() < half.max(1));
         if let Some(close) = close {
             self.pulse = Some((close.tick, frame.now));
             self.status = Some(format!(
@@ -440,28 +455,44 @@ enum Intent {
     Tail(f64),
     /// Use the grid resolution at this place among [`RESOLUTIONS`].
     Grid(usize),
+    /// Preview fitting the focused or selected anchors to the onsets.
     Fit {
+        /// Round fitted tempos to half-BPM increments.
         half_bpm: bool,
     },
+    /// Double or halve the tempo at the selected anchors.
     Scale {
+        /// Double when true, halve otherwise.
         double: bool,
     },
+    /// Toggle whether rows scroll to keep the playhead visible.
     Follow,
     /// Switch the rows between the bar layout and the time layout.
     Layout,
+    /// Remove selected anchors.
     Delete,
+    /// Select every anchor.
     SelectAll,
+    /// Toggle the keyboard shortcut reference.
     Help,
     /// Loop the bar under the cursor, or the selection.
     Loop {
+        /// Loop the selected range instead of the cursor's bar.
         selection: bool,
     },
+    /// Switch playback speed between the usual and alternate rate.
     ToggleRate,
+    /// Toggle click-track playback.
     ToggleMetronome,
+    /// Mute the click track while the key is held.
     Mute,
 }
 
 /// What `key` pressed with `modifiers` asks of the timing window, if anything.
+#[expect(
+    clippy::wildcard_enum_match_arm,
+    reason = "other keys only map if in the numeric shortcut list"
+)]
 fn intent(key: Key, modifiers: Modifiers) -> Option<Intent> {
     let (shift, ctrl) = (modifiers.shift, modifiers.command || modifiers.ctrl);
     let nudge = if ctrl {
@@ -550,7 +581,6 @@ const KEYS: &[(&str, &str)] = &[
 
 /// Draws the timing window over `inputs` while it is open, and answers its input with
 /// `commands`.
-#[allow(clippy::too_many_lines)] // the window's panels in the order they draw
 pub fn show(
     ctx: &egui::Context,
     inputs: Inputs<'_>,
@@ -566,6 +596,7 @@ pub fn show(
         window.pulse = None;
     } else if window.pulse.is_some() {
         ctx.request_repaint();
+    } else {
     }
     let mut open = window.open;
     let shown = egui::Window::new("Timing")
@@ -684,6 +715,7 @@ fn frame<'a>(
     }
     Frame {
         timing,
+        #[expect(clippy::unreachable, reason = "the constant 120 BPM is valid")]
         tail: song
             .tail_bpm()
             .unwrap_or_else(|| Bpm::try_from(120.0).unwrap_or_else(|_| unreachable!())),
@@ -730,7 +762,7 @@ fn help(ui: &mut egui::Ui) {
 }
 
 /// The rows, and every press and drag on them. Says whether the pointer is over an anchor.
-#[allow(clippy::too_many_lines)] // one row after another, then the drag across them
+#[expect(clippy::too_many_lines, reason = "draws rows then their drag state")]
 fn rows(
     ui: &mut egui::Ui,
     window: &mut TimingWindow,
@@ -742,8 +774,7 @@ fn rows(
     let spacing = 4.0;
     let pitch = ROW + spacing;
     let row_of = |tick: Tick| {
-        #[allow(clippy::cast_precision_loss)]
-        let position = frame.bars.position(i64::from(tick) as f64);
+        let position = frame.bars.position(rows::float_from_i64(i64::from(tick)));
         spans
             .iter()
             .position(|span| position >= span.start && position < span.to)
@@ -751,7 +782,7 @@ fn rows(
     let target = window
         .scroll_to
         .take()
-        .or((window.follow && inputs.playing).then_some(frame.cursor));
+        .or_else(|| (window.follow && inputs.playing).then_some(frame.cursor));
     let mut area = egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .scroll_source(egui::scroll_area::ScrollSource {
@@ -759,8 +790,7 @@ fn rows(
             ..egui::scroll_area::ScrollSource::ALL
         });
     if let Some(index) = target.and_then(row_of) {
-        #[allow(clippy::cast_precision_loss)] // rows of a song
-        let offset = (index.saturating_sub(1)) as f32 * pitch;
+        let offset = rows::float_from_usize(index.saturating_sub(1)) * pitch;
         area = area.vertical_scroll_offset(offset);
     }
     style::solid_scroll_bars(ui);
@@ -777,8 +807,7 @@ fn rows(
                 .pulse
                 .filter(|(tick, _)| *tick == pin.tick)
                 .map_or(0.0, |(_, at)| {
-                    #[allow(clippy::cast_possible_truncation)] // a share of a second
-                    let through = ((frame.now - at) / PULSE) as f32;
+                    let through = rows::float_to_f32((frame.now - at) / PULSE);
                     (through * std::f32::consts::TAU * 2.0).sin().abs() * (1.0 - through)
                 }),
         })
@@ -814,8 +843,7 @@ fn rows(
                     format!("Row at {:.1} s", span.start),
                 ),
             };
-            #[allow(clippy::cast_possible_truncation)] // hundredths of a row's start
-            let key = (span.start * 100.0).round() as i64;
+            let key = rows::float_to_i64((span.start * 100.0).round());
             let id = ui.id().with(("timing row", key));
             let response = ui.interact(rect, id, Sense::click_and_drag());
             response
@@ -827,7 +855,11 @@ fn rows(
                     median_ms,
                     ..
                 } if at == number => Some(median_ms),
-                _ => None,
+                Issue::Bar { .. }
+                | Issue::Short { .. }
+                | Issue::Jump { .. }
+                | Issue::Anchor { .. }
+                | Issue::Metre { .. } => None,
             });
             rows::header(&painter, &row, (&title, measure), off);
             let ghost = ghost(window, frame, &row, response.hover_pos(), shift);
@@ -858,6 +890,7 @@ fn rows(
                 && let Some(pos) = response.interact_pointer_pos()
             {
                 commands.push(Command::PlayFrom(row.tick_at(&frame.bars, pos.x)));
+            } else {
             }
             laid.push(row);
         }
@@ -888,8 +921,7 @@ fn reach(window: &TimingWindow, frame: &Frame<'_>) -> Option<(f64, f64)> {
         return None;
     };
     let bar = |tick: Tick| {
-        #[allow(clippy::cast_precision_loss)]
-        let at = i64::from(tick) as f64;
+        let at = rows::float_from_i64(i64::from(tick));
         frame.bars.position(at)
     };
     let moving = moving(window, from);
@@ -942,7 +974,7 @@ fn ghost(
             let target = snapped.unwrap_or(seconds);
             Some((seconds_x(frame, row, target)?, snapped.is_some()))
         }
-        _ => None,
+        Gesture::Idle | Gesture::Band { .. } | Gesture::DragBeat { .. } => None,
     }
 }
 
@@ -954,7 +986,7 @@ fn seconds_x(frame: &Frame<'_>, row: &Row, seconds: f64) -> Option<f32> {
         let next = frame
             .timing
             .time_at(Tick::new(
-                i32::try_from(i64::from(tick) + 1).unwrap_or(i32::MAX),
+                i32::try_from(i64::from(tick).saturating_add(1)).unwrap_or(i32::MAX),
             ))
             .seconds();
         let within = if next > at {
@@ -962,8 +994,7 @@ fn seconds_x(frame: &Frame<'_>, row: &Row, seconds: f64) -> Option<f32> {
         } else {
             0.0
         };
-        #[allow(clippy::cast_precision_loss)]
-        let tick = i64::from(tick) as f64 + within.clamp(0.0, 1.0);
+        let tick = rows::float_from_i64(i64::from(tick)) + within.clamp(0.0, 1.0);
         row.x_of(frame.bars.position(tick))
     })
 }
@@ -990,7 +1021,10 @@ fn anchor_near(frame: &Frame<'_>, row: &Row, x: f32) -> Option<Tick> {
 }
 
 /// A row's presses, clicks and the start and run of drags on it.
-#[allow(clippy::too_many_lines)] // this handles the row's pointer gestures and context menu
+#[expect(
+    clippy::too_many_lines,
+    reason = "handles row pointer gestures and context menu"
+)]
 fn row_input(
     response: &egui::Response,
     row: &Row,
@@ -1000,7 +1034,9 @@ fn row_input(
 ) {
     let modifiers = response.ctx.input(|input| input.modifiers);
     let (shift, ctrl) = (modifiers.shift, modifiers.command || modifiers.ctrl);
-    let pointer = response.interact_pointer_pos().or(response.hover_pos());
+    let pointer = response
+        .interact_pointer_pos()
+        .or_else(|| response.hover_pos());
     let anchor = pointer.and_then(|pos| anchor_near(frame, row, pos.x));
     // Where the button went down, not where the drag was first noticed a few points on.
     if response.drag_started()
@@ -1075,6 +1111,7 @@ fn row_input(
                 window.add(frame, seconds, shift, commands);
             }
         }
+    } else {
     }
     if response.middle_clicked()
         && let Some(pos) = pointer
@@ -1123,8 +1160,7 @@ fn drag(window: &mut TimingWindow, frame: &Frame<'_>, row: &Row, pos: Pos2, shif
                 pointer
             };
             let tick = frame.bars.tick_at_position(bar).round();
-            #[allow(clippy::cast_possible_truncation)] // clamped to a document's ticks
-            let tick = Tick::new(tick.clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32);
+            let tick = Tick::new(rows::float_to_i32(tick));
             let snapped = if window.snap_grid && !shift {
                 window.grid.nearest(frame.timing, tick)
             } else {
@@ -1167,25 +1203,29 @@ fn clamp_beat(window: &mut TimingWindow, frame: &Frame<'_>, from: Tick, to: Tick
     let (Some(&first), Some(&last)) = (moving.first(), moving.last()) else {
         return to;
     };
-    let delta = i64::from(to) - i64::from(from);
+    let delta = i64::from(to).saturating_sub(i64::from(from));
     let before = frame.pins.iter().rev().find(|pin| pin.tick < first);
     let after = frame.pins.iter().find(|pin| pin.tick > last);
     let mut clamped = delta;
     if let Some(before) = before {
-        let lowest = i64::from(before.tick) + 1 - i64::from(first);
+        let lowest = i64::from(before.tick)
+            .saturating_add(1)
+            .saturating_sub(i64::from(first));
         if clamped < lowest {
             clamped = lowest;
             window.pulse = Some((before.tick, frame.now));
         }
     }
     if let Some(after) = after {
-        let highest = i64::from(after.tick) - 1 - i64::from(last);
+        let highest = i64::from(after.tick)
+            .saturating_sub(1)
+            .saturating_sub(i64::from(last));
         if clamped > highest {
             clamped = highest;
             window.pulse = Some((after.tick, frame.now));
         }
     }
-    Tick::new(i32::try_from(i64::from(from) + clamped).unwrap_or(i32::MAX))
+    Tick::new(i32::try_from(i64::from(from).saturating_add(clamped)).unwrap_or(i32::MAX))
 }
 
 /// `to` seconds, or the nearest moment the anchors moving with the one on `tick` can reach
@@ -1207,7 +1247,12 @@ fn clamp_audio(
     let (Some(&first), Some(&last)) = (moving.first(), moving.last()) else {
         return to;
     };
-    let seconds = |at: Tick| times.iter().find(|(tick, _)| *tick == at).map(|(_, s)| *s);
+    let seconds = |at: Tick| {
+        times
+            .iter()
+            .find(|(candidate, _)| *candidate == at)
+            .map(|(_, s)| *s)
+    };
     let (Some(first_at), Some(last_at)) = (seconds(first), seconds(last)) else {
         return to;
     };
@@ -1237,15 +1282,15 @@ fn release(
 ) {
     match std::mem::replace(&mut window.gesture, Gesture::Idle) {
         Gesture::DragBeat { from, to, .. } if from != to => {
-            let delta = i64::from(to) - i64::from(from);
+            let delta = i64::from(to).saturating_sub(i64::from(from));
             let moved: Vec<(Tick, Tick)> = moving(window, from)
                 .into_iter()
                 .filter_map(|tick| {
-                    let to = i32::try_from(i64::from(tick) + delta).ok()?;
-                    Some((tick, Tick::new(to)))
+                    let destination = i32::try_from(i64::from(tick).saturating_add(delta)).ok()?;
+                    Some((tick, Tick::new(destination)))
                 })
                 .collect();
-            window.selection = moved.iter().map(|(_, to)| *to).collect();
+            window.selection = moved.iter().map(|(_, destination)| *destination).collect();
             window.focus = Some(to);
             commands.push(Command::Edit(Edit::MoveAnchors(moved)));
         }
@@ -1348,10 +1393,15 @@ fn menu(
             window.add(frame, seconds, false, commands);
             ui.close();
         }
+    } else {
     }
 }
 
 /// The window's keys, while it has the keyboard.
+#[expect(
+    clippy::wildcard_enum_match_arm,
+    reason = "only pressed key events make keyboard shortcuts"
+)]
 fn keyboard(
     ctx: &egui::Context,
     window: &mut TimingWindow,
@@ -1422,7 +1472,7 @@ fn keyboard(
 }
 
 /// Does what `intent` asks.
-#[allow(clippy::too_many_lines)] // one arm for every key the window has
+#[expect(clippy::too_many_lines, reason = "one arm for every window key")]
 fn act(window: &mut TimingWindow, frame: &Frame<'_>, intent: Intent, commands: &mut Vec<Command>) {
     let index = |tick: Tick| frame.pins.iter().position(|pin| pin.tick == tick);
     match intent {
@@ -1439,6 +1489,7 @@ fn act(window: &mut TimingWindow, frame: &Frame<'_>, intent: Intent, commands: &
                 .and_then(|at| frame.pins.get(at))
             {
                 commands.push(Command::Audition(pin.seconds - lead(frame, pin.tick)));
+            } else {
             }
         }
         Intent::Escape => {
@@ -1460,7 +1511,7 @@ fn act(window: &mut TimingWindow, frame: &Frame<'_>, intent: Intent, commands: &
         Intent::Focus(later) => {
             let current = window.focus.and_then(index);
             let next = match (current, later) {
-                (Some(at), true) => at + 1,
+                (Some(at), true) => at.saturating_add(1),
                 (Some(at), false) => at.saturating_sub(1),
                 (None, _) => frame
                     .pins
@@ -1476,8 +1527,10 @@ fn act(window: &mut TimingWindow, frame: &Frame<'_>, intent: Intent, commands: &
             let count = frame.issues.len();
             if count > 0 {
                 let at = match (window.issue, later) {
-                    (Some(at), true) => (at + 1) % count,
-                    (Some(at), false) => (at + count - 1) % count,
+                    (Some(at), true) => at.saturating_add(1).rem_euclid(count),
+                    (Some(at), false) => {
+                        at.saturating_add(count).saturating_sub(1).rem_euclid(count)
+                    }
                     (None, _) => 0,
                 };
                 window.go_to_issue(frame, at);
@@ -1579,7 +1632,7 @@ fn tempo_at(frame: &Frame<'_>, tick: Tick) -> Option<Bpm> {
 
 /// Ctrl+wheel notches among `events`, later first, and whether Shift made them coarse.
 fn nudge_notches(events: &[egui::Event]) -> Option<(i32, bool)> {
-    let mut notches = 0;
+    let mut notches = 0_i32;
     let mut coarse = false;
     for event in events {
         if let egui::Event::MouseWheel {
@@ -1588,7 +1641,7 @@ fn nudge_notches(events: &[egui::Event]) -> Option<(i32, bool)> {
             && (modifiers.command || modifiers.ctrl)
             && delta.y != 0.0
         {
-            notches += if delta.y > 0.0 { 1 } else { -1 };
+            notches = notches.saturating_add(if delta.y > 0.0 { 1 } else { -1 });
             coarse |= modifiers.shift;
         }
     }
@@ -1635,7 +1688,7 @@ mod tests {
     }
 
     impl WindowTest {
-        fn ui(&mut self, ui: &mut egui::Ui) {
+        fn ui(&mut self, ui: &egui::Ui) {
             show(
                 ui.ctx(),
                 Inputs {
@@ -1687,8 +1740,7 @@ mod tests {
     pub(super) fn row_point(harness: &Harness<'_, WindowTest>, tick: i32) -> Pos2 {
         let rect = harness.get_by_label("Measure 0").rect();
         let fraction = f64::from(tick) / 3840.0;
-        #[allow(clippy::cast_possible_truncation)] // a fraction of one row
-        let across = ((fraction + rows::LEAD_IN) / (1.0 + rows::LEAD_IN)) as f32;
+        let across = rows::float_to_f32((fraction + rows::LEAD_IN) / (1.0 + rows::LEAD_IN));
         egui::pos2(rect.left() + across * rect.width(), rect.top() + 30.0)
     }
 
@@ -1715,8 +1767,7 @@ mod tests {
         harness.event(egui::Event::ModifiersChanged(modifiers));
         pointer(harness, from, true, modifiers);
         for step in 1..=4 {
-            #[allow(clippy::cast_precision_loss)] // four pointer steps
-            harness.hover_at(from.lerp(to, step as f32 / 4.0));
+            harness.hover_at(from.lerp(to, rows::float_to_f32(f64::from(step)) / 4.0));
         }
         pointer(harness, to, false, modifiers);
         harness.event(egui::Event::ModifiersChanged(Modifiers::NONE));
@@ -1928,13 +1979,19 @@ mod tests {
             strength: 1.0,
         }];
         plain.run();
-        let at = row_point(&plain, 2880);
-        click(&mut plain, at, Modifiers::SHIFT);
-        let [Command::Edit(Edit::Sync { seconds, .. }), ..] = plain.state().commands.as_slice()
+        let plain_point = row_point(&plain, 2880);
+        click(&mut plain, plain_point, Modifiers::SHIFT);
+        let [
+            Command::Edit(Edit::Sync {
+                seconds: plain_seconds,
+                ..
+            }),
+            ..,
+        ] = plain.state().commands.as_slice()
         else {
             panic!("expected sync: {:?}", plain.state().commands);
         };
-        assert!((seconds - 1.5).abs() < 1e-4);
+        assert!((plain_seconds - 1.5).abs() < 1e-4);
     }
 
     #[test]

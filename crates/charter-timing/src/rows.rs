@@ -34,7 +34,7 @@ impl BarsPerRow {
     pub const ALL: [Self; 4] = [Self::Half, Self::One, Self::Two, Self::Four];
 
     #[must_use]
-    pub fn bars(self) -> f64 {
+    pub const fn bars(self) -> f64 {
         match self {
             Self::Half => 0.5,
             Self::One => 1.0,
@@ -44,7 +44,7 @@ impl BarsPerRow {
     }
 
     #[must_use]
-    pub fn name(self) -> &'static str {
+    pub const fn name(self) -> &'static str {
         match self {
             Self::Half => "½ bar",
             Self::One => "1 bar",
@@ -68,7 +68,7 @@ impl SecondsPerRow {
     pub const ALL: [Self; 4] = [Self::One, Self::Two, Self::Four, Self::Eight];
 
     #[must_use]
-    pub fn seconds(self) -> f64 {
+    pub const fn seconds(self) -> f64 {
         match self {
             Self::One => 1.0,
             Self::Two => 2.0,
@@ -78,7 +78,7 @@ impl SecondsPerRow {
     }
 
     #[must_use]
-    pub fn name(self) -> &'static str {
+    pub const fn name(self) -> &'static str {
         match self {
             Self::One => "1 s",
             Self::Two => "2 s",
@@ -140,7 +140,7 @@ impl<'a> Bars<'a> {
     }
 
     #[must_use]
-    pub fn layout(&self) -> Layout {
+    pub const fn layout(&self) -> Layout {
         self.layout
     }
 
@@ -187,8 +187,7 @@ impl<'a> Bars<'a> {
         let Some(measure) = self.measures.get(at) else {
             return 0.0;
         };
-        #[allow(clippy::cast_precision_loss)] // bar numbers of a song
-        let number = measure.number as f64;
+        let number = float_from_i64(measure.number);
         number + (tick - start(measure)) / length(measure)
     }
 
@@ -198,14 +197,12 @@ impl<'a> Bars<'a> {
         let (Some(first), Some(last)) = (self.measures.first(), self.measures.last()) else {
             return 0.0;
         };
-        #[allow(clippy::cast_possible_truncation)] // a bar number of a song
-        let number = bar.floor() as i64;
-        let measure = usize::try_from(number - first.number)
+        let number = float_to_i64(bar.floor());
+        let measure = usize::try_from(number.saturating_sub(first.number))
             .ok()
             .and_then(|at| self.measures.get(at))
             .unwrap_or(if number < first.number { first } else { last });
-        #[allow(clippy::cast_precision_loss)]
-        let into = bar - measure.number as f64;
+        let into = bar - float_from_i64(measure.number);
         start(measure) + into * length(measure)
     }
 
@@ -217,24 +214,28 @@ impl<'a> Bars<'a> {
             return Vec::new();
         };
         let end = start(last) + length(last);
-        let (from, to, per) = match self.layout {
-            #[allow(clippy::cast_precision_loss)] // bar numbers of a song
-            Layout::Bars => (first.number as f64, last.number as f64 + 1.0, per.bars()),
+        let (from, to, step_per_row) = match self.layout {
+            Layout::Bars => (
+                float_from_i64(first.number),
+                float_from_i64(last.number) + 1.0,
+                per.bars(),
+            ),
             Layout::Time => {
-                let per = seconds.seconds();
-                let from = (seconds_at_tick(self.timing, start(first)) / per).floor() * per;
-                (from, seconds_at_tick(self.timing, end), per)
+                let duration = seconds.seconds();
+                let from =
+                    (seconds_at_tick(self.timing, start(first)) / duration).floor() * duration;
+                (from, seconds_at_tick(self.timing, end), duration)
             }
         };
         let mut rows = Vec::new();
         let mut at = from;
         while at < to - 1e-9 {
             rows.push(Span {
-                from: at - LEAD_IN * per,
+                from: at - LEAD_IN * step_per_row,
                 start: at,
-                to: at + per,
+                to: at + step_per_row,
             });
-            at += per;
+            at += step_per_row;
         }
         rows
     }
@@ -253,7 +254,7 @@ pub struct Span {
 #[must_use]
 pub fn tick_at_seconds(timing: Valid<'_, Timing>, seconds: f64) -> f64 {
     let tick = timing.latest_tick_by(seconds);
-    let after = Tick::new(i32::try_from(i64::from(tick) + 1).unwrap_or(i32::MAX));
+    let after = Tick::new(i32::try_from(i64::from(tick).saturating_add(1)).unwrap_or(i32::MAX));
     let (at, next) = (
         timing.time_at(tick).seconds(),
         timing.time_at(after).seconds(),
@@ -263,27 +264,89 @@ pub fn tick_at_seconds(timing: Valid<'_, Timing>, seconds: f64) -> f64 {
     } else {
         0.0
     };
-    #[allow(clippy::cast_precision_loss)] // ticks of a song
-    let whole = i64::from(tick) as f64;
+    let whole = float_from_i64(i64::from(tick));
     whole + within.clamp(0.0, 1.0)
 }
 
+/// Start tick of `measure` as a floating-point value.
 fn start(measure: &Measure) -> f64 {
-    #[allow(clippy::cast_precision_loss)] // ticks of a song
-    let at = i64::from(measure.start) as f64;
+    let at = float_from_i64(i64::from(measure.start));
     at
 }
 
+/// Length of `measure` in ticks as a floating-point value.
 fn length(measure: &Measure) -> f64 {
     f64::from(u32::from(measure.length))
+}
+
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_precision_loss,
+    reason = "song positions fit visual precision"
+)]
+/// Converts a tick count to floating-point visual coordinates.
+pub(crate) fn float_from_i64(value: i64) -> f64 {
+    value as f64
+}
+
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_precision_loss,
+    reason = "row counts fit visual precision"
+)]
+/// Converts a row count to single-precision drawing coordinates.
+pub(crate) fn float_from_usize(value: usize) -> f32 {
+    value as f32
+}
+
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_precision_loss,
+    reason = "collection counts fit visual precision"
+)]
+/// Converts a collection count to double precision for visual calculations.
+pub(crate) fn double_from_usize(value: usize) -> f64 {
+    value as f64
+}
+
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    reason = "rendering needs f32 coordinates"
+)]
+/// Converts a visual coordinate to the painter's single-precision coordinates.
+pub(crate) fn float_to_f32(value: f64) -> f32 {
+    value as f32
+}
+
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    reason = "input is clamped to chart ticks"
+)]
+/// Clamps a floating-point chart tick to the range of `i32` and truncates it.
+pub(crate) fn float_to_i32(value: f64) -> i32 {
+    value.clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32
+}
+
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    reason = "bar numbers outside i64 saturate"
+)]
+/// Truncates a floating-point bar number to an integer, saturating outside the `i64` range.
+pub(crate) fn float_to_i64(value: f64) -> i64 {
+    value as i64
 }
 
 /// A row on screen: the positions it spans, and where.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Row {
+    /// Position where the lead-in to this row begins, in bars or seconds.
     pub from: f64,
     /// Where the row's own part starts, after the lead-in from before it.
     pub start: f64,
+    /// Position where the row ends, in bars or seconds.
     pub to: f64,
     /// Where the audio is drawn, the residual strip under it.
     pub rect: Rect,
@@ -293,8 +356,7 @@ impl Row {
     /// Where the position `position` lies across the row.
     #[must_use]
     pub fn x_of(&self, position: f64) -> f32 {
-        #[allow(clippy::cast_possible_truncation)] // a fraction of a row
-        let across = ((position - self.from) / (self.to - self.from)) as f32;
+        let across = float_to_f32((position - self.from) / (self.to - self.from));
         self.rect.left() + across * self.rect.width()
     }
 
@@ -307,8 +369,7 @@ impl Row {
 
     #[must_use]
     pub fn x(&self, bars: &Bars, tick: Tick) -> f32 {
-        #[allow(clippy::cast_precision_loss)]
-        let at = i64::from(tick) as f64;
+        let at = float_from_i64(i64::from(tick));
         self.x_of(bars.position(at))
     }
 
@@ -316,8 +377,7 @@ impl Row {
     #[must_use]
     pub fn tick_at(&self, bars: &Bars, x: f32) -> Tick {
         let tick = bars.tick_at_position(self.position_at(x)).round();
-        #[allow(clippy::cast_possible_truncation)] // clamped to the ticks a document holds
-        let tick = tick.clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32;
+        let tick = float_to_i32(tick);
         Tick::new(tick)
     }
 
@@ -333,8 +393,7 @@ impl Row {
     /// Whether `tick` shows in this row.
     #[must_use]
     pub fn holds(&self, bars: &Bars, tick: Tick) -> bool {
-        #[allow(clippy::cast_precision_loss)]
-        let position = bars.position(i64::from(tick) as f64);
+        let position = bars.position(float_from_i64(i64::from(tick)));
         position >= self.from && position < self.to
     }
 
@@ -352,11 +411,10 @@ impl Row {
 #[must_use]
 pub fn seconds_at_tick(timing: Valid<'_, Timing>, tick: f64) -> f64 {
     let below = tick.floor();
-    #[allow(clippy::cast_possible_truncation)] // clamped to the ticks a document holds
-    let whole = below.clamp(f64::from(i32::MIN), f64::from(i32::MAX - 1)) as i32;
+    let whole = float_to_i32(below.clamp(f64::from(i32::MIN), f64::from(i32::MAX - 1)));
     let (at, next) = (
         timing.time_at(Tick::new(whole)).seconds(),
-        timing.time_at(Tick::new(whole + 1)).seconds(),
+        timing.time_at(Tick::new(whole.saturating_add(1))).seconds(),
     );
     at + (next - at) * (tick - below)
 }
@@ -437,6 +495,10 @@ pub fn draw(painter: &egui::Painter, row: &Row, scene: &Scene<'_>) {
 
 /// The row's header: `title`, its bar number or its time, the metre, and a badge when its bar
 /// misses its onsets.
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "egui screen-coordinate vector addition cannot overflow integers"
+)]
 pub fn header(
     painter: &egui::Painter,
     row: &Row,
@@ -516,11 +578,11 @@ fn grid(painter: &egui::Painter, row: &Row, audio: Rect, scene: &Scene<'_>) {
         if to < row.from || from > row.to {
             continue;
         }
-        let mut beat = 0;
+        let mut beat = 0_u32;
         for (tick, line) in scene.grid.lines(measure, resolution) {
             // Beats count from the bar's downbeat, whether or not this row shows it.
             if matches!(line, Line::Downbeat | Line::Beat) {
-                beat += 1;
+                beat = beat.saturating_add(1);
             }
             if !row.holds(scene.bars, tick) {
                 continue;
@@ -606,8 +668,7 @@ fn strip(painter: &egui::Painter, row: &Row, scene: &Scene<'_>) {
             continue;
         }
         let x = x_at_seconds(row, scene, residual.seconds);
-        #[allow(clippy::cast_possible_truncation)] // a share from 0 to 1
-        let size = (residual.ms.abs() / SATURATION_MS).min(1.0) as f32;
+        let size = float_to_f32((residual.ms.abs() / SATURATION_MS).min(1.0));
         let colour = if residual.ms < 0.0 {
             style::RESIDUAL_EARLY
         } else {
@@ -641,6 +702,10 @@ fn dim(painter: &egui::Painter, row: &Row, audio: Rect, from: f64, to: f64) {
 
 /// An anchor: a line the height of the audio with a flag at its head naming the tempo from it
 /// on. Focused, it draws brighter and thicker; selected, its flag is filled.
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "egui screen-coordinate vector addition cannot overflow integers"
+)]
 fn draw_anchor(painter: &egui::Painter, row: &Row, audio: Rect, bars: &Bars, anchor: &Anchor) {
     let x = row.x(bars, anchor.tick);
     let colour = if anchor.focused {
@@ -841,9 +906,9 @@ mod tests {
                 { "tick": 0, "kind": { "bpm": 120.0 } },
                 { "tick": 0, "kind": { "time_signature": [numerator, 8] } }
             ]));
-            let bar_ticks = i32::from(numerator) * 480;
-            let from = Tick::new(start_bar * bar_ticks);
-            let to = Tick::new((start_bar + count) * bar_ticks - 1);
+            let bar_ticks = i32::from(numerator).saturating_mul(480);
+            let from = Tick::new(start_bar.saturating_mul(bar_ticks));
+            let to = Tick::new(start_bar.saturating_add(count).saturating_mul(bar_ticks).saturating_sub(1));
             let spans = Bars::new(document.timing(), from, to, 0)
                 .laid_out(layout).rows(bars_per, seconds_per);
             prop_assert!(!spans.is_empty());
@@ -852,7 +917,7 @@ mod tests {
                 prop_assert!((span.start - span.from - (span.to - span.start) * LEAD_IN).abs() < 1e-9);
             }
             for pair in spans.windows(2) {
-                prop_assert!((pair[0].to - pair[1].start).abs() < 1e-9);
+                prop_assert!(pair.first().zip(pair.get(1)).is_some_and(|(first, second)| (first.to - second.start).abs() < 1e-9));
             }
         }
     }

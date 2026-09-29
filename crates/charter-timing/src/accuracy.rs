@@ -98,10 +98,12 @@ fn within(onsets: &[Onset], sensitivity: f32, seconds: f64) -> impl Iterator<Ite
 pub fn median_abs(values: impl IntoIterator<Item = f64>) -> Option<f64> {
     let mut sizes: Vec<f64> = values.into_iter().map(f64::abs).collect();
     sizes.sort_by(f64::total_cmp);
-    let middle = sizes.len() / 2;
+    let middle = sizes.len().div_euclid(2);
     match sizes.len() {
         0 => None,
-        count if count % 2 == 0 => Some((sizes.get(middle - 1)? + sizes.get(middle)?) / 2.0),
+        count if count.is_multiple_of(2) => {
+            Some((sizes.get(middle.saturating_sub(1))? + sizes.get(middle)?) / 2.0)
+        }
         _ => sizes.get(middle).copied(),
     }
 }
@@ -137,8 +139,9 @@ pub fn metrics(
     matched.sort_unstable();
     matched.dedup();
     let lines = to.map_or(0, |to| lines_between(timing, grid, from, to));
-    #[allow(clippy::cast_precision_loss)] // lines of a song
-    let coverage = (lines > 0).then(|| matched.len() as f64 / lines as f64);
+    let coverage = (lines > 0).then(|| {
+        crate::rows::double_from_usize(matched.len()) / crate::rows::double_from_usize(lines)
+    });
     Metrics {
         error_ms,
         coverage: coverage.map(|share| share.min(1.0)),
@@ -161,9 +164,10 @@ fn lines_between(timing: Valid<'_, Timing>, grid: Grid, from: Tick, to: Tick) ->
         .sum()
 }
 
+/// Root mean square of `values`, or `None` for an empty iterator.
 fn rms(values: impl Iterator<Item = f64>) -> Option<f64> {
     let (count, sum) = values.fold((0u32, 0.0), |(count, sum), value| {
-        (count + 1, sum + value * value)
+        (count.saturating_add(1), sum + value * value)
     });
     (count > 0).then(|| (sum / f64::from(count)).sqrt())
 }
@@ -185,7 +189,10 @@ pub struct Fitted {
 /// anchor on. None when there is nothing in the range to fit to, or the fit would put anchors
 /// out of order.
 #[must_use]
-#[allow(clippy::indexing_slicing)] // the indices run over the vectors' own lengths
+#[expect(
+    clippy::indexing_slicing,
+    reason = "indices run over the vectors' own lengths"
+)]
 pub fn fit(
     timing: Valid<'_, Timing>,
     (pins, tail): (&[Pin], Bpm),
@@ -210,7 +217,8 @@ pub fn fit(
             .filter(|residual| residual.line > pin.tick)
             .map(|residual| i64::from(residual.line))
             .fold(
-                i64::from(pin.tick) + 4 * i64::from(u16::from(ticks_per_beat)),
+                i64::from(pin.tick)
+                    .saturating_add(4_i64.saturating_mul(i64::from(u16::from(ticks_per_beat)))),
                 i64::max,
             )
             .min(i64::from(i32::MAX));
@@ -220,15 +228,15 @@ pub fn fit(
     }
     // Every point by index: the anchors, then one past the last when fitting the tail.
     let free: Vec<usize> = (first..=last)
-        .chain(with_tail.then_some(points.len() - 1))
+        .chain(with_tail.then(|| points.len().saturating_sub(1)))
         .collect();
     let variable = |point: usize| free.iter().position(|free| *free == point);
     // The observations: each residual in a segment one of whose ends moves.
     let touched = first.saturating_sub(1)..=last;
     let mut rows: Vec<(Vec<(usize, f64)>, f64)> = Vec::new();
     for residual in residuals {
-        let Some(segment) = (0..points.len() - 1).find(|&at| {
-            let end = points[at + 1].0;
+        let Some(segment) = (0..points.len().saturating_sub(1)).find(|&at| {
+            let end = points[at.saturating_add(1)].0;
             points[at].0 <= residual.line
                 && (residual.line < end || (with_tail && at == last_pin && residual.line == end))
         }) else {
@@ -237,13 +245,13 @@ pub fn fit(
         if !touched.contains(&segment) {
             continue;
         }
-        let (start, end) = (points[segment], points[segment + 1]);
+        let (start, end) = (points[segment], points[segment.saturating_add(1)]);
         let whole = TimedSpan::between(timing, start.0, end.0)?;
         let part = TimedSpan::between(timing, start.0, residual.line)?;
         let share = part.fraction_of(whole)?;
         let mut terms = Vec::new();
         let mut known = residual.seconds - part.paused_seconds() + share * whole.paused_seconds();
-        for (point, weight) in [(segment, 1.0 - share), (segment + 1, share)] {
+        for (point, weight) in [(segment, 1.0 - share), (segment.saturating_add(1), share)] {
             match variable(point) {
                 Some(at) => terms.push((at, weight)),
                 None => known -= weight * points[point].1,
@@ -297,7 +305,10 @@ pub fn fit(
 }
 
 /// The root mean square of how far `rows` miss with the free moments at `values`, in seconds.
-#[allow(clippy::indexing_slicing)] // the indices run over the vectors' own lengths
+#[expect(
+    clippy::indexing_slicing,
+    reason = "indices run over the vectors' own lengths"
+)]
 fn rows_error(rows: &[(Vec<(usize, f64)>, f64)], values: &[f64]) -> f64 {
     rms(rows.iter().map(|(terms, known)| {
         let predicted: f64 = terms.iter().map(|(at, weight)| weight * values[*at]).sum();
@@ -308,11 +319,14 @@ fn rows_error(rows: &[(Vec<(usize, f64)>, f64)], values: &[f64]) -> f64 {
 
 /// The moments that make `rows` miss by as little as can be, pulled a little toward `current`
 /// so a moment no onset constrains stays where it is.
-#[allow(clippy::indexing_slicing)] // the indices run over the vectors' own lengths
+#[expect(
+    clippy::indexing_slicing,
+    reason = "indices run over the vectors' own lengths"
+)]
 fn least_squares(rows: &[(Vec<(usize, f64)>, f64)], current: &[f64]) -> Option<Vec<f64>> {
     const PULL: f64 = 1e-3;
     let size = current.len();
-    let mut matrix = vec![vec![0.0; size + 1]; size];
+    let mut matrix = vec![vec![0.0; size.saturating_add(1)]; size];
     for (terms, known) in rows {
         for &(row, a) in terms {
             for &(column, b) in terms {
@@ -356,7 +370,10 @@ fn least_squares(rows: &[(Vec<(usize, f64)>, f64)], current: &[f64]) -> Option<V
 
 /// `solved` with the tempo of each segment between two free points rounded to the nearest half
 /// BPM, the moments after the first following from the rounded tempos.
-#[allow(clippy::indexing_slicing)] // the indices run over the vectors' own lengths
+#[expect(
+    clippy::indexing_slicing,
+    reason = "indices run over the vectors' own lengths"
+)]
 fn to_half_bpm(
     timing: Valid<'_, Timing>,
     points: &[(Tick, f64)],
@@ -365,16 +382,18 @@ fn to_half_bpm(
 ) -> Option<Vec<f64>> {
     let mut seconds = solved.to_vec();
     for at in 1..free.len() {
-        let (before, point) = (free[at - 1], free[at]);
-        if point != before + 1 {
+        let (before, point) = (free[at.saturating_sub(1)], free[at]);
+        if point != before.saturating_add(1) {
             continue;
         }
         let span = TimedSpan::between(timing, points[before].0, points[point].0)?;
         let beats = span.timed_beats(timing.ticks_per_beat());
-        let tempo = 60.0 * beats / (seconds[at] - seconds[at - 1] - span.paused_seconds());
+        let tempo =
+            60.0 * beats / (seconds[at] - seconds[at.saturating_sub(1)] - span.paused_seconds());
         let rounded = (tempo * 2.0).round() / 2.0;
         if rounded > 0.0 {
-            seconds[at] = seconds[at - 1] + span.paused_seconds() + 60.0 * beats / rounded;
+            seconds[at] =
+                seconds[at.saturating_sub(1)] + span.paused_seconds() + 60.0 * beats / rounded;
         }
     }
     Some(seconds)
@@ -402,7 +421,7 @@ pub enum Issue {
 impl Issue {
     /// Where in the song the issue is.
     #[must_use]
-    pub fn tick(&self) -> Tick {
+    pub const fn tick(&self) -> Tick {
         match *self {
             Self::Bar { tick, .. }
             | Self::Short { tick }
@@ -471,7 +490,7 @@ pub fn issues(
     let beat = i64::from(u16::from(timing.ticks_per_beat()));
     for pair in pins.windows(2) {
         if let [from, to] = pair
-            && i64::from(to.tick) - i64::from(from.tick) < beat
+            && i64::from(to.tick).saturating_sub(i64::from(from.tick)) < beat
         {
             found.push(Issue::Short { tick: from.tick });
         }
@@ -586,7 +605,7 @@ mod tests {
     fn steady(bpm: f64, from: f64, beats: u32) -> Vec<Onset> {
         (0..beats)
             .map(|beat| {
-                let jitter = f64::from((beat * 7919) % 21) / 10.0 - 1.0;
+                let jitter = f64::from(beat.saturating_mul(7919).rem_euclid(21)) / 10.0 - 1.0;
                 onset(from + f64::from(beat) * 60.0 / bpm + jitter / 1000.0)
             })
             .collect()
@@ -852,12 +871,12 @@ mod tests {
             line: Tick::new(960),
             ms: 0.0,
         }];
-        for (pins, range) in [
+        for (candidate_pins, range) in [
             (&[][..], 0..=0),
             (pins.as_slice(), 1..=1),
             (pins.as_slice(), 1..=pins.len() - 1),
         ] {
-            assert!(fit(timing, (pins, tail), range, &found, false).is_none());
+            assert!(fit(timing, (candidate_pins, tail), range, &found, false).is_none());
         }
     }
 
@@ -968,7 +987,7 @@ mod tests {
             let delta = f64::from(offset_ms) / 1000.0;
             let found = residuals(timing, Grid::default(), &[onset(at - delta), onset(at + delta)], 0.0);
             prop_assert_eq!(found.len(), 2);
-            prop_assert_eq!(found[0].line, Tick::new(beat * 960));
+            prop_assert_eq!(found[0].line, Tick::new(beat.saturating_mul(960)));
             prop_assert_eq!(found[1].line, found[0].line);
             prop_assert!((found[0].ms + found[1].ms).abs() < 1e-6);
         }

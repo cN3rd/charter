@@ -48,13 +48,16 @@ fn start_bpm(
     match typed
         .parse::<f64>()
         .ok()
-        .and_then(|bpm| Bpm::try_from(bpm).ok())
+        .and_then(|parsed| Bpm::try_from(parsed).ok())
     {
-        Some(bpm) if frame.pins.len() > 1 => commands.push(Command::Edit(Edit::SetBpmAt {
+        Some(tempo) if frame.pins.len() > 1 => commands.push(Command::Edit(Edit::SetBpmAt {
             tick: first.tick,
-            bpm,
+            bpm: tempo,
         })),
-        Some(bpm) => commands.push(Command::Edit(Edit::TailBpm { bpm, merge: false })),
+        Some(tempo) => commands.push(Command::Edit(Edit::TailBpm {
+            bpm: tempo,
+            merge: false,
+        })),
         None => window.status = Some(format!("{typed} is not a tempo")),
     }
 }
@@ -89,7 +92,7 @@ pub(crate) fn toolbar(
             .on_hover_text("Rows of bars: the grid stays, the audio moves as you edit (V)");
         ui.selectable_value(&mut window.layout, Layout::Time, "Time")
             .on_hover_text("Rows of seconds: the audio stays, the grid moves as you edit (V)");
-        let caption = ui.weak("Rows");
+        let rows_caption = ui.weak("Rows");
         let rows = egui::ComboBox::from_id_salt("timing rows");
         let rows = match window.layout {
             Layout::Bars => rows
@@ -107,7 +110,7 @@ pub(crate) fn toolbar(
                     }
                 }),
         };
-        rows.response.labelled_by(caption.id);
+        rows.response.labelled_by(rows_caption.id);
         ui.separator();
         ui.weak("Snap");
         style::check(ui, &mut window.snap_grid, "Grid");
@@ -155,7 +158,7 @@ pub(crate) fn status(
             let issues = match count {
                 0 => "No issues".to_owned(),
                 1 => "1 issue ⚠".to_owned(),
-                count => format!("{count} issues ⚠"),
+                many => format!("{many} issues ⚠"),
             };
             if count > 0 {
                 ui.colored_label(style::WARN, issues);
@@ -225,7 +228,11 @@ pub(crate) fn inspector(
     });
 }
 
-#[allow(clippy::too_many_lines)] // one field after another, each typed into in place
+#[expect(
+    clippy::too_many_lines,
+    reason = "one field after another, typed in place"
+)]
+/// Draws the inspector for the anchor at `index`, with editable timing fields.
 fn anchor(
     ui: &mut Ui,
     window: &mut TimingWindow,
@@ -236,10 +243,10 @@ fn anchor(
     let Some(&pin) = frame.pins.get(index) else {
         return;
     };
-    let next = frame.pins.get(index + 1).copied();
+    let next = frame.pins.get(index.saturating_add(1)).copied();
     let editable = frame.editable;
     ui.label(
-        RichText::new(format!("ANCHOR {}", index + 1))
+        RichText::new(format!("ANCHOR {}", index.saturating_add(1)))
             .small()
             .strong(),
     );
@@ -274,49 +281,58 @@ fn anchor(
         }
         ui.weak("s");
         ui.end_row();
-        let caption = ui.weak("b");
-        #[allow(clippy::cast_precision_loss)]
-        let bar = frame.bars.bar_of(i64::from(pin.tick) as f64);
-        let text = format!("{bar:.3}");
+        let bar_caption = ui.weak("b");
+        let bar = frame
+            .bars
+            .bar_of(crate::rows::float_from_i64(i64::from(pin.tick)));
+        let bar_text = format!("{bar:.3}");
         if editable {
-            if let Some(typed) = field(ui, caption.id, &text, &mut window.drafts.bar, false) {
+            if let Some(typed) = field(ui, bar_caption.id, &bar_text, &mut window.drafts.bar, false)
+            {
                 match typed.parse::<f64>() {
-                    Ok(bar) if bar.is_finite() => {
-                        let tick = frame.bars.tick_at(bar).round();
-                        #[allow(clippy::cast_possible_truncation)] // clamped to a document's ticks
-                        let to =
-                            Tick::new(tick.clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32);
+                    Ok(bar_position) if bar_position.is_finite() => {
+                        let tick = frame.bars.tick_at(bar_position).round();
+                        let to = Tick::new(crate::rows::float_to_i32(tick));
                         commands.push(Command::Edit(Edit::MoveAnchors(vec![(pin.tick, to)])));
                     }
                     _ => window.status = Some(format!("{typed} is not a bar position")),
                 }
             }
         } else {
-            ui.label(text);
+            ui.label(bar_text);
         }
         ui.weak(frame.timing.grid_position(pin.tick).to_string());
         ui.end_row();
-        let caption = ui.weak("BPM");
-        let text = trimmed(f64::from(bpm), 3);
+        let tempo_caption = ui.weak("BPM");
+        let tempo_text = trimmed(f64::from(bpm), 3);
         if editable {
-            if let Some(typed) = field(ui, caption.id, &text, &mut window.drafts.bpm, false) {
+            if let Some(typed) = field(
+                ui,
+                tempo_caption.id,
+                &tempo_text,
+                &mut window.drafts.bpm,
+                false,
+            ) {
                 match typed
                     .parse::<f64>()
                     .ok()
-                    .and_then(|bpm| Bpm::try_from(bpm).ok())
+                    .and_then(|parsed| Bpm::try_from(parsed).ok())
                 {
-                    Some(bpm) => commands.push(Command::Edit(match next {
+                    Some(tempo) => commands.push(Command::Edit(match next {
                         Some(_) => Edit::SetBpmAt {
                             tick: pin.tick,
-                            bpm,
+                            bpm: tempo,
                         },
-                        None => Edit::TailBpm { bpm, merge: false },
+                        None => Edit::TailBpm {
+                            bpm: tempo,
+                            merge: false,
+                        },
                     })),
                     None => window.status = Some(format!("{typed} is not a tempo")),
                 }
             }
         } else {
-            ui.label(text);
+            ui.label(tempo_text);
         }
         ui.weak(if next.is_some() {
             "to the next"
@@ -339,8 +355,14 @@ fn anchor(
     });
     ui.add_space(6.0);
     let segment = next.map_or_else(
-        || format!("SEGMENT {} → tail", index + 1),
-        |_| format!("SEGMENT {} → {}", index + 1, index + 2),
+        || format!("SEGMENT {} → tail", index.saturating_add(1)),
+        |_| {
+            format!(
+                "SEGMENT {} → {}",
+                index.saturating_add(1),
+                index.saturating_add(2)
+            )
+        },
     );
     ui.label(RichText::new(segment).small().strong());
     let metrics = accuracy::metrics(
@@ -386,8 +408,7 @@ fn selection(ui: &mut Ui, window: &TimingWindow, frame: &Frame<'_>) {
         tempos.iter().copied().reduce(f64::min),
         tempos.iter().copied().reduce(f64::max),
     ) {
-        #[allow(clippy::cast_precision_loss)]
-        let mean = tempos.iter().sum::<f64>() / tempos.len() as f64;
+        let mean = tempos.iter().sum::<f64>() / crate::rows::double_from_usize(tempos.len());
         ui.label(format!("BPM {low:.2} · {mean:.2} · {high:.2}"));
     }
     let metrics = accuracy::metrics(
@@ -491,7 +512,7 @@ fn trimmed(value: f64, places: usize) -> String {
 }
 
 /// Something the issue list names, for the window to go to.
-pub(crate) fn issue_tick(issue: &Issue) -> Tick {
+pub(crate) const fn issue_tick(issue: &Issue) -> Tick {
     issue.tick()
 }
 
@@ -828,7 +849,7 @@ mod tests {
         let frame = crate::frame(&song, &[], (&cache, crate::rows::Layout::Bars), 0.0);
         let ctx = egui::Context::default();
         let mut commands = Vec::new();
-        let show = |events, window: &mut TimingWindow, commands: &mut Vec<Command>| {
+        let show = |events, draft_window: &mut TimingWindow, emitted: &mut Vec<Command>| {
             let input = egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
                     egui::Pos2::ZERO,
@@ -839,7 +860,7 @@ mod tests {
             };
             let mut output = ctx.run_ui(input, |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    anchor(ui, window, &frame, 0, commands);
+                    anchor(ui, draft_window, &frame, 0, emitted);
                 });
             });
             output.textures_delta.clear();
