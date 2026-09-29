@@ -148,6 +148,7 @@ Chart {
     lanes:    Option<LaneCount>,
     settings: Map<String, Value>,   // opaque, owned by the ruleset
     timing:   Option<Timing>,       // replaces the song's when present
+    layers:   Vec<Layer>,           // optional, chart-local
     objects:  Vec<Object>,
     ext:      Extensions,
 }
@@ -454,6 +455,27 @@ importer merges them into the song's list.
 
 ---
 
+## Layers
+
+A chart may list `layers` after its timing, ordered top to bottom. Each has a unique `name` (1–64
+characters, without surrounding whitespace or control characters) and a `colour`: `red`,
+`orange`, `yellow`, `green`, `teal`, `blue`, `purple` or `pink`. `view` is `shown` (the default),
+`ghosted` or `hidden`; `locked` defaults to false. Shown, unlocked layers are editable; ghosted
+layers are reference notes, and hidden layers are not drawn. Default `view` and `locked` are
+omitted when writing.
+
+An object may name its layer with `layer`. A note without `layer` is on the first layer.
+Without a `layers` list the editor shows one implicit *Notes* layer, and files written before layers
+still write neither field. A named layer not listed in the chart is an `UnknownLayer` violation at
+that object; a repeated layer name is a `DuplicateLayer` violation at the second layer.
+Children belong to their parent's layer and do not name their own.
+
+Layers change only the editor's view and editing permissions: the format and ruleset validate all
+notes together, regardless of layer, and exporters merge the layers into the game's one chart.
+See [the layers design](layers.md) for the editor behaviour.
+
+---
+
 ## Objects
 
 One type covers taps, holds, slides and arcs.
@@ -464,6 +486,7 @@ Object {
     position: Position,
     kind:     Kind,
     shape:    Shape,
+    layer:    Option<LayerName>,   // first layer when absent
     sample:   Option<SampleId>,   // keysound, from the bank
     children: Vec<Child>,
     ext:      Extensions,

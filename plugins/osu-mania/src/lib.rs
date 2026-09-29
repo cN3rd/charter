@@ -455,6 +455,8 @@ impl Chart {
             lanes: Some(self.keys.lanes()),
             settings,
             timing: self.timing.as_ref().map(Timing::to_core).transpose()?,
+            // osu!mania has no layers; writing its game model exports the merged chart.
+            layers: Vec::new(),
             objects: self.notes.iter().map(Note::to_object).collect(),
             ext: Extensions::new(),
         })
@@ -476,6 +478,8 @@ impl Note {
             },
             kind,
             shape,
+            // Layer identity cannot be recovered from an osu!mania hit object.
+            layer: None,
             sample: self.keysound.clone(),
             children: Vec::new(),
             ext: Extensions::new(),

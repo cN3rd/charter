@@ -24,6 +24,15 @@ pub(crate) fn validate(doc: &Document) -> Result<(), Violation> {
                 rule: Rule::DuplicateChartName(chart.name.clone()),
             });
         }
+        let mut layers = HashSet::with_capacity(chart.layers.len());
+        for (index, layer) in chart.layers.iter().enumerate() {
+            if !layers.insert(&layer.name) {
+                return Err(Violation {
+                    at: Location::Layer { chart: c, index },
+                    rule: Rule::DuplicateLayer(layer.name.clone()),
+                });
+            }
+        }
         check_objects(doc, c, chart)?;
         if let Some(timing) = &chart.timing {
             check_timing(timing, tpb).map_err(|rule| Violation {
@@ -82,6 +91,11 @@ fn check_objects(doc: &Document, c: usize, chart: &Chart) -> Result<(), Violatio
 
 /// Checks one object and its children against the rules that concern them alone.
 fn check_object(doc: &Document, chart: &Chart, object: &Object) -> Result<(), Rule> {
+    if let Some(name) = &object.layer
+        && !chart.layers.iter().any(|layer| &layer.name == name)
+    {
+        return Err(Rule::UnknownLayer(name.clone()));
+    }
     let samples =
         std::iter::once(&object.sample).chain(object.children.iter().map(|child| &child.sample));
     for sample in samples.flatten() {
@@ -406,6 +420,30 @@ mod tests {
 
     fn broken_rule(value: &Value) -> Rule {
         check(value).unwrap_err().rule
+    }
+
+    #[test]
+    fn duplicate_layers_and_unknown_object_layers_report_their_paths() {
+        let mut value = chart_of(json!([lane(0, 0)]));
+        value["charts"][0]["layers"] = json!([
+            {"name":"Kick","colour":"red"}, {"name":"Kick","colour":"blue"}
+        ]);
+        let error = check(&value).unwrap_err();
+        assert_eq!(error.at.to_string(), "charts[0].layers[1]");
+        assert_eq!(
+            error.rule,
+            Rule::DuplicateLayer(crate::LayerName::new("Kick").unwrap())
+        );
+        value["charts"][0]["layers"] = json!([{"name":"Kick","colour":"red"}]);
+        value["charts"][0]["objects"][0]["layer"] = json!("Missing");
+        let unknown = check(&value).unwrap_err();
+        assert_eq!(unknown.at.to_string(), "charts[0].objects[0]");
+        assert_eq!(
+            unknown.rule,
+            Rule::UnknownLayer(crate::LayerName::new("Missing").unwrap())
+        );
+        value["charts"][0].as_object_mut().unwrap().remove("layers");
+        assert!(matches!(broken_rule(&value), Rule::UnknownLayer(_)));
     }
 
     #[test]

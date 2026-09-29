@@ -344,7 +344,13 @@ impl TimingWindow {
             | Refusal::NotWhole
             | Refusal::FirstTempo
             | Refusal::Occupied
-            | Refusal::OffTheChart) => {
+            | Refusal::OffTheChart
+            | Refusal::LayerHidden(_)
+            | Refusal::LayerGhosted(_)
+            | Refusal::LayerLocked(_)
+            | Refusal::OnLayer(_)
+            | Refusal::LayerName(_)
+            | Refusal::LastLayer) => {
                 let first = other.to_string();
                 let mut letters = first.chars();
                 if let Some(letter) = letters.next() {

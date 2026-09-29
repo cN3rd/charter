@@ -513,6 +513,8 @@ impl Chart {
             lanes: Some(self.style.lanes()),
             settings,
             timing: self.timing.as_ref().map(Timing::to_core).transpose()?,
+            // StepMania has no layers; writing its game model deliberately exports the merged chart.
+            layers: Vec::new(),
             objects: self
                 .notes
                 .iter()
@@ -543,6 +545,8 @@ impl Note {
             },
             kind,
             shape,
+            // A StepMania note has no layer identity in its game model.
+            layer: None,
             sample: self.keysound.clone(),
             children: Vec::new(),
             ext: Extensions::new(),

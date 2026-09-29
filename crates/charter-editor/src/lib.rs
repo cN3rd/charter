@@ -8,5 +8,8 @@ mod points;
 mod song;
 mod sync;
 
-pub use song::{KeepNotes, NoteAt, Refusal, SNAPS, Selecting, Song, Step, TimedSpan, Toggled};
+pub use song::{
+    KeepNotes, LayerNotes, LayerRow, NoteAt, Refusal, SNAPS, Selecting, Song, Step, TimedSpan,
+    Toggled,
+};
 pub use sync::Pin;

@@ -1,7 +1,7 @@
 use std::fmt::{self, Display};
 
 use crate::document::{FORMAT_VERSION, SampleId};
-use crate::ident::Namespace;
+use crate::ident::{LayerName, Namespace};
 use crate::json::MAX_DOCUMENT_BYTES;
 use crate::unit::{LaneCount, Tick, TimeSignature};
 
@@ -52,6 +52,13 @@ pub enum Location {
     },
     /// Chart by index.
     Chart(usize),
+    /// Layer by chart and row indices.
+    Layer {
+        /// Containing chart.
+        chart: usize,
+        /// Layer row.
+        index: usize,
+    },
     /// Ruleset settings of a chart by index.
     ChartSettings(usize),
     /// Plugin data of a chart by index.
@@ -89,6 +96,7 @@ impl fmt::Display for Location {
             Self::Timing(Stream::Chart(c)) => write!(f, "charts[{c}].timing"),
             Self::Event { stream, index } => write!(f, "{}.events[{index}]", Self::Timing(stream)),
             Self::Chart(c) => write!(f, "charts[{c}]"),
+            Self::Layer { chart, index } => write!(f, "charts[{chart}].layers[{index}]"),
             Self::ChartSettings(c) => write!(f, "charts[{c}].settings"),
             Self::ChartExt(c) => write!(f, "charts[{c}].ext"),
             Self::Objects(c) => write!(f, "charts[{c}].objects"),
@@ -161,6 +169,12 @@ pub enum Rule {
     /// Chart names must be unique within the file.
     #[error("chart name {0:?} is used twice")]
     DuplicateChartName(String),
+    /// Layer names must be unique in a chart.
+    #[error("layer \"{0}\" is used twice")]
+    DuplicateLayer(LayerName),
+    /// Every explicitly named object layer must exist in the chart.
+    #[error("layer \"{0}\" is not in the chart")]
+    UnknownLayer(LayerName),
     /// A note refers to a sample missing from the file's bank.
     #[error("sample \"{0}\" is not in the bank")]
     UnknownSample(SampleId),

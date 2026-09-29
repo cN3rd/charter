@@ -583,6 +583,8 @@ impl Chart {
                 settings
             },
             timing: self.tempo.as_ref().map(Tempo::to_timing),
+            // TTR has no layers; writing its game model exports the merged chart.
+            layers: Vec::new(),
             objects: self
                 .notes
                 .iter()
@@ -608,6 +610,8 @@ impl Note {
             position: lanes.position(self.kind),
             kind,
             shape,
+            // Layer identity cannot be recovered from a TTR note.
+            layer: None,
             sample: None,
             children: Vec::new(),
             ext: Extensions::new(),
@@ -736,6 +740,7 @@ impl RulesetPlugin for Plugin {
         // What else the note carries, such as another plugin's data, stays with it.
         let changed = note.to_object(lanes).ok()?;
         Some(Object {
+            layer: object.layer.clone(),
             sample: object.sample.clone(),
             ext: object.ext.clone(),
             ..changed
@@ -1704,6 +1709,7 @@ mod tests {
                 .is_none()
         );
         let mut carrying = tap(1);
+        carrying.layer = Some(charter_core::LayerName::new("Kick").unwrap());
         carrying
             .ext
             .insert("swing.accent".parse().unwrap(), serde_json::json!(true));
@@ -1711,6 +1717,7 @@ mod tests {
             .change_note("arrow", &carrying, lanes.width())
             .unwrap();
         assert_eq!(carrying_change.ext, carrying.ext);
+        assert_eq!(carrying_change.layer, carrying.layer);
     }
 
     #[test]

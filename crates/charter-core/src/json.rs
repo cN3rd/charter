@@ -622,11 +622,12 @@ mod tests {
 
     use super::*;
     use crate::document::{
-        Anchor, Chart, Child, Extensions, Marker, Metadata, Object, PathPoint, Points, Position,
-        Preview, Ruleset, SampleId, Settings, Shape, Timing, TimingEvent, TimingKind,
+        Anchor, Chart, Child, Extensions, Layer, LayerColour, LayerView, Marker, Metadata, Object,
+        PathPoint, Points, Position, Preview, Ruleset, SampleId, Settings, Shape, Timing,
+        TimingEvent, TimingKind,
     };
     use crate::error::{InvalidValue, Rule, Violation};
-    use crate::ident::{Ease, Key, Kind, MarkerKind, Namespace};
+    use crate::ident::{Ease, Key, Kind, LayerName, MarkerKind, Namespace};
     use crate::number::{MAX_MILLIONTHS, from_millionths};
     use crate::path::ResourcePath;
     use crate::unit::{
@@ -1171,6 +1172,7 @@ mod tests {
                         position: object_position,
                         kind: object_kind,
                         shape,
+                        layer: None,
                         sample,
                         children,
                         ext: object_ext,
@@ -1228,15 +1230,32 @@ mod tests {
                 let objects: Vec<_> = (0..count)
                     .map(|i| object(1024_i32.saturating_mul(i), samples))
                     .collect();
-                (objects, settings(), option::of(timing()), ext())
+                (objects, settings(), option::of(timing()), ext(), 0_usize..4)
             })
-            .prop_map(move |(objects, settings, timing, ext)| Chart {
-                name: name.clone(),
-                lanes: LaneCount::new(LANES),
-                settings,
-                timing,
-                objects,
-                ext,
+            .prop_map(move |(mut objects, settings, timing, ext, count)| {
+                let layers: Vec<_> = (0..count)
+                    .map(|index| Layer {
+                        name: LayerName::new(format!("Layer {index}")).unwrap(),
+                        colour: LayerColour::ALL[index],
+                        view: [LayerView::Shown, LayerView::Ghosted, LayerView::Hidden]
+                            [index.rem_euclid(3)],
+                        locked: index == 2,
+                    })
+                    .collect();
+                if !layers.is_empty() {
+                    for (index, object) in objects.iter_mut().enumerate() {
+                        object.layer = Some(layers[index.rem_euclid(layers.len())].name.clone());
+                    }
+                }
+                Chart {
+                    name: name.clone(),
+                    lanes: LaneCount::new(LANES),
+                    settings,
+                    timing,
+                    layers,
+                    objects,
+                    ext,
+                }
             })
             .boxed()
     }

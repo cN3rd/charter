@@ -1,6 +1,6 @@
 //! Changes to a song, each holding what it takes to undo it.
 
-use charter_core::{Document, Marker, Metadata, Object, Settings, Timing};
+use charter_core::{Document, Layer, Marker, Metadata, Object, Settings, Timing};
 
 /// One change: to one object of the chart an edit is made to, or to the song as a whole.
 #[derive(Clone, Debug, PartialEq)]
@@ -60,6 +60,15 @@ pub(crate) enum Op {
         /// Objects after the edit.
         new: Vec<Object>,
     },
+    /// Ordered layers of chart `chart`.
+    Layers {
+        /// Chart index.
+        chart: usize,
+        /// Previous layers.
+        old: Vec<Layer>,
+        /// New layers.
+        new: Vec<Layer>,
+    },
     /// A change to the timing of the chart the edit is made to when `own`, or else the song's.
     Timing {
         /// Whether the change belongs to the chart instead of the song.
@@ -102,6 +111,11 @@ impl Op {
                 new: old.clone(),
             },
             Self::Objects { chart, old, new } => Self::Objects {
+                chart: *chart,
+                old: new.clone(),
+                new: old.clone(),
+            },
+            Self::Layers { chart, old, new } => Self::Layers {
                 chart: *chart,
                 old: new.clone(),
                 new: old.clone(),
@@ -156,6 +170,16 @@ impl Edit {
                     };
                     edited.objects.clone_from(new);
                 }
+                Op::Layers {
+                    chart: chart_index,
+                    new,
+                    ..
+                } => {
+                    let Some(edited) = document.charts.get_mut(*chart_index) else {
+                        return false;
+                    };
+                    edited.layers.clone_from(new);
+                }
                 Op::Timing {
                     own: false, new, ..
                 } => document.timing = (**new).clone(),
@@ -183,6 +207,7 @@ impl Edit {
                         Op::Metadata { .. }
                         | Op::Markers { .. }
                         | Op::Objects { .. }
+                        | Op::Layers { .. }
                         | Op::Settings { .. }
                         | Op::Timing { .. } => {}
                     }
@@ -230,6 +255,7 @@ mod tests {
             },
             kind,
             shape,
+            layer: None,
             sample: None,
             children: Vec::new(),
             ext: Extensions::new(),

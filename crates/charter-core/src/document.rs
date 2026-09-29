@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::error::InvalidValue;
-use crate::ident::{Ease, Key, Kind, MarkerKind, Namespace, string_newtype};
+use crate::ident::{Ease, Key, Kind, LayerName, MarkerKind, Namespace, string_newtype};
 use crate::number::Decimal;
 use crate::path::ResourcePath;
 use crate::unit::{
@@ -186,6 +186,113 @@ pub enum TimingKind {
 }
 
 /// One difficulty of the file's ruleset.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LayerColour {
+    /// Red palette entry.
+    Red,
+    /// Orange palette entry.
+    Orange,
+    /// Yellow palette entry.
+    Yellow,
+    /// Green palette entry.
+    Green,
+    /// Teal palette entry.
+    Teal,
+    /// Blue palette entry.
+    Blue,
+    /// Purple palette entry.
+    Purple,
+    /// Pink palette entry.
+    Pink,
+}
+
+impl LayerColour {
+    /// Palette in the order new layers receive colours.
+    pub const ALL: [Self; 8] = [
+        Self::Red,
+        Self::Orange,
+        Self::Yellow,
+        Self::Green,
+        Self::Teal,
+        Self::Blue,
+        Self::Purple,
+        Self::Pink,
+    ];
+
+    /// First unused palette entry, cycling through the palette when all are used.
+    #[must_use]
+    pub fn next_unused(used: impl IntoIterator<Item = Self>) -> Self {
+        let used: Vec<_> = used.into_iter().collect();
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|colour| !used.contains(colour))
+            .unwrap_or_else(|| {
+                Self::ALL
+                    .into_iter()
+                    .cycle()
+                    .nth(used.len())
+                    .unwrap_or(Self::Red)
+            })
+    }
+}
+
+/// A layer's visibility and whether its notes can be edited.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LayerView {
+    /// Full brightness, editable unless locked.
+    #[default]
+    Shown,
+    /// Dim reference notes that cannot be selected or edited.
+    Ghosted,
+    /// Notes not drawn or editable.
+    Hidden,
+}
+
+impl LayerView {
+    /// Whether this layer is visible at full brightness.
+    #[must_use]
+    pub fn is_shown(&self) -> bool {
+        *self == Self::Shown
+    }
+}
+
+/// Named chart-local group of notes. Only shown, unlocked layers are editable.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Layer {
+    /// Unique name within the chart.
+    pub name: LayerName,
+    /// Palette colour used by the editor.
+    pub colour: LayerColour,
+    /// How the editor displays this layer.
+    #[serde(default, skip_serializing_if = "LayerView::is_shown")]
+    pub view: LayerView,
+    /// Whether the editor prevents edits on this layer.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub locked: bool,
+}
+
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde skip_serializing_if passes a reference"
+)]
+/// Whether serde omits the default unlocked state.
+fn is_false(value: &bool) -> bool {
+    !value
+}
+
+impl Layer {
+    /// Whether its notes may be selected and changed.
+    #[must_use]
+    pub fn is_editable(&self) -> bool {
+        self.view.is_shown() && !self.locked
+    }
+}
+
+/// One difficulty of the file's ruleset.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Chart {
@@ -200,12 +307,29 @@ pub struct Chart {
     /// Replaces the song's timing entirely when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timing: Option<Timing>,
+    /// Ordered top-to-bottom layers; absent means an implicit Notes layer.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub layers: Vec<Layer>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     /// Notes in tick order.
     pub objects: Vec<Object>,
     /// Plugin-owned chart data.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub ext: Extensions,
+}
+
+impl Chart {
+    /// The layer holding `object`, defaulting to the first layer if unnamed.
+    #[must_use]
+    pub fn layer_index(&self, object: &Object) -> Option<usize> {
+        if self.layers.is_empty() {
+            None
+        } else {
+            object.layer.as_ref().map_or(Some(0), |name| {
+                self.layers.iter().position(|layer| layer.name == *name)
+            })
+        }
+    }
 }
 
 /// A note, possibly with a span and nested children.
@@ -220,6 +344,9 @@ pub struct Object {
     pub kind: Kind,
     /// Duration or path after the starting tick.
     pub shape: Shape,
+    /// Named layer holding the note, or the first layer when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layer: Option<LayerName>,
     /// Keysound from the file-level bank.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sample: Option<SampleId>,
@@ -442,6 +569,52 @@ mod tests {
     #[test]
     fn writing_omits_defaults_and_keeps_every_value() {
         assert_eq!(round_trip(&minimal()), minimal());
+    }
+
+    #[test]
+    fn layers_round_trip_and_default_views_locks_and_unnamed_notes_are_omitted() {
+        let plain = chart_of(json!([{"tick":0,"position":{"lane":{"index":0}},
+            "kind":"tap","shape":"instant"}]));
+        assert_eq!(round_trip(&plain), plain);
+        let mut layered = plain;
+        layered["charts"][0]["layers"] = json!([
+            {"name":"Kick","colour":"red"},
+            {"name":"Snare","colour":"blue","view":"ghosted","locked":true}
+        ]);
+        layered["charts"][0]["objects"][0]["layer"] = json!("Kick");
+        assert_eq!(round_trip(&layered), layered);
+        let chart = &parse(&layered).unwrap().charts[0];
+        assert_eq!(chart.layer_index(&chart.objects[0]), Some(0));
+        assert!(!chart.layers[1].is_editable());
+        assert!(chart.layers[0].is_editable());
+        let mut no_name = chart.objects[0].clone();
+        no_name.layer = None;
+        assert_eq!(chart.layer_index(&no_name), Some(0));
+        parse(
+            &json!({"format_version":1,"ruleset":{"id":"test","version":"1"},
+            "metadata":{"title":"t","artist":"a","audio":"song.ogg"},
+            "timing":{"anchors":[{"tick":0,"seconds":0.0}],"tempo":120.0,"events":[]},
+            "charts":[{"name":"Easy","layers":[{"name":"X","colour":"red","unexpected":true}]}]}),
+        )
+        .unwrap_err();
+    }
+
+    #[test]
+    fn a_new_layer_uses_the_first_unused_palette_colour_then_cycles() {
+        assert_eq!(
+            LayerColour::next_unused([LayerColour::Red, LayerColour::Yellow]),
+            LayerColour::Orange
+        );
+        assert_eq!(LayerColour::next_unused(LayerColour::ALL), LayerColour::Red);
+        assert_eq!(
+            LayerColour::next_unused(LayerColour::ALL.into_iter().chain([LayerColour::Red])),
+            LayerColour::Orange
+        );
+        assert_eq!(LayerColour::ALL.len(), 8);
+        assert_eq!(
+            serde_json::to_value(LayerColour::Teal).unwrap(),
+            json!("teal")
+        );
     }
 
     #[test]

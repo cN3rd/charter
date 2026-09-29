@@ -8,8 +8,8 @@ status: draft
 
 # Layers
 
-**Draft.** Nothing here is built yet. It settles what a layer is before any code, and lists the
-choices still open at the end.
+**Draft.** The format and editor model exist; the panel, drawing, playback and keys are not built
+yet. This chapter records the intended behaviour and the choices still open at the end.
 
 A chart is built out of parts that follow different things in the music: the kick, the snare, the
 melody, a vocal line. Charting them together means judging every note against all the others at
@@ -32,8 +32,10 @@ that as the base and adds what charting difficulties needs from it.
   could not hold without them: two notes cannot cover one lane on one tick even on different
   layers, and placing onto a note of another layer is refused, naming the layer, hidden or not.
 - **A layer has a name and a colour.** Names are unique within the chart. Colours come from a
-  fixed palette of eight, the next unused one given to each new layer, and chosen by clicking the
-  swatch.
+  fixed palette of eight, red, orange, yellow, green, teal, blue, purple and pink, the next unused
+  one given to each new layer, and chosen by clicking the swatch.
+- **The list runs top to bottom.** The first layer is the top row; *below* means the next one
+  down.
 
 ## The layers panel
 
@@ -64,8 +66,7 @@ Each row is, left to right:
   Ctrl+click on a layer's thumbnail selects its pixels in Photoshop.
 
 The highlighted row is the **active layer**, where new notes go; a click on a row makes it active.
-Rows drag to reorder, and dropping a selection of notes on a row moves them to that layer. `[+]`
-makes a layer above the active one and makes it active. `[…]`, and right-click on a row, hold
+Rows drag to reorder. `[+]` makes a layer above the active one and makes it active. `[…]`, and right-click on a row, hold
 the rest: rename, colour, *Select notes*, *Merge down*, *Copy to chart ›* and delete.
 
 ## Drawing
@@ -88,8 +89,9 @@ the rest: rename, colour, *Select notes*, *Merge down*, *Copy to chart ›* and 
   active layer is hidden, ghosted or locked, nothing is placed and the status bar says why.
 - **Selecting** takes notes from shown, unlocked layers only, so a marquee over a crowded stretch
   picks just the parts being worked on. Ctrl+A selects every such note.
-- **Moving notes to another layer**: *Move to layer ›* in the notefield's right-click menu,
-  Alt+Shift+1 to 9 for the layer at that row, or dropping the selection on the layer's row.
+- **Moving notes to another layer**: *Move to layer ›* in the notefield's right-click menu, or
+  Alt+Shift+1 to 9 for the layer at that row. Dropping a selection on a layer's row is left for
+  later.
 - **Paste** puts notes on the active layer. **Duplicate** (Ctrl+D) keeps each note's layer, since
   it stays in the same chart.
 - **Copy to chart ›** copies a layer, its name and colour, into another difficulty, which is how
@@ -109,13 +111,15 @@ song. Ghosted and hidden layers play no ticks. The metronome is unaffected.
 
 Making, deleting, renaming, recolouring, reordering, merging and copying layers, and moving notes
 between them, are edits, each one undo step, returning to the chart and cursor as any edit does.
-Visibility, lock, solo and the active layer are how the chart is being looked at, not changes to
-it, so they are not undo steps. They are kept with the song, as Quaver keeps a layer hidden, so a
-song reopens as it was left.
+So are showing, ghosting, hiding and locking a layer, and soloing one: they are kept in the song,
+as Quaver keeps a layer hidden, so a song reopens as it was left, and every change to the file
+being one undo step keeps undo and *unsaved changes* in agreement. The active layer, and what a
+solo will put back, are not saved: a song opens on its first layer, all as it was saved.
 
 ## In the file
 
-The format gains two optional fields, following its [grouping by value](format.md): layers are
+The format gains two optional fields, described in the [format's Layers section](format.md#layers)
+and following its [grouping by value](format.md): layers are
 named, and a note names its layer.
 
 ```json
@@ -133,10 +137,11 @@ named, and a note names its layer.
 ```
 
 - A note without `layer` is on the first layer, so a file written before layers, or by a tool
-  that does not know them, opens unchanged. A chart without `layers` has the one *Notes* layer,
+  that does not know them, opens unchanged. Once a chart has layers, charter writes every note's
+  layer, so reordering the layers never moves a note from one to another. A chart without `layers` has the one *Notes* layer,
   and saving it writes neither field.
-- Validation adds one rule: a note's layer is one its chart lists, and names are unique and not
-  empty.
+- Validation adds two cross-field rules: a note's named layer must be in its chart, and layer
+  names must be unique. A layer name must also be non-empty.
 - `view` and `locked` are left out when shown and unlocked.
 - Plugins see a note's layer and may ignore it. No game has layers, so every exporter merges them
   and lists the layers as lost, as [export loss reporting](research/topics/export-loss-reporting.md)
@@ -164,8 +169,9 @@ None of these is taken today.
    one lane and tick. Allowing it, with only shown layers going into the chart, would let
    alternative versions of a passage sit on top of each other, at the cost of a chart that can be
    invalid while layers are hidden.
-3. **Is the view saved?** This draft keeps visibility and lock in the song file. They could live
-   in charter's settings per song instead, keeping the file free of how one person looks at it.
+3. **Is the view saved?** This draft keeps visibility and lock in the song file, each change an
+   undo step. They could live in charter's settings per song instead, keeping the file free of how
+   one person looks at it, and out of undo.
 4. **Where paste goes.** This draft pastes onto the active layer. Keeping each note's layer where
    the target chart has one by that name would round-trip copies between difficulties better.
 5. **Ticks for ghosted layers.** This draft silences them. Quietly ticking them would help hear

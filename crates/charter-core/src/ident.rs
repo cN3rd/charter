@@ -65,6 +65,14 @@ string_newtype!(
     /// The part of a key after its namespace: any non-empty text, dots included.
     Name, "a non-empty name", |v| !v.is_empty()
 );
+string_newtype!(
+    /// A chart-local layer name, between 1 and 64 characters without surrounding whitespace or controls.
+    LayerName, "a layer name of 1–64 characters without surrounding whitespace or controls",
+    |v| !v.is_empty()
+        && v.chars().count() <= 64
+        && v.trim() == v
+        && !v.chars().any(char::is_control)
+);
 
 /// An extension key or an `other` timing name: a namespace and a name, written
 /// `<namespace>.<name>` and split at the first dot.
@@ -262,6 +270,40 @@ mod proofs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn layer_names_reject_empty_whitespace_controls_and_overlong_text() {
+        for bad in [
+            "",
+            " Kick",
+            "Kick ",
+            "Kick\nSnare",
+            "\u{7f}",
+            "a".repeat(65).as_str(),
+        ] {
+            assert!(LayerName::new(bad).is_err(), "{bad:?}");
+        }
+        assert_eq!(LayerName::new("Kick drum").unwrap().as_str(), "Kick drum");
+        LayerName::new("🎵".repeat(64)).unwrap();
+    }
+
+    proptest::proptest! {
+        #![proptest_config(crate::proptest_config())]
+
+        #[test]
+        fn arbitrary_layer_names_never_bypass_validation(text in ".{0,80}") {
+            let json = serde_json::to_string(&text).unwrap();
+            match LayerName::new(text) {
+                Ok(name) => {
+                    let parsed: LayerName = serde_json::from_str(&json).unwrap();
+                    proptest::prop_assert_eq!(parsed, name);
+                }
+                Err(_) => {
+                    proptest::prop_assert!(serde_json::from_str::<LayerName>(&json).is_err());
+                }
+            }
+        }
+    }
 
     #[test]
     fn namespaces_are_lowercase_identifiers() {
