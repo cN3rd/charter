@@ -23,7 +23,7 @@ impl Timing {
             ResolvedTime::from(first.seconds).seconds()
                 - self.elapsed(tick, first.tick, per_tick)?
         } else if let Some(next) = self.anchors.get(index) {
-            let previous = self.anchors.get(index - 1)?;
+            let previous = self.anchors.get(index.saturating_sub(1))?;
             let per_tick = self.segment_rate(previous, next)?;
             ResolvedTime::from(previous.seconds).seconds()
                 + self.elapsed(previous.tick, tick, per_tick)?
@@ -42,7 +42,10 @@ impl Timing {
         let per_tick = if index == 0 {
             self.before_first(ticks_per_beat)?
         } else {
-            match (self.anchors.get(index - 1), self.anchors.get(index)) {
+            match (
+                self.anchors.get(index.saturating_sub(1)),
+                self.anchors.get(index),
+            ) {
                 (Some(previous), Some(next)) => self.segment_rate(previous, next)?,
                 _ => tail_rate(self.tempo, ticks_per_beat),
             }
@@ -59,7 +62,10 @@ impl Timing {
             .partition_point(|anchor| anchor.tick <= tick)
             .max(1);
         Some(
-            match (self.anchors.get(index - 1), self.anchors.get(index)) {
+            match (
+                self.anchors.get(index.saturating_sub(1)),
+                self.anchors.get(index),
+            ) {
                 (Some(previous), Some(next)) => simplest(exact, previous.tick, next.tick),
                 _ => exact,
             },
@@ -110,6 +116,10 @@ impl Timing {
 
     /// Each anchored segment's rate in a forward sweep of sorted events. Anchors must be outside
     /// warps.
+    #[expect(
+        clippy::unreachable,
+        reason = "windows(2) always yields exactly two anchors"
+    )]
     pub(crate) fn segment_rates(&self) -> impl Iterator<Item = (Tick, Tick, Option<f64>)> + '_ {
         let mut first_event = 0;
         self.anchors.windows(2).map(move |pair| {
@@ -121,7 +131,7 @@ impl Timing {
                 .get(first_event)
                 .is_some_and(|event| event.tick < previous.tick)
             {
-                first_event += 1;
+                first_event = first_event.saturating_add(1);
             }
             let mut after = first_event;
             while self
@@ -129,7 +139,7 @@ impl Timing {
                 .get(after)
                 .is_some_and(|event| event.tick <= next.tick)
             {
-                after += 1;
+                after = after.saturating_add(1);
             }
             (
                 previous.tick,
@@ -228,8 +238,7 @@ fn bpm_of(per_tick: f64, ticks_per_beat: TicksPerBeat) -> f64 {
 /// land `to` on the same tick. An anchor sits on a whole tick, so the exact rate between two is a
 /// typed tempo off by up to half a tick; this is the tempo that was typed.
 fn simplest(exact: f64, from: Tick, to: Tick) -> f64 {
-    #[allow(clippy::cast_precision_loss)] // ticks of a song
-    let span = (i64::from(to) - i64::from(from)) as f64;
+    let span = span_as_f64(i64::from(to).saturating_sub(i64::from(from)));
     (0..6)
         .map(|places| {
             let scale = 10f64.powi(places);
@@ -237,6 +246,16 @@ fn simplest(exact: f64, from: Tick, to: Tick) -> f64 {
         })
         .find(|tempo| (span * tempo / exact - span).abs() < 0.5)
         .unwrap_or(exact)
+}
+
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_precision_loss,
+    reason = "two i32 tick positions differ by less than 2^53"
+)]
+/// Tick distance as a float; the difference between two chart ticks stays exact.
+fn span_as_f64(ticks: i64) -> f64 {
+    ticks as f64
 }
 
 #[cfg(test)]
@@ -513,11 +532,10 @@ mod tests {
     /// A valid timing: `events` kept one of a kind a tick with warps that do not overlap, then
     /// anchors on unwarped ticks, each after the last by its segment's pauses and `slack` more.
     fn valid_timing(
-        events: Vec<(i32, TimingKind)>,
-        anchors: Vec<(i32, f64)>,
+        mut events: Vec<(i32, TimingKind)>,
+        mut anchors: Vec<(i32, f64)>,
         (first, tempo): (f64, Bpm),
     ) -> Timing {
-        let mut events = events;
         events.sort_by_key(|(tick, _)| *tick);
         let mut seen = HashSet::new();
         let mut warp_end = None;
@@ -544,15 +562,17 @@ mod tests {
             tempo,
             events: kept,
         };
-        let warped = |timing: &Timing, tick: Tick| {
-            timing.events.iter().any(|event| match event.kind {
+        let warped = |map_timing: &Timing, tick: Tick| {
+            map_timing.events.iter().any(|event| match event.kind {
                 TimingKind::Warp(span) => {
                     event.tick <= tick && event.tick.checked_add(span).is_none_or(|end| tick < end)
                 }
-                _ => false,
+                TimingKind::Stop(_)
+                | TimingKind::Delay(_)
+                | TimingKind::TimeSignature(_)
+                | TimingKind::Other { .. } => false,
             })
         };
-        let mut anchors = anchors;
         anchors.sort_by_key(|(tick, _)| *tick);
         anchors.dedup_by_key(|(tick, _)| *tick);
         let mut seconds = first;
@@ -589,7 +609,10 @@ mod tests {
                     event.tick <= at(k)
                         && event.tick.checked_add(span).is_none_or(|end| at(k) < end)
                 }
-                _ => false,
+                TimingKind::Stop(_)
+                | TimingKind::Delay(_)
+                | TimingKind::TimeSignature(_)
+                | TimingKind::Other { .. } => false,
             })
         };
         let pauses = |k: i32, stops: bool| -> f64 {
@@ -600,14 +623,21 @@ mod tests {
                 .map(|event| match event.kind {
                     TimingKind::Stop(pause) if stops => pause.seconds(),
                     TimingKind::Delay(pause) if !stops => pause.seconds(),
-                    _ => 0.0,
+                    TimingKind::Stop(_)
+                    | TimingKind::Delay(_)
+                    | TimingKind::Warp(_)
+                    | TimingKind::TimeSignature(_)
+                    | TimingKind::Other { .. } => 0.0,
                 })
                 .sum()
         };
         let index = timing
             .anchors
             .partition_point(|anchor| anchor.tick <= at(tick));
-        let from = timing.anchors.get(index.max(1) - 1).unwrap();
+        let from = timing
+            .anchors
+            .get(index.max(1).saturating_sub(1))
+            .expect("generated timing has an anchor");
         let per_tick = timing
             .tempo_at(DEFAULT_TICKS_PER_BEAT, at(tick))
             .map(|tempo| 60.0 / (tempo * f64::from(DEFAULT_TICKS_PER_BEAT.get())))
@@ -626,7 +656,7 @@ mod tests {
             if !warped(k) {
                 elapsed += per_tick;
             }
-            elapsed += pauses(k + 1, false);
+            elapsed += pauses(k.saturating_add(1), false);
         }
         let base = ResolvedTime::from(from.seconds).seconds();
         if i64::from(tick) >= start {
@@ -671,11 +701,11 @@ mod tests {
         #[test]
         fn time_never_runs_backwards_even_across_an_anchor(timing in map(), tick in -9000i32..9000) {
             let now = timing.seconds_at(DEFAULT_TICKS_PER_BEAT, Tick::new(tick)).unwrap().seconds();
-            let next = timing.seconds_at(DEFAULT_TICKS_PER_BEAT, Tick::new(tick + 1)).unwrap().seconds();
+            let next = timing.seconds_at(DEFAULT_TICKS_PER_BEAT, Tick::new(tick.saturating_add(1))).unwrap().seconds();
             prop_assert!(now.is_finite() && next.is_finite());
             prop_assert!(next >= now - 1e-9, "{tick}: {now} then {next}");
             for anchor in &timing.anchors {
-                let before = i32::try_from(i64::from(anchor.tick) - 1).unwrap();
+                let before = i32::try_from(i64::from(anchor.tick).saturating_sub(1)).unwrap();
                 let just = timing.seconds_at(DEFAULT_TICKS_PER_BEAT, Tick::new(before)).unwrap().seconds();
                 prop_assert!(just <= ResolvedTime::from(anchor.seconds).seconds() + 1e-9);
             }

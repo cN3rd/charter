@@ -20,7 +20,7 @@ mod tests {
 
     #[test]
     fn only_plain_relative_paths_pass() {
-        assert!(ResourcePath::new("keysounds/clap.wav").is_ok());
+        ResourcePath::new("keysounds/clap.wav").unwrap();
         for bad in [
             "",
             "/etc/passwd",

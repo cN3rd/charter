@@ -35,9 +35,11 @@ pub enum SectionError {
     OutOfRange(String),
 }
 
-/// The timing `sections` make at `ticks_per_beat`: an anchor at each section's start and the
-/// last one's tempo after it, with a time signature wherever a section changes the meter or
-/// starts partway through a bar, since each section starts a bar of its own.
+/// The timing `sections` make at `ticks_per_beat`.
+///
+/// That is an anchor at each section's start and the last one's tempo after it, with a time
+/// signature wherever a section changes the meter or starts partway through a bar, since each
+/// section starts a bar of its own.
 ///
 /// # Errors
 ///
@@ -51,24 +53,33 @@ pub fn sectioned(
     let mut sorted = sections.to_vec();
     sorted.sort_by(|a, b| a.seconds.total_cmp(&b.seconds));
     let mut kept: Vec<(i64, Section)> = Vec::new();
-    let mut merged = 0;
+    let mut merged = 0_usize;
     for section in sorted {
         let Some(&(tick, last)) = kept.last() else {
             kept.push((0, section));
             continue;
         };
-        #[allow(clippy::cast_possible_truncation)] // a song's worth of ticks
-        let apart =
-            ((section.seconds - last.seconds) / last.beat_seconds * per_beat).round() as i64;
-        let tick = tick
+        let distance = ((section.seconds - last.seconds) / last.beat_seconds * per_beat).round();
+        if !distance.is_finite()
+            || distance < i64_bound_to_f64(i64::MIN)
+            || distance >= i64_bound_to_f64(i64::MAX)
+        {
+            return Err(out_of_range("a section's tick"));
+        }
+        let apart = rounded_tick(distance);
+        let next_tick = tick
             .checked_add(apart)
             .ok_or_else(|| out_of_range("a section's tick"))?;
         // Two sections on one tick: the later one is the one that plays.
-        if tick == kept.last().map_or(i64::MIN, |(tick, _)| *tick) {
-            merged += 1;
+        if next_tick
+            == kept
+                .last()
+                .map_or(i64::MIN, |(previous_tick, _)| *previous_tick)
+        {
+            merged = merged.saturating_add(1);
             kept.pop();
         }
-        kept.push((tick, section));
+        kept.push((next_tick, section));
     }
     let first = kept.first().ok_or(SectionError::Empty)?.1;
     let mut tempo = bpm(first.beat_seconds)?;
@@ -76,8 +87,7 @@ pub fn sectioned(
     let mut events = Vec::new();
     let four = NonZeroU16::new(4).unwrap_or(NonZeroU16::MIN);
     let (mut measure_from, mut meter) = (0, four);
-    #[allow(clippy::cast_possible_truncation)] // a resolution, whole and small
-    let ticks_per_beat = per_beat as i64;
+    let resolution_ticks = i64::from(ticks_per_beat.get());
     for &(tick, section) in &kept {
         tempo = bpm(section.beat_seconds)?;
         anchors.push(Anchor {
@@ -86,8 +96,10 @@ pub fn sectioned(
                 .and_then(|seconds| Origin::try_from(seconds).ok())
                 .ok_or_else(|| out_of_range(format!("{} s", section.seconds)))?,
         });
-        let measure = i64::from(meter.get()) * ticks_per_beat;
-        let mid_measure = (tick - measure_from).rem_euclid(measure.max(1)) != 0;
+        let measure = std::num::NonZeroI64::from(meter)
+            .get()
+            .saturating_mul(resolution_ticks);
+        let mid_measure = tick.saturating_sub(measure_from).rem_euclid(measure.max(1)) != 0;
         if section.meter != meter || mid_measure {
             let signature = TimeSignature {
                 numerator: section.meter,
@@ -119,10 +131,35 @@ fn bpm(beat_seconds: f64) -> Result<Bpm, SectionError> {
         .ok_or_else(|| out_of_range(format!("a beat of {beat_seconds} s is no tempo")))
 }
 
+#[expect(
+    clippy::map_err_ignore,
+    reason = "the range error already names the offending tick"
+)]
+/// A grid tick in the chart's `i32` range, or a range error.
 fn tick_of(tick: i64) -> Result<Tick, SectionError> {
     i32::try_from(tick)
         .map(Tick::new)
         .map_err(|_| out_of_range(format!("tick {tick} is past the song's end")))
+}
+
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    reason = "caller checked finite i64 bounds"
+)]
+/// Nearest whole tick after the caller checks the `i64` bounds.
+fn rounded_tick(value: f64) -> i64 {
+    value as i64
+}
+
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_precision_loss,
+    reason = "i64 bound comparison is conservative at the upper edge"
+)]
+/// Float bound for comparing a calculated tick before integer conversion.
+fn i64_bound_to_f64(value: i64) -> f64 {
+    value as f64
 }
 
 /// `value` to six places, the finest the format holds.
@@ -131,6 +168,7 @@ fn micro(value: f64) -> Option<f64> {
     rounded.is_finite().then_some(rounded)
 }
 
+/// Section error naming the value that cannot fit the chart format.
 fn out_of_range(what: impl std::fmt::Display) -> SectionError {
     SectionError::OutOfRange(format!("{what} is out of range"))
 }
@@ -211,6 +249,6 @@ mod tests {
             sectioned(&[], DEFAULT_TICKS_PER_BEAT),
             Err(SectionError::Empty)
         );
-        assert!(sectioned(&[section(0.0, 0.0, 4)], DEFAULT_TICKS_PER_BEAT).is_err());
+        sectioned(&[section(0.0, 0.0, 4)], DEFAULT_TICKS_PER_BEAT).unwrap_err();
     }
 }

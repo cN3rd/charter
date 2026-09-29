@@ -8,28 +8,48 @@ pub(crate) const MAX_MILLIONTHS: i64 = 999_999_999_999_999;
 /// digits.
 pub(crate) fn to_millionths(value: f64) -> Option<i64> {
     let scaled = (value * 1e6).round_ties_even();
-    #[allow(clippy::cast_precision_loss)] // below 2^53, so exact
-    if scaled.is_nan() || scaled.abs() > MAX_MILLIONTHS as f64 {
+    if scaled.is_nan() || scaled.abs() > i64_to_f64(MAX_MILLIONTHS) {
         return None;
     }
-    #[allow(clippy::cast_possible_truncation)] // whole and within range
-    let millionths = scaled as i64;
-    #[allow(clippy::float_cmp)] // exactness is the point
+    let millionths = bounded_whole_to_i64(scaled);
+    #[expect(clippy::float_cmp, reason = "exactness is the point")]
     (from_millionths(millionths) == value).then_some(millionths)
 }
 
 /// The double nearest to `millionths` millionths.
 pub(crate) fn from_millionths(millionths: i64) -> f64 {
-    #[allow(clippy::cast_precision_loss)] // below 2^53, so exact
-    let whole = millionths as f64;
+    let whole = i64_to_f64(millionths);
     whole / 1e6
+}
+
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_precision_loss,
+    reason = "millionths stay below 2^53"
+)]
+/// A millionths count as a double; callers keep it below the exact integer limit.
+fn i64_to_f64(value: i64) -> f64 {
+    value as f64
+}
+
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    reason = "caller bounds a whole number to millionths"
+)]
+/// Whole scaled decimal already checked against the millionths bound.
+fn bounded_whole_to_i64(value: f64) -> i64 {
+    value as i64
 }
 
 /// Writes `millionths` as the shortest decimal text for it: no exponent, no trailing zeros.
 pub(crate) fn write_millionths(f: &mut fmt::Formatter<'_>, millionths: i64) -> fmt::Result {
     let sign = if millionths < 0 { "-" } else { "" };
     let magnitude = millionths.unsigned_abs();
-    let (whole, fraction) = (magnitude / 1_000_000, magnitude % 1_000_000);
+    let (whole, fraction) = (
+        magnitude.div_euclid(1_000_000),
+        magnitude.rem_euclid(1_000_000),
+    );
     if fraction == 0 {
         return write!(f, "{sign}{whole}");
     }
@@ -122,7 +142,7 @@ mod tests {
     #[test]
     fn a_seventh_place_or_a_sixteenth_digit_is_refused() {
         for bad in [0.123_456_7, 1e9, -1e9, f64::NAN, f64::INFINITY] {
-            assert!(decimal(bad).is_err(), "{bad} accepted");
+            decimal(bad).unwrap_err();
         }
     }
 
@@ -130,7 +150,7 @@ mod tests {
     fn decimals_read_from_json_numbers() {
         let read: Decimal = serde_json::from_value(serde_json::json!(-0.014)).unwrap();
         assert_eq!(read, decimal(-0.014).unwrap());
-        assert!(serde_json::from_value::<Decimal>(serde_json::json!(0.123_456_7)).is_err());
+        serde_json::from_value::<Decimal>(serde_json::json!(0.123_456_7)).unwrap_err();
     }
 
     #[test]
@@ -174,14 +194,14 @@ mod tests {
         assert_eq!(zero.to_string(), "0");
         assert_eq!(serde_json::to_string(&zero).unwrap(), "0.0");
         for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-            assert!(decimal(bad).is_err());
+            decimal(bad).unwrap_err();
         }
     }
 
     #[test]
     fn rounding_does_not_silently_accept_a_seventh_decimal_place() {
         for bad in [0.000_000_5, -0.000_000_5, 0.000_001_4, -0.000_001_4] {
-            assert!(decimal(bad).is_err(), "{bad} was rounded");
+            decimal(bad).unwrap_err();
         }
         assert_eq!(decimal(0.000_001).unwrap().to_string(), "0.000001");
     }

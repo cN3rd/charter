@@ -16,6 +16,7 @@ use crate::unit::{
 pub const FORMAT_VERSION: u32 = 1;
 
 /// Resolution when a document does not set `ticks_per_beat`.
+#[expect(clippy::unreachable, reason = "960 is nonzero by construction")]
 pub const DEFAULT_TICKS_PER_BEAT: TicksPerBeat = match TicksPerBeat::new(960) {
     Some(resolution) => resolution,
     None => unreachable!(),
@@ -38,7 +39,7 @@ pub struct Marker {
 pub type Settings = BTreeMap<String, Value>;
 
 /// A whole chart file: one song, one ruleset, any number of charts.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Document {
     pub format_version: u32,
@@ -62,11 +63,16 @@ pub struct Document {
     pub charts: Vec<Chart>,
 }
 
-fn default_ticks_per_beat() -> TicksPerBeat {
+/// Resolution substituted when the JSON omits `ticks_per_beat`.
+const fn default_ticks_per_beat() -> TicksPerBeat {
     DEFAULT_TICKS_PER_BEAT
 }
 
-#[allow(clippy::trivially_copy_pass_by_ref)] // serde's skip_serializing_if passes a reference
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde skip_serializing_if passes a reference"
+)]
+/// Whether serde should omit the default resolution on writing.
 fn is_default_ticks_per_beat(value: &TicksPerBeat) -> bool {
     *value == DEFAULT_TICKS_PER_BEAT
 }
@@ -88,7 +94,7 @@ pub struct Plugin {
     pub version: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Metadata {
     pub title: String,
@@ -108,7 +114,7 @@ pub struct Metadata {
 }
 
 /// An excerpt of the audio, in audio time.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Preview {
     pub start_seconds: AudioTime,
@@ -118,7 +124,7 @@ pub struct Preview {
 
 /// A tick to time mapping: pinned beats, a tail tempo, and the pauses and meter events that
 /// shape the ticks between them.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Timing {
     pub anchors: Vec<Anchor>,
@@ -126,14 +132,14 @@ pub struct Timing {
     pub events: Vec<TimingEvent>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Anchor {
     pub tick: Tick,
     pub seconds: Origin,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TimingEvent {
     pub tick: Tick,
@@ -142,7 +148,7 @@ pub struct TimingEvent {
     pub ext: Extensions,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum TimingKind {
     /// Seconds of pause after the objects on this tick.
@@ -158,7 +164,7 @@ pub enum TimingKind {
 }
 
 /// One difficulty of the file's ruleset.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Chart {
     pub name: String,
@@ -175,7 +181,7 @@ pub struct Chart {
     pub ext: Extensions,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Object {
     pub tick: Tick,
@@ -197,7 +203,7 @@ string_newtype!(
 );
 
 /// An object contained by another, with no children of its own.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Child {
     pub tick: Tick,
@@ -210,16 +216,21 @@ pub struct Child {
     pub ext: Extensions,
 }
 
-fn one() -> LaneCount {
+/// Default width of a lane position when its JSON omits `width`.
+const fn one() -> LaneCount {
     LaneCount::ONE
 }
 
-#[allow(clippy::trivially_copy_pass_by_ref)] // serde's skip_serializing_if passes a reference
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde skip_serializing_if passes a reference"
+)]
+/// Whether serde should omit a one-lane `width` on writing.
 fn is_one(value: &LaneCount) -> bool {
     *value == LaneCount::ONE
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum Position {
     /// `width` lanes starting at `index`, counting from 0.
@@ -243,7 +254,7 @@ impl Position {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum Shape {
     Instant,
@@ -270,7 +281,7 @@ impl Shape {
 }
 
 /// The points of a path after the object's own position. Never empty.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "Vec<PathPoint>")]
 pub struct Points(Vec<PathPoint>);
 
@@ -295,7 +306,7 @@ impl Points {
     ///
     /// Never: `new` refuses an empty list, and nothing else builds one.
     #[must_use]
-    #[allow(clippy::expect_used)] // see Panics
+    #[expect(clippy::expect_used, reason = "points are nonempty by construction")]
     pub fn last(&self) -> &PathPoint {
         self.0.last().expect("points are never empty")
     }
@@ -309,7 +320,7 @@ impl TryFrom<Vec<PathPoint>> for Points {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PathPoint {
     pub tick: Tick,
@@ -438,7 +449,7 @@ mod tests {
             json!([{ "tick": 0, "position": plane(0.0, 0.0), "kind": "tap",
                                       "shape": { "path": { "points": [] } } }]),
         );
-        assert!(parse(&value).is_err());
+        parse(&value).unwrap_err();
     }
 
     #[test]
@@ -456,10 +467,10 @@ mod tests {
         let leaf =
             json!({ "tick": 0, "position": plane(0.0, 0.0), "kind": "tap", "shape": "instant" });
         let mut child = leaf.clone();
-        child["children"] = json!([leaf.clone()]);
+        child["children"] = json!([leaf]);
         let mut parent = leaf;
         parent["children"] = json!([child]);
-        assert!(parse(&chart_of(json!([parent]))).is_err());
+        parse(&chart_of(json!([parent]))).unwrap_err();
     }
 
     #[test]
@@ -488,7 +499,7 @@ mod tests {
             v["metadata"]["genre"] = json!("Dance");
         });
         assert_eq!(round_trip(&value), value);
-        assert!(parse(&with(|v| v["metadata"]["artwork"] = json!("../art.png"))).is_err());
+        parse(&with(|v| v["metadata"]["artwork"] = json!("../art.png"))).unwrap_err();
     }
 
     #[test]
@@ -586,9 +597,9 @@ mod tests {
             SampleId::new("kick").map(|id| id.to_string()),
             Ok("kick".to_owned())
         );
-        assert!(SampleId::new("").is_err());
+        SampleId::new("").unwrap_err();
         let empty = with(|v| v["samples"] = json!({ "": "keysounds/kick.wav" }));
-        assert!(parse(&empty).is_err());
+        parse(&empty).unwrap_err();
     }
 
     #[test]

@@ -17,7 +17,7 @@ use crate::validate::validate;
 pub const MAX_DOCUMENT_BYTES: usize = 64 << 20;
 
 /// A [`Document`] that passed every rule of the format.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ValidDocument(Document);
 
 impl ValidDocument {
@@ -69,13 +69,13 @@ impl ValidDocument {
     }
 
     #[must_use]
-    pub fn document(&self) -> &Document {
+    pub const fn document(&self) -> &Document {
         &self.0
     }
 
     /// The song's timing map.
     #[must_use]
-    pub fn timing(&self) -> Valid<'_, Timing> {
+    pub const fn timing(&self) -> Valid<'_, Timing> {
         Valid {
             part: &self.0.timing,
             document: &self.0,
@@ -169,7 +169,10 @@ impl Valid<'_, Timing> {
     ///
     /// Never: validation guarantees a `bpm` and warps that end on a tick.
     #[must_use]
-    #[allow(clippy::expect_used)] // see Panics
+    #[expect(
+        clippy::expect_used,
+        reason = "validation guarantees a time for every tick"
+    )]
     pub fn time_at(&self, tick: Tick) -> ResolvedTime {
         self.part
             .seconds_at(self.document.ticks_per_beat, tick)
@@ -192,7 +195,10 @@ impl Valid<'_, Timing> {
     ///
     /// Never: validation guarantees every anchored segment derives a tempo.
     #[must_use]
-    #[allow(clippy::expect_used)] // validation guarantees every segment derives a tempo
+    #[expect(
+        clippy::expect_used,
+        reason = "validation guarantees every segment derives a tempo"
+    )]
     pub fn tempo_at(&self, tick: Tick) -> f64 {
         self.part
             .tempo_at(self.document.ticks_per_beat, tick)
@@ -206,12 +212,8 @@ impl Valid<'_, Timing> {
     ///
     /// Never: validation guarantees every anchored segment derives a tempo.
     #[must_use]
-    #[allow(clippy::expect_used)] // validation guarantees every segment derives a tempo
     pub fn bpm_at(&self, tick: Tick) -> Option<Bpm> {
-        let tempo = self
-            .part
-            .bpm_at(self.document.ticks_per_beat, tick)
-            .expect("a valid timing map derives every segment tempo");
+        let tempo = self.part.bpm_at(self.document.ticks_per_beat, tick)?;
         Bpm::nearest(tempo)
     }
 
@@ -221,7 +223,10 @@ impl Valid<'_, Timing> {
     ///
     /// Never: validation guarantees every anchored segment derives a tempo.
     #[must_use]
-    #[allow(clippy::expect_used)] // validation guarantees every segment derives a tempo
+    #[expect(
+        clippy::expect_used,
+        reason = "validation guarantees every segment derives a tempo"
+    )]
     pub fn tempos(&self) -> Vec<(Tick, f64)> {
         self.part
             .tempos(self.document.ticks_per_beat)
@@ -230,7 +235,7 @@ impl Valid<'_, Timing> {
 
     /// How many ticks the document counts to a beat, which a grid over this timing steps by.
     #[must_use]
-    pub fn ticks_per_beat(&self) -> TicksPerBeat {
+    pub const fn ticks_per_beat(&self) -> TicksPerBeat {
         self.document.ticks_per_beat
     }
 
@@ -245,8 +250,8 @@ impl Valid<'_, Timing> {
         if self.time_at(tick(late)).seconds() <= seconds {
             return tick(late);
         }
-        while late - early > 1 {
-            let middle = early + (late - early) / 2;
+        while late.saturating_sub(early) > 1 {
+            let middle = early.saturating_add(late.saturating_sub(early).div_euclid(2));
             if self.time_at(tick(middle)).seconds() <= seconds {
                 early = middle;
             } else {
@@ -263,7 +268,7 @@ impl Valid<'_, Timing> {
     ///
     /// Never: validation guarantees every measure is a whole number of ticks.
     #[must_use]
-    #[allow(clippy::expect_used)] // see Panics
+    #[expect(clippy::expect_used, reason = "validation guarantees whole measures")]
     pub fn measures_from(&self, from: Tick) -> Measures {
         self.part
             .measures_from(self.document.ticks_per_beat, from)
@@ -276,7 +281,7 @@ impl Valid<'_, Timing> {
     ///
     /// Never: validation guarantees every measure is a whole number of ticks.
     #[must_use]
-    #[allow(clippy::expect_used)] // see Panics
+    #[expect(clippy::expect_used, reason = "validation guarantees whole measures")]
     pub fn grid_position(&self, tick: Tick) -> GridPosition {
         self.part
             .grid_position(self.document.ticks_per_beat, tick)
@@ -284,11 +289,16 @@ impl Valid<'_, Timing> {
     }
 }
 
-#[allow(clippy::expect_used)] // validation guarantees every span ends on a tick
+#[expect(
+    clippy::expect_used,
+    reason = "validation guarantees every span ends on a tick"
+)]
+/// End tick of a validated span, whose endpoint cannot overflow.
 fn span_end(tick: Tick, shape: &Shape) -> Tick {
     shape.end(tick).expect("a valid span ends on a tick")
 }
 
+/// Upgrades format 0 song and chart timing to anchored format 1 timing.
 fn migrate_v0(mut value: serde_json::Value) -> Result<serde_json::Value, Error> {
     let ticks_per_beat = value
         .get("ticks_per_beat")
@@ -385,7 +395,11 @@ impl V0Timing {
                         seconds,
                     });
                 }
-                kind => events.push(TimingEvent {
+                kind @ (V0TimingKind::Stop(_)
+                | V0TimingKind::Delay(_)
+                | V0TimingKind::Warp(_)
+                | V0TimingKind::TimeSignature(_)
+                | V0TimingKind::Other { .. }) => events.push(TimingEvent {
                     tick: event.tick,
                     kind: kind.clone().into(),
                     ext: event.ext.clone(),
@@ -419,7 +433,11 @@ impl V0Timing {
         };
         let mut bpm = self.events.iter().find_map(|event| match event.kind {
             V0TimingKind::Bpm(value) => Some(value),
-            _ => None,
+            V0TimingKind::Stop(_)
+            | V0TimingKind::Delay(_)
+            | V0TimingKind::Warp(_)
+            | V0TimingKind::TimeSignature(_)
+            | V0TimingKind::Other { .. } => None,
         })?;
         let mut elapsed = 0.0;
         let mut cursor = from;
@@ -449,6 +467,10 @@ impl V0Timing {
 }
 
 impl From<V0TimingKind> for TimingKind {
+    #[expect(
+        clippy::unreachable,
+        reason = "BPM variants become anchors before conversion"
+    )]
     fn from(kind: V0TimingKind) -> Self {
         match kind {
             V0TimingKind::Bpm(_) => unreachable!(),
@@ -465,11 +487,22 @@ impl From<V0TimingKind> for TimingKind {
 /// the first key this reader does not know.
 #[derive(Deserialize)]
 struct VersionProbe {
+    /// Version checked before decoding any fields newer than this reader knows.
     format_version: u32,
 }
 
 /// Largest integer magnitude I-JSON allows, `2^53 - 1`: every integer up to it is a double.
 const MAX_EXACT_INTEGER: u64 = (1 << 53) - 1;
+
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_precision_loss,
+    reason = "2^53 - 1 is exactly representable"
+)]
+/// Largest I-JSON exact integer expressed as a double.
+fn exact_integer_limit_as_f64() -> f64 {
+    MAX_EXACT_INTEGER as f64
+}
 
 /// Walks any JSON value and fails where it breaks I-JSON: on a repeated key, which `serde_json`
 /// would resolve by keeping the last, and on an integer a double cannot hold exactly.
@@ -481,13 +514,14 @@ impl<'de> Deserialize<'de> for IJson {
     }
 }
 
+/// Checks integer precision and duplicate map keys while walking arbitrary JSON.
 struct IJsonVisitor;
 
 impl<'de> Visitor<'de> for IJsonVisitor {
     type Value = IJson;
 
-    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("any JSON value")
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("any JSON value")
     }
 
     fn visit_bool<E>(self, _: bool) -> Result<Self::Value, E> {
@@ -509,8 +543,7 @@ impl<'de> Visitor<'de> for IJsonVisitor {
     }
 
     fn visit_f64<E: de::Error>(self, v: f64) -> Result<Self::Value, E> {
-        #[allow(clippy::cast_precision_loss)] // the largest safe integer is exact as f64
-        if v.fract() == 0.0 && v.abs() > MAX_EXACT_INTEGER as f64 {
+        if v.fract() == 0.0 && v.abs() > exact_integer_limit_as_f64() {
             return Err(inexact(v));
         }
         Ok(IJson)
@@ -582,7 +615,7 @@ mod tests {
     }
 
     fn read(value: &Value) -> Result<ValidDocument, Error> {
-        ValidDocument::from_json(&serde_json::to_vec(value).unwrap())
+        ValidDocument::from_json(&serde_json::to_vec(value)?)
     }
 
     /// Reads `value` and returns what the writer makes of it.
@@ -593,9 +626,16 @@ mod tests {
     /// The format chapter's full example, embedded at compile time so the test does no I/O.
     const SPEC: &str = include_str!("../../../docs/src/format.md");
 
+    #[expect(
+        clippy::string_slice,
+        reason = "substring searches return UTF-8 byte boundaries"
+    )]
     fn spec_example() -> Value {
-        let start = SPEC.rfind("```json\n").unwrap() + "```json\n".len();
-        let end = start + SPEC[start..].find("```").unwrap();
+        let start = SPEC
+            .rfind("```json\n")
+            .unwrap()
+            .saturating_add("```json\n".len());
+        let end = start.saturating_add(SPEC[start..].find("```").unwrap());
         serde_json::from_str(&SPEC[start..end]).unwrap()
     }
 
@@ -860,7 +900,7 @@ mod tests {
     fn excessive_nesting_is_refused_without_recursing_forever() {
         let mut document = minimal();
         document["settings"] = json!({ "nest": 0 });
-        assert!(read(&document).is_ok());
+        read(&document).unwrap();
         let shallow = serde_json::to_string(&document).unwrap();
         let nested = format!("{}0{}", "[".repeat(129), "]".repeat(129));
         let text = shallow.replace(r#""nest":0"#, &format!(r#""nest":{nested}"#));
@@ -901,7 +941,7 @@ mod tests {
 
         #[test]
         fn arbitrary_short_json_never_panics(the_bytes in proptest::collection::vec(any::<u8>(), 0..512)) {
-            let _ = ValidDocument::from_json(&the_bytes);
+            drop(ValidDocument::from_json(&the_bytes));
         }
     }
 
@@ -930,11 +970,10 @@ mod tests {
         let leaf = prop_oneof![
             Just(Value::Null),
             any::<bool>().prop_map(Value::from),
-            (-exact..=exact).prop_map(Value::from),
+            (exact.saturating_neg()..=exact).prop_map(Value::from),
             any::<f64>()
                 .prop_filter("finite I-JSON float", |f| {
-                    #[allow(clippy::cast_precision_loss)] // the bound is exactly representable
-                    let largest_safe = MAX_EXACT_INTEGER as f64;
+                    let largest_safe = exact_integer_limit_as_f64();
                     f.is_finite() && (f.fract() != 0.0 || f.abs() <= largest_safe)
                 })
                 .prop_map(Value::from),
@@ -994,7 +1033,7 @@ mod tests {
                 .boxed()
         } else {
             (0..LANES)
-                .prop_flat_map(|index| (Just(index), 1..=LANES - index))
+                .prop_flat_map(|index| (Just(index), 1..=LANES.saturating_sub(index)))
                 .prop_map(|(index, width)| Position::Lane {
                     index: LaneIndex::new(index),
                     width: LaneCount::new(width).unwrap(),
@@ -1012,7 +1051,7 @@ mod tests {
                         .into_iter()
                         .zip(1..)
                         .map(|((position, ease, ext), j)| PathPoint {
-                            tick: Tick::new(tick + 100 * j),
+                            tick: Tick::new(tick.saturating_add(100_i32.saturating_mul(j))),
                             position,
                             ease,
                             ext,
@@ -1037,30 +1076,32 @@ mod tests {
                 let children = vec((0_i32..=1000, position(plane), kind(), ext()), 0..3);
                 (position(plane), kind(), shape, sample, children, ext())
             })
-            .prop_map(move |(position, kind, shape, sample, children, ext)| {
-                let start = Tick::new(tick);
-                let end = shape.end(start).unwrap();
-                let children = children
-                    .into_iter()
-                    .map(|(offset, position, kind, ext)| Child {
-                        tick: Tick::new(tick + offset).min(end),
-                        position,
-                        kind,
-                        shape: Shape::Instant,
-                        sample: None,
-                        ext,
-                    })
-                    .collect();
-                Object {
-                    tick: start,
-                    position,
-                    kind,
-                    shape,
-                    sample,
-                    children,
-                    ext,
-                }
-            })
+            .prop_map(
+                move |(object_position, object_kind, shape, sample, children, object_ext)| {
+                    let start = Tick::new(tick);
+                    let end = shape.end(start).unwrap();
+                    let children = children
+                        .into_iter()
+                        .map(|(offset, position, kind, ext)| Child {
+                            tick: Tick::new(tick.saturating_add(offset)).min(end),
+                            position,
+                            kind,
+                            shape: Shape::Instant,
+                            sample: None,
+                            ext,
+                        })
+                        .collect();
+                    Object {
+                        tick: start,
+                        position: object_position,
+                        kind: object_kind,
+                        shape,
+                        sample,
+                        children,
+                        ext: object_ext,
+                    }
+                },
+            )
             .boxed()
     }
 
@@ -1089,7 +1130,7 @@ mod tests {
                 let events = events
                     .into_iter()
                     .map(|(k, (kind, ext))| TimingEvent {
-                        tick: Tick::new(16 * k),
+                        tick: Tick::new(16_i32.saturating_mul(k)),
                         kind,
                         ext,
                     })
@@ -1109,7 +1150,9 @@ mod tests {
     fn chart(name: String, samples: usize) -> BoxedStrategy<Chart> {
         (0_i32..4)
             .prop_flat_map(move |count| {
-                let objects: Vec<_> = (0..count).map(|i| object(1024 * i, samples)).collect();
+                let objects: Vec<_> = (0..count)
+                    .map(|i| object(1024_i32.saturating_mul(i), samples))
+                    .collect();
                 (objects, settings(), option::of(timing()), ext())
             })
             .prop_map(move |(objects, settings, timing, ext)| Chart {
@@ -1156,9 +1199,9 @@ mod tests {
             .prop_map(|markers| {
                 markers
                     .into_iter()
-                    .map(|(tick, (kind, text))| Marker {
+                    .map(|(tick, (marker_kind, text))| Marker {
                         tick: Tick::new(tick),
-                        kind,
+                        kind: marker_kind,
                         text,
                     })
                     .collect()
@@ -1242,10 +1285,10 @@ mod tests {
         assert_eq!(valid.timing().time_at(Tick::new(960)), seconds(0.5));
         assert_eq!(charts[0].timing().time_at(Tick::new(960)), seconds(0.5));
         assert_eq!(charts[1].timing().time_at(Tick::new(960)), seconds(2.0));
-        let hold = charts[0].objects().next().unwrap();
-        let child = hold.children().next().unwrap();
+        let hold_object = charts[0].objects().next().unwrap();
+        let child = hold_object.children().next().unwrap();
         assert_eq!(
-            (hold.end(), child.end()),
+            (hold_object.end(), child.end()),
             (Tick::new(1440), Tick::new(1440))
         );
     }

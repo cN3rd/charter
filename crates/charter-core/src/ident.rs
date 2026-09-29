@@ -69,23 +69,25 @@ string_newtype!(
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, ::serde::Deserialize)]
 #[serde(try_from = "String")]
 pub struct Key {
+    /// Plugin owning the key.
     namespace: Namespace,
+    /// Non-empty part following the first dot; may itself contain dots.
     name: Name,
 }
 impl Key {
     #[must_use]
-    pub fn new(namespace: Namespace, name: Name) -> Self {
+    pub const fn new(namespace: Namespace, name: Name) -> Self {
         Self { namespace, name }
     }
 
     /// The owning plugin's namespace.
     #[must_use]
-    pub fn namespace(&self) -> &Namespace {
+    pub const fn namespace(&self) -> &Namespace {
         &self.namespace
     }
 
     #[must_use]
-    pub fn name(&self) -> &Name {
+    pub const fn name(&self) -> &Name {
         &self.name
     }
 }
@@ -139,7 +141,7 @@ macro_rules! vocabulary {
         impl $name {
             /// The owning plugin's namespace, or `None` for a shared word.
             #[must_use]
-            pub fn namespace(&self) -> Option<&Namespace> {
+            pub const fn namespace(&self) -> Option<&Namespace> {
                 match self {
                     Self::Other(key) => Some(key.namespace()),
                     $(Self::$variant)|+ => None,
@@ -285,7 +287,7 @@ mod tests {
 
     #[test]
     fn identifiers_deserialize_through_their_grammar_and_write_as_plain_strings() {
-        assert!(serde_json::from_value::<Kind>(serde_json::json!("slide")).is_err());
+        serde_json::from_value::<Kind>(serde_json::json!("slide")).unwrap_err();
         let kind: Kind = serde_json::from_value(serde_json::json!("psk.flick")).unwrap();
         assert_eq!(
             serde_json::to_value(&kind).unwrap(),

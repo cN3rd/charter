@@ -6,6 +6,10 @@ use crate::json::MAX_DOCUMENT_BYTES;
 use crate::unit::{LaneCount, Tick, TimeSignature};
 
 /// Why a document could not be read or written.
+#[expect(
+    clippy::error_impl_error,
+    reason = "the crate's public error type is already named Error"
+)]
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("document is {0} bytes, over the {MAX_DOCUMENT_BYTES}-byte limit")]

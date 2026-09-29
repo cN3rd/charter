@@ -17,7 +17,7 @@ pub struct Layout {
 
 /// What a new song is made from: its metadata, one of its game's [layouts](RulesetPlugin::layouts)
 /// by index, and its charts, in order.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NewSong {
     pub metadata: Metadata,
     pub layout: usize,
@@ -96,7 +96,7 @@ pub struct NoteChange {
 }
 
 /// Timing read from another program's format, ready to take the place of a song's.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ImportedTiming {
     pub timing: Timing,
     /// What the format held that the timing leaves out, in words for the user.
@@ -125,7 +125,10 @@ pub trait RulesetPlugin: Debug {
     }
 
     /// What the game calls a layout, such as `Style` or `Keys`.
-    #[allow(clippy::unnecessary_literal_bound)] // a plugin may name it from its own data
+    #[expect(
+        clippy::unnecessary_literal_bound,
+        reason = "plugins may name layouts from their data"
+    )]
     fn layout_kind(&self) -> &str {
         "Lanes"
     }
@@ -156,7 +159,7 @@ pub trait RulesetPlugin: Debug {
     /// `object`, a note of a chart `lanes` wide, as the change `id` makes it, or none when the
     /// change does not apply to it. The editor checks the result as it does any edit.
     fn change_note(&self, id: &str, object: &Object, lanes: LaneCount) -> Option<Object> {
-        let _ = (id, object, lanes);
+        let _: (&str, &Object, LaneCount) = (id, object, lanes);
         None
     }
 
@@ -166,7 +169,7 @@ pub trait RulesetPlugin: Debug {
     ///
     /// Returns why the song cannot be made, such as a layout it does not have.
     fn new_song(&self, song: &NewSong) -> Result<ValidDocument, Box<dyn Error + Send + Sync>> {
-        let _ = song;
+        let _: &NewSong = song;
         Err(format!("{} cannot start songs", self.name()).into())
     }
 
@@ -188,7 +191,7 @@ pub trait RulesetPlugin: Debug {
         text: &str,
         into: &ValidDocument,
     ) -> Result<ImportedTiming, Box<dyn Error + Send + Sync>> {
-        let _ = (text, into);
+        let _: (&str, &ValidDocument) = (text, into);
         Err(format!("{} imports no timing", self.id()).into())
     }
 }
@@ -251,9 +254,9 @@ mod tests {
     fn a_plugin_that_only_checks_offers_no_optional_editor_actions() {
         let plugin: &dyn RulesetPlugin = &Checks;
         assert_eq!(plugin.id(), "checks");
-        assert!(plugin.check(&ValidDocument::from_json(
+        plugin.check(&ValidDocument::from_json(
             br#"{"format_version":1,"ruleset":{"id":"checks","version":"1"},"metadata":{"title":"t","artist":"a","audio":"a.ogg"},"timing":{"anchors":[{"tick":0,"seconds":0}],"tempo":120,"events":[]}}"#
-        ).unwrap()).is_ok());
+        ).unwrap()).unwrap();
         assert_eq!(plugin.layout_kind(), "Lanes");
         assert!(plugin.text_settings().is_empty());
         assert!(plugin.note_changes().is_empty());

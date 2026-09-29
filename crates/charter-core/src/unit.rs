@@ -86,13 +86,14 @@ decimal!(
 pub struct ResolvedTime(f64);
 
 impl ResolvedTime {
-    pub(crate) fn new(seconds: f64) -> Self {
+    /// A computed audio time in seconds, possibly before the audio starts.
+    pub(crate) const fn new(seconds: f64) -> Self {
         Self(seconds)
     }
 
     /// Seconds from the start of the audio file, for an audio API or a display.
     #[must_use]
-    pub fn seconds(self) -> f64 {
+    pub const fn seconds(self) -> f64 {
         self.0
     }
 }
@@ -112,8 +113,8 @@ impl From<AudioTime> for ResolvedTime {
 impl std::ops::Add<Seconds> for ResolvedTime {
     type Output = Self;
 
-    fn add(self, length: Seconds) -> Self {
-        Self(self.0 + length.seconds())
+    fn add(self, rhs: Seconds) -> Self {
+        Self(self.0 + rhs.seconds())
     }
 }
 
@@ -213,17 +214,18 @@ impl LaneCount {
     /// The last lane.
     #[must_use]
     pub const fn last(self) -> LaneIndex {
-        LaneIndex(self.0.get() - 1)
+        LaneIndex(self.0.get().saturating_sub(1))
     }
 
     /// The middle lane, or the left of the middle two.
     #[must_use]
     pub const fn middle(self) -> LaneIndex {
-        LaneIndex((self.0.get() - 1) / 2)
+        LaneIndex(self.0.get().saturating_sub(1).div_euclid(2))
     }
 }
 
 impl LaneIndex {
+    /// Zero-based index; the chart's lane count determines whether it fits.
     #[must_use]
     pub const fn new(index: u16) -> Self {
         Self(index)
@@ -244,7 +246,7 @@ impl LaneSpan {
         let start = u32::from(first.0);
         Self {
             start,
-            end: start + u32::from(width.0.get()),
+            end: start.saturating_add(NonZeroU32::from(width.0).get()),
         }
     }
 
@@ -256,7 +258,7 @@ impl LaneSpan {
 
     /// Whether the two spans share a lane.
     #[must_use]
-    pub fn overlaps(self, other: Self) -> bool {
+    pub const fn overlaps(self, other: Self) -> bool {
         self.start < other.end && other.start < self.end
     }
 }
@@ -285,12 +287,14 @@ impl LaneSpan {
 pub struct TicksPerBeat(NonZeroU16);
 
 impl Tick {
+    /// Signed tick position, including positions before tick zero.
     #[must_use]
     pub const fn new(tick: i32) -> Self {
         Self(tick)
     }
 
-    pub(crate) fn get(self) -> i32 {
+    /// Signed tick position for arithmetic and ordering.
+    pub(crate) const fn get(self) -> i32 {
         self.0
     }
 
@@ -304,8 +308,11 @@ impl Tick {
     /// the last tick.
     #[must_use]
     pub fn next_on(self, step: Ticks) -> Option<Self> {
-        let step = i64::from(step.0.get());
-        let line = (i64::from(self.0).div_euclid(step) + 1) * step;
+        let step = std::num::NonZeroI64::from(step.0).get();
+        let line = i64::from(self.0)
+            .div_euclid(step)
+            .saturating_add(1)
+            .saturating_mul(step);
         i32::try_from(line).ok().map(Self)
     }
 
@@ -313,15 +320,18 @@ impl Tick {
     /// before the first tick.
     #[must_use]
     pub fn previous_on(self, step: Ticks) -> Option<Self> {
-        let step = i64::from(step.0.get());
-        let line = (i64::from(self.0) - 1).div_euclid(step) * step;
+        let step = std::num::NonZeroI64::from(step.0).get();
+        let line = i64::from(self.0)
+            .saturating_sub(1)
+            .div_euclid(step)
+            .saturating_mul(step);
         i32::try_from(line).ok().map(Self)
     }
 
     /// How far `later` lies after this tick, or `None` unless it is later.
     #[must_use]
     pub fn ticks_until(self, later: Self) -> Option<Ticks> {
-        u32::try_from(i64::from(later.0) - i64::from(self.0))
+        u32::try_from(i64::from(later.0).saturating_sub(i64::from(self.0)))
             .ok()
             .and_then(Ticks::new)
     }
@@ -337,7 +347,8 @@ impl Ticks {
         }
     }
 
-    pub(crate) fn get(self) -> u32 {
+    /// Nonzero tick distance for calculations that need a plain count.
+    pub(crate) const fn get(self) -> u32 {
         self.0.get()
     }
 }
@@ -358,7 +369,7 @@ impl From<Ticks> for u32 {
 /// An editor counts ticks by number where it lays out or moves many of them at once.
 impl From<Tick> for i64 {
     fn from(tick: Tick) -> Self {
-        i64::from(tick.0)
+        Self::from(tick.0)
     }
 }
 
@@ -417,20 +428,26 @@ pub struct TimeSignature {
 
 impl TimeSignature {
     /// Four quarter notes a measure, the meter a song has unless it says otherwise.
-    pub const COMMON: Self = match (NonZeroU16::new(4), NonZeroU16::new(4)) {
-        (Some(numerator), Some(denominator)) => Self {
-            numerator,
-            denominator,
+    pub const COMMON: Self = match NonZeroU16::new(4) {
+        Some(four) => Self {
+            numerator: four,
+            denominator: four,
         },
-        _ => unreachable!(),
+        None => Self {
+            numerator: NonZeroU16::MIN,
+            denominator: NonZeroU16::MIN,
+        },
     };
 
     /// Whether a measure, `numerator * 4 / denominator` beats, is a whole number of ticks at
     /// `resolution`.
     #[must_use]
     pub fn measure_is_whole(self, resolution: TicksPerBeat) -> bool {
-        let quarters = u64::from(self.numerator.get()) * 4 * u64::from(resolution.0.get());
-        quarters.is_multiple_of(u64::from(self.denominator.get()))
+        let quarters = std::num::NonZeroU64::from(self.numerator)
+            .get()
+            .saturating_mul(4)
+            .saturating_mul(std::num::NonZeroU64::from(resolution.0).get());
+        quarters.is_multiple_of(std::num::NonZeroU64::from(self.denominator).get())
     }
 }
 
@@ -444,17 +461,18 @@ impl TicksPerBeat {
         }
     }
 
-    pub(crate) fn get(self) -> u16 {
+    /// Nonzero number of ticks in a quarter-note beat.
+    pub(crate) const fn get(self) -> u16 {
         self.0.get()
     }
 
     /// How long an `n`th note lasts: `4 / n` beats, if that is a whole number of ticks.
     #[must_use]
     pub fn note_length(self, n: NonZeroU16) -> Option<Ticks> {
-        let quarters = 4 * u32::from(self.0.get());
-        let n = u32::from(n.get());
+        let quarters = 4_u32.saturating_mul(NonZeroU32::from(self.0).get());
+        let n = NonZeroU32::from(n).get();
         if quarters.is_multiple_of(n) {
-            Ticks::new(quarters / n)
+            Ticks::new(quarters.div_euclid(n))
         } else {
             None
         }
@@ -559,9 +577,9 @@ mod tests {
 
     #[test]
     fn the_origin_may_precede_the_audio_but_a_preview_may_not() {
-        assert!(serde_json::from_value::<Origin>(json!(-0.014)).is_ok());
-        assert!(serde_json::from_value::<AudioTime>(json!(0.0)).is_ok());
-        assert!(serde_json::from_value::<AudioTime>(json!(-0.000_001)).is_err());
+        serde_json::from_value::<Origin>(json!(-0.014)).unwrap();
+        serde_json::from_value::<AudioTime>(json!(0.0)).unwrap();
+        serde_json::from_value::<AudioTime>(json!(-0.000_001)).unwrap_err();
     }
 
     #[test]
@@ -600,8 +618,8 @@ mod tests {
         fn stepping_along_a_grid_finds_the_nearest_line_each_way(tick in -500_i32..500, step in 1_u32..=64) {
             let gap = i32::try_from(step).unwrap();
             let on_grid = |k: &i32| k.rem_euclid(gap) == 0;
-            let next = (tick + 1..tick + 100).find(on_grid).unwrap();
-            let previous = (tick - 100..tick).rev().find(on_grid).unwrap();
+            let next = (tick.saturating_add(1)..tick.saturating_add(100)).find(on_grid).unwrap();
+            let previous = (tick.saturating_sub(100)..tick).rev().find(on_grid).unwrap();
             let span = Ticks::new(step).unwrap();
             proptest::prop_assert_eq!(Tick::new(tick).next_on(span), Some(Tick::new(next)));
             proptest::prop_assert_eq!(Tick::new(tick).previous_on(span), Some(Tick::new(previous)));

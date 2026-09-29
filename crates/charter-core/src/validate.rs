@@ -128,17 +128,19 @@ fn check_namespaces(doc: &Document) -> Result<(), Rule> {
     Ok(())
 }
 
+/// Attaches `location` to a rule rejected by a nested check.
 fn at(location: Location) -> impl FnOnce(Rule) -> Violation {
     move |rule| Violation { at: location, rule }
 }
 
+/// Checks anchor order, event order, warp bounds and whole measures at `ticks_per_beat`.
 fn check_timing(timing: &Timing, ticks_per_beat: TicksPerBeat) -> Result<(), Rule> {
     if timing.anchors.is_empty() {
         return Err(Rule::NoAnchor);
     }
     for pair in timing.anchors.windows(2) {
         let [previous, next] = pair else {
-            unreachable!()
+            return Err(Rule::AnchorsNotIncreasing);
         };
         if previous.tick >= next.tick
             || crate::ResolvedTime::from(previous.seconds).seconds()
@@ -180,14 +182,14 @@ fn check_timing(timing: &Timing, ticks_per_beat: TicksPerBeat) -> Result<(), Rul
         }
     }
     let mut events = timing.events.iter().peekable();
-    let mut warp_end = None;
+    let mut anchor_warp_end = None;
     for anchor in &timing.anchors {
         while let Some(&event) = events.peek() {
             if event.tick > anchor.tick {
                 break;
             }
             if let TimingKind::Warp(ticks) = event.kind {
-                warp_end = Some(
+                anchor_warp_end = Some(
                     event
                         .tick
                         .checked_add(ticks)
@@ -196,7 +198,7 @@ fn check_timing(timing: &Timing, ticks_per_beat: TicksPerBeat) -> Result<(), Rul
             }
             events.next();
         }
-        if warp_end.is_some_and(|end| anchor.tick < end) {
+        if anchor_warp_end.is_some_and(|end| anchor.tick < end) {
             return Err(Rule::AnchorInWarp { tick: anchor.tick });
         }
     }
@@ -366,6 +368,10 @@ mod tests {
             .push(new);
     }
 
+    #[expect(
+        clippy::unwrap_in_result,
+        reason = "test fixture always has valid JSON structure"
+    )]
     fn check(value: &Value) -> Result<(), Violation> {
         validate(&serde_json::from_value(value.clone()).unwrap())
     }
