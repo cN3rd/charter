@@ -460,6 +460,7 @@ pub fn show(
         direction,
         strip,
         grid: finest,
+        colour_notes_by_layer,
     }: Shown<'_>,
     scrolled: &mut [f32; 2],
     gesture: &mut Option<Gesture>,
@@ -577,13 +578,23 @@ pub fn show(
     events(&clipped, columns, song, view, rows, (first, last));
     let band = Rect::from_x_y_ranges(columns.timeline(), view.now_y - 12.0..=view.now_y + 12.0);
     clipped.rect_filled(band, 0.0, style::NOW_BAND);
-    let mut shown = reaching(&chart.objects, first, last).peekable();
-    for (index, object) in chart.objects().enumerate() {
-        if shown.next_if_eq(&index).is_some() {
-            let selected = song.is_selected(&object);
-            draw_object(&clipped, columns, timing, view, object, selected);
+    for object in ordered_objects(song, (first, last)) {
+        let (layer_view, colour) = song.layer_look(&object);
+        if layer_view == charter_core::LayerView::Hidden {
+            continue;
         }
+        let selected = song.is_selected(&object);
+        draw_object(
+            &clipped,
+            columns,
+            timing,
+            view,
+            object,
+            selected,
+            (layer_view, colour, colour_notes_by_layer),
+        );
     }
+
     actions.extend(pointer(
         ui,
         &response,
@@ -685,6 +696,21 @@ pub fn show(
     Some((top.min(bottom), top.max(bottom)))
 }
 
+/// Draw lower rows first, preserving note order within each row.
+fn ordered_objects(song: &Song, (first, last): (Tick, Tick)) -> Vec<Valid<'_, Object>> {
+    let Some(chart) = song.chart() else {
+        return Vec::new();
+    };
+    let mut reaching = reaching(&chart.objects, first, last).peekable();
+    let mut objects: Vec<_> = chart
+        .objects()
+        .enumerate()
+        .filter_map(|(index, object)| reaching.next_if_eq(&index).map(|_| object))
+        .collect();
+    objects.sort_by_key(|object| std::cmp::Reverse(chart.layer_index(object).unwrap_or(0)));
+    objects
+}
+
 /// The patterns the right-click menu places, by the lanes each step counts from the lane
 /// clicked, and the spacings it places them at, as how many to a beat.
 const PATTERNS: [(&str, &[u16]); 3] = [
@@ -711,7 +737,7 @@ fn menu(
     {
         let tick = snap_line(song, field.view, pos);
         if let Some(chart) = song.chart()
-            && let Some(note) = hit(&chart.objects, field, chart.timing(), pos, visible)
+            && let Some(note) = hit_on_layers(song, field, chart.timing(), pos, visible)
             && !song.selection().any(|selected| selected == note)
         {
             actions.push(Action::Select(Some(note), Selecting::Replace));
@@ -754,6 +780,24 @@ fn menu_items(ui: &mut Ui, song: &Song, (lane, at): (LaneIndex, Tick), actions: 
         ("Delete", "Delete", chosen),
         Action::DeleteSelection,
     );
+    if song.layers().len() > 1 {
+        ui.add_enabled_ui(chosen, |ui| {
+            ui.menu_button("Move to layer", |ui| {
+                for (index, row) in song.layers().iter().enumerate() {
+                    let already_there = song.chart().is_some_and(|chart| {
+                        chart
+                            .objects()
+                            .filter(|object| song.is_selected(object))
+                            .all(|object| chart.layer_index(&object) == Some(index))
+                    });
+                    if !already_there && ui.button(&row.name).clicked() {
+                        actions.push(Action::MoveSelectionToLayer(index));
+                        ui.close();
+                    }
+                }
+            });
+        });
+    }
     ui.separator();
     let move_left = Action::ShiftSelection {
         snaps: 0,
@@ -960,7 +1004,7 @@ fn pointer(
     {
         if !modifiers.command {
             actions.push(Action::Select(
-                hit(&chart.objects, field, timing, pos, visible),
+                hit_on_layers(song, field, timing, pos, visible),
                 how,
             ));
         } else if let Some((lane, tick)) = spot(pos) {
@@ -1094,7 +1138,7 @@ fn grab(
         return None;
     }
     let chart = song.chart()?;
-    let note = hit(&chart.objects, field, chart.timing(), origin, visible)?;
+    let note = hit_on_layers(song, field, chart.timing(), origin, visible)?;
     let (selected, room) = room(chart, song, note, field.lanes);
     let gesture = Gesture::MoveNotes {
         tick: line(origin)?,
@@ -1154,6 +1198,7 @@ const fn selecting(modifiers: egui::Modifiers) -> Selecting {
 const GRAB: f32 = 6.0;
 
 /// The note drawn under `pos`, the one whose head is nearest when several are.
+#[cfg(test)]
 fn hit(
     objects: &[Object],
     field: &Field,
@@ -1161,8 +1206,37 @@ fn hit(
     pos: Pos2,
     (first, last): (Tick, Tick),
 ) -> Option<NoteAt> {
+    hit_filtered(objects, field, timing, pos, (first, last), |_| true)
+}
+
+/// Only shown notes participate in pointer gestures or context-menu selection.
+fn hit_on_layers(
+    song: &Song,
+    field: &Field,
+    timing: Valid<'_, Timing>,
+    pos: Pos2,
+    visible: (Tick, Tick),
+) -> Option<NoteAt> {
+    let chart = song.chart()?;
+    hit_filtered(&chart.objects, field, timing, pos, visible, |object| {
+        song.layer_look(object).0 == charter_core::LayerView::Shown
+    })
+}
+
+/// The nearest note whose layer is eligible for selection.
+fn hit_filtered(
+    objects: &[Object],
+    field: &Field,
+    timing: Valid<'_, Timing>,
+    pos: Pos2,
+    (first, last): (Tick, Tick),
+    eligible: impl Fn(&Object) -> bool,
+) -> Option<NoteAt> {
     let under = reaching(objects, first, last).filter_map(|index| {
         let object = objects.get(index)?;
+        if !eligible(object) {
+            return None;
+        }
         let Position::Lane {
             index: lane_index,
             width,
@@ -1264,6 +1338,8 @@ pub struct Shown<'a> {
     pub strip: Option<Strip<'a>>,
     /// The note value of the grid's finest lines: 4 draws beats alone, 16 sixteenths.
     pub grid: NonZeroU16,
+    /// Tint whole notes by layer instead of marking their leading edge.
+    pub colour_notes_by_layer: bool,
 }
 
 /// What the audio strip beside the lanes draws.
@@ -1651,6 +1727,29 @@ pub(crate) fn kind_colours(kind: &Kind) -> (egui::Color32, egui::Color32) {
     }
 }
 
+/// Note-kind colours, optionally tinted by layer and dimmed for reference notes.
+fn object_colours(
+    kind: &Kind,
+    view: charter_core::LayerView,
+    colour: Option<charter_core::LayerColour>,
+    tinted: bool,
+) -> (egui::Color32, egui::Color32) {
+    let (head, body) = kind_colours(kind);
+    let (head, body) = if tinted {
+        colour.map_or((head, body), |colour| {
+            let colour = style::layer_colour(colour);
+            (colour, colour.gamma_multiply(0.65))
+        })
+    } else {
+        (head, body)
+    };
+    if view == charter_core::LayerView::Ghosted {
+        (head.gamma_multiply(0.35), body.gamma_multiply(0.35))
+    } else {
+        (head, body)
+    }
+}
+
 /// Draws a lane object's head and any sustained body, highlighting selected heads.
 fn draw_object(
     painter: &Canvas,
@@ -1659,6 +1758,11 @@ fn draw_object(
     view: View,
     object: Valid<'_, Object>,
     selected: bool,
+    (layer_view, colour, tinted): (
+        charter_core::LayerView,
+        Option<charter_core::LayerColour>,
+        bool,
+    ),
 ) {
     let Position::Lane { index, width } = object.position else {
         return;
@@ -1668,7 +1772,7 @@ fn draw_object(
     let across = columns
         .span(index, width)
         .shrink((columns.lane_w * 0.12).max(2.0));
-    let (head, body) = kind_colours(&object.kind);
+    let (head, body) = object_colours(&object.kind, layer_view, colour, tinted);
     match &object.shape {
         Shape::Instant => {}
         Shape::Sustain { .. } => {
@@ -1714,6 +1818,21 @@ fn draw_object(
         Kind::Tap | Kind::Hold | Kind::Roll | Kind::Fake | Kind::Other(_) => {
             painter.rect_filled(rect, 3.0, head);
         }
+    }
+    if let Some(colour) = colour
+        && !tinted
+    {
+        let bar = Rect::from_x_y_ranges(across, rect.top()..=rect.top() + 2.0);
+        let colour = style::layer_colour(colour);
+        painter.rect_filled(
+            bar,
+            0.0,
+            if layer_view == charter_core::LayerView::Ghosted {
+                colour.gamma_multiply(0.35)
+            } else {
+                colour
+            },
+        );
     }
     for child in object.children() {
         if let Position::Lane {
@@ -2086,6 +2205,136 @@ mod tests {
 
     fn song() -> Song {
         Song::new(demo::song(), &[])
+    }
+
+    #[test]
+    fn a_hidden_layer_is_not_hit_even_where_its_note_was_drawn() {
+        let mut song = Song::new(demo::song(), &[&charter_stepmania::Plugin]);
+        song.set_layer_view(0, charter_core::LayerView::Hidden)
+            .unwrap();
+        let field = field(&song);
+        let chart = song.chart().unwrap();
+        let note = chart
+            .objects()
+            .find(|o| matches!(o.position, Position::Lane { .. }))
+            .unwrap();
+        let Position::Lane { index, width } = note.position else {
+            panic!("the chosen note has a lane")
+        };
+        let at = pos2(
+            field.columns.span(index, width).center(),
+            field.view.y(chart.timing().time_at(note.tick)),
+        );
+        assert_eq!(
+            hit_on_layers(
+                &song,
+                &field,
+                chart.timing(),
+                at,
+                (Tick::new(0), Tick::new(3840))
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn ghosted_notes_dim_but_shown_notes_keep_their_kind_colour() {
+        let (shown, _) = object_colours(&Kind::Tap, charter_core::LayerView::Shown, None, false);
+        let (ghost, _) = object_colours(&Kind::Tap, charter_core::LayerView::Ghosted, None, false);
+        assert_eq!(shown, style::TAP);
+        assert!(ghost.r() < shown.r());
+        assert!(ghost.g() < shown.g());
+        let (tinted, _) = object_colours(
+            &Kind::Tap,
+            charter_core::LayerView::Shown,
+            Some(charter_core::LayerColour::Pink),
+            true,
+        );
+        assert_eq!(tinted, style::layer_colour(charter_core::LayerColour::Pink));
+    }
+
+    #[test]
+    fn hidden_layer_notes_disappear_from_the_rendered_notefield() {
+        let mut song = Song::new(demo::song(), &[&charter_stepmania::Plugin]);
+        let painted_taps = |drawing_song: &Song| {
+            let ctx = egui::Context::default();
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                show(
+                    ui,
+                    drawing_song,
+                    Shown {
+                        zoom: Zoom::default(),
+                        direction: Direction::Up,
+                        strip: None,
+                        grid: grid_of(16),
+                        colour_notes_by_layer: false,
+                    },
+                    &mut [0.0; 2],
+                    &mut None,
+                    &mut Vec::new(),
+                );
+            });
+            let count = output.shapes.iter().filter(|shape| {
+                matches!(&shape.shape, egui::Shape::Rect(rect) if rect.fill == style::TAP)
+            }).count();
+            output.textures_delta.clear();
+            count
+        };
+        assert!(painted_taps(&song) > 0);
+        song.set_layer_view(0, charter_core::LayerView::Hidden)
+            .unwrap();
+        assert_eq!(painted_taps(&song), 0);
+    }
+
+    #[test]
+    fn note_menu_moves_selection_to_another_layer() {
+        let mut song = Song::new(demo::song(), &[&charter_stepmania::Plugin]);
+        song.add_layer().unwrap();
+        let first = song
+            .chart()
+            .unwrap()
+            .objects()
+            .find(|o| matches!(o.position, Position::Lane { .. }))
+            .unwrap();
+        let Position::Lane { index, .. } = first.position else {
+            panic!("the chosen note has a lane")
+        };
+        song.select(
+            [NoteAt {
+                tick: first.tick,
+                lane: index,
+            }],
+            Selecting::Replace,
+        );
+        let mut harness = Harness::builder().build_ui_state(
+            |ui, (song, actions): &mut (Song, Vec<Action>)| {
+                menu_items(ui, song, (LaneIndex::new(0), Tick::new(0)), actions);
+            },
+            (song, Vec::new()),
+        );
+        harness.run();
+        harness.get_by_label("Move to layer").click();
+        harness.run();
+        harness.get_by_label("Layer 2").click();
+        harness.run();
+        assert!(harness.state().1.contains(&Action::MoveSelectionToLayer(0)));
+    }
+
+    #[test]
+    fn lower_layers_are_painted_before_higher_ones() {
+        let mut song = Song::new(demo::song(), &[&charter_stepmania::Plugin]);
+        song.add_layer().unwrap();
+        song.set_active_layer(0);
+        song.toggle(Tick::new(1_000_000), LaneIndex::new(0), Kind::Tap)
+            .unwrap();
+        let order = ordered_objects(&song, (Tick::new(0), Tick::new(1_000_000)));
+        let chart = song.chart().unwrap();
+        let layers: Vec<_> = order
+            .iter()
+            .map(|object| chart.layer_index(object).unwrap())
+            .collect();
+        assert_eq!(layers.first(), Some(&1));
+        assert_eq!(layers.last(), Some(&0));
     }
 
     #[test]
@@ -2931,6 +3180,7 @@ mod tests {
                             direction: Direction::Up,
                             strip: None,
                             grid: grid_of(16),
+                            colour_notes_by_layer: false,
                         },
                         &mut [0.0; 2],
                         &mut state.gesture,

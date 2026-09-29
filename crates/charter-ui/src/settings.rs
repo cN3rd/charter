@@ -134,6 +134,8 @@ pub struct Settings {
     pub frequencies: bool,
     /// Whether the whole chart shows in a strip beside the notefield, to jump across it.
     pub minimap: bool,
+    /// Tint whole notes with their layer's colour instead of marking their leading edge.
+    pub colour_notes_by_layer: bool,
     /// The note value of the notefield grid's finest lines, one of [`GRIDS`]: 4 draws the beats
     /// alone. Older versions kept a sixteenths switch here.
     #[serde(alias = "sixteenths", deserialize_with = "grid_or_switch")]
@@ -183,6 +185,7 @@ impl Default for Settings {
             waveform: true,
             frequencies: false,
             minimap: true,
+            colour_notes_by_layer: false,
             grid: BEATS,
             metronome_grid: false,
             rate_b: 0.6,
@@ -1172,6 +1175,7 @@ mod tests {
             waveform: false,
             frequencies: true,
             minimap: false,
+            colour_notes_by_layer: true,
             grid: NonZeroU16::new(24).unwrap(),
             metronome_grid: true,
             rate_b: 0.5,

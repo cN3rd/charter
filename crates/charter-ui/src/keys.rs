@@ -169,6 +169,7 @@ pub fn key_actions(input: &egui::InputState, lanes: u16, keys: &mut LaneKeys) ->
     clippy::wildcard_enum_match_arm,
     reason = "unmapped egui keys do not trigger shortcuts"
 )]
+#[expect(clippy::too_many_lines, reason = "shortcut table grouped by modifiers")]
 fn command(key: Key, modifiers: Modifiers) -> Option<Action> {
     let is = |shortcut: KeyboardShortcut| {
         key == shortcut.logical_key && modifiers.matches_logically(shortcut.modifiers)
@@ -190,6 +191,15 @@ fn command(key: Key, modifiers: Modifiers) -> Option<Action> {
     if is(OPEN) {
         return Some(Action::Open);
     }
+    if modifiers.command && modifiers.shift {
+        match key {
+            Key::N => return Some(Action::AddLayer),
+            Key::H => return Some(Action::ToggleActiveLayerView),
+            Key::ArrowUp => return Some(Action::StepLayer(Step::Earlier)),
+            Key::ArrowDown => return Some(Action::StepLayer(Step::Later)),
+            _ => {}
+        }
+    }
     if is(NEW_SONG) {
         return Some(Action::NewSong);
     }
@@ -206,6 +216,15 @@ fn command(key: Key, modifiers: Modifiers) -> Option<Action> {
         return Some(Action::Help);
     }
     if modifiers.alt {
+        if !modifiers.command
+            && let Some(index) = LANE_KEYS[..9].iter().position(|digit| *digit == key)
+        {
+            return Some(if modifiers.shift {
+                Action::MoveSelectionToLayer(index)
+            } else {
+                Action::SetActiveLayer(index)
+            });
+        }
         let nudge = if modifiers.shift { 0.010 } else { 0.001 };
         return match key {
             Key::ArrowDown => Some(Action::JumpSection(Step::Later)),
@@ -232,6 +251,7 @@ fn command(key: Key, modifiers: Modifiers) -> Option<Action> {
     }
     if modifiers.command {
         return match key {
+            Key::E => Some(Action::MergeActiveLayer),
             Key::Plus | Key::Equals => Some(Action::ZoomBy(Zoom::STEP)),
             Key::Minus => Some(Action::ZoomBy(Zoom::STEP.recip())),
             Key::A => Some(Action::SelectAll),
@@ -323,6 +343,29 @@ mod tests {
         for (key, modifiers, expected) in cases {
             assert_eq!(command(key, modifiers), expected, "{key:?} {modifiers:?}");
         }
+    }
+
+    #[test]
+    fn layer_shortcuts_do_not_place_lane_notes() {
+        let both = Modifiers::COMMAND.plus(Modifiers::SHIFT);
+        assert_eq!(command(Key::N, both), Some(Action::AddLayer));
+        assert_eq!(
+            command(Key::E, Modifiers::COMMAND),
+            Some(Action::MergeActiveLayer)
+        );
+        assert_eq!(command(Key::H, both), Some(Action::ToggleActiveLayerView));
+        assert_eq!(
+            command(Key::ArrowUp, both),
+            Some(Action::StepLayer(Step::Earlier))
+        );
+        assert_eq!(
+            command(Key::Num2, Modifiers::ALT),
+            Some(Action::SetActiveLayer(1))
+        );
+        assert_eq!(
+            command(Key::Num2, Modifiers::ALT.plus(Modifiers::SHIFT)),
+            Some(Action::MoveSelectionToLayer(1))
+        );
     }
 
     #[test]

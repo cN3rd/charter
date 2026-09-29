@@ -317,6 +317,40 @@ impl Note {
 /// Something a panel, key or gesture asks the editor to do.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Action {
+    /// Make a layer above the active one.
+    AddLayer,
+    /// Choose the layer at this row.
+    SetActiveLayer(usize),
+    /// Choose the adjacent row.
+    StepLayer(Step),
+    /// Move the selected notes onto this row.
+    MoveSelectionToLayer(usize),
+    /// Select the notes on this row.
+    SelectLayer(usize),
+    /// Set the view of this row.
+    SetLayerView(usize, charter_core::LayerView),
+    /// Solo this row, or restore the preceding views.
+    SoloLayer(usize),
+    /// Set the lock on this row.
+    SetLayerLocked(usize, bool),
+    /// Set the palette colour of this row.
+    RecolourLayer(usize, charter_core::LayerColour),
+    /// Give this row a new name.
+    RenameLayer(usize, String),
+    /// Drag a row to a new position.
+    MoveLayer(usize, usize),
+    /// Merge the active row into the next row.
+    MergeActiveLayer,
+    /// Merge this row into the next row.
+    MergeLayer(usize),
+    /// Remove the row, either discarding or moving its notes.
+    DeleteLayer(usize, charter_editor::LayerNotes),
+    /// Copy this row into another chart.
+    CopyLayerToChart(usize, usize),
+    /// Show or hide the active row.
+    ToggleActiveLayerView,
+    /// Switch between note-kind and layer-colour tinting.
+    ToggleLayerColours,
     /// Replace the open song with the built-in demo.
     OpenDemo,
     /// Show the chart at this index in the open song.
@@ -1378,7 +1412,6 @@ impl Window {
         let Some(song) = &mut self.song else {
             return;
         };
-        let copied = song.copied();
         // After the selection's last end, so a hold is not copied over itself.
         let last = song.chart().and_then(|chart| {
             chart
@@ -1399,7 +1432,7 @@ impl Window {
         let Some(at) = last.next_on(step) else {
             return;
         };
-        self.failure = match song.paste(&copied, at) {
+        self.failure = match song.duplicate_selection(at) {
             Ok(0) => Some("Nothing duplicated: every place is taken.".to_owned()),
             Ok(_) => None,
             Err(why) => Some(refused(&why)),
@@ -1952,8 +1985,12 @@ impl Window {
     }
 
     /// Does what the window does whether or not a song is open.
+    #[expect(clippy::too_many_lines, reason = "one match arm per window command")]
     fn apply_to_window(&mut self, action: &Action) {
         match *action {
+            Action::ToggleLayerColours => {
+                self.settings.colour_notes_by_layer = !self.settings.colour_notes_by_layer;
+            }
             Action::OpenDemo => self.open_demo(),
             Action::Open => self.requests.push(Request::Open),
             Action::OpenRecent(ref path) => {
@@ -1993,6 +2030,22 @@ impl Window {
                 self.new_song.get_or_insert_default();
             }
             Action::OpenChart(_)
+            | Action::AddLayer
+            | Action::SetActiveLayer(_)
+            | Action::StepLayer(_)
+            | Action::MoveSelectionToLayer(_)
+            | Action::SelectLayer(_)
+            | Action::SetLayerView(..)
+            | Action::SoloLayer(_)
+            | Action::SetLayerLocked(..)
+            | Action::RecolourLayer(..)
+            | Action::RenameLayer(..)
+            | Action::MoveLayer(..)
+            | Action::MergeActiveLayer
+            | Action::MergeLayer(_)
+            | Action::DeleteLayer(..)
+            | Action::CopyLayerToChart(..)
+            | Action::ToggleActiveLayerView
             | Action::Move(_)
             | Action::MoveMeasure(_)
             | Action::FinerSnap
@@ -2095,6 +2148,80 @@ impl Window {
             KeepNotes::OnBeats
         });
         match action {
+            Action::AddLayer => self.failure = song.add_layer().err().as_ref().map(refused),
+            Action::SetActiveLayer(index) => song.set_active_layer(index),
+            Action::StepLayer(step) => {
+                let active = song.active_layer();
+                song.set_active_layer(match step {
+                    Step::Earlier => active.saturating_sub(1),
+                    Step::Later => active.saturating_add(1),
+                });
+            }
+            Action::MoveSelectionToLayer(index) => {
+                self.failure = song
+                    .move_selection_to_layer(index)
+                    .err()
+                    .as_ref()
+                    .map(refused);
+            }
+            Action::SelectLayer(index) => song.select_layer(index),
+            Action::SetLayerView(index, view) => {
+                self.failure = song.set_layer_view(index, view).err().as_ref().map(refused);
+            }
+            Action::SoloLayer(index) => {
+                self.failure = song.solo_layer(index).err().as_ref().map(refused);
+            }
+            Action::SetLayerLocked(index, locked) => {
+                self.failure = song
+                    .set_layer_locked(index, locked)
+                    .err()
+                    .as_ref()
+                    .map(refused);
+            }
+            Action::RecolourLayer(index, colour) => {
+                self.failure = song
+                    .recolour_layer(index, colour)
+                    .err()
+                    .as_ref()
+                    .map(refused);
+            }
+            Action::RenameLayer(index, name) => {
+                self.failure = song.rename_layer(index, &name).err().as_ref().map(refused);
+            }
+            Action::MoveLayer(from, to) => {
+                self.failure = song.move_layer(from, to).err().as_ref().map(refused);
+            }
+            Action::MergeActiveLayer => {
+                self.failure = song
+                    .merge_layer_down(song.active_layer())
+                    .err()
+                    .as_ref()
+                    .map(refused);
+            }
+            Action::MergeLayer(index) => {
+                self.failure = song.merge_layer_down(index).err().as_ref().map(refused);
+            }
+            Action::DeleteLayer(index, notes) => {
+                self.failure = song.delete_layer(index, notes).err().as_ref().map(refused);
+            }
+            Action::CopyLayerToChart(index, chart) => {
+                self.failure = match song.copy_layer_to_chart(index, chart) {
+                    Ok(0) => None,
+                    Ok(skipped) => Some(format!("{skipped} overlapping notes skipped")),
+                    Err(why) => Some(refused(&why)),
+                };
+            }
+            Action::ToggleActiveLayerView => {
+                let index = song.active_layer();
+                if let Some(row) = song.layers().get(index) {
+                    let view = if row.view == charter_core::LayerView::Hidden {
+                        charter_core::LayerView::Shown
+                    } else {
+                        charter_core::LayerView::Hidden
+                    };
+                    self.failure = song.set_layer_view(index, view).err().as_ref().map(refused);
+                }
+            }
             Action::OpenChart(index) => {
                 song.open_chart(index);
                 self.holding.clear();
@@ -2183,6 +2310,7 @@ impl Window {
                 song.clear_selection();
             }
             Action::OpenDemo
+            | Action::ToggleLayerColours
             | Action::Open
             | Action::Save
             | Action::SaveAs
@@ -2478,7 +2606,12 @@ impl Window {
                 panels::menu_bar(
                     ui,
                     (song, recent),
-                    (playing, importable, findable),
+                    (
+                        playing,
+                        importable,
+                        findable,
+                        self.settings.colour_notes_by_layer,
+                    ),
                     &mut actions,
                 );
             });
@@ -2502,7 +2635,12 @@ impl Window {
         egui::Panel::bottom("status")
             .frame(style::chrome())
             .show(ui, |ui| {
-                panels::status_bar(ui, self.song.as_ref(), (&audio_state, self.playing));
+                panels::status_bar(
+                    ui,
+                    self.song.as_ref(),
+                    (&audio_state, self.playing),
+                    &mut actions,
+                );
             });
         self.follow_artwork();
         // The ticks and metronome are mixed in, and the pitch kept or not, as playback starts,
@@ -2585,6 +2723,7 @@ impl Window {
                             self.audio_file().as_deref(),
                         ),
                         grid: shown_grid(self.settings.grid, active_song.snap()),
+                        colour_notes_by_layer: self.settings.colour_notes_by_layer,
                     };
                     let map = self.settings.minimap && active_song.chart().is_some();
                     let length = match self.loaded() {
@@ -2998,14 +3137,17 @@ fn clicks(
     let tick = settings.note_ticks.then(|| settings.tick_sound.tick());
     if let (Some(tick), Some(chart)) = (tick, song.chart()) {
         let lanes = chart.lanes.map_or(0, u16::from);
-        let heads = chart.objects().map(|object| {
-            let cents = if settings.tuned_lanes {
-                lane_cents(object.position, lanes)
-            } else {
-                0
-            };
-            (timing.time_at(object.tick).seconds(), tick.pitched(cents))
-        });
+        let heads = chart
+            .objects()
+            .filter(|object| song.layer_look(object).0 == charter_core::LayerView::Shown)
+            .map(|object| {
+                let cents = if settings.tuned_lanes {
+                    lane_cents(object.position, lanes)
+                } else {
+                    0
+                };
+                (timing.time_at(object.tick).seconds(), tick.pitched(cents))
+            });
         clicks.extend(heads.filter(|(at, _)| (from..=until).contains(at)));
     }
     if metronome {
@@ -3090,6 +3232,7 @@ fn found_message(song: &Song) -> String {
 }
 
 /// Makes the timing edit `action` asks for, and says why if it cannot.
+#[expect(clippy::too_many_lines, reason = "one match arm per timing action")]
 fn retime(song: &mut Song, action: &Action) -> Option<String> {
     let done = match action {
         Action::SetBpmAt(tick, bpm) => song.set_bpm_at(*tick, *bpm),
@@ -3182,7 +3325,24 @@ fn retime(song: &mut Song, action: &Action) -> Option<String> {
         | Action::ToggleTicks
         | Action::ToggleTunedLanes
         | Action::FindTiming
-        | Action::SetGrid(_) => Ok(()),
+        | Action::SetGrid(_)
+        | Action::AddLayer
+        | Action::SetActiveLayer(_)
+        | Action::StepLayer(_)
+        | Action::MoveSelectionToLayer(_)
+        | Action::SelectLayer(_)
+        | Action::SetLayerView(..)
+        | Action::SoloLayer(_)
+        | Action::SetLayerLocked(..)
+        | Action::RecolourLayer(..)
+        | Action::RenameLayer(..)
+        | Action::MoveLayer(..)
+        | Action::MergeActiveLayer
+        | Action::MergeLayer(_)
+        | Action::DeleteLayer(..)
+        | Action::CopyLayerToChart(..)
+        | Action::ToggleActiveLayerView
+        | Action::ToggleLayerColours => Ok(()),
     };
     done.err().as_ref().map(refused)
 }
@@ -3329,6 +3489,158 @@ mod tests {
             .collect();
         lanes.sort_unstable();
         lanes
+    }
+
+    #[test]
+    fn hidden_notes_stop_ticking_but_the_metronome_keeps_playing() {
+        let mut song = Song::new(charter_editor::demo::song(), PLUGINS);
+        let settings = Settings {
+            note_ticks: true,
+            ..Settings::default()
+        };
+        let before = clicks(
+            &song,
+            &settings,
+            false,
+            (0.0, 30.0),
+            charter_timing::grid::Grid::default(),
+        );
+        assert!(!before.is_empty());
+        song.set_layer_view(0, charter_core::LayerView::Hidden)
+            .unwrap();
+        let after = clicks(
+            &song,
+            &settings,
+            false,
+            (0.0, 30.0),
+            charter_timing::grid::Grid::default(),
+        );
+        assert!(after.is_empty());
+        let metronome = clicks(
+            &song,
+            &settings,
+            true,
+            (0.0, 1.0),
+            charter_timing::grid::Grid::default(),
+        );
+        assert!(!metronome.is_empty());
+    }
+
+    #[test]
+    fn panel_layer_edits_each_undo_as_one_step() {
+        let edits = [
+            Action::RenameLayer(0, "Kick".into()),
+            Action::RecolourLayer(0, charter_core::LayerColour::Pink),
+            Action::SetLayerView(0, charter_core::LayerView::Ghosted),
+            Action::SetLayerLocked(0, true),
+            Action::SoloLayer(0),
+            Action::MoveLayer(0, 1),
+            Action::MergeLayer(0),
+            Action::DeleteLayer(0, charter_editor::LayerNotes::Delete),
+        ];
+        for action in edits {
+            let mut app = Window::new(PLUGINS);
+            app.open_demo();
+            app.apply(Action::AddLayer);
+            let before = app.song.as_ref().unwrap().document().to_json().unwrap();
+            app.apply(action.clone());
+            assert!(app.failure.is_none(), "{action:?}: {:?}", app.failure);
+            app.apply(Action::Undo);
+            assert_eq!(
+                app.song.as_ref().unwrap().document().to_json().unwrap(),
+                before,
+                "{action:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn add_layer_button_and_shortcut_both_create_undoable_layers() {
+        let mut harness = editable_demo();
+        harness.get_by_label("Add layer").click();
+        harness.run();
+        assert_eq!(harness.state().song.as_ref().unwrap().layers().len(), 2);
+        harness.key_press_modifiers(
+            egui::Modifiers::COMMAND.plus(egui::Modifiers::SHIFT),
+            egui::Key::N,
+        );
+        harness.run();
+        assert_eq!(harness.state().song.as_ref().unwrap().layers().len(), 3);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.run();
+        assert_eq!(harness.state().song.as_ref().unwrap().layers().len(), 2);
+    }
+
+    #[test]
+    fn alt_digits_switch_layers_and_move_notes_without_placing_lane_taps() {
+        let mut harness = editable_four_taps();
+        harness.state_mut().apply(Action::AddLayer);
+        let before = note_count(&harness);
+        harness.key_press_modifiers(egui::Modifiers::ALT, egui::Key::Num2);
+        harness.run();
+        assert_eq!(harness.state().song.as_ref().unwrap().active_layer(), 1);
+        assert!(harness.query_by_label("Active layer Notes").is_some());
+        select_note(&mut harness, 3, 720);
+        harness.key_press_modifiers(
+            egui::Modifiers::ALT.plus(egui::Modifiers::SHIFT),
+            egui::Key::Num1,
+        );
+        harness.run();
+        let song = harness.state().song.as_ref().unwrap();
+        assert_eq!(song.layers()[0].notes, 1);
+        assert_eq!(note_count(&harness), before);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.run();
+        assert_eq!(harness.state().song.as_ref().unwrap().layers()[0].notes, 0);
+    }
+
+    #[test]
+    fn view_menu_toggles_the_persisted_layer_tint_setting() {
+        let mut harness = editable_demo();
+        assert!(!harness.state().settings.colour_notes_by_layer);
+        harness.get_by_label("View").click();
+        harness.run();
+        harness.get_by_label("Colour notes by layer").click();
+        harness.run();
+        let settings = &harness.state().settings;
+        assert!(settings.colour_notes_by_layer);
+        assert!(Settings::from_kept(&settings.to_kept()).colour_notes_by_layer);
+    }
+
+    #[test]
+    fn copying_a_layer_to_another_chart_is_one_undo_step() {
+        let mut app = Window::new(PLUGINS);
+        app.open_demo();
+        app.apply(Action::AddLayer);
+        let before = app.song.as_ref().unwrap().document().to_json().unwrap();
+        app.apply(Action::CopyLayerToChart(1, 1));
+        assert_ne!(
+            app.song.as_ref().unwrap().document().to_json().unwrap(),
+            before
+        );
+        app.apply(Action::Undo);
+        assert_eq!(
+            app.song.as_ref().unwrap().document().to_json().unwrap(),
+            before
+        );
+    }
+
+    #[test]
+    fn hidden_or_locked_layers_contribute_no_notes_to_select_all() {
+        for action in [
+            Action::SetLayerView(1, charter_core::LayerView::Hidden),
+            Action::SetLayerLocked(1, true),
+        ] {
+            let mut harness = editable_four_taps();
+            harness.state_mut().apply(Action::AddLayer);
+            harness.state_mut().apply(action);
+            harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+            harness.run();
+            assert_eq!(
+                harness.state().song.as_ref().unwrap().selection().count(),
+                0
+            );
+        }
     }
 
     fn cursor_shows(harness: &Harness<'_, Window>, position: &str) -> bool {
@@ -4192,6 +4504,36 @@ mod tests {
         harness.run();
         assert_eq!(lanes_at(&harness, 240), [1]);
         assert_eq!(lanes_at(&harness, 720), [0, 3]);
+    }
+
+    #[test]
+    fn ctrl_d_keeps_the_source_layer_when_another_is_active() {
+        let mut harness = editable_four_taps();
+        harness.state_mut().apply(Action::AddLayer);
+        select_note(&mut harness, 3, 720);
+        let source = harness
+            .state()
+            .song
+            .as_ref()
+            .unwrap()
+            .chart()
+            .unwrap()
+            .objects
+            .iter()
+            .find(|o| o.tick == Tick::new(720))
+            .unwrap()
+            .layer
+            .clone();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::D);
+        harness.run();
+        let song = harness.state().song.as_ref().unwrap();
+        assert!(
+            song.chart()
+                .unwrap()
+                .objects
+                .iter()
+                .any(|o| o.tick == Tick::new(960) && o.layer == source)
+        );
     }
 
     #[test]
@@ -5120,6 +5462,8 @@ mod tests {
     #[test]
     fn a_timing_point_is_added_at_the_cursor_and_removed_but_not_the_first() {
         let mut harness = editable_demo();
+        harness.set_size(egui::vec2(1000.0, 1100.0));
+        harness.run();
         assert!(harness.query_by_label("Remove this timing point").is_none());
         let add = |view: &Harness<'_, Window>| {
             view.get_by_label("Add a timing point here")
@@ -5157,6 +5501,8 @@ mod tests {
     #[test]
     fn a_time_typed_for_a_point_moves_it_in_the_audio() {
         let mut harness = editable_demo();
+        harness.set_size(egui::vec2(1000.0, 1100.0));
+        harness.run();
         harness.get_by_label("Timing point at 00:26.100").click();
         harness.run();
         let time = harness.get_by_role_and_label(Role::TextInput, "Time");

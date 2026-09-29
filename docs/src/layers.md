@@ -1,15 +1,16 @@
 ---
 type: Design Note
 title: Layers
-description: Design draft for layers within a chart, from what a layer is to how it is drawn, edited, played and saved.
-tags: [ui, layers, format, draft]
-status: draft
+description: Layers within a chart, from the model to drawing, editing, playback and saving.
+tags: [ui, layers, format]
+status: implemented
 ---
 
 # Layers
 
-**Draft.** The format and editor model exist; the panel, drawing, playback and keys are not built
-yet. This chapter records the intended behaviour and the choices still open at the end.
+**Built.** The format, editor model, panel, drawing, playback and shortcuts are in the editor.
+Dropping a selection onto a layer row remains for a later pass; use *Move to layer* or
+Alt+Shift+1–9 instead. The choices at the end are still open.
 
 A chart is built out of parts that follow different things in the music: the kick, the snare, the
 melody, a vocal line. Charting them together means judging every note against all the others at
@@ -66,7 +67,7 @@ Each row is, left to right:
   Ctrl+click on a layer's thumbnail selects its pixels in Photoshop.
 
 The highlighted row is the **active layer**, where new notes go; a click on a row makes it active.
-Rows drag to reorder. `[+]` makes a layer above the active one and makes it active. `[…]`, and right-click on a row, hold
+Drag a row by its handle to reorder it. `[+]` makes a layer above the active one and makes it active. `[…]`, and right-click on a row, hold
 the rest: rename, colour, *Select notes*, *Merge down*, *Copy to chart ›* and delete.
 
 ## Drawing

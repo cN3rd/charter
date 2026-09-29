@@ -12,7 +12,14 @@ status: draft
 draws on are all still open. `cargo run -p charter-ui --example mock` shows it as a static egui
 mock, with a made-up song in each of StepMania, Tap Tap Revenge, osu!mania, Project Sekai and
 Arcaea. `cargo run -p charter-app` is the editor so far. It draws charts in the shared vocabulary's
-glyphs, since no ruleset plugin draws yet, and starts and edits songs of the built-in rulesets. Lane
+glyphs, since no ruleset plugin draws yet, and starts and edits songs of the built-in rulesets.
+The song panel has a Layers section below Charts: each chart's named, coloured layers can be
+shown, ghosted, hidden, soloed, locked, renamed, reordered, merged, deleted or copied to another
+chart. The active layer is shown in the status bar; hidden and ghosted layers make no note ticks.
+Alt+1–9 chooses a layer, Alt+Shift+1–9 moves selected notes there, Ctrl+Shift+N adds one,
+Ctrl+Shift+Up/Down chooses the adjacent row, Ctrl+E merges down and Ctrl+Shift+H shows or hides
+the active row. *View › Colour notes by layer* tints whole notes rather than marking their leading
+edge. Lane
 keys and Ctrl with the mouse place taps, holds and mines; the mouse selects and Delete removes the
 selection; `]` lengthens the selected notes, or those at the cursor when none is selected, to
 the snap's next line, making a tap a hold, and `[` shortens them back to a tap. Ctrl+X, Ctrl+C
@@ -183,6 +190,9 @@ of an eight-lane chart at 800 pixels wide; a long marker name shows in full when
 |   Challenge    4L |  13  |         |----+----+----+----|---===---| # |               |
 |   Doubles      8L |Chorus|~~~~~~~~~|~~~~|~~~~|~~~~|~~~~|~~~~~~~~~| - |               |
 | [new] [copy] [del]|      |bpm 190  | [] | [] |    |    |  =====  | # |               |
+| LAYERS       [+][…]|      |         |    |    | xx |    |   ==    | ! |               |
+| [o] [ ] ■ Kick  52|      |         |    |    |    |    |         |   |               |
+|>[o] [ ] ■ Snare 31|      |         |    |    |    |    |         |   |               |
 |                   |      |         |    |    | xx |    |   ==    | ! |               |
 | CHART SETTINGS    |  14  |         |----+----+----+----|--====---| # |               |
 | difficulty  Hard  |      |         |    |    |    | [] |   ===   |   |               |
@@ -436,6 +446,6 @@ and the notes over a waveform that stays put.
 - C-mod as the default, or a default per ruleset
 - Tempora's plain drag of an anchor's musical position, and its multi-select, in the timing window
 - Test play, which osu! and Quaver have and this draft leaves out
-- Layers within a chart, drafted in [Layers](layers.md)
+- Dropping selected notes onto a layer row; the [Layers](layers.md) menu and keys move them today
 - Two charts side by side, which the column layout would allow
 - Plugin timing keys too long for the gutter, such as `osu_mania.scroll_speed`

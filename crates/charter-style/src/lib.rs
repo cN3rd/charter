@@ -104,6 +104,22 @@ pub const ANCHOR_SELECTED: Color32 = ACCENT;
 /// The area beyond the timing window's editable reach.
 pub const REACH_DIM: Color32 = Color32::from_rgba_unmultiplied_const(0, 0, 0, 120);
 
+/// Palette colour legible against the dark panels and note lanes.
+#[must_use]
+pub const fn layer_colour(colour: charter_core::LayerColour) -> Color32 {
+    use charter_core::LayerColour;
+    match colour {
+        LayerColour::Red => Color32::from_rgb(240, 105, 110),
+        LayerColour::Orange => Color32::from_rgb(240, 155, 85),
+        LayerColour::Yellow => Color32::from_rgb(235, 205, 95),
+        LayerColour::Green => Color32::from_rgb(120, 205, 115),
+        LayerColour::Teal => Color32::from_rgb(85, 205, 190),
+        LayerColour::Blue => Color32::from_rgb(110, 170, 255),
+        LayerColour::Purple => Color32::from_rgb(180, 140, 235),
+        LayerColour::Pink => Color32::from_rgb(235, 140, 195),
+    }
+}
+
 /// The family for titles and emphasis.
 fn semibold() -> FontFamily {
     FontFamily::Name("semibold".into())
@@ -593,6 +609,21 @@ mod tests {
         assert!(output.shapes.iter().any(|clipped| {
             matches!(&clipped.shape, egui::Shape::Text(text) if text.galley.text() == "No values")
         }));
+    }
+
+    #[test]
+    fn palette_entries_have_distinct_visible_colours() {
+        let colours: Vec<_> = charter_core::LayerColour::ALL
+            .into_iter()
+            .map(layer_colour)
+            .collect();
+        assert_eq!(colours.len(), 8);
+        for colour in &colours {
+            assert!(colour.r().max(colour.g()).max(colour.b()) >= 160);
+        }
+        for (index, colour) in colours.iter().enumerate() {
+            assert!(!colours[index + 1..].contains(colour));
+        }
     }
 }
 
