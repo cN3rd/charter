@@ -1,3 +1,5 @@
+//! The timing window measures how well the map fits the audio.
+//!
 //! What the timing window measures: how far each onset near a grid line is from it, how well a
 //! stretch of the map fits the audio, a least-squares fit that makes it fit better, and the
 //! places a map most likely went wrong. All of it works on the song as it stands and the onsets
@@ -83,6 +85,7 @@ pub fn nearest_onset(onsets: &[Onset], sensitivity: f32, seconds: f64) -> Option
         .map(|onset| onset.seconds)
 }
 
+/// Onsets within [`SNAP`] seconds of `seconds` that meet the strength threshold.
 fn within(onsets: &[Onset], sensitivity: f32, seconds: f64) -> impl Iterator<Item = &Onset> {
     let from = onsets.partition_point(|onset| onset.seconds < seconds - SNAP);
     onsets
@@ -182,6 +185,8 @@ pub struct Fitted {
     pub after_ms: f64,
 }
 
+/// Fits anchors to audio onsets by least squares.
+///
 /// A least-squares fit of the anchors `range` indexes among `pins` to the `residuals`, the
 /// tempo after the last anchor as well when the range reaches it: each anchor's moment moves so
 /// the grid lines of the segments it bounds pass as near their onsets as they can. With

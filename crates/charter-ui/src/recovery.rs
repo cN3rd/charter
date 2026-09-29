@@ -9,6 +9,7 @@ use serde_json::Value;
 
 use charter_editor::Song;
 
+/// The autosave's serialised song and the files it needs to restore it.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Autosave {
@@ -19,6 +20,7 @@ struct Autosave {
     /// Autosaves from before it was kept have none.
     #[serde(default)]
     audio: Option<String>,
+    /// The chart document kept with the autosave.
     song: Value,
     /// The song's artwork, when it is not beside the song yet. Autosaves from before it was kept
     /// have none.
@@ -33,6 +35,7 @@ pub(crate) struct Kept {
     pub(crate) path: Option<PathBuf>,
     /// The audio file dropped on the song.
     pub(crate) audio: Option<PathBuf>,
+    /// The restored chart and its editing state.
     pub(crate) song: Song,
     /// The song's artwork, as the file it names is to hold it once saved.
     pub(crate) artwork: Option<Vec<u8>>,

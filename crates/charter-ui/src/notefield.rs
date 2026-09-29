@@ -125,12 +125,17 @@ pub fn earliest_tick_from(timing: Valid<'_, Timing>, seconds: f64) -> Tick {
 /// Column widths: the ruler; the timing gutter at its widest and narrowest; a lane at its widest
 /// and narrowest.
 const RULER_W: f32 = 80.0;
+/// Preferred timing gutter width, in points.
 const TIMING_W: f32 = 160.0;
+/// Smallest timing gutter width, in points.
 const TIMING_MIN_W: f32 = 72.0;
+/// Preferred width of each note lane, in points.
 const LANE_W: f32 = 56.0;
 /// How wide the waveform strip is, when there is a waveform to show.
 const WAVE_W: f32 = 64.0;
+/// Smallest width of each note lane, in points.
 const LANE_MIN_W: f32 = 20.0;
+/// Space above the timeline for lane labels, in points.
 const HEADER_H: f32 = 26.0;
 /// How far down the notefield the now line sits.
 const NOW_AT: f32 = 0.2;
@@ -142,11 +147,15 @@ const MOST_BEATS: usize = 64;
 
 /// Where each notefield column sits across the window.
 pub(crate) struct Columns {
+    /// Screen range reserved for measure numbers and markers.
     ruler: Rangef,
+    /// Screen range reserved for timing events.
     timing: Rangef,
     /// The waveform strip, empty when there is no waveform.
     wave: Rangef,
+    /// Screen range spanning all note lanes.
     lanes: Rangef,
+    /// Width of one lane after fitting the columns into the window, in points.
     lane_w: f32,
 }
 
@@ -376,9 +385,13 @@ fn handle_at(song: &Song, field: &Field, pos: Pos2) -> Option<Gesture> {
 
 /// Where the notefield draws things in one frame.
 pub(crate) struct Field {
+    /// Fitted horizontal positions of the notefield columns.
     pub(crate) columns: Columns,
+    /// Vertical drawing range below the header, in points.
     rows: Rangef,
+    /// Timeline placing the cursor at the now line.
     pub(crate) view: View,
+    /// Number of lanes in the open chart.
     lanes: u16,
 }
 
@@ -682,6 +695,7 @@ const PATTERNS: [(&str, &[u16]); 3] = [
     ("1-2-3-1-2-3", &[0, 1, 2, 0, 1, 2]),
     ("1-2-1-2", &[0, 1, 0, 1]),
 ];
+/// Note values offered for the spacing between pattern steps.
 const SPACINGS: [u16; 7] = [1, 2, 4, 8, 16, 32, 64];
 
 /// The right-click menu. A right click selects the note under the pointer unless it is selected
@@ -1246,7 +1260,9 @@ fn backdrop(painter: &Canvas, columns: &Columns, lanes: u16, rows: Rangef) {
 /// audio when there is one to draw.
 #[derive(Clone, Copy, Debug)]
 pub struct Shown<'a> {
+    /// Vertical scale in screen points per audio second.
     pub zoom: Zoom,
+    /// Whether later notes appear above or below the now line.
     pub direction: Direction,
     /// What the strip beside the lanes shows of the song's audio, if anything.
     pub strip: Option<Strip<'a>>,
@@ -1257,6 +1273,7 @@ pub struct Shown<'a> {
 /// What the audio strip beside the lanes draws.
 #[derive(Clone, Copy, Debug)]
 pub enum Strip<'a> {
+    /// Peak amplitude for each visible audio interval.
     Waveform(&'a Peaks),
     /// How loud each band of pitch is over time, low on the strip's left and high on its right.
     Frequencies(&'a Tiles),
@@ -1467,6 +1484,7 @@ pub const GRIDS: [u16; 7] = [4, 8, 12, 16, 24, 32, 48];
 /// A line of the grid inside a measure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Line {
+    /// A line coinciding with a quarter-note beat.
     Beat,
     /// A line of a finer grid between two beats.
     Between,
@@ -1637,6 +1655,7 @@ pub(crate) fn kind_colours(kind: &Kind) -> (egui::Color32, egui::Color32) {
     }
 }
 
+/// Draws a lane object's head and any sustained body, highlighting selected heads.
 fn draw_object(
     painter: &Canvas,
     columns: &Columns,

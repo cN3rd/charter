@@ -96,15 +96,21 @@ const DEFAULT_SNAP: u16 = 16;
 /// A song open in the editor.
 #[derive(Debug)]
 pub struct Song {
+    /// Validated chart data as opened or last edited.
     document: ValidDocument,
+    /// Plugin that authorises edits, or the reason this song is read-only.
     rules: Rules,
+    /// Index of the chart currently open.
     chart: usize,
+    /// Tick where edits and playback start.
     cursor: Tick,
+    /// Notes per whole note at the current snap resolution.
     snap: NonZeroU16,
     /// What a BPM set on a timing point keeps of the notes it times.
     keep: KeepNotes,
     /// Every edit, oldest first. The first `done` are in effect; the rest were undone.
     history: Vec<Change>,
+    /// Number of history entries currently applied.
     done: usize,
     /// How many edits were in effect when the song was opened or last saved, unless no undo or
     /// redo can bring that state back.
@@ -142,8 +148,11 @@ impl Rules {
 /// An edit and where it was made, which undo and redo return to.
 #[derive(Debug)]
 struct Change {
+    /// Chart open when the edit was made.
     chart: usize,
+    /// Tick to restore with this edit during undo or redo.
     cursor: Tick,
+    /// Operations recorded as one undo step.
     edit: Edit,
 }
 
@@ -1445,6 +1454,7 @@ impl Song {
         Ok(())
     }
 
+    /// Moves the selection to the notes in `notes` according to `how`.
     fn meet(&mut self, notes: Vec<NoteAt>, how: Selecting) {
         match how {
             Selecting::Replace => self.selection = notes.into_iter().collect(),
@@ -1591,6 +1601,7 @@ impl Song {
         }
     }
 
+    /// Moves to the next coarser snap supported by this song's tick resolution.
     pub fn coarser_snap(&mut self) {
         let coarser = self.snaps().filter(|snap| *snap < self.snap).last();
         self.snap = coarser.unwrap_or(self.snap);
@@ -1604,12 +1615,14 @@ impl Song {
             .filter(|snap| self.length_of(*snap).is_some())
     }
 
+    /// Whole ticks in a note at `snap`, if the song's resolution supports it.
     fn length_of(&self, snap: NonZeroU16) -> Option<Ticks> {
         self.document.document().ticks_per_beat.note_length(snap)
     }
 }
 
 /// Whether a note starts at `object`'s tick on a lane it covers, among `objects`.
+/// Whether another object starts at `object`'s tick on one of its lanes.
 fn taken(objects: &[Object], object: &Object) -> bool {
     let from = objects.partition_point(|other| other.tick < object.tick);
     let to = objects.partition_point(|other| other.tick <= object.tick);
@@ -1810,7 +1823,9 @@ const fn note(tick: Tick, lane: LaneIndex, kind: Kind) -> Object {
 /// Timed ticks and pauses in a stretch of timing, with warps left out of the timed ticks.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TimedSpan {
+    /// Ticks through which the tempo advances, excluding any warp.
     timed_ticks: f64,
+    /// Seconds added by stops or delays in the span.
     paused_seconds: f64,
 }
 
@@ -1846,6 +1861,7 @@ impl TimedSpan {
     }
 }
 
+/// Timed ticks and pause duration from `from` to `to`, or `None` for reversed bounds.
 fn span_parts(timing: &Timing, from: Tick, to: Tick) -> Option<TimedSpan> {
     if to < from {
         return None;

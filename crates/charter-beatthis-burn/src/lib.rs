@@ -43,7 +43,9 @@ pub enum Error {
 /// The Beat This! network with its weights, ready to track beats.
 #[derive(Debug)]
 pub struct Tracker {
+    /// Loaded network parameters for inference on the CPU.
     model: BeatThis<Cpu>,
+    /// Device used to construct each inference tensor.
     device: FlexDevice,
 }
 
@@ -94,6 +96,7 @@ impl Tracker {
         })
     }
 
+    /// A model of `dims` populated by `load` on the CPU device.
     fn loaded(
         dims: Dims,
         load: impl FnOnce(&mut BeatThis<Cpu>) -> Result<(), Error>,
@@ -184,6 +187,7 @@ fn remapped<S: StoreRemap>(store: S) -> S {
 
 /// The key remapping both stores offer, under one name.
 trait StoreRemap: Sized {
+    /// Rewrites checkpoint key paths from `from` to `to`.
     fn remap_key(self, from: &str, to: &str) -> Self;
     /// Leaves the checkpoint's own bookkeeping, such as `num_batches_tracked` and the rotary
     /// frequencies the model computes, unloaded.

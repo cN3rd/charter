@@ -231,6 +231,7 @@ impl Timing {
 /// A timing map's stretches, able to say where measures start and how they are numbered, in
 /// ticks that may run past either end of what a document can hold.
 struct Grid {
+    /// Meter stretches used to locate and number measures.
     stretches: Vec<Stretch>,
 }
 

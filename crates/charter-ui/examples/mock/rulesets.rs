@@ -13,32 +13,41 @@ use super::{Beat, Direction, Lanes};
 pub struct Mock {
     /// The game, as the mock switcher names it.
     pub game: &'static str,
+    /// Name shown in the song panel, independent of the ruleset.
     pub title: &'static str,
     /// Each chart's name and lane count, and whether it is the open one.
     pub charts: &'static [(&'static str, &'static str, bool)],
     /// What the chart header says after the open chart's name.
     pub layout: &'static str,
+    /// Label/value pairs shown in the chart settings panel.
     pub settings: &'static [(&'static str, &'static str)],
+    /// Named audio samples shown in the song panel.
     pub samples: &'static [(&'static str, &'static str)],
     /// The key that places a note in each lane, one per lane.
     pub keys: &'static [&'static str],
+    /// Screen width of each lane, in points.
     pub lane_w: f32,
     /// Playfield beyond the lanes on each side, such as Arcaea's sky.
     pub sky_w: f32,
     /// A strip beside the playfield where the ruleset draws a second view, as its caption and
     /// width, such as Arcaea's heights seen from the side.
     pub side: Option<(&'static str, f32)>,
+    /// Whether later beats scroll up or down the playfield.
     pub direction: Direction,
+    /// Event beats and labels drawn beside the chart.
     pub timing: &'static [(Beat, &'static str)],
     /// What is selected, which the inspector describes.
     pub selected: &'static str,
+    /// Label/value pairs describing the selected object.
     pub inspector: &'static [(&'static str, &'static str)],
+    /// Song validation message, if the mock shows one.
     pub problem: Option<&'static str>,
     /// Draws the ruleset's own kinds in its column.
     pub draw: fn(&Painter, &Lanes),
 }
 
 impl Mock {
+    /// Number of playable lanes, capped to the lane count's `u16` range.
     pub fn lanes(&self) -> u16 {
         u16::try_from(self.keys.len()).unwrap_or(u16::MAX)
     }
@@ -54,6 +63,7 @@ impl Mock {
     }
 }
 
+/// Songs offered by the ruleset switcher, in display order.
 pub const ALL: [&Mock; 5] = [
     &STEPMANIA,
     &TAP_TAP_REVENGE,
@@ -62,19 +72,32 @@ pub const ALL: [&Mock; 5] = [
     &ARCAEA,
 ];
 
+/// Light note heads and outlines on dark playfields.
 const WHITE: Color32 = Color32::from_gray(230);
+/// Blue tap heads, arcs and osu!mania side keys.
 const BLUE: Color32 = Color32::from_rgb(110, 170, 255);
+/// Dimmer fill for StepMania hold bodies.
 const DARK_BLUE: Color32 = Color32::from_rgb(60, 100, 170);
+/// Mine outlines and the first Tap Tap Revenge lane.
 const RED: Color32 = Color32::from_rgb(235, 90, 90);
+/// Slide heads and the middle Tap Tap Revenge lane.
 const GREEN: Color32 = Color32::from_rgb(100, 210, 130);
+/// Critical notes, mega taps and the middle osu!mania key.
 const YELLOW: Color32 = Color32::from_rgb(250, 205, 80);
+/// Flicks and Arcaea's second arc colour.
 const PINK: Color32 = Color32::from_rgb(255, 110, 170);
+/// Regular Project Sekai tap heads.
 const CYAN: Color32 = Color32::from_rgb(90, 215, 255);
+/// Tap Tap Revenge shake gestures.
 const ORANGE: Color32 = Color32::from_rgb(255, 160, 60);
+/// Tap Tap Revenge slice gestures.
 const VIOLET: Color32 = Color32::from_rgb(190, 120, 255);
+/// Muted detail lines in the Arcaea side view.
 const GREY: Color32 = Color32::from_gray(150);
+/// Translucent fill behind Arcaea's sky area.
 const SKY: Color32 = Color32::from_rgba_unmultiplied_const(70, 90, 180, 28);
 
+/// Mock dance chart with stops, a tempo change and a warp warning.
 pub const STEPMANIA: Mock = Mock {
     game: "StepMania",
     title: "Anthem",
@@ -114,6 +137,7 @@ pub const STEPMANIA: Mock = Mock {
     draw: stepmania,
 };
 
+/// Mock three-lane chart with gesture notes and upward scrolling.
 const TAP_TAP_REVENGE: Mock = Mock {
     game: "Tap Tap Revenge",
     title: "Neon Riff",
@@ -144,6 +168,7 @@ const TAP_TAP_REVENGE: Mock = Mock {
     draw: tap_tap_revenge,
 };
 
+/// Mock seven-key chart with per-lane colours and holds.
 const OSU_MANIA: Mock = Mock {
     game: "osu!mania",
     title: "Sidechain",
@@ -180,6 +205,7 @@ const OSU_MANIA: Mock = Mock {
     draw: osu_mania,
 };
 
+/// Mock twelve-lane chart with flicks and multi-point slides.
 const PROJECT_SEKAI: Mock = Mock {
     game: "Project Sekai",
     title: "Hologram",
@@ -212,6 +238,7 @@ const PROJECT_SEKAI: Mock = Mock {
     draw: project_sekai,
 };
 
+/// Mock four-lane floor with sky arcs and a side-on height view.
 const ARCAEA: Mock = Mock {
     game: "Arcaea",
     title: "Skyline",
@@ -263,12 +290,17 @@ fn outline(painter: &Painter, rect: Rect) {
     );
 }
 
+/// Kinds shown in the StepMania mock sequence.
 enum Step {
+    /// Single instant note.
     Tap,
+    /// Sustained note ending at the contained beat.
     Hold(Beat),
+    /// Hazard drawn as a ring instead of a filled head.
     Mine,
 }
 
+/// Beat, lane and kind of each note in the StepMania mock.
 const STEPS: [(Beat, u16, Step); 38] = [
     (Beat(-1.0), 1, Step::Tap),
     (Beat(0.0), 0, Step::Tap),
@@ -310,6 +342,7 @@ const STEPS: [(Beat, u16, Step); 38] = [
     (Beat(20.0), 1, Step::Tap),
 ];
 
+/// Draws the StepMania notes and outlines the selected pair of taps.
 fn stepmania(painter: &Painter, lanes: &Lanes) {
     for (at, lane, step) in STEPS {
         let across = lanes.span(lane, 1).shrink(8.0);
@@ -336,10 +369,15 @@ fn stepmania(painter: &Painter, lanes: &Lanes) {
     }
 }
 
+/// Kinds shown in the Tap Tap Revenge mock sequence.
 enum Gem {
+    /// Single coloured orb.
     Tap,
+    /// Orb with a coloured body ending at the contained beat.
     Hold(Beat),
+    /// Directional gesture with the shake label.
     Shake,
+    /// Directional gesture with the slice label.
     Slice,
     /// Covers every lane, whichever it names.
     Mega,
@@ -348,6 +386,7 @@ enum Gem {
 /// Each lane's colour, left to right.
 const GEM_COLOURS: [Color32; 3] = [RED, GREEN, BLUE];
 
+/// Beat, lane and kind of each Tap Tap Revenge note.
 const GEMS: [(Beat, u16, Gem); 21] = [
     (Beat(-1.0), 2, Gem::Tap),
     (Beat(0.0), 0, Gem::Tap),
@@ -372,6 +411,7 @@ const GEMS: [(Beat, u16, Gem); 21] = [
     (Beat(16.0), 0, Gem::Mega),
 ];
 
+/// Draws orbs, gesture boxes and full-width mega taps.
 fn tap_tap_revenge(painter: &Painter, lanes: &Lanes) {
     for (at, lane, gem) in GEMS {
         let across = lanes.span(lane, 1);
@@ -478,6 +518,7 @@ type Press = (Beat, u16, Option<Beat>);
 /// osu!'s default seven-key colours, with the middle key set apart.
 const SEVEN_KEY: [Color32; 7] = [WHITE, BLUE, WHITE, YELLOW, WHITE, BLUE, WHITE];
 
+/// Beat, lane and optional hold end of the seven-key osu!mania chart.
 const PRESSES: [Press; 40] = [
     (Beat(-1.0), 2, None),
     (Beat(-0.5), 4, None),
@@ -521,6 +562,7 @@ const PRESSES: [Press; 40] = [
     (Beat(14.0), 2, Some(Beat(15.0))),
 ];
 
+/// Draws the osu!mania presses and marks the chosen hold.
 fn osu_mania(painter: &Painter, lanes: &Lanes) {
     presses(painter, lanes, &PRESSES, &SEVEN_KEY);
     let hold = lanes.span(3, 1).shrink(3.0);
@@ -541,8 +583,11 @@ fn presses(painter: &Painter, lanes: &Lanes, presses: &[Press], colours: &[Color
     }
 }
 
+/// Kinds shown in the Project Sekai mock sequence.
 enum Sekai {
+    /// Instant note spanning one or more lanes.
     Tap,
+    /// Instant note requiring an upward flick.
     Flick,
     /// The points after its head, each a beat and the lanes it covers there as first lane and
     /// width, and whether it ends in a flick.
@@ -586,6 +631,7 @@ const SEKAI_NOTES: [(Beat, u16, u16, bool, Sekai); 18] = [
     (Beat(14.0), 6, 3, true, Sekai::Tap),
 ];
 
+/// Draws wide notes, flicks and linked slide segments.
 fn project_sekai(painter: &Painter, lanes: &Lanes) {
     for (at, lane, width, critical, note) in SEKAI_NOTES {
         let across = lanes.span(lane, width).shrink(2.0);
@@ -669,13 +715,21 @@ fn diamond(painter: &Painter, centre: Pos2, colour: Color32) {
 /// second.
 #[derive(Clone, Copy)]
 enum Ease {
+    /// Linear x and height.
     S,
+    /// Smoothed x and height.
     B,
+    /// Sine-in x and linear height.
     Si,
+    /// Sine-out x and linear height.
     So,
+    /// Sine-in x and height.
     SiSi,
+    /// Sine-in x and sine-out height.
     SiSo,
+    /// Sine-out x and sine-in height.
     SoSi,
+    /// Sine-out x and height.
     SoSo,
 }
 
@@ -742,11 +796,13 @@ const ARCS: [(Curve, Color32); 8] = [
 
 /// A trace, which nobody holds, carrying arctaps.
 const TRACE: Curve = (Beat(9.0), Beat(11.0), (0.25, 0.5), (0.75, 1.0), Ease::S);
+/// Beats where taps attach to the unheld trace.
 const ARCTAPS: [Beat; 3] = [Beat(9.0), Beat(10.0), Beat(11.0)];
 
 /// How many straight pieces draw one curve.
 const PIECES: u8 = 24;
 
+/// Beat, lane and optional hold end of the Arcaea floor notes.
 const FLOOR: [Press; 12] = [
     (Beat(-1.0), 3, None),
     (Beat(0.0), 0, None),

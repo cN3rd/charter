@@ -130,6 +130,7 @@ macro_rules! styles {
                 }
             }
 
+            /// Lane count for this steps type, including both players in routine styles.
             #[must_use]
             pub const fn lanes(self) -> LaneCount {
                 match self {
@@ -236,9 +237,13 @@ pub enum Difficulty {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ChartSettings {
+    /// Steps type determining the chart's lane count.
     style: Style,
+    /// Standard difficulty written as a chart setting.
     difficulty: Difficulty,
+    /// Numeric difficulty rating.
     meter: u32,
+    /// Optional free-text chart description.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     description: String,
 }
@@ -263,11 +268,17 @@ pub enum NoteKind {
     AutoKeysound,
 }
 
+/// Ruleset key for an unjudged keysound note.
 const AUTO_KEYSOUND: &str = "auto_keysound";
+/// Ruleset key for hold ticks counted per beat.
 const TICKCOUNT: &str = "tickcount";
+/// Ruleset key for hit and miss combo multipliers.
 const COMBO: &str = "combo";
+/// Ruleset key for an eased scroll-speed change.
 const SPEED: &str = "speed";
+/// Ruleset key for an immediate scroll multiplier.
 const SCROLL: &str = "scroll";
+/// Ruleset key for a span of fake notes.
 const FAKE: &str = "fake";
 
 /// This ruleset's key for `name`.
@@ -399,6 +410,7 @@ impl Song {
 }
 
 impl Timing {
+    /// Writes StepMania's extra segments as namespaced shared timing events.
     fn to_core(&self) -> Result<CoreTiming, Error> {
         let other = |name: &str, value: Value| -> Result<CoreKind, Error> {
             Ok(CoreKind::Other {
@@ -433,6 +445,7 @@ impl Timing {
 }
 
 impl Chart {
+    /// Writes the steps type and difficulty as settings alongside the placed notes.
     fn to_core(&self) -> Result<CoreChart, Error> {
         let settings = serde_json::to_value(ChartSettings {
             style: self.style,
@@ -464,6 +477,7 @@ impl Chart {
 }
 
 impl Note {
+    /// Writes this note as a one-lane object, retaining its optional keysound.
     fn to_object(&self) -> Result<Object, InvalidValue> {
         let (kind, shape) = match self.kind {
             NoteKind::Tap => (Kind::Tap, Shape::Instant),
@@ -650,6 +664,7 @@ impl RulesetPlugin for Plugin {
     }
 }
 
+/// Reads chart `c`, checking that its settings agree with its lane count.
 fn read_chart(chart: &CoreChart, c: usize) -> Result<Chart, Error> {
     reject_own_keys(&chart.ext, Location::ChartExt(c))?;
     let settings = Value::Object(chart.settings.clone().into_iter().collect());
@@ -687,6 +702,7 @@ fn read_chart(chart: &CoreChart, c: usize) -> Result<Chart, Error> {
     })
 }
 
+/// A single-lane StepMania note at `at`, rejecting unsupported shapes.
 fn read_note(object: &Object, at: Location) -> Result<Note, Error> {
     if !object.children.is_empty() {
         return Err(Error::Unsupported {
@@ -724,6 +740,7 @@ fn read_note(object: &Object, at: Location) -> Result<Note, Error> {
     })
 }
 
+/// Converts shared events in `stream` into StepMania timing.
 fn read_timing(timing: &CoreTiming, stream: Stream) -> Result<Timing, Error> {
     let mut events = Vec::with_capacity(timing.events.len());
     for (index, event) in timing.events.iter().enumerate() {

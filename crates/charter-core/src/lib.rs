@@ -2,17 +2,27 @@
 //! validation that turns bytes into a valid document, and [`RulesetPlugin`], which a ruleset
 //! plugin implements so the editor can check documents against its game.
 
+/// Chart data model and the format's default values.
 mod document;
+/// Locations and rules describing invalid documents.
 mod error;
+/// Measure boundaries and tick positions derived from meters.
 mod grid;
+/// Namespaced keys and shared vocabulary for plugin data.
 mod ident;
+/// JSON reading, writing and version migration.
 mod json;
+/// Exact six-place decimals and their textual representation.
 mod number;
+/// Relative resource paths safe for chart audio and assets.
 mod path;
 mod plugin;
+/// Converts audio-based tempo sections into anchored timing.
 mod sections;
+/// Resolves ticks to audio time using anchors and pauses.
 mod timing;
 mod unit;
+/// Cross-field rules applied before a document becomes valid.
 mod validate;
 
 pub use document::{

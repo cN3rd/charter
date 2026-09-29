@@ -31,8 +31,11 @@ pub enum ImportError {
 struct Point {
     /// Milliseconds into the audio.
     time: f64,
+    /// Milliseconds per beat for a red line; negative inverse scroll speed for a green line.
     beat_length: f64,
+    /// Quarter-note beats in a measure.
     meter: NonZeroU16,
+    /// True for a red tempo line, false for an inherited green scroll-speed line.
     uninherited: bool,
 }
 
@@ -40,8 +43,11 @@ struct Point {
 /// is within half a tick of where osu! has it, and its beat in milliseconds.
 #[derive(Clone, Copy, Debug)]
 struct Placed {
+    /// Tick nearest the red line's audio position.
     tick: i64,
+    /// Milliseconds into the audio at `tick`.
     at: f64,
+    /// Milliseconds per beat from the red line.
     beat_length: f64,
 }
 
@@ -309,6 +315,7 @@ fn micro(value: f64) -> Option<f64> {
     rounded.is_finite().then_some(rounded)
 }
 
+/// An import error retaining the failing conversion's message.
 fn out_of_range(error: impl std::fmt::Display) -> ImportError {
     ImportError::OutOfRange(error.to_string())
 }

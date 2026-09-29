@@ -19,9 +19,13 @@ const NOTE_H: f32 = 1.5;
 /// bottom to top when `reversed`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Map {
+    /// The screen rectangle receiving the whole-song strip.
     rect: Rect,
+    /// The earliest time drawn in the strip, in seconds.
     from: f64,
+    /// The latest time drawn in the strip, in seconds.
     to: f64,
+    /// Whether later times sit above earlier times.
     reversed: bool,
 }
 

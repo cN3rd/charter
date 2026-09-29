@@ -30,6 +30,7 @@ pub enum Sound {
 }
 
 impl Sound {
+    /// The note tick sounds offered in settings, in menu order.
     const ALL: [Self; 6] = [
         Self::Click,
         Self::Beep,
@@ -249,12 +250,14 @@ fn on_or_sound<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<bool
 
 /// The shortest and longest waits between snapshots, in minutes, and the most copies kept.
 const SNAPSHOT_MINUTES: (u32, u32) = (1, 120);
+/// Allowed range of snapshot copies kept per song.
 const SNAPSHOTS_KEPT: (u32, u32) = (1, 500);
 
 /// The shortest and longest autosave waits, in seconds.
 const AUTOSAVE_SECONDS: (u32, u32) = (5, 600);
 
 /// The interface sizes on offer, as factors.
+/// Interface size factors offered in display settings.
 const SCALES: [f32; 6] = [0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
 
 impl Settings {
@@ -605,6 +608,7 @@ fn row(ui: &mut egui::Ui, name: &str, about: &str, control: impl FnOnce(&mut egu
     ui.add_space(6.0);
 }
 
+/// Controls for placing notes and for opening a chart.
 fn editing(ui: &mut egui::Ui, settings: &mut Settings) {
     let name = "Move on a snap after placing a note";
     row(
@@ -652,6 +656,7 @@ fn editing(ui: &mut egui::Ui, settings: &mut Settings) {
     );
 }
 
+/// Controls for the interface size and the notefield's appearance.
 fn display(ui: &mut egui::Ui, settings: &mut Settings) {
     row(
         ui,
@@ -970,6 +975,7 @@ pub(crate) fn grid_choice(ui: &mut egui::Ui, grid: &mut NonZeroU16, id: &str) ->
         .response
 }
 
+/// `factor` displayed as a percentage rounded to a whole number.
 fn percent(factor: f32) -> String {
     format!("{:.0}%", factor * 100.0)
 }

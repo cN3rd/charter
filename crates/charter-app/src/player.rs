@@ -16,23 +16,32 @@ use kira::{AudioManager, AudioManagerSettings, Decibels, DefaultBackend, Frame, 
 /// What the loading thread sends: kept peaks as soon as they are read, then the audio, with its
 /// peaks unless they came first, then its frequencies, then its onsets, which take longest.
 enum Loaded {
+    /// Audio envelope available before the remaining analyses finish.
     Peaks(Peaks),
+    /// Decoded audio and any envelope not already sent.
     Audio(Result<(Arc<Track>, Option<Peaks>), String>),
+    /// Frequency analysis of the decoded audio.
     Spectrum(Spectrum),
+    /// Detected transients in the decoded audio.
     Onsets(Arc<[Onset]>),
 }
 
 /// The song's audio playing: as it is, at a speed that moves its pitch too, or stretched to keep
 /// its pitch at `rate` times its speed.
 enum Playing {
+    /// Playback whose pitch changes with speed.
     Plain(StaticSoundHandle),
+    /// Playback stretched in time without changing pitch.
     Stretched {
+        /// Kira's handle for the time-stretched stream.
         sound: StreamingSoundHandle<std::convert::Infallible>,
+        /// Ratio of source time to played time.
         rate: f64,
     },
 }
 
 impl Playing {
+    /// Kira's current playback state, regardless of the sound type.
     fn state(&self) -> PlaybackState {
         match self {
             Self::Plain(sound) => sound.state(),
@@ -48,6 +57,7 @@ impl Playing {
         }
     }
 
+    /// Sets the playing sound's volume in decibels.
     fn set_volume(&mut self, volume: Decibels) {
         match self {
             Self::Plain(sound) => sound.set_volume(volume, Tween::default()),
@@ -63,6 +73,7 @@ impl Playing {
         }
     }
 
+    /// Stops either type of playing sound.
     fn stop(&mut self) {
         match self {
             Self::Plain(sound) => sound.stop(Tween::default()),
@@ -71,10 +82,12 @@ impl Playing {
     }
 }
 
+/// Source seconds corresponding to `stretched_seconds` of pitched-preserving playback.
 fn source_position(stretched_seconds: f64, rate: f64) -> f64 {
     stretched_seconds * rate
 }
 
+/// Playback seconds corresponding to `source_seconds` of the original audio.
 fn stretched_position(source_seconds: f64, rate: f64) -> f64 {
     source_seconds / rate
 }
@@ -90,11 +103,13 @@ pub struct Player {
     load: fn(&Path) -> Result<Track, String>,
     /// Whether loading happens on the caller's thread, as in tests, rather than on its own.
     inline: bool,
+    /// Background decoder job and its results, if audio is loading.
     loading: Option<Loading>,
     /// The audio, decoded and as sound kira plays.
     loaded: Option<(PathBuf, Arc<Track>, StaticSoundData)>,
     /// Audio that failed to load, which is not tried again until the window wants other audio.
     failed: Option<PathBuf>,
+    /// Sound currently playing the song, if any.
     playing: Option<Playing>,
     /// A metronome sound being previewed, beside whatever else plays.
     previewing: Option<StaticSoundHandle>,
@@ -385,6 +400,7 @@ impl Player {
     }
 }
 
+/// Reuses a working device or retries `init` after a previous failure.
 fn get_or_retry<T, E>(
     device: &mut Option<Result<T, E>>,
     init: impl FnOnce() -> Result<T, E>,

@@ -9,19 +9,29 @@ use charter_editor::Step;
 use crate::notefield::Zoom;
 use crate::{Action, Note};
 
+/// Undo the latest edit with the platform's command modifier.
 pub(crate) const UNDO: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Z);
+/// Redo an edit with the shifted command key.
 pub(crate) const REDO: KeyboardShortcut =
     KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::Z);
 /// Redo as Windows programs spell it.
 const REDO_Y: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Y);
+/// Ask the host to open a song.
 pub(crate) const OPEN: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::O);
+/// Save the open song to its current file.
 pub(crate) const SAVE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::S);
+/// Ask the host where to save the open song.
 pub(crate) const SAVE_AS: KeyboardShortcut =
     KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::S);
+/// Show the editor's settings window.
 pub(crate) const SETTINGS: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Comma);
+/// Start a song from the new-song dialog.
 pub(crate) const NEW_SONG: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::N);
+/// Add or remove a bookmark at the cursor.
 pub(crate) const BOOKMARK: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::B);
+/// Show the timing window.
 pub(crate) const SYNC: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::T);
+/// Show the keyboard shortcut help.
 pub(crate) const HELP: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE, Key::F1);
 
 /// The keys that place notes on lanes 1 to 10, as StepMania and ArrowVortex bind them.
@@ -41,6 +51,7 @@ const LANE_KEYS: [Key; 10] = [
 /// Where one lane key is.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum LaneKey {
+    /// Ready to place a note on the next press.
     #[default]
     Up,
     /// Down without having placed or removed a note: pressed with a modifier, or past the last

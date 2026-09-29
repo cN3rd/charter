@@ -29,6 +29,7 @@ pub struct Dims {
     pub head: usize,
     /// Width of the transformer over time.
     pub transformer: usize,
+    /// Number of attention and feed-forward layers over time.
     pub layers: usize,
     /// How much wider a feed-forward's inside is than its outside.
     pub ff_mult: usize,
@@ -236,13 +237,18 @@ fn rotated<B: Backend>(x: Tensor<B, 4>) -> Tensor<B, 4> {
 /// Attention and feed-forward across frequency, then across time, each added to its input.
 #[derive(Module, Debug)]
 pub struct PartialFt<B: Backend> {
+    /// Attention across mel frequencies at each time step.
     attn_f: Attention<B>,
+    /// Feed-forward projection after frequency attention.
     ff_f: FeedForward<B>,
+    /// Attention across time at each mel frequency.
     attn_t: Attention<B>,
+    /// Feed-forward projection after time attention.
     ff_t: FeedForward<B>,
 }
 
 impl<B: Backend> PartialFt<B> {
+    /// Frequency and time residual blocks operating on `dim` channels.
     fn new(dim: usize, head: usize, device: &B::Device) -> Self {
         Self {
             attn_f: Attention::new(dim, head, device),
@@ -314,12 +320,16 @@ impl<B: Backend> FrontendBlock<B> {
 /// Normalise each mel band, then a convolution over four bands at a time.
 #[derive(Module, Debug)]
 pub struct Stem<B: Backend> {
+    /// Normalisation across the input's mel bands.
     bn1d: BatchNorm<B>,
+    /// Strided convolution reducing mel bands by four.
     conv2d: Conv2d<B>,
+    /// Normalisation across the stem's output channels.
     bn2d: BatchNorm<B>,
 }
 
 impl<B: Backend> Stem<B> {
+    /// The spectrogram-to-channel projection at width `stem`.
     fn new(stem: usize, device: &B::Device) -> Self {
         Self {
             bn1d: BatchNormConfig::new(BINS).init(device),

@@ -83,6 +83,7 @@ pub struct Chart {
     pub theme: Option<String>,
     /// Replaces the song's tempo map when present.
     pub tempo: Option<Tempo>,
+    /// Notes in this level's lanes.
     pub notes: Vec<Note>,
 }
 
@@ -130,6 +131,7 @@ impl Difficulty {
         }
     }
 
+    /// The standard level stored under `key`, if recognised.
     fn keyed(key: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|level| level.key() == key)
     }
@@ -393,6 +395,7 @@ impl Lanes {
         }
     }
 
+    /// The supported lane count matching `width`, if any.
     fn of(width: LaneCount) -> Option<Self> {
         LANES.into_iter().find(|lanes| lanes.width() == width)
     }
@@ -436,13 +439,20 @@ const fn lanes(n: u16) -> LaneCount {
 }
 
 /// The note changes the editor offers, by their ids.
+/// Editor change id for a shake in a direction.
 const CHANGE_ARROW: &str = "arrow";
+/// Editor change id for a directional slice.
 const CHANGE_SLICE: &str = "slice";
+/// Editor change id for a tap spanning every lane.
 const CHANGE_BIG_TAP: &str = "big_tap";
+/// Editor change id for a single-lane tap.
 const CHANGE_TAP: &str = "tap";
 
+/// Ruleset key for a directional shake.
 const SHAKE: &str = "shake";
+/// Ruleset key for a directional slice.
 const SLICE: &str = "slice";
+/// Ruleset key for a tap spanning every lane.
 const MEGA_TAP: &str = "mega_tap";
 
 /// This ruleset's kind called `name`.
@@ -459,6 +469,7 @@ const fn one_lane(index: LaneIndex) -> Position {
 }
 
 impl Tempo {
+    /// Converts the supported meter changes into the shared timing map.
     fn to_timing(&self) -> Timing {
         let events = self.changes.iter().map(|change| TimingEvent {
             tick: change.tick,
@@ -476,6 +487,7 @@ impl Tempo {
 }
 
 impl Chart {
+    /// Writes the chart's settings, optional tempo override and placed notes.
     fn to_core(&self) -> Result<CoreChart, InvalidValue> {
         let lanes = self.lanes;
         Ok(CoreChart {
@@ -500,6 +512,7 @@ impl Chart {
 }
 
 impl Note {
+    /// Writes a note with its position derived from `lanes`.
     fn to_object(self, lanes: Lanes) -> Result<Object, InvalidValue> {
         let (kind, shape) = match self.kind {
             NoteKind::Tap { .. } => (Kind::Tap, Shape::Instant),
@@ -742,6 +755,7 @@ impl RulesetPlugin for Plugin {
 /// Every lane count a song can have.
 const LANES: [Lanes; 3] = [Lanes::Three, Lanes::Four, Lanes::Five];
 
+/// Reads chart `c`, rejecting settings and objects this ruleset cannot represent.
 fn read_chart(c: usize, chart: &CoreChart) -> Result<Chart, Error> {
     let lanes = chart.lanes.and_then(Lanes::of).ok_or(Error::Lanes {
         at: Location::Chart(c),
@@ -802,6 +816,7 @@ fn read_chart(c: usize, chart: &CoreChart) -> Result<Chart, Error> {
     })
 }
 
+/// The note type at its expected position for `lanes`, if representable.
 fn read_note(object: &Object, lanes: Lanes) -> Option<NoteKind> {
     let placed = |candidates: &[NoteKind]| {
         candidates
@@ -834,6 +849,7 @@ fn read_note(object: &Object, lanes: Lanes) -> Option<NoteKind> {
     }
 }
 
+/// Reads supported meter changes in `stream` and rejects unsupported timing.
 fn read_tempo(timing: &Timing, stream: Stream) -> Result<Tempo, Error> {
     let mut changes = Vec::with_capacity(timing.events.len());
     for (index, event) in timing.events.iter().enumerate() {
@@ -886,6 +902,7 @@ fn named(value: Option<&Value>, at: Location) -> Result<Option<String>, Error> {
     }
 }
 
+/// Fails at `at` for the first unrecognised chart setting.
 fn reject_keys<'a>(mut keys: impl Iterator<Item = &'a String>, at: Location) -> Result<(), Error> {
     match keys.next() {
         Some(key) => Err(Error::UnknownSetting {

@@ -64,6 +64,7 @@ decimal!(
 );
 
 impl Seconds {
+    /// Positive duration as floating-point seconds for timing calculations.
     pub(crate) fn seconds(self) -> f64 {
         from_millionths(self.0)
     }
@@ -235,7 +236,9 @@ impl LaneIndex {
 /// The lanes a lane position covers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LaneSpan {
+    /// Inclusive first lane as a widened index.
     start: u32,
+    /// Exclusive lane after the span, widened to accommodate a full `u16` width.
     end: u32,
 }
 

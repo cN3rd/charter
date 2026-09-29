@@ -14,9 +14,13 @@ use crate::{Command, Edit, Frame, Gesture, TimingWindow};
 /// What is being typed into the inspector, while a field has the keyboard.
 #[derive(Debug, Default)]
 pub struct Drafts {
+    /// Uncommitted audio moment in seconds.
     seconds: Option<String>,
+    /// Uncommitted bar position typed for an anchor.
     bar: Option<String>,
+    /// Uncommitted tempo typed for an anchor.
     bpm: Option<String>,
+    /// Uncommitted tempo typed for the first anchor.
     start_bpm: Option<String>,
     /// A field asked to take the keyboard, as a double-click on an anchor asks of its moment.
     pub(crate) focus_seconds: bool,
@@ -382,6 +386,7 @@ fn anchor(
     }
 }
 
+/// Displays the selected anchors' tempo range and audio-fit measurements.
 fn selection(ui: &mut Ui, window: &TimingWindow, frame: &Frame<'_>) {
     let (Some(&first), Some(&last)) = (window.selection.first(), window.selection.last()) else {
         return;
@@ -420,6 +425,7 @@ fn selection(ui: &mut Ui, window: &TimingWindow, frame: &Frame<'_>) {
     metrics_rows(ui, "selection", &metrics);
 }
 
+/// Displays fit error and grid coverage for `metrics` in a compact grid.
 fn metrics_rows(ui: &mut Ui, id: &str, metrics: &Metrics) {
     compact(ui, id, |ui| {
         ui.weak("fit error");
@@ -438,6 +444,7 @@ fn metrics_rows(ui: &mut Ui, id: &str, metrics: &Metrics) {
     });
 }
 
+/// Lists timing issues and lets a click focus the affected anchor.
 fn issues(ui: &mut Ui, window: &mut TimingWindow, frame: &Frame<'_>) {
     ui.label(
         RichText::new(format!("ISSUES · {}", frame.issues.len()))

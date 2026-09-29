@@ -130,9 +130,11 @@ pub struct TimingWindow {
     pub audition: bool,
     /// Whether the rows follow the playhead while the song plays.
     pub follow: bool,
+    /// Anchor under keyboard focus, by its tick.
     focus: Option<Tick>,
     /// The selected anchors, a run of neighbours, by tick.
     selection: Vec<Tick>,
+    /// Active pointer operation in the timing rows.
     gesture: Gesture,
     /// The anchor an edit ran into, and when, to pulse it.
     pulse: Option<(Tick, f64)>,
@@ -150,11 +152,13 @@ pub struct TimingWindow {
     help: bool,
     /// Whether the metronome is muted while Shift+C is held.
     muting: bool,
+    /// Inspector values being typed but not yet committed.
     drafts: panel::Drafts,
     /// Where the open context menu started, while the pointer moves over its buttons.
     menu_target: Option<(Option<Tick>, Pos2)>,
     /// A tick whose row to scroll to, as the second row.
     scroll_to: Option<Tick>,
+    /// Measurements reused while timing, grid and onsets stay unchanged.
     cache: Option<Cache>,
 }
 
@@ -193,23 +197,33 @@ impl Default for TimingWindow {
 /// What a press or drag in the rows is doing, as the specification's state machine has it.
 #[derive(Clone, Debug, PartialEq)]
 enum Gesture {
+    /// No press or drag is active.
     Idle,
     /// Moving an anchor's beat, `from` where it was to `to`, with the others selected alike.
     DragBeat {
+        /// Tick where the dragged anchor began.
         from: Tick,
+        /// Tick where the anchor would land if released now.
         to: Tick,
+        /// Pointer position at the start of the drag, in screen points.
         origin: f64,
     },
     /// Moving an anchor in the audio, from `from` seconds to `to`.
     DragAudio {
+        /// Tick identifying the dragged anchor.
         tick: Tick,
+        /// Audio moment before the drag, in seconds.
         from: f64,
+        /// Audio moment if released now, in seconds.
         to: f64,
+        /// Pointer position at the start of the drag, in screen points.
         origin: f64,
     },
     /// Selecting the anchors between two points on screen.
     Band {
+        /// Screen position where the selection drag began.
         origin: Pos2,
+        /// Current opposite corner of the selection rectangle.
         to: Pos2,
     },
 }
@@ -218,34 +232,54 @@ enum Gesture {
 /// onsets change.
 #[derive(Debug)]
 struct Cache {
+    /// Timing map the measurements were computed for.
     timing: Timing,
+    /// Grid resolution the measurements were computed for.
     grid: Grid,
+    /// Minimum onset strength the measurements were computed for.
     sensitivity: f32,
+    /// Onsets the measurements were computed for.
     onsets: Vec<Onset>,
+    /// Audio deviations from the timing grid, in milliseconds.
     residuals: Vec<Residual>,
+    /// Timing problems inferred from the residuals and anchors.
     issues: Vec<Issue>,
 }
 
 /// Everything a frame of the window works from.
 pub(crate) struct Frame<'a> {
+    /// Validated timing map for this frame.
     timing: Valid<'a, Timing>,
+    /// Anchors of the current map, in tick order.
     pins: Vec<Pin>,
+    /// Tempo after the last anchor.
     tail: Bpm,
+    /// Mapping between ticks and visible row positions.
     bars: Bars<'a>,
+    /// Audio onsets to draw and snap against.
     onsets: &'a [Onset],
+    /// Onset deviations from the grid, in milliseconds.
     residuals: &'a [Residual],
+    /// Detected timing problems for the issue list.
     issues: &'a [Issue],
+    /// Whether the song's plugin allows edits.
     editable: bool,
+    /// Editor playhead position, in ticks.
     cursor: Tick,
+    /// Frame timestamp, in seconds, for feedback and merged edits.
     now: f64,
 }
 
 /// What the host gives the window each frame.
 #[derive(Clone, Copy, Debug)]
 pub struct Inputs<'a> {
+    /// Song open in the editor, if any.
     pub song: Option<&'a Song>,
+    /// Audio envelope, when decoding has completed.
     pub peaks: Option<&'a Peaks>,
+    /// Detected audio transients, sorted by time.
     pub onsets: &'a [Onset],
+    /// Whether the audio is currently playing.
     pub playing: bool,
     /// The calibrated audio latency, in milliseconds, shown in the status line.
     pub latency_ms: f64,
@@ -357,6 +391,7 @@ impl TimingWindow {
         Some((first, to))
     }
 
+    /// Focuses the issue at `at` and scrolls its anchor into view.
     fn go_to_issue(&mut self, frame: &Frame<'_>, at: usize) {
         let Some(issue) = frame.issues.get(at) else {
             return;
@@ -370,6 +405,7 @@ impl TimingWindow {
         }
     }
 
+    /// Selects and scrolls to the anchor at `tick`.
     fn focus_on(&mut self, tick: Tick) {
         self.focus = Some(tick);
         self.selection = vec![tick];
@@ -439,9 +475,13 @@ fn lead(frame: &Frame<'_>, tick: Tick) -> f64 {
 /// What a key asks of the timing window.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Intent {
+    /// Toggle playback at the current position.
     Play,
+    /// Accept the preview currently offered.
     Enter,
+    /// Dismiss the preview or current interaction.
     Escape,
+    /// Pin an anchor to the audio under the playhead.
     AddAtPlayhead,
     /// Focus the anchor before, or after.
     Focus(bool),
@@ -730,6 +770,7 @@ fn frame<'a>(
     }
 }
 
+/// Draws the scrollable keyboard shortcut reference.
 fn help(ui: &mut egui::Ui) {
     let narrow = ui.available_width() < 600.0;
     let height = (ui.available_height() - ROW - 20.0).max(120.0);

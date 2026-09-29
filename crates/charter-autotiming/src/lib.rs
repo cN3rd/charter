@@ -55,9 +55,13 @@ pub struct Estimate {
 /// and whether it starts a bar.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Beat {
+    /// Beat position in seconds from the audio's start.
     seconds: f64,
+    /// Fit weight: one if onset-confirmed, [`UNREFINED`] otherwise.
     weight: f64,
+    /// Counted position including any beats the tracker missed.
     index: i64,
+    /// Whether the tracker marked this beat as a bar start.
     downbeat: bool,
 }
 
@@ -260,6 +264,7 @@ impl Sums {
         }
     }
 
+    /// The sums for a suffix after subtracting the prefix `earlier`.
     fn minus(self, earlier: Self) -> Self {
         Self {
             w: self.w - earlier.w,

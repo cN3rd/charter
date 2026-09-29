@@ -13,6 +13,7 @@ use timestretch::engine::{Engine, EngineConfig, EngineHandles, EngineProfile};
 
 /// The slowest and fastest the stretcher keeps the pitch at; past them, pitch follows speed.
 const SLOWEST: f64 = 0.25;
+/// Fastest playback rate that the pitch-preserving stretcher supports.
 const FASTEST: f64 = 2.0;
 /// Frames each call to [`Decoder::decode`] makes.
 const CHUNK: usize = 1024;
@@ -31,8 +32,11 @@ pub fn keeps_pitch(rate: f64) -> bool {
 /// A track played at `rate` times its speed with its pitch kept, as frames of the stretched
 /// audio: frame `n` sounds source frame `n * rate`.
 pub struct Stretched {
+    /// Source audio kept alive for the streaming decoder.
     track: Arc<Track>,
+    /// Source frames played per output frame.
     rate: f64,
+    /// Timestretch source and processor state.
     engine: EngineHandles,
     /// Source frames handed to the stretcher so far.
     fed: usize,

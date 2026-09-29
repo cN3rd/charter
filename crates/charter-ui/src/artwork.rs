@@ -20,13 +20,17 @@ pub struct Artwork {
     bytes: Option<Vec<u8>>,
     /// Whether the bytes are still to be written beside the song.
     unsaved: bool,
+    /// The picture waiting to be decoded or uploaded, or the texture already on screen.
     preview: Preview,
 }
 
 /// What the song panel shows of the artwork.
 enum Preview {
+    /// Waiting for the host to read the named file.
     Reading,
+    /// Decoded by the host but not yet uploaded as a texture.
     Decoded(egui::ColorImage),
+    /// Uploaded texture ready for the song panel.
     Shown(egui::TextureHandle),
     /// Why there is nothing to show.
     Missing(&'static str),

@@ -24,6 +24,7 @@ pub trait Disk {
     /// # Errors
     /// Whatever keeps the folder from being made.
     fn make_folder(&self, path: &Path) -> io::Result<()>;
+    /// Whether `path` names an existing file or directory.
     fn exists(&self, path: &Path) -> bool;
     /// The files directly in `folder`, in no particular order.
     ///

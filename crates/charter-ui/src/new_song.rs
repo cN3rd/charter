@@ -14,12 +14,15 @@ use crate::style;
 pub const NO_AUDIO: &str = "no-audio-yet";
 /// What a new song is called, and by whom, until the user or its audio's tags say.
 pub const UNTITLED: &str = "Untitled";
+/// Default artist until the user or audio tags supply one.
 pub const UNKNOWN_ARTIST: &str = "Unknown artist";
 
 /// Whether a new song gets a chart of one standard level, and what it is called.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Pick {
+    /// Whether to create a chart for this standard level.
     on: bool,
+    /// Editable chart name, blank when the standard level name should be used.
     name: String,
     /// The level's standard name, which a blank name falls back to.
     level: String,
@@ -32,7 +35,9 @@ pub struct Draft {
     game: usize,
     /// Which of the game's layouts.
     layout: usize,
+    /// Title typed in the dialog; blank until supplied or found in audio tags.
     title: String,
+    /// Artist typed in the dialog; blank until supplied or found in audio tags.
     artist: String,
     /// The charts of a game without standard levels.
     charts: Vec<String>,
@@ -177,11 +182,14 @@ impl Draft {
 pub enum Answer {
     /// Make `song` with `plugin`.
     Create {
+        /// The ruleset used to check the new song's charts.
         plugin: &'static dyn RulesetPlugin,
+        /// The new song and its initial charts, ready for the editor.
         song: Box<NewSong>,
     },
     /// Ask the host to let the user choose the audio.
     ChooseAudio,
+    /// Close the dialog without starting a song.
     Cancel,
 }
 
@@ -344,7 +352,9 @@ fn row<C, R>(
 
 /// How wide the dialog and its captions are, and the gap between a caption and its field.
 const WIDTH: f32 = 500.0;
+/// Width of labels in the new-song dialog, in pixels.
 const CAPTION_W: f32 = 88.0;
+/// Horizontal gap between labels and their fields, in pixels.
 const GAP: f32 = 12.0;
 /// About how tall the dialog grows, for the game with the most rows; its top stays where this
 /// height would be centred.

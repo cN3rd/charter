@@ -101,14 +101,19 @@ pub enum Layout {
     Time,
 }
 
+/// Bars maps ticks to positions along the song.
+///
 /// The measures of a stretch of the song, by number, for turning ticks into bar positions and
 /// back: a bar position counts the bar and how far through it, so a correct map lines beats up
 /// down the rows whatever the tempo. The rows lay ticks out by a position that is the bar
 /// position in the bar layout and the audio time in the time layout.
 #[derive(Clone, Debug)]
 pub struct Bars<'a> {
+    /// Measures used to translate between ticks and bar positions.
     measures: Vec<Measure>,
+    /// Validated timing map for audio positions.
     timing: Valid<'a, Timing>,
+    /// Whether positions are bars or seconds.
     layout: Layout,
 }
 
@@ -542,6 +547,7 @@ pub fn header(
     }
 }
 
+/// Draws the audio envelope one pixel column at a time across `row`.
 fn waveform(painter: &egui::Painter, row: &Row, audio: Rect, scene: &Scene<'_>, peaks: &Peaks) {
     let (middle, half) = (audio.center().y, audio.height() / 2.0 - 4.0);
     let mut x = audio.left().floor();
@@ -679,6 +685,7 @@ fn strip(painter: &egui::Painter, row: &Row, scene: &Scene<'_>) {
     }
 }
 
+/// Shades the audio outside the reachable span from `from` to `to`.
 fn dim(painter: &egui::Painter, row: &Row, audio: Rect, from: f64, to: f64) {
     let (left, right) = (
         row.x_of(from).max(audio.left()),

@@ -6,14 +6,20 @@ use serde_json::{Value, json};
 
 /// Ticks in a sixteenth note and in a 4/4 measure, at the default resolution the demo uses.
 const SIXTEENTH: i64 = 240;
+/// Ticks in one 4/4 measure of the demo.
 const MEASURE: i64 = 16 * SIXTEENTH;
 /// Ticks in a 7/8 measure.
 const SEVEN_EIGHT_MEASURE: i64 = 14 * SIXTEENTH;
 
+/// Tick where the demo's verse begins, after eight 4/4 measures.
 const VERSE: i64 = 8 * MEASURE;
+/// Tick where the demo's chorus begins, after sixteen 4/4 measures.
 const CHORUS: i64 = 16 * MEASURE;
+/// Tick where the demo switches to 7/8, after twenty-four 4/4 measures.
 const BRIDGE: i64 = 24 * MEASURE;
+/// Tick where the demo returns to 4/4, after four 7/8 measures.
 const OUTRO: i64 = BRIDGE + 4 * SEVEN_EIGHT_MEASURE;
+/// Tick just beyond the four 4/4 measures of the outro.
 const END: i64 = OUTRO + 4 * MEASURE;
 
 /// The demo song: two StepMania dance-single charts over a tempo change, a stop and a spell of

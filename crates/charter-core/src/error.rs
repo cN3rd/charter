@@ -137,11 +137,14 @@ pub enum Rule {
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 #[error("expected {expected}, found {found}")]
 pub struct InvalidValue {
+    /// Grammar or range the rejected value should have met.
     expected: &'static str,
+    /// Display form of the offending value.
     found: String,
 }
 
 impl InvalidValue {
+    /// Captures `found` for an error naming the required grammar or range.
     pub(crate) fn new(expected: &'static str, found: impl Display) -> Self {
         Self {
             expected,

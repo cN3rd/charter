@@ -105,6 +105,7 @@ pub enum Keys {
 }
 
 impl Keys {
+    /// Supported key counts, including two-stage even counts.
     pub const ALL: [Self; 15] = [
         Self::K1,
         Self::K2,
@@ -123,6 +124,7 @@ impl Keys {
         Self::K20,
     ];
 
+    /// Number of lanes for this key count.
     #[must_use]
     pub const fn lanes(self) -> LaneCount {
         lanes(match self {
@@ -182,6 +184,7 @@ impl TryFrom<Decimal> for Difficulty {
 pub struct ScrollSpeed(Decimal);
 
 impl ScrollSpeed {
+    /// A positive scroll multiplier, or `None` for zero or less.
     #[must_use]
     pub fn new(value: Decimal) -> Option<Self> {
         (value > whole(0)).then_some(Self(value))
@@ -217,8 +220,10 @@ const fn default_difficulty() -> Difficulty {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ChartSettings {
+    /// HP drain rate; defaults to osu!'s standard value.
     #[serde(default = "default_difficulty")]
     hp: Difficulty,
+    /// Overall difficulty used for judgement windows.
     #[serde(default = "default_difficulty")]
     od: Difficulty,
 }
@@ -227,6 +232,7 @@ impl Difficulty {
     /// osu!'s value when a beatmap does not set one.
     pub const DEFAULT: Self = Self(whole(5));
 
+    /// A difficulty within osu!'s inclusive 0 to 10 range.
     #[must_use]
     pub fn new(value: Decimal) -> Option<Self> {
         (whole(0)..=whole(10))
@@ -244,8 +250,10 @@ pub struct Note {
     pub keysound: Option<SampleId>,
 }
 
+/// Ruleset key for an inherited timing point's slider velocity.
 const SCROLL_SPEED: &str = "scroll_speed";
 
+/// Quarter-note denominator for osu! meters.
 const FOUR: NonZeroU16 = NonZeroU16::MIN.saturating_add(3);
 
 /// Written as the ruleset version.
@@ -372,6 +380,7 @@ impl Song {
 }
 
 impl Timing {
+    /// Writes meters and scroll changes as shared timing events.
     fn to_core(&self) -> Result<CoreTiming, Error> {
         let events = self.events.iter().map(|event| {
             let kind = match event.kind {
@@ -399,6 +408,7 @@ impl Timing {
 }
 
 impl Chart {
+    /// Writes the beatmap's difficulty settings, key count and notes.
     fn to_core(&self) -> Result<CoreChart, Error> {
         let settings = serde_json::to_value(ChartSettings {
             hp: self.hp,
@@ -424,6 +434,7 @@ impl Chart {
 }
 
 impl Note {
+    /// Writes a one-lane tap or hold, retaining its optional keysound.
     fn to_object(&self) -> Object {
         let (kind, shape) = match self.hold {
             None => (Kind::Tap, Shape::Instant),
@@ -633,6 +644,7 @@ const NEW_SONG_KEYS: [Keys; 15] = [
     Keys::K20,
 ];
 
+/// Reads beatmap `c`, checking its settings and supported key count.
 fn read_chart(chart: &CoreChart, c: usize) -> Result<Chart, Error> {
     reject_own_keys(&chart.ext, Location::ChartExt(c))?;
     let keys = chart.lanes.and_then(Keys::of).ok_or(Error::Keys {
@@ -665,6 +677,7 @@ fn read_chart(chart: &CoreChart, c: usize) -> Result<Chart, Error> {
     })
 }
 
+/// A single-lane tap or hold at `at`, rejecting other note shapes.
 fn read_note(object: &Object, at: Location) -> Result<Note, Error> {
     if !object.children.is_empty() {
         return Err(Error::Unsupported {
@@ -693,6 +706,7 @@ fn read_note(object: &Object, at: Location) -> Result<Note, Error> {
     })
 }
 
+/// Reads quarter-note meters and scroll changes in `stream`, rejecting unsupported timing.
 fn read_timing(timing: &CoreTiming, stream: Stream) -> Result<Timing, Error> {
     let mut events = Vec::with_capacity(timing.events.len());
     for (index, event) in timing.events.iter().enumerate() {

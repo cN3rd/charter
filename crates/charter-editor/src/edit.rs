@@ -5,48 +5,74 @@ use charter_core::{Document, Marker, Metadata, Object, Settings, Timing};
 /// One change: to one object of the chart an edit is made to, or to the song as a whole.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Op {
+    /// Adds a note at its sorted position in the open chart.
     Insert {
+        /// Position in the chart's object list.
         index: usize,
+        /// Note to insert.
         object: Object,
     },
+    /// Removes a note from the open chart.
     Remove {
+        /// Position in the chart's object list.
         index: usize,
+        /// Note to remove, retained for undo.
         object: Object,
     },
+    /// Replaces one note without changing its sorted position.
     Replace {
+        /// Position in the chart's object list.
         index: usize,
+        /// Note before the edit, retained for undo.
         old: Object,
+        /// Note after the edit.
         new: Object,
     },
+    /// Changes the song's metadata.
     Metadata {
+        /// Metadata before the edit.
         old: Box<Metadata>,
+        /// Metadata after the edit.
         new: Box<Metadata>,
     },
+    /// Changes the song's markers.
     Markers {
+        /// Markers before the edit.
         old: Vec<Marker>,
+        /// Markers after the edit.
         new: Vec<Marker>,
     },
     /// The song's settings, or chart `chart`'s when there is one.
     Settings {
+        /// Chart index when these are chart settings, or `None` for song settings.
         chart: Option<usize>,
+        /// Settings before the edit.
         old: Settings,
+        /// Settings after the edit.
         new: Settings,
     },
     /// Every object of chart `chart`, whichever chart the edit is made to.
     Objects {
+        /// Index of the chart whose objects change.
         chart: usize,
+        /// Objects before the edit.
         old: Vec<Object>,
+        /// Objects after the edit.
         new: Vec<Object>,
     },
     /// A change to the timing of the chart the edit is made to when `own`, or else the song's.
     Timing {
+        /// Whether the change belongs to the chart instead of the song.
         own: bool,
+        /// Timing before the edit.
         old: Box<Timing>,
+        /// Timing after the edit.
         new: Box<Timing>,
     },
 }
 
 impl Op {
+    /// The reverse operation, swapping the saved old and new values.
     fn inverse(&self) -> Self {
         match self {
             Self::Insert { index, object } => Self::Remove {

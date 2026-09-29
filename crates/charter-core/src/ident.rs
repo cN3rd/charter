@@ -3,6 +3,7 @@ use std::str::FromStr;
 
 use crate::error::InvalidValue;
 
+/// Defines a validated string type with parsing, display and serde support.
 macro_rules! string_newtype {
     ($(#[$meta:meta])* $name:ident, $expected:literal, |$v:ident| $accepts:expr) => {
         $(#[$meta])*
@@ -226,6 +227,7 @@ fn split(value: &str) -> Option<(&str, &str)> {
         .filter(|(namespace, name)| is_namespace(namespace) && !name.is_empty())
 }
 
+/// Whether `value` matches the lowercase ASCII namespace grammar.
 fn is_namespace(value: &str) -> bool {
     let mut chars = value.chars();
     chars.next().is_some_and(|c| c.is_ascii_lowercase())

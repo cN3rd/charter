@@ -13,6 +13,7 @@ use crate::window::Request;
 
 /// How many clicks play, and after how long a lead in seconds.
 const CLICKS: usize = 32;
+/// Lead-in before the first calibration click, in seconds.
 const LEAD: f64 = 1.0;
 /// How many taps make a measurement.
 pub const WANTED: usize = 16;
@@ -21,12 +22,15 @@ const FLASH: f64 = 0.08;
 /// The tempos the clicks fold into by doubling or halving, slow enough to tap each one and
 /// fast enough to keep the beat.
 const SLOWEST: f64 = 60.0;
+/// Highest tappable tempo of the calibration clicks, in beats per minute.
 const FASTEST: f64 = 180.0;
 
 /// The click track: seconds between clicks, and how many make a measure, its first accented.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Beat {
+    /// Seconds from one calibration click to the next.
     spacing: f64,
+    /// Number of clicks before the accent repeats, at least one.
     per_measure: u16,
 }
 
@@ -133,6 +137,7 @@ pub fn flashing(elapsed: f64, audio_ms: f64, clicks: &[f64]) -> bool {
 /// The calibration window's state.
 #[derive(Debug, Default)]
 pub struct Calibration {
+    /// Whether the calibration dialog is showing.
     pub open: bool,
     /// When the clicks started, on the frame clock, and at what beat.
     started: Option<(f64, Beat)>,

@@ -12,15 +12,18 @@ use crate::window::Action;
 /// Whether the window shows, which format it reads, and what has been pasted into it.
 #[derive(Debug, Default)]
 pub struct Import {
+    /// Whether the import dialog is showing.
     pub open: bool,
     /// Which of the plugins that read timing reads it, by its place among them.
     format: usize,
+    /// Text pasted into the dialog or read by the host from a file.
     pub(crate) text: String,
     /// The last text read and how it read, so a long paste is read once, not every frame.
     read: Option<(String, usize, Result<ImportedTiming, String>)>,
 }
 
 impl Import {
+    /// Forces the next display to read the current text and selected format again.
     pub(crate) fn invalidate(&mut self) {
         self.read = None;
     }

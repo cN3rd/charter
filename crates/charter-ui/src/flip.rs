@@ -89,6 +89,7 @@ impl Flip {
         }
     }
 
+    /// The screen rectangle covered by `rect` of the notefield's layout.
     #[must_use]
     pub fn rect(self, rect: Rect) -> Rect {
         Rect::from_two_pos(self.pos(rect.min), self.pos(rect.max))
@@ -159,16 +160,19 @@ impl Canvas {
         self.painter.add(Shape::mesh(mesh));
     }
 
+    /// Fills `rect` of the notefield's layout, after turning it onto the screen.
     pub fn rect_filled(&self, rect: Rect, rounding: f32, fill: egui::Color32) {
         self.painter
             .rect_filled(self.flip.rect(rect), rounding, fill);
     }
 
+    /// Strokes the transformed outline of `rect` in notefield coordinates.
     pub fn rect_stroke(&self, rect: Rect, rounding: f32, stroke: Stroke, kind: StrokeKind) {
         self.painter
             .rect_stroke(self.flip.rect(rect), rounding, stroke, kind);
     }
 
+    /// Fills and strokes `rect` in notefield coordinates, turned onto the screen.
     pub fn rect(
         &self,
         rect: Rect,
@@ -191,6 +195,7 @@ impl Canvas {
         self.line(vec![pos2(x, y.min), pos2(x, y.max)], stroke);
     }
 
+    /// Draws a line through `points` of the notefield's layout.
     pub fn line(&self, points: Vec<Pos2>, stroke: Stroke) {
         let points = points
             .into_iter()
@@ -199,6 +204,7 @@ impl Canvas {
         self.painter.add(Shape::line(points, stroke));
     }
 
+    /// Draws a filled polygon through `points` of the notefield's layout.
     pub fn convex_polygon(&self, points: Vec<Pos2>, fill: egui::Color32, stroke: Stroke) {
         let points = points
             .into_iter()
@@ -208,11 +214,13 @@ impl Canvas {
             .add(Shape::convex_polygon(points, fill, stroke));
     }
 
+    /// Fills a circle at `centre` in the notefield's layout, in screen pixels.
     pub fn circle_filled(&self, centre: Pos2, radius: f32, fill: egui::Color32) {
         self.painter
             .circle_filled(self.flip.pos(centre), radius, fill);
     }
 
+    /// Strokes a circle at `centre` in the notefield's layout, in screen pixels.
     pub fn circle_stroke(&self, centre: Pos2, radius: f32, stroke: Stroke) {
         self.painter
             .circle_stroke(self.flip.pos(centre), radius, stroke);

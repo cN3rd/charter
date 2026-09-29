@@ -30,6 +30,7 @@ const PLUGINS: &[&dyn RulesetPlugin] = &[
 /// Where the settings are kept in eframe's storage: as the changes from the defaults, and in the
 /// whole copy older versions kept, read when there are no changes kept yet.
 const SETTINGS: &str = "settings.changes";
+/// Legacy storage key used when the changes-only settings are absent.
 const OLD_SETTINGS: &str = "settings";
 
 /// The app's name, which also names its folder in the user's data.
@@ -37,12 +38,15 @@ const APP: &str = "charter";
 
 /// The editor window, and the files and dialogs it asks for.
 struct Host {
+    /// Editor UI that requests file and audio operations from this host.
     window: Window,
     /// Where the autosave is kept, when the user's data folder is known.
     recovery: Option<PathBuf>,
+    /// Audio playback and loading for the open song.
     player: Player,
     /// Finds timing from the audio, and downloads the beat tracker it needs.
     finder: Finder,
+    /// File operations, replaceable with in-memory storage in tests.
     disk: Box<dyn Disk>,
 }
 
@@ -62,6 +66,7 @@ impl eframe::App for Host {
 }
 
 impl Host {
+    /// Handles UI requests and any requests they enqueue in turn.
     fn handle_requests(&mut self, mut requests: Vec<Request>) {
         while !requests.is_empty() {
             for request in requests {
@@ -219,6 +224,7 @@ impl Host {
         }
     }
 
+    /// Writes the song and its accompanying assets, reporting the outcome to the window.
     fn write(&mut self, path: PathBuf, bytes: &[u8]) {
         let copied = match self.window.audio_copy_for(&path) {
             Some((from, to)) => disk::copy_whole(self.disk.as_ref(), &from, &to)
@@ -362,6 +368,7 @@ impl Host {
         }
     }
 
+    /// Writes the current unsaved song into the recovery file.
     fn autosave(&mut self, bytes: &[u8]) {
         let Some(recovery) = &self.recovery else {
             self.window
@@ -446,6 +453,7 @@ fn on_wayland() -> bool {
         && std::env::var_os("WAYLAND_DISPLAY").is_some_and(|display| !display.is_empty())
 }
 
+/// File dialog restricted to charter's JSON song files.
 fn song_dialog() -> rfd::FileDialog {
     rfd::FileDialog::new().add_filter("charter song", &["json"])
 }

@@ -183,6 +183,7 @@ impl Timing {
         Self::span_parts_in(&self.events, from, to)
     }
 
+    /// Timed ticks and pause seconds between `from` and `to` under `events`.
     fn span_parts_in(events: &[TimingEvent], from: Tick, to: Tick) -> Option<(f64, f64)> {
         if to < from {
             return None;

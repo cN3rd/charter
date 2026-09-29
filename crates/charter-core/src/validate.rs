@@ -11,6 +11,7 @@ use crate::error::{Location, Rule, Stream, Violation};
 use crate::ident::{Key, Kind, Namespace};
 use crate::unit::{LaneSpan, Tick, TicksPerBeat};
 
+/// First cross-field violation in `doc`, or success when every format rule holds.
 pub(crate) fn validate(doc: &Document) -> Result<(), Violation> {
     let tpb = doc.ticks_per_beat;
     check_timing(&doc.timing, tpb).map_err(at(Location::Timing(Stream::Song)))?;
@@ -106,6 +107,7 @@ fn check_object(doc: &Document, chart: &Chart, object: &Object) -> Result<(), Ru
     Ok(())
 }
 
+/// Checks that each used plugin namespace is declared and each declared plugin is used.
 fn check_namespaces(doc: &Document) -> Result<(), Rule> {
     let ruleset = &doc.ruleset.id;
     if doc.plugins.contains_key(ruleset) {
@@ -247,6 +249,7 @@ fn positions(object: &Object) -> impl Iterator<Item = &Position> {
     own.chain(children)
 }
 
+/// Path points in `shape`, or an empty slice for an instant or sustain.
 fn path_points(shape: &Shape) -> &[PathPoint] {
     match shape {
         Shape::Path { points } => points.as_slice(),
@@ -254,6 +257,7 @@ fn path_points(shape: &Shape) -> &[PathPoint] {
     }
 }
 
+/// Checks that every lane covered by `position` exists in `chart`.
 fn check_lanes(chart: &Chart, position: &Position) -> Result<(), Rule> {
     let Some(covered) = position.lanes() else {
         return Ok(());
@@ -314,10 +318,12 @@ fn used_namespaces(doc: &Document) -> BTreeSet<&Namespace> {
     used
 }
 
+/// Adds namespaces owning keys in `ext` to the set of used plugins.
 fn add_keys<'a>(used: &mut BTreeSet<&'a Namespace>, ext: &'a Extensions) {
     used.extend(ext.keys().map(Key::namespace));
 }
 
+/// Adds namespaces used by an object's kind, extensions and path points.
 fn add_item<'a>(
     used: &mut BTreeSet<&'a Namespace>,
     kind: &'a Kind,

@@ -31,6 +31,7 @@ pub struct Finder {
     weights: Option<PathBuf>,
     /// The audio and resolution waiting on the weights.
     waiting: Option<(PathBuf, TicksPerBeat, Option<Vec<Onset>>)>,
+    /// Receiver for the current download or analysis job, if one is running.
     work: Option<Receiver<Progress>>,
 }
 

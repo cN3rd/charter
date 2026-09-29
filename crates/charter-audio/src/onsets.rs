@@ -25,9 +25,11 @@ const APART: f64 = 0.030;
 /// How far back and ahead of a peak, in seconds, the neighbourhood it has to stand out from
 /// reaches.
 const BEFORE: f64 = 0.100;
+/// How far after a peak, in seconds, the prominence neighbourhood reaches.
 const AFTER: f64 = 0.030;
 /// How far before and after the peak's time, in seconds, the hit's start is looked for.
 const BACK: f64 = 0.030;
+/// How far after a peak, in seconds, to search for the start of a hit.
 const AHEAD: f64 = 0.010;
 /// How far from the quiet before a hit to its loudest, as a share, the loudness has climbed where
 /// the hit starts.

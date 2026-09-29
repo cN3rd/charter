@@ -23,8 +23,11 @@ pub const BINS: usize = 128;
 const WINDOW: usize = 1024;
 /// Samples from one frame to the next.
 const HOP: usize = 441;
+/// Lower edge of the mel filterbank in hertz.
 const F_MIN: f64 = 30.0;
+/// Upper edge of the mel filterbank in hertz.
 const F_MAX: f64 = 11_000.0;
+/// Scale applied to mel magnitudes before `ln(1 + x)`.
 const LOG_MULTIPLIER: f32 = 1000.0;
 
 /// `samples`, mono audio at `rate`, at the network's [`RATE`].
@@ -171,6 +174,7 @@ fn mel(hz: f64) -> f64 {
     }
 }
 
+/// Hertz corresponding to `mel` on the Slaney scale.
 fn hz(mel: f64) -> f64 {
     if mel < 15.0 {
         mel * 200.0 / 3.0

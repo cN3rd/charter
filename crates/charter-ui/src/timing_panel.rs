@@ -14,18 +14,26 @@ use crate::style::{self, icon, table};
 /// What is being typed into the section's fields, while one has the keyboard.
 #[derive(Debug, Default)]
 pub struct Drafts {
+    /// Tempo being typed, in beats per minute.
     bpm: Option<String>,
+    /// Time signature being typed as `numerator/denominator`.
     meter: Option<String>,
+    /// Starting offset being typed, in seconds.
     offset: Option<String>,
+    /// First timing point's tempo being typed, in beats per minute.
     start_bpm: Option<String>,
+    /// Audio position being typed for the selected timing point, in seconds.
     time: Option<String>,
 }
 
 /// A tick of the timing holding events, with what they set.
 #[derive(Debug)]
 struct Point {
+    /// Tick holding the events represented by this row.
     tick: Tick,
+    /// Tempo change at this tick, when there is one.
     bpm: Option<Bpm>,
+    /// Time signature change at this tick, when there is one.
     meter: Option<TimeSignature>,
     /// Stops, delays, warps and game events, as words.
     others: Vec<String>,
@@ -130,6 +138,7 @@ pub fn section(
     refused
 }
 
+/// The timing point list and editable fields, with the reason an edit was refused.
 fn body(
     ui: &mut Ui,
     song: &Song,

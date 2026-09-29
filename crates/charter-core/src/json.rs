@@ -97,7 +97,9 @@ impl ValidDocument {
 /// compute fallibly, a valid one computes outright: a time for every tick, an end for every span.
 #[derive(Debug)]
 pub struct Valid<'a, T> {
+    /// Validated chart part this view dereferences to.
     part: &'a T,
+    /// Document whose cross-field rules have already been checked.
     document: &'a Document,
 }
 
@@ -329,6 +331,7 @@ fn migrate_v0(mut value: serde_json::Value) -> Result<serde_json::Value, Error> 
     Ok(value)
 }
 
+/// Replaces one format 0 timing value with an anchored timing map.
 fn migrate_timing_value(
     value: &mut serde_json::Value,
     ticks_per_beat: TicksPerBeat,
@@ -345,30 +348,46 @@ fn migrate_timing_value(
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+/// Format 0 timing, with a global offset and BPM changes among its events.
 struct V0Timing {
+    /// Audio time of tick zero in seconds.
     offset_seconds: Origin,
+    /// Format 0 events, including the tempo changes that become anchors.
     events: Vec<V0TimingEvent>,
 }
 
+/// An event in a format 0 timing map.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct V0TimingEvent {
+    /// Tick at which the old event applies.
     tick: Tick,
+    /// Tempo, shared timing or plugin-specific event at this tick.
     kind: V0TimingKind,
+    /// Opaque plugin data retained on non-tempo events.
     #[serde(default)]
     ext: Extensions,
 }
 
+/// Timing event kinds accepted in format 0 files before conversion to anchors.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 enum V0TimingKind {
+    /// Tempo change that becomes an anchor at its resolved audio time.
     Bpm(Bpm),
+    /// Pause after the objects at this tick.
     Stop(Seconds),
+    /// Pause before the objects at this tick.
     Delay(Seconds),
+    /// Ticks skipped without taking time.
     Warp(Ticks),
+    /// Meter in effect from this tick.
     TimeSignature(TimeSignature),
+    /// Opaque timing event belonging to a plugin.
     Other {
+        /// Namespaced identifier of the event.
         name: crate::Key,
+        /// Plugin-specific event payload.
         value: serde_json::Value,
     },
 }
@@ -414,6 +433,7 @@ impl V0Timing {
         })
     }
 
+    /// Audio time of `tick`, using the old offset and tempo events.
     fn seconds_at(&self, ticks_per_beat: TicksPerBeat, tick: Tick) -> Option<f64> {
         let offset = ResolvedTime::from(self.offset_seconds).seconds();
         let zero = Tick::new(0);
@@ -424,6 +444,7 @@ impl V0Timing {
         })
     }
 
+    /// Seconds from `from` to `to` under the old tempo, pauses and warps.
     fn elapsed(&self, ticks_per_beat: TicksPerBeat, from: Tick, to: Tick) -> Option<f64> {
         let timed = |cursor: Tick, until: Tick, warp_end: Option<Tick>, bpm: Bpm| {
             let start = warp_end.map_or(cursor, |end| end.max(cursor));
@@ -575,6 +596,7 @@ impl<'de> Visitor<'de> for IJsonVisitor {
     }
 }
 
+/// Deserialization error for an integer outside the exact double range.
 fn inexact<E: de::Error>(v: impl fmt::Display) -> E {
     E::custom(format_args!(
         "integer {v} is beyond what a double holds exactly"

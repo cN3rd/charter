@@ -26,12 +26,16 @@ const AUDIO: [&str; 4] = ["ogg", "mp3", "wav", "flac"];
 pub enum Request {
     /// Write `bytes`, the song as it stands, to `path`.
     Write {
+        /// Destination file of the open song.
         path: PathBuf,
+        /// Serialised chart document to write.
         bytes: Vec<u8>,
     },
     /// Ask where to save the song, suggesting the file name `name`, then write `bytes` there.
     SaveAs {
+        /// Suggested file name for the save dialog.
         name: String,
+        /// Serialised chart document to write at the chosen location.
         bytes: Vec<u8>,
     },
     /// Ask for a song to open.
@@ -39,6 +43,7 @@ pub enum Request {
     /// Read the song at `path` and pass it to [`Window::open`], or say why with
     /// [`Window::refuse`]: a song opened before.
     OpenPath {
+        /// File last used to open this song.
         path: PathBuf,
     },
     /// Write `bytes`, the song as its file holds it, as a dated copy named after `name` into each
@@ -57,6 +62,7 @@ pub enum Request {
     /// kept before. The host passes them to [`Window::recover`] when it starts, and says through
     /// [`Window::autosave_failed`] if they could not be kept.
     Autosave {
+        /// Serialised autosave and its original file path.
         bytes: Vec<u8>,
     },
     /// Remove the kept changes: they were saved or thrown away.
@@ -64,7 +70,9 @@ pub enum Request {
     /// Copy the song's audio from `from` to `to`, beside the song, unless a file is there. The
     /// host says through [`Window::audio_not_copied`] if it could not.
     CopyAudio {
+        /// Original audio file.
         from: PathBuf,
+        /// Destination beside the chart file.
         to: PathBuf,
     },
     /// Play the song's audio from `from` seconds, at `rate` times its speed. The host reports
@@ -84,6 +92,7 @@ pub enum Request {
     },
     /// Carry on playing with the audio at this volume.
     Volume(charter_audio::Gain),
+    /// Pause the song's audio at its current position.
     Pause,
     /// Carry on playing from this many seconds into the audio.
     Seek(f64),
@@ -104,11 +113,13 @@ pub enum Request {
     /// Decode `bytes`, the artwork an autosave kept, and pass the picture to
     /// [`Window::artwork_restored`].
     DecodeArtwork {
+        /// Picture bytes kept in the autosave.
         bytes: Vec<u8>,
     },
     /// Read and decode the picture at `file`, the song's artwork, and pass it to
     /// [`Window::artwork_read`].
     ReadArtwork {
+        /// Artwork file named by the song.
         file: PathBuf,
     },
     /// Ask the user to choose a file holding timing in another program's format, such as a
@@ -116,6 +127,7 @@ pub enum Request {
     ChooseTimingFile,
     /// Read the tags of the audio file at `file`, and pass them to [`Window::tags_read`].
     ReadTags {
+        /// Audio file whose title and artist tags should be read.
         file: PathBuf,
     },
     /// Find the timing of the audio in `file` at `ticks_per_beat` and pass it to
@@ -133,6 +145,7 @@ pub enum Request {
 /// Where finding the song's timing from its audio has got to.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 enum Finding {
+    /// No automatic timing operation is pending.
     #[default]
     Idle,
     /// Waiting on the user to agree to download the beat tracker's weights.
@@ -148,7 +161,9 @@ enum Finding {
 struct Offer {
     /// Whether they go to the new-song dialog rather than the open song.
     draft: bool,
+    /// Title from the audio tags, if it would change the song's title.
     title: Option<String>,
+    /// Artist from the audio tags, if it would change the song's artist.
     artist: Option<String>,
 }
 
@@ -163,7 +178,9 @@ impl Default for Rate {
 }
 
 impl Rate {
+    /// Lowest allowed playback speed as a factor of the audio's own speed.
     const SLOWEST: f64 = 0.1;
+    /// Highest allowed playback speed as a factor of the audio's own speed.
     const FASTEST: f64 = 4.0;
 
     /// This rate changed by `step`, to the nearest percent, and kept between a tenth and four
@@ -198,6 +215,7 @@ impl Rate {
 enum Loaded {
     /// Ready to play, this many seconds long.
     Ready(f64),
+    /// The host could not load the audio file for playback.
     Failed,
 }
 
@@ -219,7 +237,9 @@ enum Discard {
     Close,
     /// Opening another song, read from `path` unless it is the demo.
     Open {
+        /// The opened song's file, or none for the demo.
         path: Option<PathBuf>,
+        /// The replacement song, held until the current song can be discarded.
         song: Box<Song>,
         /// Whether the song is the autosave, restored.
         restored: bool,
@@ -231,9 +251,13 @@ enum Discard {
 /// Unsaved changes from an earlier run, waiting on whether to restore them.
 #[derive(Debug)]
 struct Restoring {
+    /// File the autosaved song belongs to, if one was chosen.
     path: Option<PathBuf>,
+    /// Audio file dropped onto the autosaved song, if any.
     audio: Option<PathBuf>,
+    /// The autosaved song to offer for restoration.
     song: Box<Song>,
+    /// Artwork bytes not yet saved beside the song, if any.
     artwork: Option<Vec<u8>>,
 }
 
@@ -249,6 +273,7 @@ enum Saving {
 /// How far the window is in closing, once the user chose to.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum Leaving {
+    /// No close request is under way.
     #[default]
     Staying,
     /// The host's window is to be told to close.
@@ -279,12 +304,19 @@ impl Note {
 /// Something a panel, key or gesture asks the editor to do.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Action {
+    /// Replace the open song with the built-in demo.
     OpenDemo,
+    /// Show the chart at this index in the open song.
     OpenChart(usize),
+    /// Move the cursor by a snap in the given direction.
     Move(Step),
+    /// Move the cursor by a measure in the given direction.
     MoveMeasure(Step),
+    /// Increase the snap's denominator to reach finer lines.
     FinerSnap,
+    /// Decrease the snap's denominator to reach coarser lines.
     CoarserSnap,
+    /// Multiply the notefield zoom by this factor.
     ZoomBy(f32),
     /// Places a note on the lane at the cursor, or removes what starts there.
     Toggle(LaneIndex, Note),
@@ -294,14 +326,20 @@ pub(crate) enum Action {
     LanesReleased,
     /// Places a note at `tick` on `lane`, or removes what starts there.
     Place {
+        /// Position along the chart where the note starts.
         tick: Tick,
+        /// Lane on which the note is placed.
         lane: LaneIndex,
+        /// Kind of note placed on that lane.
         note: Note,
     },
     /// Makes the tap or hold starting on `lane` at `from` end at `to`.
     Stretch {
+        /// Lane whose tap or hold is stretched.
         lane: LaneIndex,
+        /// Tick where the note starts.
         from: Tick,
+        /// Tick where the note ends.
         to: Tick,
     },
     /// Meets the selection with a note, or with none: nothing was under the pointer.
@@ -309,19 +347,29 @@ pub(crate) enum Action {
     /// Moves the selected notes this many ticks later and lanes right, earlier and left when
     /// negative.
     MoveSelection {
+        /// Signed distance to move along the chart, in ticks.
         ticks: i32,
+        /// Signed distance to move across lanes.
         lanes: i32,
     },
     /// Meets the selection with the notes starting within `ticks` on a lane within `lanes`.
     SelectBetween {
+        /// Inclusive range of ticks covered by the selection.
         ticks: (Tick, Tick),
+        /// Inclusive range of lanes covered by the selection.
         lanes: (LaneIndex, LaneIndex),
+        /// Whether to replace, add to or remove from the existing selection.
         how: Selecting,
     },
+    /// Revert the latest editing step.
     Undo,
+    /// Reapply the latest reverted editing step.
     Redo,
+    /// Select every note in the open chart.
     SelectAll,
+    /// Leave no notes selected.
     ClearSelection,
+    /// Remove the selected notes from the open chart.
     DeleteSelection,
     /// Moves the end of the selected notes, or those at the cursor, a snap later or earlier.
     ResizeNotes(Step),
@@ -337,7 +385,9 @@ pub(crate) enum Action {
     /// Moves the selected notes this many snap lines later and lanes right, back and left when
     /// negative.
     ShiftSelection {
+        /// Signed number of snap lines to move the notes.
         snaps: i32,
+        /// Signed number of lanes to move the notes.
         lanes: i32,
     },
     /// Flips the selected notes across the lanes.
@@ -390,6 +440,7 @@ pub(crate) enum Action {
     NudgeRate(f64),
     /// Makes the audio play at this factor of its speed.
     SetRate(f64),
+    /// Apply the user's playback volume settings.
     SetVolumes(charter_audio::Volumes),
     /// Gives the timing point on the tick this tempo.
     SetBpmAt(Tick, charter_core::Bpm),
@@ -397,8 +448,11 @@ pub(crate) enum Action {
     SetMetadata(Box<charter_core::Metadata>),
     /// Sets a text setting of the song or the open chart, or takes it away without a value.
     SetSetting {
+        /// Whether the setting belongs to the song or its open chart.
         scope: charter_core::SettingScope,
+        /// The game's key for the text setting.
         key: String,
+        /// Replacement text, or none to remove the setting.
         value: Option<String>,
     },
     /// Moves the tempo point on the tick to this many seconds into the audio, the first one
@@ -414,8 +468,11 @@ pub(crate) enum Action {
     AddBpm,
     /// Moves the offset by this many seconds, later in the audio when positive.
     NudgeOffset(f64),
+    /// Show the timing window for editing audio anchors.
     ShowSync,
+    /// Show the dialog for reading another program's timing.
     ShowImport,
+    /// Ask the host to choose a file to import timing from.
     ChooseTimingFile,
     /// Puts this timing in place of the one tempo edits go to.
     ImportTiming(Box<charter_core::Timing>),
@@ -437,22 +494,29 @@ pub(crate) enum Action {
     ResetTiming,
     /// Loop the ticks from `from` to `to` with the metronome, or stop looping them.
     Loop {
+        /// Tick at which the playback loop starts.
         from: Tick,
+        /// Tick at which the playback loop ends.
         to: Tick,
     },
     /// Switch between the usual playback speed and the alternate one.
     ToggleRate,
     /// Mute the metronome, or unmute it, while a key is held.
     MuteMetronome(bool),
+    /// Show or hide the timing window.
     ToggleSync,
     /// Moves every timing event at `from` to `to`, as one timing point.
     MoveTiming {
+        /// Tick holding the events to move.
         from: Tick,
+        /// Tick to which those events move.
         to: Tick,
     },
     /// Moves the song's marker at `index` to `to`.
     MoveMarker {
+        /// Index of the marker in the song.
         index: usize,
+        /// Tick at which to put the marker.
         to: Tick,
     },
     /// Puts the cursor on the nearest section that way.
@@ -502,6 +566,7 @@ pub struct Window {
     after_save: Option<Discard>,
     /// How far the window is in closing.
     leaving: Leaving,
+    /// The user's editor choices, kept by the host between runs.
     settings: Settings,
     /// Whether the settings window is showing.
     settings_open: bool,
@@ -582,6 +647,7 @@ pub struct Window {
     audio: Option<(PathBuf, Loaded)>,
     /// Whether the audio is playing.
     playing: bool,
+    /// Current playback speed relative to the audio's own speed.
     rate: Rate,
     /// The audio file dropped on the song, which is copied beside the song when it is saved
     /// elsewhere.
@@ -998,6 +1064,7 @@ impl Window {
         }
     }
 
+    /// Starts audio at the cursor, or pauses it; explains why playback could not start.
     fn toggle_play(&mut self) {
         if std::mem::take(&mut self.playing) {
             self.requests.push(Request::Pause);
@@ -1039,6 +1106,7 @@ impl Window {
         }
     }
 
+    /// Changes playback speed, replaying stretched audio when its pitch is kept.
     fn set_rate(&mut self, rate: Rate) {
         self.rate = rate;
         // Audio that keeps its pitch, or played keeping it, is stretched for its speed, so a new
@@ -1782,6 +1850,7 @@ impl Window {
         }
     }
 
+    /// Completes a close or song replacement after unsaved changes have been handled.
     fn carry_on(&mut self, discard: Discard) {
         match discard {
             Discard::Close => {
@@ -2803,6 +2872,7 @@ impl Sounds {
 /// other text is not taken for notes.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Clipped {
+    /// Copied chart objects under a key distinct from ordinary clipboard text.
     charter_notes: Vec<charter_core::Object>,
 }
 

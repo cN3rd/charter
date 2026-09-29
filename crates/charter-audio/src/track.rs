@@ -14,7 +14,9 @@ use symphonia_wrap as symphonia;
 /// Audio decoded to stereo frames of `f32` samples, left then right.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Track {
+    /// Nonzero sample rate in frames per second.
     rate: NonZeroU32,
+    /// Interleaved-in-time stereo samples, left then right per frame.
     frames: Vec<[f32; 2]>,
 }
 

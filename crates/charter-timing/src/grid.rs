@@ -1,3 +1,5 @@
+//! The grid restarts at every downbeat.
+//!
 //! The timing window's grid: lines a fraction of a whole note apart, restarting on every
 //! downbeat, so a measure of 7/8 at quarters ends on a short step rather than carrying the grid
 //! into the next measure.

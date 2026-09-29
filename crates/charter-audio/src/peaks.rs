@@ -56,9 +56,11 @@ pub fn fingerprint(bytes: &[u8]) -> u64 {
 /// A track's extents over blocks of frames, each level's blocks twice as long as the last's.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Peaks {
+    /// Source frames per second, used to turn requested times into block indices.
     rate: f64,
     /// How many frames the track has.
     frames: usize,
+    /// Cached extents from 64-frame blocks through successively doubled blocks.
     levels: Vec<Vec<Extent>>,
 }
 

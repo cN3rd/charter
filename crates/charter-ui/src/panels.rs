@@ -508,13 +508,19 @@ pub fn song_panel(
 /// What is being typed into the song section's fields, while one has the keyboard.
 #[derive(Debug, Default)]
 pub struct SongDrafts {
+    /// Title being edited, while its field has the keyboard.
     title: Option<String>,
+    /// Artist being edited, while its field has the keyboard.
     artist: Option<String>,
+    /// Genre being edited, while its field has the keyboard.
     genre: Option<String>,
+    /// Artwork file name being edited, while its field has the keyboard.
     artwork: Option<String>,
     /// The game's text settings, by whether they are the chart's, and key.
     settings: std::collections::HashMap<(bool, String), Option<String>>,
+    /// Preview start being edited, while its field has the keyboard.
     preview: Option<String>,
+    /// Audio length being edited, while its field has the keyboard.
     length: Option<String>,
 }
 
@@ -853,6 +859,7 @@ pub fn markers(ui: &mut Ui, song: &Song, draft: &mut Option<String>, actions: &m
     style::section(ui, "Markers", |ui| markers_body(ui, song, draft, actions));
 }
 
+/// Draws section names and the field for naming the section at the cursor.
 fn markers_body(ui: &mut Ui, song: &Song, draft: &mut Option<String>, actions: &mut Vec<Action>) {
     let editable = song.read_only().is_none();
     if editable {
@@ -1390,8 +1397,11 @@ fn notice<R>(ui: &mut Ui, symbol: &str, body: impl FnOnce(&mut Ui) -> R) -> R {
 /// What to do with unsaved changes that are about to be lost.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Answer {
+    /// Save the changes before leaving.
     Save,
+    /// Leave without saving the changes.
     DontSave,
+    /// Stay in the song without losing its changes.
     Cancel,
 }
 
