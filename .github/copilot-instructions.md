@@ -92,10 +92,10 @@ expected `E1` for it. Do not silence that by adding frontmatter.
 | `crates/charter-autotiming` | DSP: a tempo map from a song's beats and onsets, as sections of constant tempo; the back end of automatic timing, fed by any tracker |
 | `crates/charter-beatthis-burn` | DSP: beats and downbeats from audio by the Beat This! network in burn on the CPU, loading the released `final0.ckpt`; parity fixtures from `fixtures/make.py` |
 | `crates/charter-core` | the chart format: data model, JSON I/O, validation, tick to time; `RulesetPlugin`, the surface a ruleset plugin implements |
-| `crates/charter-editor` | editing a song without drawing it: open chart, cursor, snaps, note edits the ruleset plugin checks, selection, undo, unsaved changes, the demo song |
+| `crates/charter-editor` | editing a song without drawing it: open chart, cursor, snaps, note edits the ruleset plugin checks, selection, undo, unsaved changes, the demo song; `Song` lives in `song/`, one file per concern (layers, notes, selection, tempo, markers, history, cursor, settings) |
 | `crates/charter-style` | the shared look: colour tokens, Inter and Phosphor fonts, and the widgets drawn in them |
-| `crates/charter-timing` | the timing window in egui: the audio one measure a row, anchors pinning beats to the audio; hands its edits back as commands |
-| `crates/charter-ui` | the editor window in egui: notefield, panels, keys, settings; hosts the timing window; asks its host for files and dialogs; the static mock as an example |
+| `crates/charter-timing` | the timing window in egui: the audio one measure a row, anchors pinning beats to the audio; hands its edits back as commands; `lib.rs` holds the state, `draw.rs`, `pointer.rs` and `keyboard.rs` its drawing and input |
+| `crates/charter-ui` | the editor window in egui: notefield, panels, keys, settings; hosts the timing window; asks its host for files and dialogs; the static mock as an example. `window/`, `panels/` and `notefield/` are split one file per concern, each `impl Window` block beside the state sub-struct it owns |
 | `crates/charter-app` | binary front end, thin: registers the built-in ruleset plugins, answers the window's file and dialog requests with `std::fs` and rfd, plays the song's audio through kira, keeps settings in eframe's storage; its file I/O goes through a `Disk` trait so it is tested in memory |
 | `plugins/stepmania`, `plugins/ttr`, `plugins/osu-mania` | ruleset plugins: typed game models over `charter-core`, each with a `Plugin` the editor checks songs and edits through |
 | `third-party/symphonia-wrap` | build-time facade over `symphonia`, read its README first |
