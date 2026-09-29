@@ -7,11 +7,16 @@
 //!
 //! The window reads a song and draws it; what the user asks of it comes back as [`Command`]s,
 //! which its host carries out, since the host owns the song, its history and its playback. The
-//! host says through [`TimingWindow::refused`] when an edit could not be made.
+//! host says through [`TimingWindow::refused`] when an edit could not be made. Pointer,
+//! keyboard and row painting internals live in private modules; the crate root keeps the public
+//! surface and per-frame shared state.
 
 pub mod accuracy;
+mod draw;
 pub mod grid;
+mod keyboard;
 mod panel;
+mod pointer;
 pub mod rows;
 
 use std::num::NonZeroU16;
@@ -20,11 +25,13 @@ use charter_audio::{Onset, Peaks};
 use charter_core::{Bpm, Tick, Timing, Valid};
 use charter_editor::{Pin, Refusal, Song};
 use charter_style as style;
-use egui::{Key, Modifiers, Pos2, Sense, vec2};
+use egui::Pos2;
 
 use crate::accuracy::{Fitted, Issue, Residual};
 use crate::grid::{Grid, RESOLUTIONS};
-use crate::rows::{Anchor, Bars, BarsPerRow, GRAB, Layout, ROW, Row, Scene, SecondsPerRow};
+use crate::rows::{Bars, BarsPerRow, Layout, ROW, SecondsPerRow};
+
+pub(crate) use crate::pointer::Gesture;
 
 /// What the timing window asks its host to do.
 #[derive(Clone, Debug, PartialEq)]
@@ -168,7 +175,7 @@ pub struct TimingWindow {
     /// The selected anchors, a run of neighbours, by tick.
     selection: Vec<Tick>,
     /// Active pointer operation in the timing rows.
-    gesture: Gesture,
+    gesture: pointer::Gesture,
     /// The anchor an edit ran into, and when, to pulse it.
     pulse: Option<(Tick, f64)>,
     /// Why the last edit did not happen.
@@ -176,7 +183,7 @@ pub struct TimingWindow {
     /// A fit waiting on Enter or Esc, and what it does in words.
     preview: Option<(Fitted, String)>,
     /// The anchors last nudged, and when, so a run of nudges joins one step.
-    last_nudge: Option<(Vec<Tick>, f64)>,
+    last_nudge: Option<LastNudge>,
     /// The issue last gone to.
     issue: Option<usize>,
     /// Whether the window has the keyboard: after a click in it, until a click elsewhere.
@@ -210,7 +217,7 @@ impl Default for TimingWindow {
             follow: false,
             focus: None,
             selection: Vec::new(),
-            gesture: Gesture::Idle,
+            gesture: pointer::Gesture::Idle,
             pulse: None,
             status: None,
             preview: None,
@@ -227,44 +234,18 @@ impl Default for TimingWindow {
     }
 }
 
-/// What a press or drag in the rows is doing, as the specification's state machine has it.
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum Gesture {
-    /// No press or drag is active.
-    Idle,
-    /// Moving an anchor's beat, `from` where it was to `to`, with the others selected alike.
-    DragBeat {
-        /// Tick where the dragged anchor began.
-        from: Tick,
-        /// Tick where the anchor would land if released now.
-        to: Tick,
-        /// Pointer position at the start of the drag, in screen points.
-        origin: f64,
-    },
-    /// Moving an anchor in the audio, from `from` seconds to `to`.
-    DragAudio {
-        /// Tick identifying the dragged anchor.
-        tick: Tick,
-        /// Audio moment before the drag, in seconds.
-        from: f64,
-        /// Audio moment if released now, in seconds.
-        to: f64,
-        /// Pointer position at the start of the drag, in screen points.
-        origin: f64,
-    },
-    /// Selecting the anchors between two points on screen.
-    Band {
-        /// Screen position where the selection drag began.
-        origin: Pos2,
-        /// Current opposite corner of the selection rectangle.
-        to: Pos2,
-    },
+/// A run of related audio nudges that can merge into one undo step.
+#[derive(Clone, Debug, PartialEq)]
+struct LastNudge {
+    /// Anchors shifted by the last nudge; empty means the tail tempo changed.
+    ticks: Vec<Tick>,
+    /// Frame timestamp when the nudge happened.
+    at: f64,
 }
 
-/// What the rows are measured against, worked out again only when the timing, the grid or the
-/// onsets change.
-#[derive(Debug)]
-struct Cache {
+/// Inputs that make cached timing measurements stale when any of them changes.
+#[derive(Debug, PartialEq)]
+struct CacheKey {
     /// Timing map the measurements were computed for.
     timing: Timing,
     /// Grid resolution the measurements were computed for.
@@ -273,6 +254,14 @@ struct Cache {
     sensitivity: f32,
     /// Onsets the measurements were computed for.
     onsets: Vec<Onset>,
+}
+
+/// What the rows are measured against, worked out again only when the timing, the grid or the
+/// onsets change.
+#[derive(Debug)]
+struct Cache {
+    /// Values that decide whether these measurements are still current.
+    key: CacheKey,
     /// Audio deviations from the timing grid, in milliseconds.
     residuals: Vec<Residual>,
     /// Timing problems inferred from the residuals and anchors.
@@ -486,8 +475,11 @@ impl TimingWindow {
         let merge = self
             .last_nudge
             .as_ref()
-            .is_some_and(|(last, at)| *last == ticks && now - at < NUDGE_MERGE);
-        self.last_nudge = Some((ticks.clone(), now));
+            .is_some_and(|last| last.ticks == ticks && now - last.at < NUDGE_MERGE);
+        self.last_nudge = Some(LastNudge {
+            ticks: ticks.clone(),
+            at: now,
+        });
         commands.push(Command::Edit(Edit::Nudge { ticks, by, merge }));
     }
 
@@ -536,157 +528,6 @@ fn lead(frame: &Frame<'_>, tick: Tick) -> f64 {
     (60.0 / bpm).clamp(AUDITION.0, AUDITION.1)
 }
 
-/// What a key asks of the timing window.
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum Intent {
-    /// Toggle playback at the current position.
-    Play,
-    /// Accept the preview currently offered.
-    Enter,
-    /// Dismiss the preview or current interaction.
-    Escape,
-    /// Pin an anchor to the audio under the playhead.
-    AddAtPlayhead,
-    /// Focus the anchor before, or after.
-    Focus(bool),
-    /// Go to the issue before, or after.
-    Issue(bool),
-    /// Nudge the targets this many seconds.
-    Nudge(f64),
-    /// Move the targets this many grid steps.
-    Move(i32),
-    /// Change the tail tempo by this many BPM.
-    Tail(f64),
-    /// Use the grid resolution at this place among [`RESOLUTIONS`].
-    Grid(usize),
-    /// Preview fitting the focused or selected anchors to the onsets.
-    Fit {
-        /// Round fitted tempos to half-BPM increments.
-        half_bpm: bool,
-    },
-    /// Double or halve the tempo at the selected anchors.
-    Scale {
-        /// Double when true, halve otherwise.
-        double: bool,
-    },
-    /// Toggle whether rows scroll to keep the playhead visible.
-    Follow,
-    /// Switch the rows between the bar layout and the time layout.
-    Layout,
-    /// Remove selected anchors.
-    Delete,
-    /// Select every anchor.
-    SelectAll,
-    /// Toggle the keyboard shortcut reference.
-    Help,
-    /// Loop the bar under the cursor, or the selection.
-    Loop {
-        /// Loop the selected range instead of the cursor's bar.
-        selection: bool,
-    },
-    /// Switch playback speed between the usual and alternate rate.
-    ToggleRate,
-    /// Toggle click-track playback.
-    ToggleMetronome,
-    /// Mute the click track while the key is held.
-    Mute,
-}
-
-/// What `key` pressed with `modifiers` asks of the timing window, if anything.
-#[expect(
-    clippy::wildcard_enum_match_arm,
-    reason = "other keys only map if in the numeric shortcut list"
-)]
-fn intent(key: Key, modifiers: Modifiers) -> Option<Intent> {
-    let (shift, ctrl) = (modifiers.shift, modifiers.command || modifiers.ctrl);
-    let nudge = if ctrl {
-        0.010
-    } else if shift {
-        0.0001
-    } else {
-        0.001
-    };
-    Some(match key {
-        Key::Space => Intent::Play,
-        Key::Enter => Intent::Enter,
-        Key::Escape => Intent::Escape,
-        Key::A if ctrl => Intent::SelectAll,
-        Key::A => Intent::AddAtPlayhead,
-        Key::J => Intent::Focus(false),
-        Key::K => Intent::Focus(true),
-        Key::N => Intent::Issue(!shift),
-        Key::ArrowLeft => Intent::Nudge(-nudge),
-        Key::ArrowRight => Intent::Nudge(nudge),
-        Key::ArrowUp => Intent::Move(-1),
-        Key::ArrowDown => Intent::Move(1),
-        Key::Plus | Key::Equals => Intent::Tail(if shift { 1.0 } else { 0.1 }),
-        Key::Minus => Intent::Tail(if shift { -1.0 } else { -0.1 }),
-        Key::F => Intent::Fit { half_bpm: shift },
-        Key::D => Intent::Scale { double: !shift },
-        Key::O => Intent::Follow,
-        Key::V => Intent::Layout,
-        Key::L => Intent::Loop { selection: shift },
-        Key::R => Intent::ToggleRate,
-        Key::C if shift => Intent::Mute,
-        Key::C => Intent::ToggleMetronome,
-        Key::Delete | Key::Backspace => Intent::Delete,
-        Key::Questionmark | Key::Slash => Intent::Help,
-        _ => {
-            let numbers = [
-                Key::Num1,
-                Key::Num2,
-                Key::Num3,
-                Key::Num4,
-                Key::Num5,
-                Key::Num6,
-                Key::Num7,
-                Key::Num8,
-                Key::Num9,
-                Key::Num0,
-            ];
-            Intent::Grid(numbers.iter().position(|number| *number == key)?)
-        }
-    })
-}
-
-/// The keys of the timing window, for its shortcut sheet.
-#[expect(
-    clippy::non_ascii_literal,
-    reason = "the timing help displays arrow, minus, ellipsis and separator symbols as UI labels"
-)]
-const KEYS: &[(&str, &str)] = &[
-    ("Space", "Play or pause"),
-    (
-        "Enter",
-        "Play from a beat before the focused anchor; apply a fit",
-    ),
-    ("Esc", "Cancel a drag or fit, then clear the selection"),
-    ("A", "Add an anchor at the playhead"),
-    ("J, K", "Focus the anchor before, after"),
-    ("N, Shift+N", "Next, previous issue"),
-    (
-        "←, →",
-        "Nudge in the audio by 1 ms · Shift 0.1 ms · Ctrl 10 ms",
-    ),
-    ("↑, ↓", "Move on the grid by one step"),
-    ("+, −", "Tail tempo by 0.1 BPM · Shift 1 BPM"),
-    ("1 … 0", "Grid 1/1 … 1/32"),
-    ("F, Shift+F", "Fit tempo, fit to half BPMs"),
-    ("D, Shift+D", "Double, halve the tempo"),
-    ("O", "Follow the playhead"),
-    ("V", "Rows of bars or rows of seconds"),
-    ("L, Shift+L", "Loop the bar under the cursor, the selection"),
-    ("R", "Switch to the alternate speed and back"),
-    ("C, Shift+C held", "Metronome on or off; muted while held"),
-    ("?", "Show or hide these keys"),
-    ("Del", "Remove the focused or selected anchors"),
-    ("Ctrl+A", "Select every anchor"),
-    (
-        "Ctrl+wheel",
-        "Nudge the focused anchor by 1 ms · Shift 0.1 ms",
-    ),
-];
-
 /// Draws the timing window over `inputs` while it is open, and answers its input with
 /// `commands`.
 pub fn show(
@@ -696,7 +537,7 @@ pub fn show(
     commands: &mut Vec<Command>,
 ) {
     if !window.open {
-        window.gesture = Gesture::Idle;
+        window.gesture = pointer::Gesture::Idle;
         return;
     }
     let now = ctx.input(|input| input.time);
@@ -740,12 +581,12 @@ pub fn show(
                     );
                 }
                 if window.help {
-                    help(ui);
+                    keyboard::help(ui);
                 }
-                hovering = rows(ui, window, &frame, inputs, commands);
+                hovering = draw::rows(ui, window, &frame, inputs, commands);
             });
             if window.keys && !ui.ctx().egui_wants_keyboard_input() {
-                keyboard(ui.ctx(), window, &frame, commands);
+                keyboard::keyboard(ui.ctx(), window, &frame, commands);
             }
             window.cache = Some(cache);
         });
@@ -769,21 +610,24 @@ pub fn show(
 /// timing, grid or set of onsets.
 fn refreshed(cache: Option<Cache>, song: &Song, onsets: &[Onset], window: &TimingWindow) -> Cache {
     let timing = song.timing();
+    let key = CacheKey {
+        timing: (*timing).clone(),
+        grid: window.grid,
+        sensitivity: window.sensitivity,
+        onsets: onsets.to_vec(),
+    };
     let fresh = cache.filter(|cache| {
-        cache.timing == *timing
-            && cache.grid == window.grid
-            && (cache.sensitivity - window.sensitivity).abs() <= f32::EPSILON
-            && cache.onsets.as_slice() == onsets
+        cache.key.timing == key.timing
+            && cache.key.grid == key.grid
+            && (cache.key.sensitivity - key.sensitivity).abs() <= f32::EPSILON
+            && cache.key.onsets == key.onsets
     });
     fresh.unwrap_or_else(|| {
         let pins = song.anchors();
         let residuals = accuracy::residuals(timing, window.grid, onsets, window.sensitivity);
         let issues = accuracy::issues(timing, &pins, &residuals, (onsets, window.sensitivity));
         Cache {
-            timing: (*timing).clone(),
-            grid: window.grid,
-            sensitivity: window.sensitivity,
-            onsets: onsets.to_vec(),
+            key,
             residuals,
             issues,
         }
@@ -834,925 +678,6 @@ fn frame<'a>(
     }
 }
 
-/// Draws the scrollable keyboard shortcut reference.
-fn help(ui: &mut egui::Ui) {
-    let narrow = ui.available_width() < 600.0;
-    let height = (ui.available_height() - ROW - 20.0).max(120.0);
-    style::solid_scroll_bars(ui);
-    egui::ScrollArea::vertical()
-        .id_salt("timing help")
-        .max_height(height)
-        .show(ui, |ui| {
-            egui::Frame::new()
-                .fill(style::RAISED)
-                .inner_margin(egui::Margin::same(8))
-                .show(ui, |ui| {
-                    if narrow {
-                        for (keys, does) in KEYS {
-                            ui.monospace(*keys);
-                            ui.label(*does);
-                            ui.add_space(6.0);
-                        }
-                    } else {
-                        style::table(ui, "timing keys", |ui| {
-                            for (keys, does) in KEYS {
-                                ui.monospace(*keys);
-                                ui.label(*does);
-                                ui.end_row();
-                            }
-                        });
-                    }
-                });
-        });
-}
-
-/// The rows, and every press and drag on them. Says whether the pointer is over an anchor.
-#[expect(clippy::too_many_lines, reason = "draws rows then their drag state")]
-fn rows(
-    ui: &mut egui::Ui,
-    window: &mut TimingWindow,
-    frame: &Frame<'_>,
-    inputs: Inputs<'_>,
-    commands: &mut Vec<Command>,
-) -> bool {
-    let spans = frame.bars.rows(window.bars_per_row, window.seconds_per_row);
-    let spacing = 4.0;
-    let pitch = ROW + spacing;
-    let row_of = |tick: Tick| {
-        let position = frame.bars.position(rows::float_from_i64(i64::from(tick)));
-        spans
-            .iter()
-            .position(|span| position >= span.start && position < span.to)
-    };
-    let target = window
-        .scroll_to
-        .take()
-        .or_else(|| (window.follow && inputs.playing).then_some(frame.cursor));
-    let mut area = egui::ScrollArea::vertical()
-        .auto_shrink([false, false])
-        .scroll_source(egui::scroll_area::ScrollSource {
-            drag: egui::scroll_area::DragScroll::Never,
-            ..egui::scroll_area::ScrollSource::ALL
-        });
-    if let Some(index) = target.and_then(row_of) {
-        let offset = rows::float_from_usize(index.saturating_sub(1)) * pitch;
-        area = area.vertical_scroll_offset(offset);
-    }
-    style::solid_scroll_bars(ui);
-    let anchors: Vec<Anchor> = frame
-        .pins
-        .iter()
-        .map(|pin| Anchor {
-            tick: pin.tick,
-            bpm: tempo_at(frame, pin.tick)
-                .map_or_else(|| frame.tail.to_string(), |bpm| bpm.to_string()),
-            focused: window.focus == Some(pin.tick),
-            selected: window.selection.contains(&pin.tick),
-            pulse: window
-                .pulse
-                .filter(|(tick, _)| *tick == pin.tick)
-                .map_or(0.0, |(_, at)| {
-                    let through = rows::float_to_f32((frame.now - at) / PULSE);
-                    (through * std::f32::consts::TAU * 2.0).sin().abs() * (1.0 - through)
-                }),
-        })
-        .collect();
-    let mut laid: Vec<Row> = Vec::new();
-    let mut hovering = false;
-    let mut released: Option<Pos2> = None;
-    let latest = ui.input(|input| input.pointer.latest_pos());
-    let shift = ui.input(|input| input.modifiers.shift);
-    let reach = reach(window, frame);
-    area.show_rows(ui, ROW, spans.len(), |ui, range| {
-        ui.spacing_mut().item_spacing.y = spacing;
-        for span in spans.get(range).unwrap_or_default() {
-            let (whole, _) =
-                ui.allocate_exact_size(vec2(ui.available_width(), ROW), Sense::hover());
-            let mut rect = whole;
-            rect.min.x += rows::GUTTER;
-            let row = Row {
-                from: span.from,
-                start: span.start,
-                to: span.to,
-                rect,
-            };
-            // The measure the row's own part starts in, which names it in the bar layout.
-            let measure = frame
-                .bars
-                .measure_at(frame.bars.tick_at_position(span.start).floor());
-            let number = measure.map_or(0, |measure| measure.number);
-            let (title, label) = match window.layout {
-                Layout::Bars => (number.to_string(), format!("Measure {number}")),
-                Layout::Time => (
-                    format!("{:.1}s", span.start),
-                    format!("Row at {:.1} s", span.start),
-                ),
-            };
-            let key = rows::float_to_i64((span.start * 100.0).round());
-            let id = ui.id().with(("timing row", key));
-            let response = ui.interact(rect, id, Sense::click_and_drag());
-            response
-                .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Other, true, &label));
-            let painter = ui.painter_at(whole);
-            let off = frame.issues.iter().find_map(|issue| match *issue {
-                Issue::Bar {
-                    number: at,
-                    median_ms,
-                    ..
-                } if at == number => Some(median_ms),
-                Issue::Bar { .. }
-                | Issue::Short { .. }
-                | Issue::Jump { .. }
-                | Issue::Anchor { .. }
-                | Issue::Metre { .. } => None,
-            });
-            rows::header(&painter, &row, (&title, measure), off);
-            let ghost = ghost(window, frame, &row, response.hover_pos(), shift);
-            let scene = Scene {
-                timing: frame.timing,
-                bars: &frame.bars,
-                grid: window.grid,
-                peaks: inputs.peaks,
-                onsets: frame.onsets,
-                sensitivity: window.sensitivity,
-                residuals: frame.residuals,
-                anchors: &anchors,
-                cursor: frame.cursor,
-                ghost,
-                reach,
-            };
-            rows::draw(&painter, &row, &scene);
-            let over = response
-                .hover_pos()
-                .and_then(|pos| anchor_near(frame, &row, pos.x));
-            hovering |= over.is_some();
-            if frame.editable {
-                row_input(&response, &row, frame, window, commands);
-                if response.drag_stopped() {
-                    released = ui.input(|input| input.pointer.latest_pos());
-                }
-            } else if response.secondary_clicked()
-                && let Some(pos) = response.interact_pointer_pos()
-            {
-                commands.push(Command::PlayFrom(row.tick_at(&frame.bars, pos.x)));
-            }
-            laid.push(row);
-        }
-    });
-    if let Gesture::Band { origin, .. } = window.gesture
-        && let Some(to) = latest
-    {
-        window.gesture = Gesture::Band { origin, to };
-        let band = egui::Rect::from_two_pos(origin, to);
-        ui.painter().rect_filled(band, 0.0, style::MARQUEE_FILL);
-        ui.painter().rect_stroke(
-            band,
-            0.0,
-            egui::Stroke::new(1.0, style::MARQUEE),
-            egui::StrokeKind::Inside,
-        );
-    }
-    if let Some(at) = released {
-        release(window, frame, &laid, at, commands);
-    }
-    hovering
-}
-
-/// The bar positions the anchor being dragged on the grid may reach, if one is; the rest is
-/// dimmed.
-fn reach(window: &TimingWindow, frame: &Frame<'_>) -> Option<(f64, f64)> {
-    let Gesture::DragBeat { from, .. } = window.gesture else {
-        return None;
-    };
-    let bar = |tick: Tick| {
-        let at = rows::float_from_i64(i64::from(tick));
-        frame.bars.position(at)
-    };
-    let moving = moving(window, from);
-    let (first, last) = (moving.first().copied()?, moving.last().copied()?);
-    let before = frame
-        .pins
-        .iter()
-        .rev()
-        .find(|pin| pin.tick < first)
-        .map(|pin| pin.tick);
-    let after = frame
-        .pins
-        .iter()
-        .find(|pin| pin.tick > last)
-        .map(|pin| pin.tick);
-    Some((before.map_or(f64::MIN, bar), after.map_or(f64::MAX, bar)))
-}
-
-/// Where in `row` what is under way would land, and whether that is on a snap target: a
-/// dragged anchor's target, or where a click at `hover` would add one.
-fn ghost(
-    window: &TimingWindow,
-    frame: &Frame<'_>,
-    row: &Row,
-    hover: Option<Pos2>,
-    shift: bool,
-) -> Option<(f32, bool)> {
-    match window.gesture {
-        Gesture::DragBeat { to, .. } if row.holds(&frame.bars, to) => {
-            Some((row.x(&frame.bars, to), window.snap_grid && !shift))
-        }
-        Gesture::DragAudio { to, .. } => {
-            let snapped = window.snap_onset
-                && !shift
-                && frame
-                    .onsets
-                    .iter()
-                    .any(|onset| (onset.seconds - to).abs() < 1e-9);
-            Some((seconds_x(frame, row, to)?, snapped))
-        }
-        Gesture::Idle if frame.editable => {
-            let pos = hover?;
-            if anchor_near(frame, row, pos.x).is_some() {
-                return None;
-            }
-            let seconds = row.seconds_at(&frame.bars, frame.timing, pos.x);
-            let snapped = (window.snap_onset && !shift)
-                .then(|| accuracy::snap(frame.onsets, window.sensitivity, seconds))
-                .flatten();
-            let target = snapped.unwrap_or(seconds);
-            Some((seconds_x(frame, row, target)?, snapped.is_some()))
-        }
-        Gesture::Idle | Gesture::Band { .. } | Gesture::DragBeat { .. } => None,
-    }
-}
-
-/// Where the moment `seconds` lies across `row`, if it shows there.
-fn seconds_x(frame: &Frame<'_>, row: &Row, seconds: f64) -> Option<f32> {
-    let tick = frame.timing.latest_tick_by(seconds);
-    row.holds(&frame.bars, tick).then(|| {
-        let at = frame.timing.time_at(tick).seconds();
-        let next = frame
-            .timing
-            .time_at(Tick::new(
-                i32::try_from(i64::from(tick).saturating_add(1)).unwrap_or(i32::MAX),
-            ))
-            .seconds();
-        let within = if next > at {
-            (seconds - at) / (next - at)
-        } else {
-            0.0
-        };
-        let tick = rows::float_from_i64(i64::from(tick)) + within.clamp(0.0, 1.0);
-        row.x_of(frame.bars.position(tick))
-    })
-}
-
-/// The anchors a drag of the one on `tick` moves: the selection when it is in it.
-fn moving(window: &TimingWindow, tick: Tick) -> Vec<Tick> {
-    if window.selection.contains(&tick) {
-        window.selection.clone()
-    } else {
-        vec![tick]
-    }
-}
-
-/// The endpoints of the anchors moving with `tick`, without copying the selection.
-fn moving_bounds(window: &TimingWindow, tick: Tick) -> (Tick, Tick) {
-    if window.selection.contains(&tick) {
-        window
-            .selection
-            .first()
-            .copied()
-            .zip(window.selection.last().copied())
-            .unwrap_or((tick, tick))
-    } else {
-        (tick, tick)
-    }
-}
-
-/// The anchor in `row` within grabbing distance of `x`, the nearest if several.
-fn anchor_near(frame: &Frame<'_>, row: &Row, x: f32) -> Option<Tick> {
-    frame
-        .pins
-        .iter()
-        .filter(|pin| row.holds(&frame.bars, pin.tick))
-        .map(|pin| (pin.tick, (row.x(&frame.bars, pin.tick) - x).abs()))
-        .filter(|(_, off)| *off <= GRAB)
-        .min_by(|a, b| a.1.total_cmp(&b.1))
-        .map(|(tick, _)| tick)
-}
-
-/// A row's presses, clicks and the start and run of drags on it.
-#[expect(
-    clippy::too_many_lines,
-    reason = "handles row pointer gestures and context menu"
-)]
-fn row_input(
-    response: &egui::Response,
-    row: &Row,
-    frame: &Frame<'_>,
-    window: &mut TimingWindow,
-    commands: &mut Vec<Command>,
-) {
-    let modifiers = response.ctx.input(|input| input.modifiers);
-    let (shift, ctrl) = (modifiers.shift, modifiers.command || modifiers.ctrl);
-    let pointer = response
-        .interact_pointer_pos()
-        .or_else(|| response.hover_pos());
-    let anchor = pointer.and_then(|pos| anchor_near(frame, row, pos.x));
-    // Where the button went down, not where the drag was first noticed a few points on.
-    if response.drag_started()
-        && let Some(origin) = response.ctx.input(|input| input.pointer.press_origin())
-    {
-        let pressed = anchor_near(frame, row, origin.x);
-        let seconds = row.seconds_at(&frame.bars, frame.timing, origin.x);
-        window.gesture = match pressed {
-            Some(tick) if ctrl => {
-                let at = frame
-                    .pins
-                    .iter()
-                    .find(|pin| pin.tick == tick)
-                    .map_or(seconds, |pin| pin.seconds);
-                Gesture::DragAudio {
-                    tick,
-                    from: at,
-                    to: at,
-                    origin: seconds,
-                }
-            }
-            Some(tick) => Gesture::DragBeat {
-                from: tick,
-                to: tick,
-                origin: row.position_at(origin.x),
-            },
-            None => Gesture::Band { origin, to: origin },
-        };
-        if let Some(tick) = pressed
-            && !window.selection.contains(&tick)
-        {
-            window.focus = Some(tick);
-            window.selection = vec![tick];
-        }
-    }
-    if response.dragged()
-        && let Some(pos) = response.ctx.input(|input| input.pointer.latest_pos())
-    {
-        drag(window, frame, row, pos, shift);
-    }
-    if response.double_clicked() {
-        if let Some(tick) = anchor {
-            window.focus = Some(tick);
-            window.selection = vec![tick];
-            window.drafts.focus_seconds = true;
-        }
-    } else if response.clicked()
-        && let Some(pos) = pointer
-    {
-        match anchor {
-            Some(tick) if shift => {
-                let from = window.focus.unwrap_or(tick);
-                let (low, high) = if from <= tick {
-                    (from, tick)
-                } else {
-                    (tick, from)
-                };
-                window.selection = frame
-                    .pins
-                    .iter()
-                    .map(|pin| pin.tick)
-                    .filter(|at| *at >= low && *at <= high)
-                    .collect();
-                window.focus = Some(tick);
-            }
-            Some(tick) => {
-                window.focus = Some(tick);
-                window.selection = vec![tick];
-            }
-            None => {
-                let seconds = row.seconds_at(&frame.bars, frame.timing, pos.x);
-                window.add(frame, seconds, shift, commands);
-            }
-        }
-    }
-    if response.middle_clicked()
-        && let Some(pos) = pointer
-    {
-        match anchor.and_then(|tick| frame.pins.iter().find(|pin| pin.tick == tick)) {
-            Some(pin) => commands.push(Command::Audition(pin.seconds - lead(frame, pin.tick))),
-            None => commands.push(Command::PlayFrom(row.tick_at(&frame.bars, pos.x))),
-        }
-    }
-    if response.secondary_clicked()
-        && let Some(pos) = pointer
-    {
-        window.menu_target = Some((anchor, pos));
-    }
-    response.context_menu(|ui| {
-        let (anchor, pointer) = window
-            .menu_target
-            .map_or((anchor, pointer), |(tick, pos)| (tick, Some(pos)));
-        menu(ui, window, frame, row, anchor, pointer, commands);
-    });
-    if response.hovered()
-        && let Some((notches, fine)) = response.ctx.input(|input| nudge_notches(&input.events))
-    {
-        let target = window.focus.or(anchor);
-        if let Some(tick) = target {
-            window.focus = Some(tick);
-            if window.selection.is_empty() {
-                window.selection = vec![tick];
-            }
-            let by = if fine { 0.0001 } else { 0.001 };
-            window.nudge(by * f64::from(notches), frame.now, commands);
-        }
-    }
-}
-
-/// Moves the drag under way to `pos`, over `row`: a beat snaps to the grid, a moment to an onset,
-/// both finely and unsnapped with Shift, and neither past the anchors beside what moves; running
-/// into one pulses it and stops there.
-fn drag(window: &mut TimingWindow, frame: &Frame<'_>, row: &Row, pos: Pos2, shift: bool) {
-    match window.gesture {
-        Gesture::DragBeat { from, origin, .. } => {
-            let pointer = row.position_at(pos.x);
-            let bar = if shift {
-                origin + (pointer - origin) / FINE
-            } else {
-                pointer
-            };
-            let tick = frame.bars.tick_at_position(bar).round();
-            let tick = Tick::new(rows::float_to_i32(tick));
-            let snapped = if window.snap_grid && !shift {
-                window.grid.nearest(frame.timing, tick)
-            } else {
-                tick
-            };
-            let to = clamp_beat(window, frame, from, snapped);
-            window.gesture = Gesture::DragBeat { from, to, origin };
-        }
-        Gesture::DragAudio {
-            tick, from, origin, ..
-        } => {
-            let pointer = row.seconds_at(&frame.bars, frame.timing, pos.x);
-            let moment = if shift {
-                origin + (pointer - origin) / FINE
-            } else {
-                pointer
-            };
-            let target = from + (moment - origin);
-            let target = if window.snap_onset && !shift {
-                accuracy::snap(frame.onsets, window.sensitivity, target).unwrap_or(target)
-            } else {
-                target
-            };
-            let to = clamp_audio(window, frame, tick, from, target);
-            window.gesture = Gesture::DragAudio {
-                tick,
-                from,
-                to,
-                origin,
-            };
-        }
-        Gesture::Band { .. } | Gesture::Idle => {}
-    }
-}
-
-/// `to`, or the nearest beat to it that the anchors moving with the one on `from` can reach
-/// without meeting a neighbour, which then pulses.
-fn clamp_beat(window: &mut TimingWindow, frame: &Frame<'_>, from: Tick, to: Tick) -> Tick {
-    let (first, last) = moving_bounds(window, from);
-    let delta = i64::from(to).saturating_sub(i64::from(from));
-    let before = frame.pins.iter().rev().find(|pin| pin.tick < first);
-    let after = frame.pins.iter().find(|pin| pin.tick > last);
-    let mut clamped = delta;
-    if let Some(before) = before {
-        let lowest = i64::from(before.tick)
-            .saturating_add(1)
-            .saturating_sub(i64::from(first));
-        if clamped < lowest {
-            clamped = lowest;
-            window.pulse = Some((before.tick, frame.now));
-        }
-    }
-    if let Some(after) = after {
-        let highest = i64::from(after.tick)
-            .saturating_sub(1)
-            .saturating_sub(i64::from(last));
-        if clamped > highest {
-            clamped = highest;
-            window.pulse = Some((after.tick, frame.now));
-        }
-    }
-    Tick::new(i32::try_from(i64::from(from).saturating_add(clamped)).unwrap_or(i32::MAX))
-}
-
-/// `to` seconds, or the nearest moment the anchors moving with the one on `tick` can reach
-/// without meeting a neighbour in the audio, which then pulses.
-fn clamp_audio(
-    window: &mut TimingWindow,
-    frame: &Frame<'_>,
-    tick: Tick,
-    from: f64,
-    to: f64,
-) -> f64 {
-    const MARGIN: f64 = 0.001;
-    let (first, last) = moving_bounds(window, tick);
-    let seconds = |at: Tick| {
-        frame
-            .pins
-            .iter()
-            .find(|pin| pin.tick == at)
-            .map(|pin| pin.seconds)
-    };
-    let (Some(first_at), Some(last_at)) = (seconds(first), seconds(last)) else {
-        return to;
-    };
-    let mut delta = to - from;
-    if let Some(before) = frame.pins.iter().rev().find(|pin| pin.tick < first)
-        && first_at + delta < before.seconds + MARGIN
-    {
-        delta = before.seconds + MARGIN - first_at;
-        window.pulse = Some((before.tick, frame.now));
-    }
-    if let Some(after) = frame.pins.iter().find(|pin| pin.tick > last)
-        && last_at + delta > after.seconds - MARGIN
-    {
-        delta = after.seconds - MARGIN - last_at;
-        window.pulse = Some((after.tick, frame.now));
-    }
-    from + delta
-}
-
-/// Ends the drag under way where the pointer let go, at `at` among the `laid` rows.
-fn release(
-    window: &mut TimingWindow,
-    frame: &Frame<'_>,
-    laid: &[Row],
-    at: Pos2,
-    commands: &mut Vec<Command>,
-) {
-    match std::mem::replace(&mut window.gesture, Gesture::Idle) {
-        Gesture::DragBeat { from, to, .. } if from != to => {
-            let delta = i64::from(to).saturating_sub(i64::from(from));
-            let moved: Vec<(Tick, Tick)> = moving(window, from)
-                .into_iter()
-                .filter_map(|tick| {
-                    let destination = i32::try_from(i64::from(tick).saturating_add(delta)).ok()?;
-                    Some((tick, Tick::new(destination)))
-                })
-                .collect();
-            window.selection = moved.iter().map(|(_, destination)| *destination).collect();
-            window.focus = Some(to);
-            commands.push(Command::Edit(Edit::MoveAnchors(moved)));
-        }
-        Gesture::DragAudio { tick, from, to, .. } if (to - from).abs() > 1e-7 => {
-            let ticks = moving(window, tick);
-            commands.push(Command::Edit(Edit::Nudge {
-                ticks,
-                by: to - from,
-                merge: false,
-            }));
-        }
-        Gesture::Band { origin, .. } => {
-            let tick_of =
-                |pos: Pos2| rows::row_at(laid, pos).map(|row| row.tick_at(&frame.bars, pos.x));
-            let (Some(a), Some(b)) = (tick_of(origin), tick_of(at)) else {
-                return;
-            };
-            let (low, high) = if a <= b { (a, b) } else { (b, a) };
-            window.selection = frame
-                .pins
-                .iter()
-                .map(|pin| pin.tick)
-                .filter(|tick| *tick >= low && *tick <= high)
-                .collect();
-            window.focus = window.selection.first().copied();
-        }
-        Gesture::DragBeat { .. } | Gesture::DragAudio { .. } | Gesture::Idle => {}
-    }
-}
-
-/// The right-click menu of a row, on an anchor or off one.
-fn menu(
-    ui: &mut egui::Ui,
-    window: &mut TimingWindow,
-    frame: &Frame<'_>,
-    row: &Row,
-    anchor: Option<Tick>,
-    pointer: Option<Pos2>,
-    commands: &mut Vec<Command>,
-) {
-    if let Some(tick) = anchor {
-        if window.focus != Some(tick) && !window.selection.contains(&tick) {
-            window.focus = Some(tick);
-            window.selection = vec![tick];
-        }
-        if ui.button("Play from a beat before").clicked()
-            && let Some(pin) = frame.pins.iter().find(|pin| pin.tick == tick)
-        {
-            commands.push(Command::Audition(pin.seconds - lead(frame, tick)));
-            ui.close();
-        }
-        if ui.button("Fit tempo").clicked() {
-            window.fit(frame, false);
-            ui.close();
-        }
-        if ui.button("Double tempo").clicked() {
-            commands.push(Command::Edit(Edit::Scale {
-                ticks: window.targets(),
-                double: true,
-            }));
-            ui.close();
-        }
-        if ui.button("Halve tempo").clicked() {
-            commands.push(Command::Edit(Edit::Scale {
-                ticks: window.targets(),
-                double: false,
-            }));
-            ui.close();
-        }
-        if ui.button("Select to the start").clicked() {
-            window.selection = frame
-                .pins
-                .iter()
-                .map(|pin| pin.tick)
-                .filter(|at| *at <= tick)
-                .collect();
-            ui.close();
-        }
-        if ui.button("Select to the end").clicked() {
-            window.selection = frame
-                .pins
-                .iter()
-                .map(|pin| pin.tick)
-                .filter(|at| *at >= tick)
-                .collect();
-            ui.close();
-        }
-        ui.separator();
-        if ui.button("Remove").clicked() {
-            commands.push(Command::Edit(Edit::Unsync(window.targets())));
-            ui.close();
-        }
-    } else if let Some(pos) = pointer {
-        if ui.button("Play from here").clicked() {
-            commands.push(Command::PlayFrom(row.tick_at(&frame.bars, pos.x)));
-            ui.close();
-        }
-        if ui.button("Add an anchor here").clicked() {
-            let seconds = row.seconds_at(&frame.bars, frame.timing, pos.x);
-            window.add(frame, seconds, false, commands);
-            ui.close();
-        }
-    }
-}
-
-/// The window's keys, while it has the keyboard.
-#[expect(
-    clippy::wildcard_enum_match_arm,
-    reason = "only pressed key events make keyboard shortcuts"
-)]
-fn keyboard(
-    ctx: &egui::Context,
-    window: &mut TimingWindow,
-    frame: &Frame<'_>,
-    commands: &mut Vec<Command>,
-) {
-    let pressed: Vec<(Key, Modifiers)> = ctx.input(|input| {
-        input
-            .events
-            .iter()
-            .filter_map(|event| match event {
-                egui::Event::Key {
-                    key,
-                    pressed: true,
-                    modifiers,
-                    ..
-                } => Some((*key, *modifiers)),
-                _ => None,
-            })
-            .collect()
-    });
-    // Shift+C mutes only while held.
-    let let_go = ctx.input(|input| {
-        input.events.iter().any(|event| {
-            matches!(
-                event,
-                egui::Event::Key {
-                    key: Key::C,
-                    pressed: false,
-                    ..
-                }
-            )
-        })
-    });
-    if window.muting && let_go {
-        window.muting = false;
-        commands.push(Command::MuteMetronome(false));
-    }
-    let dragging = !matches!(window.gesture, Gesture::Idle);
-    for (key, modifiers) in pressed {
-        let Some(intent) = intent(key, modifiers) else {
-            continue;
-        };
-        // During a drag only Esc and Space count.
-        if dragging && !matches!(intent, Intent::Escape | Intent::Play) {
-            continue;
-        }
-        if frame.editable
-            || matches!(
-                intent,
-                Intent::Play
-                    | Intent::Focus(_)
-                    | Intent::Issue(_)
-                    | Intent::Grid(_)
-                    | Intent::Follow
-                    | Intent::Layout
-                    | Intent::Help
-                    | Intent::Escape
-                    | Intent::Loop { .. }
-                    | Intent::ToggleRate
-                    | Intent::ToggleMetronome
-                    | Intent::Mute
-            )
-        {
-            act(window, frame, intent, commands);
-        }
-    }
-}
-
-/// Does what `intent` asks.
-#[expect(clippy::too_many_lines, reason = "one arm for every window key")]
-fn act(window: &mut TimingWindow, frame: &Frame<'_>, intent: Intent, commands: &mut Vec<Command>) {
-    let index = |tick: Tick| frame.pins.iter().position(|pin| pin.tick == tick);
-    match intent {
-        Intent::Play => commands.push(Command::TogglePlay),
-        Intent::Enter => {
-            if let Some((fitted, _)) = window.preview.take() {
-                commands.push(Command::Edit(Edit::Repin {
-                    pins: fitted.pins,
-                    tail: fitted.tail,
-                }));
-            } else if let Some(pin) = window
-                .focus
-                .and_then(index)
-                .and_then(|at| frame.pins.get(at))
-            {
-                commands.push(Command::Audition(pin.seconds - lead(frame, pin.tick)));
-            }
-        }
-        Intent::Escape => {
-            if !matches!(window.gesture, Gesture::Idle) {
-                window.gesture = Gesture::Idle;
-            } else if window.preview.is_some() {
-                window.preview = None;
-            } else if window.help {
-                window.help = false;
-            } else {
-                window.selection.clear();
-                window.focus = None;
-            }
-        }
-        Intent::AddAtPlayhead => {
-            let seconds = frame.timing.time_at(frame.cursor).seconds();
-            window.add(frame, seconds, false, commands);
-        }
-        Intent::Focus(later) => {
-            let current = window.focus.and_then(index);
-            let next = match (current, later) {
-                (Some(at), true) => at.saturating_add(1),
-                (Some(at), false) => at.saturating_sub(1),
-                (None, _) => frame
-                    .pins
-                    .iter()
-                    .position(|pin| pin.tick >= frame.cursor)
-                    .unwrap_or(0),
-            };
-            if let Some(pin) = frame.pins.get(next.min(frame.pins.len().saturating_sub(1))) {
-                window.focus_on(pin.tick);
-            }
-        }
-        Intent::Issue(later) => {
-            let count = frame.issues.len();
-            if count > 0 {
-                let at = match (window.issue, later) {
-                    (Some(at), true) => at.saturating_add(1).rem_euclid(count),
-                    (Some(at), false) => {
-                        at.saturating_add(count).saturating_sub(1).rem_euclid(count)
-                    }
-                    (None, _) => 0,
-                };
-                window.go_to_issue(frame, at);
-            }
-        }
-        Intent::Nudge(by) => window.nudge(by, frame.now, commands),
-        Intent::Move(steps) => {
-            let moved: Vec<(Tick, Tick)> = window
-                .targets()
-                .into_iter()
-                .map(|tick| (tick, window.grid.stepped(frame.timing, tick, steps)))
-                .collect();
-            if let Some(&(_, to)) = moved.iter().find(|(from, _)| Some(*from) == window.focus) {
-                window.focus = Some(to);
-            }
-            window.selection = moved.iter().map(|(_, to)| *to).collect();
-            commands.push(Command::Edit(Edit::MoveAnchors(moved)));
-        }
-        Intent::Tail(by) => {
-            let tempo = f64::from(frame.tail) + by;
-            match Bpm::try_from((tempo * 1e6).round() / 1e6) {
-                Ok(bpm) => {
-                    let merge = window
-                        .last_nudge
-                        .as_ref()
-                        .is_some_and(|(last, at)| last.is_empty() && frame.now - at < NUDGE_MERGE);
-                    window.last_nudge = Some((Vec::new(), frame.now));
-                    commands.push(Command::Edit(Edit::TailBpm { bpm, merge }));
-                }
-                Err(_) => window.status = Some(format!("{tempo} is not a tempo")),
-            }
-        }
-        Intent::Grid(at) => {
-            if let Some(resolution) = RESOLUTIONS
-                .get(at)
-                .and_then(|value| NonZeroU16::new(*value))
-            {
-                window.grid = Grid { resolution };
-            }
-        }
-        Intent::Fit { half_bpm } => window.fit(frame, half_bpm),
-        Intent::Scale { double } => {
-            commands.push(Command::Edit(Edit::Scale {
-                ticks: window.targets(),
-                double,
-            }));
-        }
-        Intent::Follow => window.follow = !window.follow,
-        Intent::Layout => {
-            window.layout = match window.layout {
-                Layout::Bars => Layout::Time,
-                Layout::Time => Layout::Bars,
-            };
-            // Keep what was in view there.
-            window.scroll_to = window.focus.or(Some(frame.cursor));
-        }
-        Intent::Delete => {
-            let targets = window.targets();
-            if !targets.is_empty() {
-                commands.push(Command::Edit(Edit::Unsync(targets)));
-                window.selection.clear();
-            }
-        }
-        Intent::SelectAll => {
-            window.selection = frame.pins.iter().map(|pin| pin.tick).collect();
-            window.focus = window.selection.first().copied();
-        }
-        Intent::Help => window.help = !window.help,
-        Intent::Loop { selection } => {
-            let span = if selection {
-                window.selected_span(frame)
-            } else {
-                None
-            };
-            let span = span.or_else(|| {
-                let measure = frame.timing.measures_from(frame.cursor).next()?;
-                Some((measure.start, measure.start.checked_add(measure.length)?))
-            });
-            if let Some((from, to)) = span {
-                commands.push(Command::Loop { from, to });
-            }
-        }
-        Intent::ToggleRate => commands.push(Command::ToggleRate),
-        Intent::ToggleMetronome => commands.push(Command::ToggleMetronome),
-        Intent::Mute => {
-            if !window.muting {
-                window.muting = true;
-                commands.push(Command::MuteMetronome(true));
-            }
-        }
-    }
-}
-
-/// The tempo of the BPM change on `tick`, as the song holds it: stops and delays between
-/// anchors take time the tempo does not.
-fn tempo_at(frame: &Frame<'_>, tick: Tick) -> Option<Bpm> {
-    frame.timing.bpm_at(tick)
-}
-
-/// Ctrl+wheel notches among `events`, later first, and whether Shift made them coarse.
-fn nudge_notches(events: &[egui::Event]) -> Option<(i32, bool)> {
-    let mut notches = 0_i32;
-    let mut coarse = false;
-    for event in events {
-        if let egui::Event::MouseWheel {
-            delta, modifiers, ..
-        } = event
-            && (modifiers.command || modifiers.ctrl)
-            && delta.y != 0.0
-        {
-            notches = notches.saturating_add(if delta.y > 0.0 { 1 } else { -1 });
-            coarse |= modifiers.shift;
-        }
-    }
-    (notches != 0).then_some((notches, coarse))
-}
-
 /// Deterministic property tests with no regression files.
 #[cfg(test)]
 fn proptest_config() -> proptest::test_runner::Config {
@@ -1764,13 +689,15 @@ fn proptest_config() -> proptest::test_runner::Config {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod test_support {
+
     use charter_core::{RulesetPlugin, ValidDocument};
+    use egui::{Modifiers, vec2};
     use egui_kittest::Harness;
     use egui_kittest::kittest::Queryable;
     use serde_json::json;
 
-    use super::*;
+    use crate::*;
 
     #[derive(Debug)]
     struct TestRuleset;
@@ -1789,7 +716,7 @@ mod tests {
         }
     }
 
-    pub(super) struct WindowTest {
+    pub(crate) struct WindowTest {
         pub(super) song: Song,
         pub(super) window: TimingWindow,
         pub(super) commands: Vec<Command>,
@@ -1797,7 +724,7 @@ mod tests {
     }
 
     impl WindowTest {
-        fn ui(&mut self, ui: &egui::Ui) {
+        pub(crate) fn ui(&mut self, ui: &egui::Ui) {
             show(
                 ui.ctx(),
                 Inputs {
@@ -1813,7 +740,7 @@ mod tests {
         }
     }
 
-    pub(super) fn timing_harness() -> Harness<'static, WindowTest> {
+    pub(crate) fn timing_harness() -> Harness<'static, WindowTest> {
         let value = json!({
             "format_version": 1,
             "ruleset": { "id": "test", "version": "1" },
@@ -1846,14 +773,19 @@ mod tests {
         harness
     }
 
-    pub(super) fn row_point(harness: &Harness<'_, WindowTest>, tick: i32) -> Pos2 {
+    pub(crate) fn row_point(harness: &Harness<'_, WindowTest>, tick: i32) -> Pos2 {
         let rect = harness.get_by_label("Measure 0").rect();
         let fraction = f64::from(tick) / 3840.0;
         let across = rows::float_to_f32((fraction + rows::LEAD_IN) / (1.0 + rows::LEAD_IN));
         egui::pos2(rect.left() + across * rect.width(), rect.top() + 30.0)
     }
 
-    fn pointer(harness: &Harness<'_, WindowTest>, pos: Pos2, pressed: bool, modifiers: Modifiers) {
+    pub(crate) fn pointer(
+        harness: &Harness<'_, WindowTest>,
+        pos: Pos2,
+        pressed: bool,
+        modifiers: Modifiers,
+    ) {
         harness.event(egui::Event::PointerButton {
             pos,
             button: egui::PointerButton::Primary,
@@ -1871,7 +803,12 @@ mod tests {
         harness.step();
     }
 
-    fn drag(harness: &mut Harness<'_, WindowTest>, from: Pos2, to: Pos2, modifiers: Modifiers) {
+    pub(crate) fn drag(
+        harness: &mut Harness<'_, WindowTest>,
+        from: Pos2,
+        to: Pos2,
+        modifiers: Modifiers,
+    ) {
         harness.hover_at(from);
         harness.event(egui::Event::ModifiersChanged(modifiers));
         pointer(harness, from, true, modifiers);
@@ -1882,95 +819,26 @@ mod tests {
         harness.event(egui::Event::ModifiersChanged(Modifiers::NONE));
         harness.step();
     }
+}
 
-    #[test]
-    fn a_row_click_emits_a_sync_and_an_audition_before_the_new_anchor() {
-        let mut harness = timing_harness();
-        assert_eq!(harness.state().song.read_only(), None);
-        let pos = row_point(&harness, 2880);
-        click(&mut harness, pos, Modifiers::NONE);
-        let [
-            Command::Edit(Edit::Sync { tick, seconds }),
-            Command::Audition(from),
-        ] = harness.state().commands.as_slice()
-        else {
-            panic!("expected sync and audition: {:?}", harness.state().commands);
-        };
-        assert_eq!(*tick, Tick::new(2880));
-        assert!((seconds - 1.5).abs() < 1e-4);
-        assert!((from - 1.0).abs() < 1e-4);
-        assert_eq!(harness.state().window.gesture, Gesture::Idle);
-    }
+#[cfg(test)]
+mod tests {
+    #![allow(
+        unused_imports,
+        reason = "shared imports keep moved tests close to their original form"
+    )]
 
-    #[test]
-    fn dragging_a_beat_emits_one_move_and_focuses_its_destination() {
-        let mut harness = timing_harness();
-        harness.state_mut().window.grid = Grid {
-            resolution: NonZeroU16::new(8).unwrap(),
-        };
-        harness.run();
-        let from = row_point(&harness, 960);
-        let to = row_point(&harness, 1440);
-        drag(&mut harness, from, to, Modifiers::NONE);
-        assert_eq!(
-            harness.state().commands,
-            [Command::Edit(Edit::MoveAnchors(vec![(
-                Tick::new(960),
-                Tick::new(1440)
-            )]))]
-        );
-        assert_eq!(harness.state().window.gesture, Gesture::Idle);
-    }
+    use charter_audio::Onset;
+    use charter_core::{Bpm, Tick, ValidDocument};
+    use charter_editor::{Pin, Song};
+    use egui::{Key, Modifiers, Pos2, vec2};
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+    use serde_json::json;
 
-    #[test]
-    fn ctrl_dragging_an_anchor_emits_an_audio_nudge_without_changing_its_beat() {
-        let mut harness = timing_harness();
-        let from = row_point(&harness, 960);
-        let to = row_point(&harness, 1200);
-        drag(&mut harness, from, to, Modifiers::COMMAND);
-        let [Command::Edit(Edit::Nudge { ticks, by, merge })] = harness.state().commands.as_slice()
-        else {
-            panic!("expected audio nudge: {:?}", harness.state().commands);
-        };
-        assert_eq!(ticks, &[Tick::new(960)]);
-        assert!((by - 0.125).abs() < 1e-4);
-        assert!(!merge);
-        assert_eq!(harness.state().window.focus, Some(Tick::new(960)));
-    }
-
-    #[test]
-    fn shift_click_selects_the_run_and_delete_emits_one_unsync() {
-        let mut harness = timing_harness();
-        let first = row_point(&harness, 0);
-        let last = row_point(&harness, 1920);
-        click(&mut harness, first, Modifiers::NONE);
-        click(&mut harness, last, Modifiers::SHIFT);
-        assert_eq!(
-            harness.state().window.selection,
-            [Tick::new(0), Tick::new(960), Tick::new(1920)]
-        );
-        harness.key_press(Key::Delete);
-        harness.run();
-        assert_eq!(
-            harness.state().commands,
-            [Command::Edit(Edit::Unsync(vec![
-                Tick::new(0),
-                Tick::new(960),
-                Tick::new(1920)
-            ]))]
-        );
-    }
-
-    #[test]
-    fn a_band_selects_only_the_anchors_between_its_endpoints() {
-        let mut harness = timing_harness();
-        let from = row_point(&harness, 400);
-        let to = row_point(&harness, 1500);
-        drag(&mut harness, from, to, Modifiers::NONE);
-        assert_eq!(harness.state().window.selection, [Tick::new(960)]);
-        assert_eq!(harness.state().commands, []);
-        assert_eq!(harness.state().window.gesture, Gesture::Idle);
-    }
+    use super::*;
+    use crate::test_support::*;
+    use crate::*;
 
     #[test]
     fn nudges_merge_for_the_same_selection_until_a_refusal_resets_them() {
@@ -2003,7 +871,7 @@ mod tests {
         };
         let state = harness.state_mut();
         let timing = state.song.timing();
-        let now = state.window.last_nudge.as_ref().unwrap().1;
+        let now = state.window.last_nudge.as_ref().unwrap().at;
         state
             .window
             .refused(&edit, &Refusal::Crosses(Tick::new(1920)), timing, now);
@@ -2026,247 +894,6 @@ mod tests {
     }
 
     #[test]
-    fn dragging_into_a_neighbour_stops_short_and_pulses_that_anchor() {
-        let mut harness = timing_harness();
-        let from = row_point(&harness, 960);
-        let to = row_point(&harness, 2400);
-        drag(&mut harness, from, to, Modifiers::NONE);
-        assert_eq!(
-            harness.state().commands,
-            [Command::Edit(Edit::MoveAnchors(vec![(
-                Tick::new(960),
-                Tick::new(1919)
-            )]))]
-        );
-        assert!(matches!(
-            harness.state().window.pulse,
-            Some((tick, _)) if tick == Tick::new(1920)
-        ));
-    }
-
-    #[test]
-    fn escape_cancels_a_drag_before_clearing_the_selection() {
-        let mut harness = timing_harness();
-        let at = row_point(&harness, 960);
-        click(&mut harness, at, Modifiers::NONE);
-        harness.state_mut().window.gesture = Gesture::DragBeat {
-            from: Tick::new(960),
-            to: Tick::new(1440),
-            origin: 0.25,
-        };
-        harness.key_press(Key::Delete);
-        harness.run();
-        assert_eq!(harness.state().commands, []);
-        harness.key_press(Key::Escape);
-        harness.run();
-        assert_eq!(harness.state().window.gesture, Gesture::Idle);
-        assert_eq!(harness.state().window.selection, [Tick::new(960)]);
-        harness.key_press(Key::Escape);
-        harness.run();
-        assert_eq!(harness.state().window.selection, []);
-    }
-
-    #[test]
-    fn adding_an_anchor_snaps_to_an_onset_unless_shift_is_held() {
-        let mut snapped = timing_harness();
-        snapped.state_mut().onsets = vec![Onset {
-            seconds: 1.512,
-            strength: 1.0,
-        }];
-        snapped.run();
-        let at = row_point(&snapped, 2880);
-        click(&mut snapped, at, Modifiers::NONE);
-        let [Command::Edit(Edit::Sync { seconds, .. }), ..] = snapped.state().commands.as_slice()
-        else {
-            panic!("expected sync: {:?}", snapped.state().commands);
-        };
-        assert!((seconds - 1.512).abs() < 1e-9);
-
-        let mut plain = timing_harness();
-        plain.state_mut().onsets = vec![Onset {
-            seconds: 1.512,
-            strength: 1.0,
-        }];
-        plain.run();
-        let plain_point = row_point(&plain, 2880);
-        click(&mut plain, plain_point, Modifiers::SHIFT);
-        let [
-            Command::Edit(Edit::Sync {
-                seconds: plain_seconds,
-                ..
-            }),
-            ..,
-        ] = plain.state().commands.as_slice()
-        else {
-            panic!("expected sync: {:?}", plain.state().commands);
-        };
-        assert!((plain_seconds - 1.5).abs() < 1e-4);
-    }
-
-    #[test]
-    fn adding_too_near_an_anchor_refuses_and_identifies_the_blocker() {
-        let mut harness = timing_harness();
-        let at = row_point(&harness, 1030);
-        click(&mut harness, at, Modifiers::NONE);
-        assert_eq!(harness.state().commands, []);
-        assert!(matches!(
-            harness.state().window.pulse,
-            Some((tick, _)) if tick == Tick::new(960)
-        ));
-        assert!(
-            harness
-                .query_by_label_contains("Too close to the anchor")
-                .is_some()
-        );
-    }
-
-    #[test]
-    fn ctrl_dragging_past_a_neighbour_keeps_a_millisecond_between_them() {
-        let mut harness = timing_harness();
-        let from = row_point(&harness, 960);
-        let to = row_point(&harness, 2400);
-        drag(&mut harness, from, to, Modifiers::COMMAND);
-        let [Command::Edit(Edit::Nudge { ticks, by, merge })] = harness.state().commands.as_slice()
-        else {
-            panic!("expected constrained nudge: {:?}", harness.state().commands);
-        };
-        assert_eq!(ticks, &[Tick::new(960)]);
-        assert!((by - 0.499).abs() < 1e-5);
-        assert!(!merge);
-        assert!(matches!(
-            harness.state().window.pulse,
-            Some((tick, _)) if tick == Tick::new(1920)
-        ));
-    }
-
-    #[test]
-    fn selecting_two_anchors_loops_their_span_and_layout_switch_keeps_the_focus() {
-        let mut harness = timing_harness();
-        let first = row_point(&harness, 0);
-        let last = row_point(&harness, 1920);
-        click(&mut harness, first, Modifiers::NONE);
-        click(&mut harness, last, Modifiers::SHIFT);
-        harness.key_press_modifiers(Modifiers::SHIFT, Key::L);
-        harness.step();
-        assert_eq!(
-            harness.state().commands,
-            [Command::Loop {
-                from: Tick::new(0),
-                to: Tick::new(1920)
-            }]
-        );
-        harness.key_press(Key::V);
-        harness.step();
-        assert_eq!(harness.state().window.layout, Layout::Time);
-        assert_eq!(harness.state().window.scroll_to, None);
-        assert!(harness.query_by_label("Row at 0.0 s").is_some());
-    }
-
-    #[test]
-    fn an_anchor_context_menu_keeps_its_target_while_the_pointer_moves_to_a_button() {
-        let mut harness = timing_harness();
-        let at = row_point(&harness, 960);
-        harness.hover_at(at);
-        for pressed in [true, false] {
-            harness.event(egui::Event::PointerButton {
-                pos: at,
-                button: egui::PointerButton::Secondary,
-                pressed,
-                modifiers: Modifiers::NONE,
-            });
-        }
-        harness.step();
-        harness.get_by_label("Double tempo").click();
-        harness.step();
-        assert_eq!(
-            harness.state().commands,
-            [Command::Edit(Edit::Scale {
-                ticks: vec![Tick::new(960)],
-                double: true
-            })]
-        );
-    }
-
-    #[test]
-    fn dragging_one_of_several_selected_anchors_moves_the_whole_run() {
-        let mut harness = timing_harness();
-        harness.state_mut().window.grid = Grid {
-            resolution: NonZeroU16::new(8).unwrap(),
-        };
-        harness.run();
-        let first = row_point(&harness, 0);
-        let second = row_point(&harness, 960);
-        click(&mut harness, first, Modifiers::NONE);
-        click(&mut harness, second, Modifiers::SHIFT);
-        let to = row_point(&harness, 1440);
-        drag(&mut harness, second, to, Modifiers::NONE);
-        assert_eq!(
-            harness.state().commands,
-            [Command::Edit(Edit::MoveAnchors(vec![
-                (Tick::new(0), Tick::new(480)),
-                (Tick::new(960), Tick::new(1440))
-            ]))]
-        );
-    }
-
-    #[test]
-    fn a_key_after_clicking_outside_the_window_does_not_edit_the_song() {
-        let mut harness = timing_harness();
-        let at = row_point(&harness, 960);
-        click(&mut harness, at, Modifiers::NONE);
-        assert!(harness.state().window.has_keyboard());
-        click(&mut harness, egui::pos2(20.0, 20.0), Modifiers::NONE);
-        assert!(!harness.state().window.has_keyboard());
-        harness.key_press(Key::Delete);
-        harness.step();
-        assert_eq!(harness.state().commands, []);
-    }
-
-    #[test]
-    fn only_a_focused_existing_anchor_can_be_auditioned_with_enter() {
-        let mut harness = timing_harness();
-        harness.key_press(Key::Enter);
-        harness.step();
-        assert_eq!(harness.state().commands, []);
-        let at = row_point(&harness, 960);
-        click(&mut harness, at, Modifiers::NONE);
-        harness.key_press(Key::Enter);
-        harness.step();
-        assert_eq!(harness.state().commands, [Command::Audition(0.0)]);
-    }
-
-    #[test]
-    fn nudge_merge_expires_at_the_window_and_is_scoped_to_the_same_targets() {
-        let mut window = TimingWindow::default();
-        let mut commands = Vec::new();
-        window.focus = Some(Tick::new(960));
-        window.nudge(0.001, 1.0, &mut commands);
-        window.nudge(0.001, 1.8, &mut commands);
-        window.selection = vec![Tick::new(0), Tick::new(960)];
-        window.nudge(0.001, 1.9, &mut commands);
-        assert_eq!(
-            commands,
-            [
-                Command::Edit(Edit::Nudge {
-                    ticks: vec![Tick::new(960)],
-                    by: 0.001,
-                    merge: false
-                }),
-                Command::Edit(Edit::Nudge {
-                    ticks: vec![Tick::new(960)],
-                    by: 0.001,
-                    merge: false
-                }),
-                Command::Edit(Edit::Nudge {
-                    ticks: vec![Tick::new(0), Tick::new(960)],
-                    by: 0.001,
-                    merge: false
-                })
-            ]
-        );
-    }
-
-    #[test]
     fn a_missing_onset_for_a_fit_explains_why_no_edit_was_made() {
         let mut harness = timing_harness();
         let at = row_point(&harness, 960);
@@ -2279,30 +906,6 @@ mod tests {
                 .query_by_label_contains("No onsets to fit")
                 .is_some()
         );
-    }
-
-    #[test]
-    fn timing_keys_fit_beside_the_inspector_and_leave_room_for_rows() {
-        let ctx = egui::Context::default();
-        let mut used = egui::Rect::NOTHING;
-        let mut below = 0.0;
-        let input = egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(420.0, 320.0),
-            )),
-            ..egui::RawInput::default()
-        };
-        let mut output = ctx.run_ui(input, |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
-                help(ui);
-                used = ui.min_rect();
-                below = ui.cursor().top();
-            });
-        });
-        output.textures_delta.clear();
-        assert!(used.width() <= 420.0, "help is too wide: {used:?}");
-        assert!(below <= 248.0, "help hides the rows: {below}");
     }
 
     #[test]
@@ -2376,319 +979,6 @@ mod tests {
     }
 
     #[test]
-    fn keys_ask_for_what_the_specification_gives_them() {
-        let none = Modifiers::NONE;
-        assert_eq!(intent(Key::ArrowRight, none), Some(Intent::Nudge(0.001)));
-        assert_eq!(
-            intent(Key::ArrowLeft, Modifiers::SHIFT),
-            Some(Intent::Nudge(-0.0001))
-        );
-        assert_eq!(
-            intent(Key::ArrowRight, Modifiers::COMMAND),
-            Some(Intent::Nudge(0.010))
-        );
-        assert_eq!(intent(Key::ArrowUp, none), Some(Intent::Move(-1)));
-        assert_eq!(intent(Key::Num1, none), Some(Intent::Grid(0)));
-        assert_eq!(intent(Key::Num0, none), Some(Intent::Grid(9)));
-        assert_eq!(
-            intent(Key::F, Modifiers::SHIFT),
-            Some(Intent::Fit { half_bpm: true })
-        );
-        assert_eq!(
-            intent(Key::D, Modifiers::SHIFT),
-            Some(Intent::Scale { double: false })
-        );
-        assert_eq!(intent(Key::A, Modifiers::COMMAND), Some(Intent::SelectAll));
-        assert_eq!(intent(Key::A, none), Some(Intent::AddAtPlayhead));
-        assert_eq!(intent(Key::N, Modifiers::SHIFT), Some(Intent::Issue(false)));
-        assert_eq!(
-            intent(Key::Minus, Modifiers::SHIFT),
-            Some(Intent::Tail(-1.0))
-        );
-        assert_eq!(intent(Key::Q, none), None);
-    }
-
-    #[test]
-    fn ctrl_wheel_notches_add_up_and_shift_makes_them_fine() {
-        let wheel = |up: f32, modifiers| egui::Event::MouseWheel {
-            unit: egui::MouseWheelUnit::Line,
-            delta: vec2(0.0, up),
-            modifiers,
-            phase: egui::TouchPhase::Move,
-        };
-        let ctrl = Modifiers::COMMAND;
-        assert_eq!(nudge_notches(&[wheel(1.0, Modifiers::NONE)]), None);
-        let fine = [wheel(1.0, ctrl), wheel(1.0, ctrl), wheel(-1.0, ctrl)];
-        assert_eq!(nudge_notches(&fine), Some((1, false)));
-        let coarse = [wheel(-1.0, ctrl.plus(Modifiers::SHIFT))];
-        assert_eq!(nudge_notches(&coarse), Some((-1, true)));
-    }
-
-    #[test]
-    fn issue_keys_wrap_in_both_directions_and_focus_the_named_anchor() {
-        let mut harness = timing_harness();
-        harness.state_mut().onsets = [0.012, 0.512, 1.012]
-            .map(|seconds| Onset {
-                seconds,
-                strength: 1.0,
-            })
-            .to_vec();
-        harness.run();
-        let count = harness.state().window.cache.as_ref().unwrap().issues.len();
-        assert!(count >= 3, "expected displaced anchors to be issues");
-        harness.key_press(Key::N);
-        harness.run();
-        assert_eq!(harness.state().window.issue, Some(0));
-        assert_eq!(harness.state().window.focus, Some(Tick::new(0)));
-        harness.key_press_modifiers(Modifiers::SHIFT, Key::N);
-        harness.run();
-        assert_eq!(harness.state().window.issue, Some(count - 1));
-        assert_eq!(harness.state().window.focus, Some(Tick::new(1920)));
-        harness.key_press(Key::N);
-        harness.run();
-        assert_eq!(harness.state().window.issue, Some(0));
-    }
-
-    #[test]
-    fn playback_and_metronome_keys_work_on_a_read_only_song_but_edits_do_not() {
-        let mut harness = timing_harness();
-        let document = harness.state().song.document().clone();
-        harness.state_mut().song = Song::new(document, &[]);
-        harness.run();
-        let anchor = row_point(&harness, 960);
-        click(&mut harness, anchor, Modifiers::NONE);
-        harness.key_press(Key::ArrowRight);
-        harness.key_press(Key::Delete);
-        harness.key_press(Key::Space);
-        harness.key_press(Key::R);
-        harness.key_press(Key::C);
-        harness.step();
-        assert_eq!(
-            harness.state().commands,
-            [
-                Command::TogglePlay,
-                Command::ToggleRate,
-                Command::ToggleMetronome
-            ]
-        );
-        harness.key_press_modifiers(Modifiers::SHIFT, Key::C);
-        harness.step();
-        assert!(
-            harness
-                .state()
-                .commands
-                .ends_with(&[Command::MuteMetronome(true), Command::MuteMetronome(false)])
-        );
-        harness.event(egui::Event::Key {
-            key: Key::C,
-            physical_key: None,
-            pressed: false,
-            repeat: false,
-            modifiers: Modifiers::NONE,
-        });
-        harness.step();
-        assert_eq!(
-            harness.state().commands.last(),
-            Some(&Command::MuteMetronome(false))
-        );
-    }
-
-    #[test]
-    fn the_anchor_menu_can_audition_select_a_run_and_remove_that_run() {
-        let mut harness = timing_harness();
-        let at = row_point(&harness, 960);
-        for pressed in [true, false] {
-            harness.event(egui::Event::PointerButton {
-                pos: at,
-                button: egui::PointerButton::Secondary,
-                pressed,
-                modifiers: Modifiers::NONE,
-            });
-        }
-        harness.step();
-        harness.get_by_label("Select to the end").click();
-        harness.step();
-        assert_eq!(
-            harness.state().window.selection,
-            [Tick::new(960), Tick::new(1920)]
-        );
-        harness.hover_at(at);
-        for pressed in [true, false] {
-            harness.event(egui::Event::PointerButton {
-                pos: at,
-                button: egui::PointerButton::Secondary,
-                pressed,
-                modifiers: Modifiers::NONE,
-            });
-        }
-        harness.step();
-        harness.get_by_label("Remove").click();
-        harness.step();
-        assert_eq!(
-            harness.state().commands,
-            [Command::Edit(Edit::Unsync(vec![
-                Tick::new(960),
-                Tick::new(1920)
-            ]))]
-        );
-    }
-
-    #[test]
-    fn a_fit_stays_a_preview_until_enter_and_escape_discards_it() {
-        let mut harness = timing_harness();
-        harness.state_mut().onsets = [0.0, 0.5, 1.0, 1.5, 2.0]
-            .map(|seconds| Onset {
-                seconds,
-                strength: 1.0,
-            })
-            .to_vec();
-        harness.run();
-        let at = row_point(&harness, 960);
-        click(&mut harness, at, Modifiers::NONE);
-        harness.key_press(Key::F);
-        harness.step();
-        assert!(harness.state().window.preview.is_some());
-        assert_eq!(harness.state().commands, []);
-        harness.key_press(Key::Escape);
-        harness.step();
-        assert!(harness.state().window.preview.is_none());
-        assert_eq!(harness.state().commands, []);
-        harness.key_press(Key::F);
-        harness.step();
-        harness.key_press(Key::Enter);
-        harness.step();
-        assert!(matches!(
-            harness.state().commands.as_slice(),
-            [Command::Edit(Edit::Repin { .. })]
-        ));
-        assert!(harness.state().window.preview.is_none());
-    }
-
-    #[test]
-    fn looping_one_selected_anchor_ends_at_the_next_anchor() {
-        let mut harness = timing_harness();
-        let at = row_point(&harness, 960);
-        click(&mut harness, at, Modifiers::NONE);
-        harness.key_press_modifiers(Modifiers::SHIFT, Key::L);
-        harness.step();
-        assert_eq!(
-            harness.state().commands,
-            [Command::Loop {
-                from: Tick::new(960),
-                to: Tick::new(1920),
-            }]
-        );
-    }
-
-    #[test]
-    fn focusing_from_the_playhead_finds_the_next_anchor_and_moving_it_keeps_focus() {
-        let mut harness = timing_harness();
-        harness.state_mut().song.jump_to(Tick::new(1200));
-        harness.run();
-        let state = harness.state();
-        let cache = state.window.cache.as_ref().unwrap();
-        let frame = frame(&state.song, &[], (cache, Layout::Bars), 0.0);
-        let mut window = TimingWindow::default();
-        let mut commands = Vec::new();
-        act(&mut window, &frame, Intent::Focus(true), &mut commands);
-        assert_eq!(window.focus, Some(Tick::new(1920)));
-        act(&mut window, &frame, Intent::Move(1), &mut commands);
-        assert_eq!(window.focus, Some(Tick::new(2880)));
-        assert_eq!(window.selection, [Tick::new(2880)]);
-        assert_eq!(
-            commands,
-            [Command::Edit(Edit::MoveAnchors(vec![(
-                Tick::new(1920),
-                Tick::new(2880)
-            )]))]
-        );
-    }
-
-    #[test]
-    fn consecutive_tail_tempo_adjustments_ask_to_merge_into_one_edit() {
-        let harness = timing_harness();
-        let state = harness.state();
-        let cache = state.window.cache.as_ref().unwrap();
-        let frame = frame(&state.song, &[], (cache, Layout::Bars), 1.0);
-        let mut window = TimingWindow::default();
-        let mut commands = Vec::new();
-        act(&mut window, &frame, Intent::Tail(1.0), &mut commands);
-        act(&mut window, &frame, Intent::Tail(1.0), &mut commands);
-        assert_eq!(
-            commands,
-            [
-                Command::Edit(Edit::TailBpm {
-                    bpm: Bpm::try_from(121.0).unwrap(),
-                    merge: false,
-                }),
-                Command::Edit(Edit::TailBpm {
-                    bpm: Bpm::try_from(121.0).unwrap(),
-                    merge: true,
-                }),
-            ]
-        );
-    }
-
-    #[test]
-    fn a_dragged_audio_anchor_shows_when_it_snaps_to_an_onset() {
-        let harness = timing_harness();
-        let state = harness.state();
-        let cache = state.window.cache.as_ref().unwrap();
-        let onsets = [Onset {
-            seconds: 0.75,
-            strength: 1.0,
-        }];
-        let frame = frame(&state.song, &onsets, (cache, Layout::Bars), 0.0);
-        let span = frame.bars.rows(BarsPerRow::One, SecondsPerRow::default())[0];
-        let row = Row {
-            from: span.from,
-            start: span.start,
-            to: span.to,
-            rect: egui::Rect::from_min_size(Pos2::ZERO, vec2(1000.0, ROW)),
-        };
-        let mut window = TimingWindow {
-            gesture: Gesture::DragAudio {
-                tick: Tick::new(960),
-                from: 0.5,
-                to: 0.75,
-                origin: 0.5,
-            },
-            ..TimingWindow::default()
-        };
-        let (at, snapped) = ghost(&window, &frame, &row, None, false).unwrap();
-        assert!((at - row.x(&frame.bars, Tick::new(1440))).abs() < 1.0);
-        assert!(snapped);
-        assert_eq!(ghost(&window, &frame, &row, None, true), Some((at, false)));
-        window.gesture = Gesture::Idle;
-        assert_eq!(
-            anchor_near(&frame, &row, row.x(&frame.bars, Tick::new(960))),
-            Some(Tick::new(960))
-        );
-    }
-
-    #[test]
-    fn middle_click_auditions_an_anchor_but_plays_from_empty_audio() {
-        let mut harness = timing_harness();
-        for (tick, expected) in [
-            (960, Command::Audition(0.0)),
-            (2880, Command::PlayFrom(Tick::new(2880))),
-        ] {
-            let at = row_point(&harness, tick);
-            harness.hover_at(at);
-            for pressed in [true, false] {
-                harness.event(egui::Event::PointerButton {
-                    pos: at,
-                    button: egui::PointerButton::Middle,
-                    pressed,
-                    modifiers: Modifiers::NONE,
-                });
-            }
-            harness.step();
-            assert_eq!(harness.state().commands.last(), Some(&expected));
-        }
-    }
-
-    #[test]
     fn a_refused_edit_capitalises_its_reason_and_accepts_an_empty_plugin_error() {
         let harness = timing_harness();
         let mut window = TimingWindow::default();
@@ -2707,57 +997,7 @@ mod tests {
         window.refused(&edit, &blank, harness.state().song.timing(), 0.0);
         assert_eq!(window.status.as_deref(), Some(""));
     }
-
-    #[test]
-    fn the_wide_keyboard_help_lists_timing_shortcuts() {
-        let mut harness = timing_harness();
-        harness.state_mut().window.help = true;
-        harness.run();
-        assert!(harness.query_by_label("Ctrl+wheel").is_some());
-    }
-
-    #[test]
-    fn the_anchor_menu_plays_from_one_beat_before_the_chosen_anchor() {
-        let mut harness = timing_harness();
-        let at = row_point(&harness, 960);
-        harness.hover_at(at);
-        for pressed in [true, false] {
-            harness.event(egui::Event::PointerButton {
-                pos: at,
-                button: egui::PointerButton::Secondary,
-                pressed,
-                modifiers: Modifiers::NONE,
-            });
-        }
-        harness.step();
-        harness.get_by_label("Play from a beat before").click();
-        harness.step();
-        assert_eq!(harness.state().commands, [Command::Audition(0.0)]);
-    }
-
-    #[test]
-    fn an_anchor_menu_can_select_every_anchor_up_to_its_target() {
-        let mut harness = timing_harness();
-        let at = row_point(&harness, 960);
-        harness.hover_at(at);
-        for pressed in [true, false] {
-            harness.event(egui::Event::PointerButton {
-                pos: at,
-                button: egui::PointerButton::Secondary,
-                pressed,
-                modifiers: Modifiers::NONE,
-            });
-        }
-        harness.step();
-        harness.get_by_label("Select to the start").click();
-        harness.step();
-        assert_eq!(
-            harness.state().window.selection,
-            [Tick::new(0), Tick::new(960)]
-        );
-    }
 }
-
 /// Proofs for Kani, run with `cargo kani -p charter-timing`.
 #[cfg(kani)]
 mod proofs {

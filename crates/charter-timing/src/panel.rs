@@ -549,7 +549,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::tests::{WindowTest, timing_harness};
+    use crate::test_support::{WindowTest, timing_harness};
 
     fn type_field(harness: &mut Harness<'_, WindowTest>, label: &str, text: &str) {
         harness
