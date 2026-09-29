@@ -26,11 +26,15 @@ impl Timing {
             let previous = self.anchors.get(index.saturating_sub(1))?;
             let per_tick = self.segment_rate(previous, next)?;
             ResolvedTime::from(previous.seconds).seconds()
-                + self.elapsed(previous.tick, tick, per_tick)?
+                + self.elapsed_from_unwarped(previous.tick, tick, per_tick)?
         } else {
             let last = self.anchors.last()?;
             ResolvedTime::from(last.seconds).seconds()
-                + self.elapsed(last.tick, tick, tail_rate(self.tempo, ticks_per_beat))?
+                + self.elapsed_from_unwarped(
+                    last.tick,
+                    tick,
+                    tail_rate(self.tempo, ticks_per_beat),
+                )?
         };
         Some(ResolvedTime::new(seconds))
     }
@@ -92,7 +96,12 @@ impl Timing {
         to: Tick,
         seconds: f64,
     ) -> Option<Bpm> {
-        let per_tick = Self::rate_for(from, to, seconds, &self.events)?;
+        let per_tick = Self::rate_for(
+            from,
+            to,
+            seconds,
+            self.event_span_with_prior_warp(from, to)?,
+        )?;
         let tempo = bpm_of(per_tick, ticks_per_beat);
         Bpm::try_from((tempo * 1e6).round() / 1e6).ok()
     }
@@ -100,7 +109,11 @@ impl Timing {
     /// Seconds a timed tick takes between the anchors `previous` and `next`, exactly: their
     /// time apart less the pauses between, over the ticks between that warps leave timed.
     pub(crate) fn segment_rate(&self, previous: &Anchor, next: &Anchor) -> Option<f64> {
-        Self::segment_rate_in(previous, next, &self.events)
+        Self::segment_rate_in(
+            previous,
+            next,
+            self.event_span_after(previous.tick, next.tick)?,
+        )
     }
 
     /// Derive a segment's rate from only the events that can affect it.
@@ -176,11 +189,47 @@ impl Timing {
         Some(pauses + timed_ticks * per_tick)
     }
 
+    /// Seconds between unwarped `from` and `to`.
+    fn elapsed_from_unwarped(&self, from: Tick, to: Tick, per_tick: f64) -> Option<f64> {
+        let (timed_ticks, pauses) =
+            Self::span_parts_in(self.event_span_after(from, to)?, from, to)?;
+        Some(pauses + timed_ticks * per_tick)
+    }
+
     /// The ticks from `from` to `to` that warps leave timed, and the seconds of the pauses
     /// between them, by the format's rules: a stop on a tick counts from it, a delay up to it.
     /// None when `to` is before `from` or a warp ends past the last tick.
     pub(crate) fn span_parts(&self, from: Tick, to: Tick) -> Option<(f64, f64)> {
-        Self::span_parts_in(&self.events, from, to)
+        Self::span_parts_in(self.event_span_with_prior_warp(from, to)?, from, to)
+    }
+
+    /// Events able to affect the span from unwarped `from` to `to`.
+    fn event_span_after(&self, from: Tick, to: Tick) -> Option<&[TimingEvent]> {
+        if to < from {
+            return None;
+        }
+        let first = self.events.partition_point(|event| event.tick < from);
+        let end = self.events.partition_point(|event| event.tick <= to);
+        self.events.get(first..end)
+    }
+
+    /// Events able to affect the span from `from` to `to`, plus the last earlier warp because it
+    /// may still cover `from`.
+    fn event_span_with_prior_warp(&self, from: Tick, to: Tick) -> Option<&[TimingEvent]> {
+        if to < from {
+            return None;
+        }
+        let first = self.events.partition_point(|event| event.tick < from);
+        // ponytail: arbitrary spans may start inside a warp, so this scans the prefix for the
+        // last warp; add a cached warp index only if profiling finds imported warp-heavy maps.
+        let start = self
+            .events
+            .get(..first)?
+            .iter()
+            .rposition(|event| matches!(event.kind, TimingKind::Warp(_)))
+            .unwrap_or(first);
+        let end = self.events.partition_point(|event| event.tick <= to);
+        self.events.get(start..end)
     }
 
     /// Timed ticks and pause seconds between `from` and `to` under `events`.
@@ -447,6 +496,15 @@ mod tests {
         assert_time(&t, 1500, 1.0);
         assert_time(&t, 1920, 1.0);
         assert_time(&t, 2880, 2.0);
+    }
+
+    #[test]
+    fn a_span_starting_inside_an_earlier_warp_stays_warped() {
+        let t = timing(&[(0, 0.0)], 60.0, vec![event(900, warp(600))]);
+        assert_eq!(
+            t.span_parts(Tick::new(1000), Tick::new(1600)),
+            Some((100.0, 0.0))
+        );
     }
 
     #[test]
