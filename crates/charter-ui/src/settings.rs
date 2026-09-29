@@ -1045,6 +1045,7 @@ mod tests {
     use egui::accesskit::Role;
     use egui_kittest::Harness;
     use egui_kittest::kittest::Queryable;
+    use proptest::prelude::*;
 
     #[test]
     fn dragging_the_settings_windows_corner_resizes_it() {
@@ -1628,5 +1629,16 @@ mod tests {
         harness.run();
         assert_eq!(harness.state().0.autosave_after(), None);
         assert_eq!(harness.state().0.autosave_seconds, 12);
+    }
+
+    proptest! {
+        #![proptest_config(crate::proptest_config())]
+
+        #[test]
+        fn arbitrary_kept_settings_never_panic(bytes in proptest::collection::vec(any::<u8>(), 0..4096)) {
+            let kept = String::from_utf8_lossy(&bytes);
+            let settings = Settings::from_kept(&kept);
+            prop_assert_eq!(Settings::from_kept(&settings.to_kept()), settings);
+        }
     }
 }

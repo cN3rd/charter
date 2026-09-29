@@ -267,6 +267,7 @@ mod tests {
     use egui::accesskit::Role;
     use egui_kittest::Harness;
     use egui_kittest::kittest::Queryable;
+    use proptest::prelude::*;
 
     #[derive(Debug)]
     struct Importer;
@@ -507,5 +508,17 @@ mod tests {
         assert_eq!(trimmed(895.0), "895");
         assert_eq!(trimmed(895.25), "895.25");
         assert_eq!(trimmed(-14.0), "-14");
+    }
+
+    proptest! {
+        #![proptest_config(crate::proptest_config())]
+
+        #[test]
+        fn arbitrary_pasted_timing_text_never_panics(bytes in proptest::collection::vec(any::<u8>(), 0..1024)) {
+            let mut harness = preview(true, PLUGINS);
+            harness.state_mut().0.text = String::from_utf8_lossy(&bytes).into_owned();
+            harness.run();
+            prop_assert!(harness.state().0.open);
+        }
     }
 }

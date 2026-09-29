@@ -23,6 +23,7 @@ charter-stepmania.workspace = true
 charter-ttr.workspace = true
 eframe.workspace = true
 egui_kittest.workspace = true
+proptest.workspace = true
 
 # The static mock of the book's UI draft, kept as reference while the real window grows.
 [[example]]

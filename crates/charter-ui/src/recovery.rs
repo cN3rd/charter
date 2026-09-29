@@ -83,6 +83,7 @@ pub(crate) fn read(bytes: &[u8], plugins: &[&'static dyn RulesetPlugin]) -> Resu
 #[cfg(test)]
 mod tests {
     use charter_editor::demo;
+    use proptest::prelude::*;
 
     use super::*;
 
@@ -151,5 +152,14 @@ mod tests {
     fn a_damaged_autosave_is_refused() {
         read(b"", &[]).unwrap_err();
         read(br#"{ "path": null, "song": { "format_version": 0 } }"#, &[]).unwrap_err();
+    }
+
+    proptest! {
+        #![proptest_config(crate::proptest_config())]
+
+        #[test]
+        fn arbitrary_autosave_bytes_never_panic(bytes in proptest::collection::vec(any::<u8>(), 0..4096)) {
+            drop(read(&bytes, &[]));
+        }
     }
 }

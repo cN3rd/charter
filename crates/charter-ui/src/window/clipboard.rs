@@ -80,6 +80,7 @@ impl Window {
 #[cfg(test)]
 mod tests {
     use crate::window::test_support::*;
+    use proptest::prelude::*;
 
     #[test]
     fn add_layer_button_and_shortcut_both_create_undoable_layers() {
@@ -470,5 +471,22 @@ mod tests {
         assert_eq!(note_count(&harness), 5);
         assert_eq!(lanes_at(&harness, 3840), [0]);
         assert_eq!(harness.state().clipboard.pasting, None);
+    }
+
+    proptest! {
+        #![proptest_config(crate::proptest_config())]
+
+        #[test]
+        fn arbitrary_external_clipboard_text_never_panics(bytes in proptest::collection::vec(any::<u8>(), 0..4096)) {
+            let text = String::from_utf8_lossy(&bytes);
+            let mut app = Window::new(PLUGINS);
+            app.open(Path::new("four.json"), &four_taps());
+            app.paste(Some(&text));
+            prop_assert!(
+                app.song
+                    .as_ref()
+                    .is_some_and(|song| song.document().to_json().is_ok())
+            );
+        }
     }
 }

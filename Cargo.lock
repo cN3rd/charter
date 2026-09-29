@@ -1612,6 +1612,7 @@ dependencies = [
  "eframe",
  "egui",
  "egui_kittest",
+ "proptest",
  "serde",
  "serde_json",
 ]
