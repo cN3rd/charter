@@ -34,6 +34,15 @@ pub use import::ImportError;
 /// The ruleset namespace.
 pub const ID: &str = "osu_mania";
 
+#[cfg(test)]
+fn proptest_config() -> proptest::test_runner::Config {
+    proptest::test_runner::Config {
+        failure_persistence: None,
+        rng_seed: proptest::test_runner::RngSeed::Fixed(0),
+        ..proptest::test_runner::Config::default()
+    }
+}
+
 /// A song, checked against this ruleset and every document rule when built, and unchangeable
 /// after.
 #[derive(Clone, Debug, PartialEq, Eq)]

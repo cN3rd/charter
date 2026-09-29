@@ -47,6 +47,15 @@ struct Point {
     uninherited: bool,
 }
 
+/// A parsed timing point with its source line.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct LocatedPoint {
+    /// One-based line number in the pasted text or `.osu` file.
+    line: usize,
+    /// Timing fields parsed from that line.
+    point: Point,
+}
+
 /// A red line placed on charter's grid: its tick, where that tick falls in milliseconds, which
 /// is within half a tick of where osu! has it, and its beat in milliseconds.
 #[derive(Clone, Copy, Debug)]
@@ -64,14 +73,18 @@ struct Placed {
 pub(crate) fn import(text: &str, into: &ValidDocument) -> Result<ImportedTiming, ImportError> {
     let points = points(text)?;
     let ticks_per_beat = f64::from(u16::from(into.document().ticks_per_beat));
-    let mut reds: Vec<Point> = points.iter().copied().filter(|p| p.uninherited).collect();
-    reds.sort_by(|a, b| a.time.total_cmp(&b.time));
+    let mut reds: Vec<LocatedPoint> = points
+        .iter()
+        .copied()
+        .filter(|located| located.point.uninherited)
+        .collect();
+    reds.sort_by(|a, b| a.point.time.total_cmp(&b.point.time));
     let sections: Vec<Section> = reds
         .iter()
         .map(|red| Section {
-            seconds: red.time / 1000.0,
-            beat_seconds: red.beat_length / 1000.0,
-            meter: red.meter,
+            seconds: red.point.time / 1000.0,
+            beat_seconds: red.point.beat_length / 1000.0,
+            meter: red.point.meter,
         })
         .collect();
     let made = sectioned(&sections, into.document().ticks_per_beat).map_err(|why| match why {
@@ -102,8 +115,12 @@ pub(crate) fn import(text: &str, into: &ValidDocument) -> Result<ImportedTiming,
         tempo,
         mut events,
     } = made.timing;
-    let mut greens: Vec<Point> = points.iter().copied().filter(|p| !p.uninherited).collect();
-    greens.sort_by(|a, b| a.time.total_cmp(&b.time));
+    let mut greens: Vec<LocatedPoint> = points
+        .iter()
+        .copied()
+        .filter(|located| !located.point.uninherited)
+        .collect();
+    greens.sort_by(|a, b| a.point.time.total_cmp(&b.point.time));
     match (into.document().ruleset.id.as_str() == ID, greens.is_empty()) {
         (true, _) => events.extend(scroll_speeds(&placed, &greens, ticks_per_beat)?),
         (false, false) => left_out.push(format!(
@@ -128,12 +145,13 @@ pub(crate) fn import(text: &str, into: &ValidDocument) -> Result<ImportedTiming,
 /// to 1 on each red line without one of its own, as osu! resets it.
 fn scroll_speeds(
     placed: &[(Placed, NonZeroU16)],
-    greens: &[Point],
+    greens: &[LocatedPoint],
     ticks_per_beat: f64,
 ) -> Result<Vec<TimingEvent>, ImportError> {
-    let mut changes: Vec<(i64, f64, f64)> = greens
+    let mut changes: Vec<(i64, f64, f64, usize)> = greens
         .iter()
-        .map(|green| {
+        .map(|located| {
+            let green = located.point;
             let red = placed
                 .iter()
                 .rev()
@@ -150,10 +168,8 @@ fn scroll_speeds(
             let tick = red
                 .tick
                 .checked_add(ticks(green.time - red.at, red.beat_length, ticks_per_beat))
-                .ok_or_else(|| {
-                    ImportError::OutOfRange("timing point tick is out of range".into())
-                })?;
-            Ok((tick, green.time, -100.0 / green.beat_length))
+                .ok_or_else(|| line_out_of_range(located.line, "timing point tick"))?;
+            Ok((tick, green.time, -100.0 / green.beat_length, located.line))
         })
         .collect::<Result<_, ImportError>>()?;
     let mut resets = Vec::new();
@@ -162,17 +178,17 @@ fn scroll_speeds(
         let before = changes
             .iter()
             .chain(&resets)
-            .filter(|(_, time, _)| *time < red.at)
+            .filter(|(_, time, _, _)| *time < red.at)
             .max_by(|left, right| left.1.total_cmp(&right.1))
-            .map_or(1.0, |(_, _, ratio)| *ratio);
+            .map_or(1.0, |(_, _, ratio, _)| *ratio);
         #[expect(
             clippy::float_cmp,
             reason = "identical source timestamps assign green to red"
         )]
-        let own = changes.iter().any(|(_, time, _)| *time == red.at);
+        let own = changes.iter().any(|(_, time, _, _)| *time == red.at);
         #[expect(clippy::float_cmp, reason = "osu!'s own 1x is exact")]
         if !own && before != 1.0 {
-            resets.push((red.tick, red.at, 1.0));
+            resets.push((red.tick, red.at, 1.0, 0));
         }
     }
     changes.extend(resets);
@@ -185,6 +201,7 @@ fn scroll_speeds(
     changes.dedup_by(|later, earlier| {
         if later.0 == earlier.0 {
             earlier.2 = later.2;
+            earlier.3 = later.3;
             true
         } else {
             false
@@ -192,24 +209,37 @@ fn scroll_speeds(
     });
     changes
         .into_iter()
-        .map(|(tick, _, ratio)| {
+        .map(|(tick, _, ratio, line)| {
             let ratio = micro(ratio)
                 .and_then(|ratio| Decimal::try_from(ratio).ok())
                 .filter(|_| ratio > 0.0)
-                .ok_or_else(|| ImportError::OutOfRange(format!("{ratio} is not a scroll speed")))?;
+                .ok_or_else(|| {
+                    if line == 0 {
+                        ImportError::OutOfRange("scroll speed is out of range".into())
+                    } else {
+                        line_out_of_range(line, "scroll speed")
+                    }
+                })?;
             let name = Key::new(
                 Namespace::new(ID).map_err(out_of_range)?,
                 Name::new(SCROLL_SPEED).map_err(out_of_range)?,
             );
             let value = serde_json::to_value(ratio).map_err(out_of_range)?;
-            event(tick, TimingKind::Other { name, value })
+            event(tick, TimingKind::Other { name, value }).map_err(|error| match error {
+                ImportError::OutOfRange(_) if line != 0 => {
+                    line_out_of_range(line, "timing point tick")
+                }
+                other @ (ImportError::Line { .. }
+                | ImportError::NoTempo
+                | ImportError::OutOfRange(_)) => other,
+            })
         })
         .collect()
 }
 
 /// The timing points in `text`: its `[TimingPoints]` section when it has one, as a whole `.osu`
 /// file does, or else every line, as a pasted section is.
-fn points(text: &str) -> Result<Vec<Point>, ImportError> {
+fn points(text: &str) -> Result<Vec<LocatedPoint>, ImportError> {
     let lines: Vec<(usize, &str)> = (1..).zip(text.lines()).collect();
     let section = lines
         .iter()
@@ -227,7 +257,10 @@ fn points(text: &str) -> Result<Vec<Point>, ImportError> {
         if line.is_empty() || line.starts_with("//") {
             continue;
         }
-        points.push(point(line).map_err(|why| ImportError::Line { line: number, why })?);
+        points.push(LocatedPoint {
+            line: number,
+            point: point(line).map_err(|why| ImportError::Line { line: number, why })?,
+        });
     }
     Ok(points)
 }
@@ -325,6 +358,11 @@ fn micro(value: f64) -> Option<f64> {
 /// An import error retaining the failing conversion's message.
 fn out_of_range(error: impl std::fmt::Display) -> ImportError {
     ImportError::OutOfRange(error.to_string())
+}
+
+/// Line-scoped range error for a parsed timing point.
+fn line_out_of_range(line: usize, what: &str) -> ImportError {
+    ImportError::OutOfRange(format!("line {line}: {what} is out of range"))
 }
 
 /// Proofs for Kani, run with `cargo kani -p charter-osu-mania`.
@@ -673,19 +711,23 @@ mod tests {
     }
 
     #[test]
-    fn arbitrary_timing_text_never_panics() {
-        let config = proptest::test_runner::Config {
-            failure_persistence: None,
-            rng_seed: proptest::test_runner::RngSeed::Fixed(0),
-            ..proptest::test_runner::Config::default()
-        };
-        let mut runner = proptest::test_runner::TestRunner::new(config);
-        runner
-            .run(&proptest::collection::vec(any::<char>(), 0..256), |text| {
-                let text: String = text.into_iter().collect();
-                drop(import(&text, &song(ID)));
-                Ok(())
-            })
-            .unwrap();
+    fn out_of_range_green_points_report_their_line() {
+        let tick = import("0,500\n1e100,-50", &song(ID)).unwrap_err();
+        assert_eq!(
+            tick.to_string(),
+            "line 2: timing point tick is out of range"
+        );
+        let speed = import("0,500\n1,-1e-300", &song(ID)).unwrap_err();
+        assert_eq!(speed.to_string(), "line 2: scroll speed is out of range");
+    }
+
+    proptest! {
+        #![proptest_config(crate::proptest_config())]
+
+        #[test]
+        fn arbitrary_timing_text_never_panics(text in proptest::collection::vec(any::<char>(), 0..256)) {
+            let text: String = text.into_iter().collect();
+            drop(import(&text, &song(ID)));
+        }
     }
 }
