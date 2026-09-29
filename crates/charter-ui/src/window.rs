@@ -2376,59 +2376,58 @@ impl Window {
                 }) {
                     panels::no_audio(ui, self.no_drops, &mut actions);
                 }
-                match &self.song {
-                    Some(song) => {
-                        let shown = notefield::Shown {
-                            zoom: self.zoom,
-                            direction: self.settings.direction,
-                            strip: shown_strip(
-                                &self.settings,
-                                self.waveform.as_ref(),
-                                self.spectrum.as_ref(),
-                                self.audio_file().as_deref(),
-                            ),
-                            grid: shown_grid(self.settings.grid, song.snap()),
+                if let Some(song) = &self.song {
+                    let shown = notefield::Shown {
+                        zoom: self.zoom,
+                        direction: self.settings.direction,
+                        strip: shown_strip(
+                            &self.settings,
+                            self.waveform.as_ref(),
+                            self.spectrum.as_ref(),
+                            self.audio_file().as_deref(),
+                        ),
+                        grid: shown_grid(self.settings.grid, song.snap()),
+                    };
+                    let map = self.settings.minimap && song.chart().is_some();
+                    let length = match self.loaded() {
+                        Some(Loaded::Ready(seconds)) => Some(*seconds),
+                        _ => None,
+                    };
+                    let reversed = self.settings.direction == Direction::Down;
+                    let (scrolled, gesture) = (&mut self.scrolled, &mut self.gesture);
+                    style::stage().show(ui, |ui| {
+                        ui.set_min_size(ui.available_size());
+                        let whole = ui.available_rect_before_wrap();
+                        let (field, beside) = if map {
+                            let gap = minimap::WIDTH + 8.0;
+                            let (field, beside) = whole.split_left_right_at_x(whole.right() - gap);
+                            (field, Some(beside.with_min_x(beside.left() + 8.0)))
+                        } else {
+                            (whole, None)
                         };
-                        let map = self.settings.minimap && song.chart().is_some();
-                        let length = match self.loaded() {
-                            Some(Loaded::Ready(seconds)) => Some(*seconds),
-                            _ => None,
-                        };
-                        let reversed = self.settings.direction == Direction::Down;
-                        let (scrolled, gesture) = (&mut self.scrolled, &mut self.gesture);
-                        style::stage().show(ui, |ui| {
-                            ui.set_min_size(ui.available_size());
-                            let whole = ui.available_rect_before_wrap();
-                            let (field, beside) = if map {
-                                let gap = minimap::WIDTH + 8.0;
-                                let (field, beside) =
-                                    whole.split_left_right_at_x(whole.right() - gap);
-                                (field, Some(beside.with_min_x(beside.left() + 8.0)))
-                            } else {
-                                (whole, None)
-                            };
-                            let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(field));
-                            let visible = notefield::show(
-                                &mut inner,
+                        let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(field));
+                        let visible = notefield::show(
+                            &mut inner,
+                            song,
+                            shown,
+                            scrolled,
+                            gesture,
+                            &mut actions,
+                        );
+                        if let (Some(beside), Some(visible)) = (beside, visible) {
+                            minimap::show(
+                                ui,
+                                beside,
                                 song,
-                                shown,
-                                scrolled,
-                                gesture,
+                                (visible, length, reversed),
                                 &mut actions,
                             );
-                            if let (Some(beside), Some(visible)) = (beside, visible) {
-                                minimap::show(
-                                    ui,
-                                    beside,
-                                    song,
-                                    (visible, length, reversed),
-                                    &mut actions,
-                                );
-                            }
-                            ui.allocate_rect(whole, egui::Sense::hover());
-                        });
-                    }
-                    None => panels::empty(ui, self.no_drops, &mut actions),
+                        }
+                        ui.allocate_rect(whole, egui::Sense::hover());
+                    });
+                } else {
+                    let recent = &self.settings.recent;
+                    panels::empty(ui, (self.no_drops, recent), &mut actions);
                 }
             });
         let data_folder = self.data_folder.clone();
@@ -7391,6 +7390,23 @@ mod tests {
             panic!("one snapshot, got {taken:?}");
         };
         assert_eq!(folders, &[PathBuf::from("/backups").join(name)]);
+    }
+
+    #[test]
+    fn the_empty_window_lists_recent_songs_to_open() {
+        let app = Window::new(PLUGINS).with_settings(Settings {
+            recent: vec![PathBuf::from("/songs/Starlight/Starlight.json")],
+            ..Settings::default()
+        });
+        let mut harness = window(app);
+        harness.get_by_label("Starlight.json").click();
+        harness.run();
+        assert_eq!(
+            harness.state_mut().take_requests(),
+            [Request::OpenPath {
+                path: PathBuf::from("/songs/Starlight/Starlight.json")
+            }]
+        );
     }
 
     #[test]

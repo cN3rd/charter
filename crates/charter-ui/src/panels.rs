@@ -1282,7 +1282,11 @@ pub fn ordinal(n: NonZeroU16) -> String {
 }
 
 /// What the centre shows with no song open.
-pub fn empty(ui: &mut Ui, no_drops: bool, actions: &mut Vec<Action>) {
+pub fn empty(
+    ui: &mut Ui,
+    (no_drops, recent): (bool, &[std::path::PathBuf]),
+    actions: &mut Vec<Action>,
+) {
     ui.vertical_centered(|ui| {
         ui.add_space((ui.available_height() / 3.0 - 40.0).max(0.0));
         ui.label(
@@ -1316,6 +1320,21 @@ pub fn empty(ui: &mut Ui, no_drops: bool, actions: &mut Vec<Action>) {
         if !no_drops {
             ui.add_space(16.0);
             ui.weak("or drop a charter song (.json) on this window");
+        }
+        if !recent.is_empty() {
+            ui.add_space(28.0);
+            style::heading(ui, "Recent");
+            ui.add_space(4.0);
+            for path in recent.iter().take(5) {
+                let name = path.file_name().map_or_else(
+                    || path.display().to_string(),
+                    |name| name.to_string_lossy().into_owned(),
+                );
+                let link = ui.link(name).on_hover_text(path.display().to_string());
+                if link.clicked() {
+                    actions.push(Action::OpenRecent(path.clone()));
+                }
+            }
         }
     });
 }
