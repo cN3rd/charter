@@ -16,14 +16,18 @@ use crate::edit::{Edit, Op};
 /// Which way the cursor moves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Step {
+    /// Toward an earlier tick.
     Earlier,
+    /// Toward a later tick.
     Later,
 }
 
 /// What a lane key did at the cursor.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Toggled {
+    /// A note was added.
     Placed,
+    /// A note already there was removed.
     Removed,
 }
 
@@ -31,23 +35,30 @@ pub enum Toggled {
 /// no other note starting on that tick shares.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct NoteAt {
+    /// Where the note starts.
     pub tick: Tick,
+    /// First lane the note covers.
     pub lane: LaneIndex,
 }
 
 /// How notes being selected meet the selection there is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Selecting {
+    /// Discard the previous selection.
     Replace,
+    /// Keep the previous selection as well.
     Add,
+    /// Remove matching notes from the selection.
     Subtract,
 }
 
 /// Why an edit did not happen. The song stays as it was.
 #[derive(Debug, thiserror::Error)]
 pub enum Refusal {
+    /// There is no plugin authorised to edit the song.
     #[error("the song is read only")]
     ReadOnly,
+    /// The song has no chart open for note edits.
     #[error("the song has no chart to edit")]
     NoChart,
     /// The edit breaks a rule of the format.
@@ -202,11 +213,13 @@ impl Song {
         }
     }
 
+    /// The validated data held by this song.
     #[must_use]
     pub const fn document(&self) -> &ValidDocument {
         &self.document
     }
 
+    /// Index of the chart currently open, even when the song has no charts.
     #[must_use]
     pub const fn chart_index(&self) -> usize {
         self.chart
@@ -233,11 +246,13 @@ impl Song {
         }
     }
 
+    /// Tick at which edits and playback begin.
     #[must_use]
     pub const fn cursor(&self) -> Tick {
         self.cursor
     }
 
+    /// Current snap resolution in notes per whole note.
     #[must_use]
     pub const fn snap(&self) -> NonZeroU16 {
         self.snap
@@ -1067,6 +1082,7 @@ impl Song {
         self.selection.iter().copied()
     }
 
+    /// Whether an object of the open chart belongs to the selection.
     #[must_use]
     pub fn is_selected(&self, object: &Object) -> bool {
         note_at(object).is_some_and(|note| self.selection.contains(&note))
@@ -1120,6 +1136,7 @@ impl Song {
             .unwrap_or_default();
     }
 
+    /// Clears the selected notes without changing the song.
     pub fn clear_selection(&mut self) {
         self.selection.clear();
     }
@@ -1535,11 +1552,13 @@ impl Song {
         self.done
     }
 
+    /// Whether there is an edit left to undo.
     #[must_use]
     pub const fn can_undo(&self) -> bool {
         self.done > 0
     }
 
+    /// Whether there is an undone edit to redo.
     #[must_use]
     pub const fn can_redo(&self) -> bool {
         self.done < self.history.len()

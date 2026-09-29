@@ -19,13 +19,19 @@ use egui::RichText;
 #[serde(rename_all = "snake_case")]
 pub enum Sound {
     // Older versions kept the note ticks off as a sound of their own.
+    /// A short, dry note click.
     #[default]
     #[serde(alias = "off")]
     Click,
+    /// A pitched electronic note.
     Beep,
+    /// A sharp impact.
     Hit,
+    /// A handclap.
     Clap,
+    /// A quieter handclap.
     SoftClap,
+    /// A bright finishing accent.
     Finish,
 }
 

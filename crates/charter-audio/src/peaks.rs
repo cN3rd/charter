@@ -9,7 +9,9 @@ const FINEST: usize = 64;
 /// The lowest and highest sample of a stretch of audio, both channels together.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Extent {
+    /// Lowest sample across both channels.
     pub low: f32,
+    /// Highest sample across both channels.
     pub high: f32,
 }
 

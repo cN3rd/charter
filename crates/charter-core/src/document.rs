@@ -29,7 +29,9 @@ pub type Extensions = BTreeMap<Key, Value>;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Marker {
+    /// Position of this marker on the song's grid.
     pub tick: Tick,
+    /// Shared or plugin-defined marker category.
     pub kind: MarkerKind,
     /// What the editor shows. May be empty.
     pub text: String,
@@ -42,23 +44,33 @@ pub type Settings = BTreeMap<String, Value>;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Document {
+    /// Core schema version, checked before reading the rest of the document.
     pub format_version: u32,
     #[serde(
         default = "default_ticks_per_beat",
         skip_serializing_if = "is_default_ticks_per_beat"
     )]
+    /// Grid resolution shared by the song and its charts.
     pub ticks_per_beat: TicksPerBeat,
+    /// Plugin defining the meaning of the charts.
     pub ruleset: Ruleset,
+    /// Ruleset-owned configuration for the song.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub settings: Settings,
+    /// Non-ruleset plugins whose data appears in the document.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub plugins: BTreeMap<Namespace, Plugin>,
+    /// Song-wide descriptive information and assets.
     pub metadata: Metadata,
+    /// File-level bank of sound references.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub samples: BTreeMap<SampleId, ResourcePath>,
+    /// Song timing inherited by charts without their own timing.
     pub timing: Timing,
+    /// Song-wide navigation points.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub markers: Vec<Marker>,
+    /// Difficulties in the order they appear in the file.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub charts: Vec<Chart>,
 }
@@ -81,6 +93,7 @@ fn is_default_ticks_per_beat(value: &TicksPerBeat) -> bool {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Ruleset {
+    /// Namespace owning this song's charts.
     pub id: Namespace,
     /// Opaque to the core; the ruleset interprets it.
     pub version: String,
@@ -94,12 +107,17 @@ pub struct Plugin {
     pub version: String,
 }
 
+/// Song credits, audio and optional descriptive assets.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Metadata {
+    /// Name shown for the song.
     pub title: String,
+    /// Performer or creator credited for the music.
     pub artist: String,
+    /// Audio resource to play with the chart.
     pub audio: ResourcePath,
+    /// Excerpt used when previewing the song.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preview: Option<Preview>,
     /// The song's picture, such as StepMania's jacket, osu!'s background or Tap Tap Revenge's
@@ -110,6 +128,7 @@ pub struct Metadata {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub genre: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    /// Plugin-owned song metadata.
     pub ext: Extensions,
 }
 
@@ -117,7 +136,9 @@ pub struct Metadata {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Preview {
+    /// Where the excerpt begins in the audio.
     pub start_seconds: AudioTime,
+    /// Excerpt duration; absent when playback runs to the end.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub length_seconds: Option<Seconds>,
 }
@@ -127,27 +148,38 @@ pub struct Preview {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Timing {
+    /// Beats pinned to moments of audio time.
     pub anchors: Vec<Anchor>,
+    /// Tempo following the last anchor.
     pub tempo: Bpm,
+    /// Pauses, warps, meters and plugin timing data.
     pub events: Vec<TimingEvent>,
 }
 
+/// A beat pinned to a moment of the audio.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Anchor {
+    /// Beat to pin on the grid.
     pub tick: Tick,
+    /// Moment at which that beat plays, possibly before the audio starts.
     pub seconds: Origin,
 }
 
+/// A change to the timing map at a particular tick.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TimingEvent {
+    /// Tick at which this change applies.
     pub tick: Tick,
+    /// Timing change or plugin-owned data.
     pub kind: TimingKind,
+    /// Plugin-owned properties of the event.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub ext: Extensions,
 }
 
+/// Timing changes interpreted by the core, or opaque plugin timing data.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum TimingKind {
@@ -160,39 +192,56 @@ pub enum TimingKind {
     /// The meter from this tick on.
     TimeSignature(TimeSignature),
     /// Plugin timing data the core carries and never interprets.
-    Other { name: Key, value: Value },
+    Other {
+        /// Plugin-qualified name of this timing kind.
+        name: Key,
+        /// Data interpreted by the owning plugin.
+        value: Value,
+    },
 }
 
 /// One difficulty of the file's ruleset.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Chart {
+    /// Difficulty name, unique within the document.
     pub name: String,
+    /// Number of lanes; absent for a plane-only chart.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lanes: Option<LaneCount>,
+    /// Ruleset-owned configuration for this difficulty.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub settings: Settings,
     /// Replaces the song's timing entirely when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timing: Option<Timing>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// Notes in tick order.
     pub objects: Vec<Object>,
+    /// Plugin-owned chart data.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub ext: Extensions,
 }
 
+/// A note, possibly with a span and nested children.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Object {
+    /// Starting tick of the note.
     pub tick: Tick,
+    /// Lane span or point on the playfield.
     pub position: Position,
+    /// Shared or plugin-defined note kind.
     pub kind: Kind,
+    /// Duration or path after the starting tick.
     pub shape: Shape,
     /// Keysound from the file-level bank.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sample: Option<SampleId>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// Notes contained within this one's span.
     pub children: Vec<Child>,
+    /// Plugin-owned properties of this note.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub ext: Extensions,
 }
@@ -206,12 +255,18 @@ string_newtype!(
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Child {
+    /// Starting tick within the parent's span.
     pub tick: Tick,
+    /// Lane span or point on the playfield.
     pub position: Position,
+    /// Shared or plugin-defined note kind.
     pub kind: Kind,
+    /// Duration or path within the parent's span.
     pub shape: Shape,
+    /// Keysound from the file-level bank.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sample: Option<SampleId>,
+    /// Plugin-owned properties of this child.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub ext: Extensions,
 }
@@ -230,17 +285,25 @@ fn is_one(value: &LaneCount) -> bool {
     *value == LaneCount::ONE
 }
 
+/// A note's location in lanes or on a continuous playfield.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum Position {
     /// `width` lanes starting at `index`, counting from 0.
     Lane {
+        /// First lane covered, counting from zero.
         index: LaneIndex,
+        /// Consecutive lanes covered, defaulting to one.
         #[serde(default = "one", skip_serializing_if = "is_one")]
         width: LaneCount,
     },
     /// A point on a continuous playfield, in units the ruleset defines.
-    Plane { x: Decimal, y: Decimal },
+    Plane {
+        /// Horizontal coordinate in the ruleset's units.
+        x: Decimal,
+        /// Vertical coordinate in the ruleset's units.
+        y: Decimal,
+    },
 }
 
 impl Position {
@@ -254,15 +317,20 @@ impl Position {
     }
 }
 
+/// Whether a note is instantaneous, sustained or follows a path.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum Shape {
+    /// No duration beyond the starting tick.
     Instant,
     /// Ticks from the object's tick to its end.
     Sustain {
+        /// Positive distance from the starting tick.
         duration: Ticks,
     },
+    /// A sequence of points following the note's starting position.
     Path {
+        /// Subsequent points in strictly increasing tick order.
         points: Points,
     },
 }
@@ -286,6 +354,8 @@ impl Shape {
 pub struct Points(Vec<PathPoint>);
 
 impl Points {
+    /// Wraps a non-empty list of path points.
+    ///
     /// # Errors
     ///
     /// Returns [`InvalidValue`] if `points` is empty.
@@ -297,6 +367,7 @@ impl Points {
         }
     }
 
+    /// The points following the object's starting position.
     #[must_use]
     pub fn as_slice(&self) -> &[PathPoint] {
         &self.0
@@ -320,14 +391,18 @@ impl TryFrom<Vec<PathPoint>> for Points {
     }
 }
 
+/// One later point of an object's path.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PathPoint {
+    /// Tick after the previous path point.
     pub tick: Tick,
+    /// Position reached at this tick.
     pub position: Position,
     /// Shapes the segment arriving at this point.
     pub ease: Ease,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    /// Plugin-owned properties of this point.
     pub ext: Extensions,
 }
 

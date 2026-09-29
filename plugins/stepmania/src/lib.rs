@@ -44,27 +44,40 @@ pub struct Song {
     charts: Vec<Chart>,
 }
 
+/// A tempo map with StepMania's extra timing segments.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Timing {
+    /// Audio positions pinned to chart ticks.
     pub anchors: Vec<Anchor>,
+    /// Starting tempo.
     pub tempo: Bpm,
+    /// Changes to tempo, metre and game-specific timing.
     pub events: Vec<TimingEvent>,
 }
 
+/// A timing change at a chart tick.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TimingEvent {
+    /// Position of the change.
     pub tick: Tick,
+    /// Effect of the change.
     pub kind: TimingKind,
 }
 
+/// Timing segments supported by StepMania.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TimingKind {
+    /// Pause before the tick.
     Stop(Seconds),
+    /// Pause after the tick.
     Delay(Seconds),
+    /// Ticks skipped without elapsed audio time.
     Warp(Ticks),
+    /// Beats and beat unit per measure.
     TimeSignature(TimeSignature),
     /// Hold ticks per beat for scoring.
     TickCount(u32),
+    /// Hit and miss combo multipliers.
     Combo(Combo),
     /// Scroll speed that eases toward `ratio` over `length`.
     Speed(Speed),
@@ -74,38 +87,54 @@ pub enum TimingKind {
     Fake(Ticks),
 }
 
+/// Multipliers applied to successful and missed notes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Combo {
+    /// Multiplier for hits.
     pub hit: u32,
+    /// Multiplier for misses.
     pub miss: u32,
 }
 
+/// An eased scroll-speed change.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Speed {
+    /// Target scroll multiplier.
     pub ratio: Decimal,
+    /// Duration and unit of the transition.
     pub length: SpeedLength,
 }
 
+/// Unit and duration of an eased speed change.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum SpeedLength {
     /// The new speed applies at once.
     Instant,
+    /// Ease over this many chart ticks.
     Ticks(Ticks),
+    /// Ease over this much audio time.
     Seconds(Seconds),
 }
 
+/// A chart's steps, settings and optional timing override.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Chart {
+    /// Display name.
     pub name: String,
+    /// Steps type, fixing the lane count.
     pub style: Style,
+    /// Named difficulty.
     pub difficulty: Difficulty,
+    /// Numeric difficulty rating.
     pub meter: u32,
+    /// Free-text description.
     pub description: String,
     /// Replaces the song's timing when present, as in `.ssc`.
     pub timing: Option<Timing>,
+    /// Placed notes.
     pub notes: Vec<Note>,
 }
 
@@ -115,7 +144,7 @@ macro_rules! styles {
         /// A StepMania steps type such as `dance-single`.
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         pub enum Style {
-            $($variant,)+
+            $(#[doc = concat!("The `", $name, "` steps type.")] $variant,)+
         }
 
         impl Style {
@@ -222,14 +251,21 @@ impl<'de> Deserialize<'de> for Style {
     }
 }
 
+/// Named StepMania chart difficulty.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Difficulty {
+    /// Entry-level steps.
     Beginner,
+    /// Easy steps.
     Easy,
+    /// Medium steps.
     Medium,
+    /// Hard steps.
     Hard,
+    /// Challenge steps.
     Challenge,
+    /// User-created steps.
     Edit,
 }
 
@@ -248,21 +284,33 @@ struct ChartSettings {
     description: String,
 }
 
+/// A single placed step.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Note {
+    /// Chart tick of the note.
     pub tick: Tick,
+    /// Column containing the note.
     pub lane: LaneIndex,
+    /// How the step is judged.
     pub kind: NoteKind,
+    /// Optional sample played with the note.
     pub keysound: Option<SampleId>,
 }
 
+/// StepMania's supported step types.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NoteKind {
+    /// One instant step.
     Tap,
+    /// Sustained step.
     Hold(Ticks),
+    /// Sustained roll requiring repeated presses.
     Roll(Ticks),
+    /// Step penalising a press.
     Mine,
+    /// Step judged on release.
     Lift,
+    /// Unjudged visible step.
     Fake,
     /// Plays its keysound unjudged.
     AutoKeysound,
@@ -503,38 +551,73 @@ impl Note {
     }
 }
 
+/// Why a document cannot be represented as a StepMania song.
 #[expect(
     clippy::error_impl_error,
     reason = "public error type is part of the plugin API"
 )]
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// Document belongs to another ruleset.
     #[error("ruleset is \"{0}\", not {ID:?}")]
     WrongRuleset(Namespace),
+    /// Chart columns do not match its steps type.
     #[error("{at}: a {style} chart has {expected} lanes, not {}", .found.map_or_else(|| "none".to_owned(), |lanes| lanes.to_string()))]
     Lanes {
+        /// Chart containing the mismatch.
         at: Location,
+        /// Steps type's external name.
         style: &'static str,
+        /// Required columns.
         expected: LaneCount,
+        /// Actual columns, if specified.
         found: Option<LaneCount>,
     },
+    /// Unrecognised key in this plugin's namespace.
     #[error("{at}: \"{key}\" is not a StepMania key")]
-    UnknownKey { at: Location, key: Key },
+    UnknownKey {
+        /// Location of the key.
+        at: Location,
+        /// Unrecognised key.
+        key: Key,
+    },
+    /// Unrecognised chart or song setting.
     #[error("{at}: \"{key}\" is not a StepMania setting")]
-    UnknownSetting { at: Location, key: String },
+    UnknownSetting {
+        /// Location of the setting.
+        at: Location,
+        /// Unrecognised setting.
+        key: String,
+    },
+    /// Note shape or position StepMania cannot play.
     #[error("{at}: not a StepMania note")]
-    UnsupportedObject { at: Location },
+    UnsupportedObject {
+        /// Location of the unsupported note.
+        at: Location,
+    },
+    /// Unsupported timing or object feature.
     #[error("{at}: {what} are not part of StepMania")]
-    Unsupported { at: Location, what: &'static str },
+    Unsupported {
+        /// Location of the unsupported feature.
+        at: Location,
+        /// Name of the feature.
+        what: &'static str,
+    },
+    /// Malformed plugin-specific setting or timing value.
     #[error("{at}: {source}")]
     Malformed {
+        /// Location of the malformed value.
         at: Location,
+        /// JSON conversion failure.
         source: serde_json::Error,
     },
+    /// Invalid format-level value.
     #[error(transparent)]
     Value(#[from] InvalidValue),
+    /// JSON conversion failure.
     #[error(transparent)]
     Json(#[from] serde_json::Error),
+    /// Invalid chart document.
     #[error(transparent)]
     Document(#[from] charter_core::Error),
 }

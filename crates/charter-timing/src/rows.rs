@@ -23,16 +23,22 @@ pub const LEAD_IN: f64 = 0.10;
 /// How many bars a row holds.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum BarsPerRow {
+    /// Half a bar, for close inspection.
     Half,
+    /// One bar across the row.
     #[default]
     One,
+    /// Two bars across the row.
     Two,
+    /// Four bars across the row.
     Four,
 }
 
 impl BarsPerRow {
+    /// Choices in toolbar order.
     pub const ALL: [Self; 4] = [Self::Half, Self::One, Self::Two, Self::Four];
 
+    /// Bar count represented by this choice.
     #[must_use]
     pub const fn bars(self) -> f64 {
         match self {
@@ -43,6 +49,7 @@ impl BarsPerRow {
         }
     }
 
+    /// Short label for the toolbar.
     #[must_use]
     pub const fn name(self) -> &'static str {
         match self {
@@ -57,16 +64,22 @@ impl BarsPerRow {
 /// How long a row is in the time layout.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SecondsPerRow {
+    /// One second across the row.
     One,
+    /// Two seconds across the row.
     #[default]
     Two,
+    /// Four seconds across the row.
     Four,
+    /// Eight seconds across the row.
     Eight,
 }
 
 impl SecondsPerRow {
+    /// Choices in toolbar order.
     pub const ALL: [Self; 4] = [Self::One, Self::Two, Self::Four, Self::Eight];
 
+    /// Audio duration represented by this choice.
     #[must_use]
     pub const fn seconds(self) -> f64 {
         match self {
@@ -77,6 +90,7 @@ impl SecondsPerRow {
         }
     }
 
+    /// Short label for the toolbar.
     #[must_use]
     pub const fn name(self) -> &'static str {
         match self {
@@ -144,6 +158,7 @@ impl<'a> Bars<'a> {
         Self { layout, ..self }
     }
 
+    /// Whether positions in these rows count bars or seconds.
     #[must_use]
     pub const fn layout(&self) -> Layout {
         self.layout
@@ -177,6 +192,7 @@ impl<'a> Bars<'a> {
         self.measures.get(at)
     }
 
+    /// Measures used for translating ticks into bar positions.
     #[must_use]
     pub fn measures(&self) -> &[Measure] {
         &self.measures
@@ -250,8 +266,11 @@ impl<'a> Bars<'a> {
 /// part starts, to where it ends.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Span {
+    /// Beginning of the lead-in, in bars or seconds.
     pub from: f64,
+    /// Beginning of the row's own span.
     pub start: f64,
+    /// End of the row's own span.
     pub to: f64,
 }
 
@@ -372,6 +391,7 @@ impl Row {
         self.from + across * (self.to - self.from)
     }
 
+    /// Screen x-coordinate of `tick` in the row's layout.
     #[must_use]
     pub fn x(&self, bars: &Bars, tick: Tick) -> f32 {
         let at = float_from_i64(i64::from(tick));
@@ -427,10 +447,13 @@ pub fn seconds_at_tick(timing: Valid<'_, Timing>, tick: f64) -> f64 {
 /// How an anchor is drawn.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Anchor {
+    /// Tick held by the anchor.
     pub tick: Tick,
     /// The tempo from it on.
     pub bpm: String,
+    /// Whether this anchor has keyboard focus.
     pub focused: bool,
+    /// Whether this anchor is selected.
     pub selected: bool,
     /// How strongly it pulses, from 0 to 1, when an edit ran into it.
     pub pulse: f32,
@@ -439,14 +462,23 @@ pub struct Anchor {
 /// Everything a row draws.
 #[derive(Debug)]
 pub struct Scene<'a> {
+    /// Validated timing of the song being drawn.
     pub timing: Valid<'a, Timing>,
+    /// Measures and layout used to locate ticks.
     pub bars: &'a Bars<'a>,
+    /// Beat lines shown over the waveform.
     pub grid: Grid,
+    /// Decoded audio envelope, when available.
     pub peaks: Option<&'a Peaks>,
+    /// Detected transients, in time order.
     pub onsets: &'a [Onset],
+    /// Minimum strength for a transient to appear.
     pub sensitivity: f32,
+    /// Distances from detected transients to grid lines.
     pub residuals: &'a [Residual],
+    /// Visible anchor labels and highlights.
     pub anchors: &'a [Anchor],
+    /// Playhead tick.
     pub cursor: Tick,
     /// Where a drag would drop, and whether it is on a snap target.
     pub ghost: Option<(f32, bool)>,

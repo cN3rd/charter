@@ -34,6 +34,7 @@ macro_rules! string_newtype {
                 }
             }
 
+            /// The validated text held by this identifier.
             #[must_use]
             pub fn as_str(&self) -> &str {
                 &self.0
@@ -76,6 +77,7 @@ pub struct Key {
     name: Name,
 }
 impl Key {
+    /// Joins an owning namespace and non-empty name into an extension key.
     #[must_use]
     pub const fn new(namespace: Namespace, name: Name) -> Self {
         Self { namespace, name }
@@ -87,6 +89,7 @@ impl Key {
         &self.namespace
     }
 
+    /// Part of the key after the first dot.
     #[must_use]
     pub const fn name(&self) -> &Name {
         &self.name
@@ -134,7 +137,8 @@ macro_rules! vocabulary {
         #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, ::serde::Deserialize)]
         #[serde(try_from = "String")]
         pub enum $name {
-            $($variant,)+
+            $(#[doc = concat!("Shared `", $word, "` vocabulary word.")]
+            $variant,)+
             /// A plugin's own word, under its namespace.
             Other(Key),
         }

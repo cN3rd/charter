@@ -43,29 +43,41 @@ pub struct Song {
     theme: Option<String>,
 }
 
+/// Supported chart column counts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Lanes {
+    /// Three-column chart.
     Three,
+    /// Four-column chart.
     Four,
+    /// Five-column chart.
     Five,
 }
 
 /// A song's tempo map.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Tempo {
+    /// Audio positions pinned to chart ticks.
     pub anchors: Vec<Anchor>,
+    /// Starting tempo.
     pub tempo: Bpm,
+    /// Metre changes.
     pub changes: Vec<TempoChange>,
 }
 
+/// A change to the song's timing grid.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TempoChange {
+    /// Position of the change.
     pub tick: Tick,
+    /// Effect of the change.
     pub kind: TempoKind,
 }
 
+/// Timing changes supported by Tap Tap Revenge.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TempoKind {
+    /// Beats and beat unit per measure.
     TimeSignature(TimeSignature),
 }
 
@@ -90,9 +102,13 @@ pub struct Chart {
 /// A chart's standard level, easiest first.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Difficulty {
+    /// Entry-level chart.
     Easy,
+    /// Intermediate chart.
     Medium,
+    /// Advanced chart.
     Hard,
+    /// Highest standard level.
     Extreme,
 }
 
@@ -180,19 +196,28 @@ const PRESETS: [(&str, &[(Difficulty, &str)]); 4] = [
     ),
 ];
 
+/// One note on a chart.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Note {
+    /// Tick at which the note starts.
     pub tick: Tick,
+    /// What the player does at that tick.
     pub kind: NoteKind,
 }
 
+/// Notes Tap Tap Revenge can play.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NoteKind {
+    /// Single-column tap.
     Tap {
+        /// Column to press.
         lane: LaneIndex,
     },
+    /// Sustained single-column press.
     Hold {
+        /// Column to hold.
         lane: LaneIndex,
+        /// Length of the hold.
         duration: Ticks,
     },
     /// Shake the device in this direction.
@@ -203,51 +228,100 @@ pub enum NoteKind {
     MegaTap,
 }
 
+/// A horizontal direction in the tap area.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Side {
+    /// Left side.
     Left,
+    /// Right side.
     Right,
 }
 
+/// Direction in which to shake the device.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Shake {
+    /// Shake left.
     Left,
+    /// Shake right.
     Right,
+    /// Shake down.
     Down,
 }
 
 /// Written as the ruleset version.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Why a document cannot be represented as a Tap Tap Revenge song.
 #[expect(
     clippy::error_impl_error,
     reason = "public error type is part of the plugin API"
 )]
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// Document belongs to another ruleset.
     #[error("ruleset is \"{0}\", not {ID:?}")]
     WrongRuleset(Namespace),
+    /// Songs must have a chart.
     #[error("a tap tap revenge song needs at least one chart")]
     NoCharts,
+    /// Note shape or position this game cannot play.
     #[error("{at}: not a tap tap revenge note")]
-    UnsupportedObject { at: Location },
+    UnsupportedObject {
+        /// Location of the note.
+        at: Location,
+    },
+    /// Unsupported document feature.
     #[error("{at}: {what} are not part of tap tap revenge")]
-    Unsupported { at: Location, what: &'static str },
+    Unsupported {
+        /// Location of the feature.
+        at: Location,
+        /// Name of the feature.
+        what: &'static str,
+    },
+    /// Unrecognised plugin key.
     #[error("{at}: \"{key}\" is not a tap tap revenge key")]
-    UnknownKey { at: Location, key: Key },
+    UnknownKey {
+        /// Location of the key.
+        at: Location,
+        /// Unrecognised key.
+        key: Key,
+    },
+    /// Unrecognised chart or song setting.
     #[error("{at}: \"{key}\" is not a tap tap revenge setting")]
-    UnknownSetting { at: Location, key: String },
+    UnknownSetting {
+        /// Location of the setting.
+        at: Location,
+        /// Unrecognised setting.
+        key: String,
+    },
+    /// Difficulty other than the four standard levels.
     #[error("{at}: the difficulty {found} is not easy, medium, hard or extreme")]
-    Difficulty { at: Location, found: String },
+    Difficulty {
+        /// Location of the difficulty.
+        at: Location,
+        /// Unsupported value.
+        found: String,
+    },
+    /// Invalid theme name.
     #[error("{at}: a theme is a name, such as DeltaHeavyTheme, not {found}")]
-    Theme { at: Location, found: String },
+    Theme {
+        /// Location of the theme.
+        at: Location,
+        /// Invalid value.
+        found: String,
+    },
+    /// Chart with an unsupported column count.
     #[error("{at} has {} lanes; a chart has 3, 4 or 5", .lanes.map_or_else(|| "no".to_owned(), |lanes| lanes.to_string()))]
     Lanes {
+        /// Location of the chart.
         at: Location,
+        /// Column count, if specified.
         lanes: Option<LaneCount>,
     },
+    /// Invalid format-level value.
     #[error(transparent)]
     Value(#[from] InvalidValue),
+    /// Invalid chart document.
     #[error(transparent)]
     Document(#[from] charter_core::Error),
 }
@@ -881,7 +955,6 @@ fn read_tempo(timing: &Timing, stream: Stream) -> Result<Tempo, Error> {
     })
 }
 
-/// Fails on the first key, since this ruleset defines no settings.
 /// Settings holding `theme` as the theme, if there is one.
 fn themed(theme: Option<&str>) -> Settings {
     theme

@@ -12,6 +12,7 @@ use crate::unit::LaneCount;
 pub struct Layout {
     /// The name the game gives the layout.
     pub name: String,
+    /// Number of playable lanes in charts of this layout.
     pub lanes: LaneCount,
 }
 
@@ -19,8 +20,11 @@ pub struct Layout {
 /// by index, and its charts, in order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NewSong {
+    /// Metadata supplied by the editor.
     pub metadata: Metadata,
+    /// Index into the plugin's [`RulesetPlugin::layouts`].
     pub layout: usize,
+    /// Charts to create in order.
     pub charts: Vec<NewChart>,
 }
 
@@ -28,7 +32,9 @@ pub struct NewSong {
 /// [difficulty level](Difficulties::levels) it is, by index, when the game has levels.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NewChart {
+    /// Name shown for this difficulty.
     pub name: String,
+    /// Index into [`Difficulties::levels`], when applicable.
     pub level: Option<usize>,
 }
 
@@ -57,6 +63,7 @@ pub struct Difficulties {
 /// `Metallica` for the standard `Medium`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DifficultyPreset {
+    /// Name shown for this group of difficulties.
     pub name: String,
     /// The levels it has, by index into [`Difficulties::levels`], easiest first, and what their
     /// charts are called.
@@ -66,7 +73,9 @@ pub struct DifficultyPreset {
 /// Where a setting sits: on the song, or on each of its charts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SettingScope {
+    /// Store the setting on the song.
     Song,
+    /// Store the setting separately on each chart.
     Chart,
 }
 
@@ -80,6 +89,7 @@ pub struct TextSetting {
     pub name: String,
     /// What it does, for a tooltip.
     pub about: String,
+    /// Location at which the setting is stored.
     pub scope: SettingScope,
 }
 
@@ -98,6 +108,7 @@ pub struct NoteChange {
 /// Timing read from another program's format, ready to take the place of a song's.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ImportedTiming {
+    /// Timing map to substitute for the song's.
     pub timing: Timing,
     /// What the format held that the timing leaves out, in words for the user.
     pub left_out: Vec<String>,

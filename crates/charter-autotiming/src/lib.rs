@@ -35,6 +35,7 @@ const SNAP: f64 = 0.005;
 /// A stretch of constant tempo the beats fit, and how well.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Fitted {
+    /// The start, tempo and meter of this stretch.
     pub section: Section,
     /// Beats of the song the stretch spans.
     pub beats: usize,
@@ -47,7 +48,9 @@ pub struct Fitted {
 /// A tempo map estimated from a song's beats: its stretches, and the timing they make.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Estimate {
+    /// Fitted stretches, earliest first.
     pub fitted: Vec<Fitted>,
+    /// The chart's resolved timing from those stretches.
     pub timing: Timing,
 }
 

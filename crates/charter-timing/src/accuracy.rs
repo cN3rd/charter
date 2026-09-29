@@ -33,9 +33,13 @@ pub const ON_ONSET_MS: f64 = 1.0;
 /// An onset near a grid line, and how far from it: positive when the audio comes late.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Residual {
+    /// Audio position of the onset.
     pub seconds: f64,
+    /// Detected onset strength.
     pub strength: f32,
+    /// Nearest grid tick to the onset.
     pub line: Tick,
+    /// Signed onset offset from that tick, in milliseconds.
     pub ms: f64,
 }
 
@@ -178,10 +182,13 @@ fn rms(values: impl Iterator<Item = f64>) -> Option<f64> {
 /// A fit of anchors to the audio, to look at before taking.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Fitted {
+    /// Fitted anchors in tick order.
     pub pins: Vec<Pin>,
+    /// Fitted tempo following the last anchor.
     pub tail: Bpm,
     /// The error of the stretch fitted before the fit and after, in milliseconds.
     pub before_ms: f64,
+    /// Residual error after fitting, in milliseconds.
     pub after_ms: f64,
 }
 
@@ -409,18 +416,37 @@ fn to_half_bpm(
 pub enum Issue {
     /// The bar starting on `tick` misses its onsets by `median_ms` in the middle.
     Bar {
+        /// First tick of the bar.
         tick: Tick,
+        /// Bar number to show in the issue list.
         number: i64,
+        /// Median absolute offset from its onsets, in milliseconds.
         median_ms: f64,
     },
     /// The segment from the anchor on `tick` is shorter than a beat.
-    Short { tick: Tick },
+    Short {
+        /// Tick of the anchor beginning the short segment.
+        tick: Tick,
+    },
     /// The tempo from the anchor on `tick` differs from the one before by `percent`.
-    Jump { tick: Tick, percent: f64 },
+    Jump {
+        /// Tick where the tempo changes.
+        tick: Tick,
+        /// Magnitude of the tempo change, as a percentage.
+        percent: f64,
+    },
     /// The anchor on `tick` is `ms` from the onset nearest it.
-    Anchor { tick: Tick, ms: f64 },
+    Anchor {
+        /// Tick pinned by the anchor.
+        tick: Tick,
+        /// Signed distance to the nearest onset, in milliseconds.
+        ms: f64,
+    },
     /// A time signature on `tick` without an anchor, so its downbeat is not pinned.
-    Metre { tick: Tick },
+    Metre {
+        /// Tick where the metre changes without an anchor.
+        tick: Tick,
+    },
 }
 
 impl Issue {

@@ -18,10 +18,18 @@ use crate::{ID, SCROLL_SPEED};
 /// Why pasted text holds no timing.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ImportError {
+    /// A malformed timing point at the given line.
     #[error("line {line}: {why}")]
-    Line { line: usize, why: String },
+    Line {
+        /// One-based line number in the input.
+        line: usize,
+        /// Reason the timing point was rejected.
+        why: String,
+    },
+    /// No red timing point sets an initial tempo.
     #[error("there is no uninherited timing point, which osu! needs to start its tempo")]
     NoTempo,
+    /// A timing value cannot fit the document format.
     #[error("{0}")]
     OutOfRange(String),
 }

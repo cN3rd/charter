@@ -39,7 +39,12 @@ pub enum Command {
     TogglePlay,
     /// Loop the ticks from the first to the second with the metronome, or stop looping them
     /// when they loop already.
-    Loop { from: Tick, to: Tick },
+    Loop {
+        /// First tick of the loop, inclusive.
+        from: Tick,
+        /// Tick where playback returns to the start.
+        to: Tick,
+    },
     /// Switch between the usual playback speed and the alternate one.
     ToggleRate,
     /// Turn the metronome on or off.
@@ -52,25 +57,53 @@ pub enum Command {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Edit {
     /// Makes the beat on `tick` fall `seconds` into the audio, anchoring it there.
-    Sync { tick: Tick, seconds: f64 },
+    Sync {
+        /// Beat to pin.
+        tick: Tick,
+        /// Position in the audio, in seconds.
+        seconds: f64,
+    },
     /// Sets the tempo starting at this anchor, accounting for stops, delays and warps.
-    SetBpmAt { tick: Tick, bpm: Bpm },
+    SetBpmAt {
+        /// Anchor beginning the segment.
+        tick: Tick,
+        /// Tempo to set on that segment.
+        bpm: Bpm,
+    },
     /// Removes the anchors on the ticks.
     Unsync(Vec<Tick>),
     /// Moves each anchor on a first tick to the beat on its second, keeping their moments.
     MoveAnchors(Vec<(Tick, Tick)>),
     /// Moves the anchors on the ticks `by` seconds, merged into the step before when `merge`.
     Nudge {
+        /// Anchors to shift in the audio.
         ticks: Vec<Tick>,
+        /// Signed shift in seconds.
         by: f64,
+        /// Whether to join the preceding nudge in undo history.
         merge: bool,
     },
     /// Sets the tempo after the last anchor.
-    TailBpm { bpm: Bpm, merge: bool },
+    TailBpm {
+        /// Tempo beyond the last anchor.
+        bpm: Bpm,
+        /// Whether to join the preceding adjustment in undo history.
+        merge: bool,
+    },
     /// Doubles, or halves, the tempo after each anchor on the ticks.
-    Scale { ticks: Vec<Tick>, double: bool },
+    Scale {
+        /// Anchors whose following segments change tempo.
+        ticks: Vec<Tick>,
+        /// Double when true, halve otherwise.
+        double: bool,
+    },
     /// Makes these the anchors, with this tempo after the last, as a fit does.
-    Repin { pins: Vec<Pin>, tail: Bpm },
+    Repin {
+        /// Replacement anchors, in tick order.
+        pins: Vec<Pin>,
+        /// Tempo beyond the last replacement anchor.
+        tail: Bpm,
+    },
 }
 
 impl Edit {

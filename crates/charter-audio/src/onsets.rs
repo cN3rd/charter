@@ -47,7 +47,9 @@ const COMPRESSION: f32 = 100.0;
 /// above 0 to 1.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Onset {
+    /// Position from the start of the track.
     pub seconds: f64,
+    /// Prominence relative to the track's strongest onset.
     pub strength: f32,
 }
 

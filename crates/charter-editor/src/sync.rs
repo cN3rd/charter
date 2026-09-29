@@ -11,7 +11,9 @@ use crate::song::{Refusal, Song};
 /// An anchor: the beat on `tick` pinned `seconds` into the audio.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Pin {
+    /// Beat fixed to the audio.
     pub tick: Tick,
+    /// Moment in the audio, measured from its start.
     pub seconds: f64,
 }
 

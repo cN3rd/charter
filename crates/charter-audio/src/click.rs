@@ -12,7 +12,12 @@ use crate::{Track, cast};
 pub enum Tone {
     /// A note's tick: `sound`, pitched `cents` hundredths of a semitone up, or down when
     /// negative, by playing it faster or slower.
-    Tick { sound: Tick, cents: i16 },
+    Tick {
+        /// The sample or synthesised sound to play.
+        sound: Tick,
+        /// Pitch shift in hundredths of a semitone.
+        cents: i16,
+    },
     /// A metronome's sound for a beat.
     Beat(Kit),
     /// A metronome's sound for the first beat of a measure.
@@ -31,8 +36,11 @@ pub enum Tick {
     Beep,
     /// The synthesised hit sounds.
     Hit,
+    /// A sharp handclap.
     Clap,
+    /// A quieter handclap.
     SoftClap,
+    /// The finishing hit.
     Finish,
 }
 
@@ -70,19 +78,29 @@ impl Tick {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Kit {
+    /// A gated tone pair.
     #[default]
     ToneGate,
+    /// A soft buzzy pair.
     SoftBuzz,
+    /// A pair of stick clicks.
     StickClick,
+    /// A filtered knocking pair.
     FilterKnock,
+    /// A pure sine pair.
     PureSine,
+    /// A rising ramp pair.
     RampTick,
+    /// A decaying square-wave pair.
     SquareDecay,
+    /// A shaker-like pair.
     ShakerBurst,
+    /// A bright tick pair.
     BrightTick,
 }
 
 impl Kit {
+    /// Every built-in metronome kit, in display order.
     pub const ALL: [Self; 9] = [
         Self::ToneGate,
         Self::SoftBuzz,
@@ -95,6 +113,7 @@ impl Kit {
         Self::BrightTick,
     ];
 
+    /// The label shown when choosing a metronome kit.
     #[must_use]
     pub const fn name(self) -> &'static str {
         match self {
@@ -140,6 +159,7 @@ impl Kit {
 pub struct Gain(f32);
 
 impl Gain {
+    /// The recorded amplitude, without attenuation.
     pub const FULL: Self = Self(1.0);
 
     /// The factor on the samples, from 0 to 1.
@@ -186,9 +206,11 @@ impl From<Gain> for f32 {
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Volumes {
+    /// The song's own audio.
     pub music: Gain,
     /// The tick on each note.
     pub ticks: Gain,
+    /// The metronome's beats and accents.
     pub metronome: Gain,
     /// The metronome's clicks between beats, as a share of its volume.
     pub subdivision: Gain,

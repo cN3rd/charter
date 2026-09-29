@@ -48,19 +48,27 @@ pub struct Song {
     charts: Vec<Chart>,
 }
 
+/// Song timing with osu!mania's inherited scroll-speed points.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Timing {
+    /// Audio positions pinned to chart ticks.
     pub anchors: Vec<Anchor>,
+    /// Starting tempo.
     pub tempo: Bpm,
+    /// Metre and scroll-speed changes.
     pub events: Vec<TimingEvent>,
 }
 
+/// One change to the timing grid or scroll speed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TimingEvent {
+    /// Position of the change.
     pub tick: Tick,
+    /// Effect of the change.
     pub kind: TimingKind,
 }
 
+/// Changes osu!mania timing supports.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TimingKind {
     /// Beats per measure. osu! meters are always in quarter notes.
@@ -72,7 +80,9 @@ pub enum TimingKind {
 /// One difficulty, which osu! calls a beatmap's version.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Chart {
+    /// Beatmap version name.
     pub name: String,
+    /// Key count fixing the lane count.
     pub keys: Keys,
     /// HP drain rate.
     pub hp: Difficulty,
@@ -80,6 +90,7 @@ pub struct Chart {
     pub od: Difficulty,
     /// Replaces the song's timing when present. osu! stores timing per beatmap.
     pub timing: Option<Timing>,
+    /// Placed taps and holds.
     pub notes: Vec<Note>,
 }
 
@@ -87,20 +98,35 @@ pub struct Chart {
 /// two; see `MAX_STAGE_KEYS` in osu!lazer's `ManiaRuleset`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Keys {
+    /// One key.
     K1,
+    /// Two keys.
     K2,
+    /// Three keys.
     K3,
+    /// Four keys.
     K4,
+    /// Five keys.
     K5,
+    /// Six keys.
     K6,
+    /// Seven keys.
     K7,
+    /// Eight keys.
     K8,
+    /// Nine keys.
     K9,
+    /// Ten keys.
     K10,
+    /// Twelve keys on two stages.
     K12,
+    /// Fourteen keys on two stages.
     K14,
+    /// Sixteen keys on two stages.
     K16,
+    /// Eighteen keys on two stages.
     K18,
+    /// Twenty keys on two stages.
     K20,
 }
 
@@ -241,12 +267,16 @@ impl Difficulty {
     }
 }
 
+/// One placed tap or hold.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Note {
+    /// Start position in chart ticks.
     pub tick: Tick,
+    /// Column containing the note.
     pub column: LaneIndex,
     /// Ticks held, for a hold note.
     pub hold: Option<Ticks>,
+    /// Optional sample to play with the note.
     pub keysound: Option<SampleId>,
 }
 
@@ -455,36 +485,69 @@ impl Note {
     }
 }
 
+/// Why a document cannot be represented as an osu!mania song.
 #[expect(
     clippy::error_impl_error,
     reason = "public error type is part of the plugin API"
 )]
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// Document belongs to another ruleset.
     #[error("ruleset is \"{0}\", not {ID:?}")]
     WrongRuleset(Namespace),
+    /// Beatmap has an unsupported key count.
     #[error("{at}: osu!mania does not play {} keys", .found.map_or_else(|| "no".to_owned(), |lanes| lanes.to_string()))]
     Keys {
+        /// Location of the beatmap.
         at: Location,
+        /// Key count, if specified.
         found: Option<LaneCount>,
     },
+    /// Unsupported document feature.
     #[error("{at}: {what} are not part of osu!mania")]
-    Unsupported { at: Location, what: &'static str },
+    Unsupported {
+        /// Location of the feature.
+        at: Location,
+        /// Name of the feature.
+        what: &'static str,
+    },
+    /// Note shape or position this game cannot play.
     #[error("{at}: not an osu!mania note")]
-    UnsupportedObject { at: Location },
+    UnsupportedObject {
+        /// Location of the note.
+        at: Location,
+    },
+    /// Unrecognised plugin key.
     #[error("{at}: \"{key}\" is not an osu!mania key")]
-    UnknownKey { at: Location, key: Key },
+    UnknownKey {
+        /// Location of the key.
+        at: Location,
+        /// Unrecognised key.
+        key: Key,
+    },
+    /// Unrecognised chart or song setting.
     #[error("{at}: \"{key}\" is not an osu!mania setting")]
-    UnknownSetting { at: Location, key: String },
+    UnknownSetting {
+        /// Location of the setting.
+        at: Location,
+        /// Unrecognised setting.
+        key: String,
+    },
+    /// Malformed plugin-specific value.
     #[error("{at}: {source}")]
     Malformed {
+        /// Location of the value.
         at: Location,
+        /// JSON conversion failure.
         source: serde_json::Error,
     },
+    /// Invalid format-level value.
     #[error(transparent)]
     Value(#[from] InvalidValue),
+    /// JSON conversion failure.
     #[error(transparent)]
     Json(#[from] serde_json::Error),
+    /// Invalid chart document.
     #[error(transparent)]
     Document(#[from] charter_core::Error),
 }

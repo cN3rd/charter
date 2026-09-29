@@ -13,8 +13,11 @@ use crate::unit::{Bpm, Origin, Tick, TicksPerBeat, TimeSignature};
 /// `meter` beats to a bar starting on its first beat.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Section {
+    /// Starting moment in the audio.
     pub seconds: f64,
+    /// Duration of one beat in seconds.
     pub beat_seconds: f64,
+    /// Beats per bar from this section's start.
     pub meter: NonZeroU16,
 }
 
@@ -22,15 +25,21 @@ pub struct Section {
 /// starts on, and how many fell on the tick of a later one and gave way to it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Sectioned {
+    /// Pinned beats and meter changes produced from the sections.
     pub timing: Timing,
+    /// Sections retained, paired with their computed starting ticks.
     pub kept: Vec<(i64, Section)>,
+    /// Number of sections displaced by another on the same tick.
     pub merged: usize,
 }
 
+/// A section could not be converted to chart timing.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum SectionError {
+    /// No sections were supplied.
     #[error("there is no section to start the tempo")]
     Empty,
+    /// A time, tick or tempo falls outside the representable range.
     #[error("{0}")]
     OutOfRange(String),
 }

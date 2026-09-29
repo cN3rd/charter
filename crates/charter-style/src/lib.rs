@@ -8,6 +8,7 @@ use egui::{self, Color32, CornerRadius, FontFamily, FontId, Margin, RichText, St
 
 pub use egui_phosphor::regular as icon;
 
+/// Ordinary text against the dark surfaces.
 pub const TEXT: Color32 = Color32::from_gray(214);
 /// At least 4.5:1 against the panels, which egui's own weak text is not.
 pub const WEAK_TEXT: Color32 = Color32::from_gray(146);
@@ -40,40 +41,67 @@ pub const WARN: Color32 = Color32::from_rgb(240, 180, 90);
 /// The strip a notice sits on, tinted from the warning.
 pub const NOTICE: Color32 = Color32::from_rgb(40, 34, 24);
 
+/// The notefield's surround behind its lanes.
 pub const COLUMN_BG: Color32 = Color32::from_gray(24);
+/// The darker interior of each note lane.
 pub const LANES_BG: Color32 = Color32::from_gray(13);
+/// Separators between adjacent note lanes.
 pub const DIVIDER: Color32 = Color32::from_gray(58);
+/// Ordinary beat guides across the notefield.
 pub const BEAT_LINE: Color32 = Color32::from_gray(36);
 /// Beat lines among sixteenth lines, a step brighter so each beat still reads.
 pub const BEAT_LINE_STRONG: Color32 = Color32::from_gray(52);
+/// Guides between beats at sixteenth-note spacing.
 pub const SIXTEENTH_LINE: Color32 = Color32::from_gray(26);
+/// Bar boundaries on the notefield.
 pub const MEASURE_LINE: Color32 = Color32::from_gray(92);
+/// Timing changes and anchor positions.
 pub const TIMING_MARK: Color32 = Color32::from_rgb(230, 170, 90);
+/// The cursor's bright line.
 pub const NOW_LINE: Color32 = Color32::from_rgb(236, 240, 245);
+/// A faint band around the cursor.
 pub const NOW_BAND: Color32 = Color32::from_rgba_unmultiplied_const(255, 255, 255, 10);
+/// Section markers on the chart.
 pub const SECTION: Color32 = Color32::from_rgb(110, 200, 130);
+/// Bookmarks on the chart.
 pub const BOOKMARK: Color32 = Color32::from_rgb(190, 140, 255);
+/// Tap notes.
 pub const TAP: Color32 = ACCENT;
+/// Hold notes.
 pub const HOLD: Color32 = Color32::from_rgb(60, 100, 170);
+/// Roll notes.
 pub const ROLL: Color32 = Color32::from_rgb(230, 140, 70);
+/// Mine notes.
 pub const MINE: Color32 = Color32::from_rgb(235, 90, 90);
+/// Fake notes.
 pub const FAKE: Color32 = Color32::from_gray(110);
+/// Notes without a dedicated colour.
 pub const OTHER: Color32 = Color32::from_rgb(170, 170, 120);
+/// Highlighted notes in a selection.
 pub const SELECTED: Color32 = Color32::from_rgb(200, 224, 255);
+/// The outline of a selection marquee.
 pub const MARQUEE: Color32 = ACCENT;
 /// The waveform, quieter than the notes it sits beside, on a strip of its own.
 pub const WAVE: Color32 = Color32::from_rgb(92, 128, 176);
+/// The strip beneath a waveform.
 pub const WAVE_BG: Color32 = Color32::from_gray(16);
+/// The translucent interior of a selection marquee.
 pub const MARQUEE_FILL: Color32 = Color32::from_rgba_unmultiplied_const(110, 170, 255, 28);
 /// The timing window: onsets, how far they miss the grid either way, and anchors as they stand,
 /// focused and selected. Early and late differ in lightness as well as hue, so they read without
 /// colour.
 pub const ONSET: Color32 = Color32::from_rgb(170, 180, 196);
+/// A timing estimate before the chart's grid line.
 pub const RESIDUAL_EARLY: Color32 = Color32::from_rgb(90, 160, 255);
+/// A timing estimate after the chart's grid line.
 pub const RESIDUAL_LATE: Color32 = Color32::from_rgb(255, 190, 110);
+/// An ordinary timing anchor.
 pub const ANCHOR: Color32 = TIMING_MARK;
+/// An anchor under keyboard focus.
 pub const ANCHOR_FOCUS: Color32 = Color32::from_rgb(255, 214, 140);
+/// A selected timing anchor.
 pub const ANCHOR_SELECTED: Color32 = ACCENT;
+/// The area beyond the timing window's editable reach.
 pub const REACH_DIM: Color32 = Color32::from_rgba_unmultiplied_const(0, 0, 0, 120);
 
 /// The family for titles and emphasis.

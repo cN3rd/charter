@@ -12,10 +12,12 @@ use crate::unit::{Tick, Ticks, TicksPerBeat, TimeSignature};
 pub struct Measure {
     /// Counting from 0 for the measure holding tick 0, and down from -1 before it.
     pub number: i64,
+    /// First tick of this measure.
     pub start: Tick,
     /// A whole measure of its meter, or less where the next time signature cuts it short. Both
     /// ends stay inside the ticks a document can hold.
     pub length: Ticks,
+    /// Meter governing this measure.
     pub meter: TimeSignature,
 }
 

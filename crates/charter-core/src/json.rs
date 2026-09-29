@@ -68,6 +68,7 @@ impl ValidDocument {
         Ok(serde_json::to_vec_pretty(&self.0)?)
     }
 
+    /// The validated raw document, without losing its ownership.
     #[must_use]
     pub const fn document(&self) -> &Document {
         &self.0
@@ -129,6 +130,7 @@ impl<'a> Valid<'a, Chart> {
         }
     }
 
+    /// Objects in this chart, in tick order.
     pub fn objects(&self) -> impl Iterator<Item = Valid<'a, Object>> + 'a {
         let document = self.document;
         self.part
@@ -145,6 +147,7 @@ impl<'a> Valid<'a, Object> {
         span_end(self.part.tick, &self.part.shape)
     }
 
+    /// Children of this object, in tick order.
     pub fn children(&self) -> impl Iterator<Item = Valid<'a, Child>> + 'a {
         let document = self.document;
         self.part

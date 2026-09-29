@@ -12,12 +12,16 @@ use crate::unit::{LaneCount, Tick, TimeSignature};
 )]
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// Input exceeds the reader's byte limit.
     #[error("document is {0} bytes, over the {MAX_DOCUMENT_BYTES}-byte limit")]
     TooLarge(usize),
+    /// The file uses a schema newer than this reader supports.
     #[error("format version {0} is newer than the supported {FORMAT_VERSION}")]
     UnsupportedVersion(u32),
+    /// Input could not be decoded or written as JSON.
     #[error(transparent)]
     Json(#[from] serde_json::Error),
+    /// A cross-field rule of the format was broken.
     #[error(transparent)]
     Invalid(#[from] Violation),
 }
@@ -25,27 +29,40 @@ pub enum Error {
 /// A place in a document, shown as a path such as `charts[1].objects[4]`. Indices count from 0.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Location {
+    /// Song-level ruleset settings.
     Settings,
+    /// Non-ruleset plugin declarations.
     Plugins,
+    /// File-level sample bank.
     Samples,
+    /// Plugin-owned song metadata.
     MetadataExt,
     /// The marker list as a whole.
     Markers,
+    /// Marker by its index in the song's marker list.
     Marker(usize),
     /// A timing map.
     Timing(Stream),
     /// An event of a timing map.
     Event {
+        /// Map containing the event.
         stream: Stream,
+        /// Index in that map's events.
         index: usize,
     },
+    /// Chart by index.
     Chart(usize),
+    /// Ruleset settings of a chart by index.
     ChartSettings(usize),
+    /// Plugin data of a chart by index.
     ChartExt(usize),
     /// A chart's object list as a whole.
     Objects(usize),
+    /// An object by its chart and object indices.
     Object {
+        /// Chart containing the object.
         chart: usize,
+        /// Index in that chart's objects.
         index: usize,
     },
 }
@@ -53,7 +70,9 @@ pub enum Location {
 /// Which timing map a location lies in: the song's or a chart's own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stream {
+    /// The song's shared timing.
     Song,
+    /// Timing of the chart at this index.
     Chart(usize),
 }
 
@@ -82,53 +101,94 @@ impl fmt::Display for Location {
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 #[error("{at}: {rule}")]
 pub struct Violation {
+    /// Location of the first broken rule.
     pub at: Location,
+    /// Rule broken at this location.
     pub rule: Rule,
 }
 
 /// The rules the format chapter lists for the validation pass.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum Rule {
+    /// Entries must appear in tick order.
     #[error("items are not sorted by tick")]
     Unsorted,
+    /// Only one timing event of a given kind may occur on a tick.
     #[error("two timing events of one kind on tick {tick}")]
-    DuplicateEvent { tick: Tick },
+    DuplicateEvent {
+        /// Tick containing the repeated event.
+        tick: Tick,
+    },
+    /// Only one marker of a given kind may occur on a tick.
     #[error("two markers of one kind on tick {tick}")]
-    DuplicateMarker { tick: Tick },
+    DuplicateMarker {
+        /// Tick containing the repeated marker.
+        tick: Tick,
+    },
+    /// Timing requires at least one pinned beat.
     #[error("timing has no anchor")]
     NoAnchor,
+    /// Pinned beats must progress in both ticks and audio time.
     #[error("anchors do not strictly increase in both ticks and seconds")]
     AnchorsNotIncreasing,
+    /// A pinned beat cannot lie inside ticks that take no time.
     #[error("anchor on tick {tick} lies inside a warp")]
-    AnchorInWarp { tick: Tick },
+    AnchorInWarp {
+        /// Pinned beat inside the warp.
+        tick: Tick,
+    },
+    /// Pauses and warps leave insufficient time between anchors.
     #[error("the pauses and warps before the anchor on tick {tick} leave its beats no time")]
-    BadAnchorSegment { tick: Tick },
+    BadAnchorSegment {
+        /// Anchor ending the segment.
+        tick: Tick,
+    },
+    /// A meter cannot divide this resolution into whole ticks.
     #[error("a {0} measure is not a whole number of ticks")]
     FractionalMeasure(TimeSignature),
+    /// A span's end does not fit within the tick type.
     #[error("span ends past the last tick")]
     SpanPastLastTick,
+    /// Warps may not cover the same ticks.
     #[error("warp overlaps the previous one")]
     OverlappingWarps,
+    /// Two notes occupy the same lane and tick.
     #[error("two objects cover one lane on tick {tick}")]
-    LaneTaken { tick: Tick },
+    LaneTaken {
+        /// Tick where the notes collide.
+        tick: Tick,
+    },
+    /// Chart names must be unique within the file.
     #[error("chart name {0:?} is used twice")]
     DuplicateChartName(String),
+    /// A note refers to a sample missing from the file's bank.
     #[error("sample \"{0}\" is not in the bank")]
     UnknownSample(SampleId),
+    /// A lane span extends beyond the chart's layout.
     #[error("position covers a lane past the last of {lanes}")]
-    LaneOutOfRange { lanes: LaneCount },
+    LaneOutOfRange {
+        /// Lane count of the containing chart.
+        lanes: LaneCount,
+    },
+    /// Lane positions require a chart layout.
     #[error("lane position in a chart without lanes")]
     MissingLanes,
+    /// Points of a path must progress in tick order.
     #[error("path ticks do not strictly increase")]
     PathNotIncreasing,
+    /// A path cannot switch between lane and plane positions.
     #[error("path mixes lane and plane positions")]
     MixedPath,
+    /// A child must fit inside its parent's span.
     #[error("child lies outside its parent's span")]
     ChildOutsideParent,
+    /// Plugin data names an owner not declared by the document.
     #[error("namespace \"{0}\" is neither the ruleset nor a declared plugin")]
     UndeclaredNamespace(Namespace),
+    /// A declared plugin left no data in the document.
     #[error("plugin \"{0}\" is declared but leaves no data")]
     UnusedPlugin(Namespace),
+    /// The ruleset must not also appear as a non-ruleset plugin.
     #[error("ruleset \"{0}\" is also declared as a plugin")]
     RulesetInPlugins(Namespace),
 }

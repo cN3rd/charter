@@ -6,21 +6,33 @@ use std::path::{Path, PathBuf};
 
 /// Where the host's files live.
 pub trait Disk {
+    /// Reads all bytes at `path`.
+    ///
     /// # Errors
     /// Whatever keeps the file from being read.
     fn read(&self, path: &Path) -> io::Result<Vec<u8>>;
+    /// Replaces the bytes at `path`.
+    ///
     /// # Errors
     /// Whatever keeps the file from being written.
     fn write(&self, path: &Path, bytes: &[u8]) -> io::Result<()>;
+    /// Moves `from` to `to`.
+    ///
     /// # Errors
     /// Whatever keeps the file from being moved.
     fn rename(&self, from: &Path, to: &Path) -> io::Result<()>;
+    /// Removes the file at `path`.
+    ///
     /// # Errors
     /// Whatever keeps the file from being removed, such as it not being there.
     fn remove(&self, path: &Path) -> io::Result<()>;
+    /// Copies `from` to `to`.
+    ///
     /// # Errors
     /// Whatever keeps the file from being copied.
     fn copy(&self, from: &Path, to: &Path) -> io::Result<()>;
+    /// Makes `path` and any missing parent directories.
+    ///
     /// # Errors
     /// Whatever keeps the folder from being made.
     fn make_folder(&self, path: &Path) -> io::Result<()>;
@@ -146,12 +158,15 @@ pub mod memory {
     /// Files held in memory, some of which refuse to be written or moved.
     #[derive(Debug, Default)]
     pub struct Memory {
+        /// File contents keyed by path.
         pub files: RefCell<BTreeMap<PathBuf, Vec<u8>>>,
         /// Files that refuse writes.
         pub unwritable: Vec<PathBuf>,
+        /// Files that refuse reads.
         pub unreadable: Vec<PathBuf>,
         /// Whether every move fails.
         pub stuck: bool,
+        /// Whether a copy writes half its bytes before failing.
         pub partial_copy_fail: bool,
     }
 
@@ -163,6 +178,7 @@ pub mod memory {
     }
 
     impl Memory {
+        /// Starts with the given path-and-content pairs.
         pub fn with(files: &[(&str, &[u8])]) -> Self {
             let files = files
                 .iter()
@@ -174,6 +190,7 @@ pub mod memory {
             }
         }
 
+        /// Returns the bytes at `path`, if present.
         pub fn get(&self, path: &str) -> Option<Vec<u8>> {
             self.files.borrow().get(Path::new(path)).cloned()
         }

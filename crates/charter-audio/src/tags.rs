@@ -12,7 +12,9 @@ use symphonia_wrap as symphonia;
 /// The song facts an audio file's tags carry, where it carries them.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Tags {
+    /// Song title, if tagged.
     pub title: Option<String>,
+    /// Performing artist, if tagged.
     pub artist: Option<String>,
     /// The picture the file holds, its front cover where it names one.
     pub artwork: Option<Artwork>,
@@ -21,6 +23,7 @@ pub struct Tags {
 /// A picture held inside an audio file, as it was encoded.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Artwork {
+    /// Encoded PNG or JPEG data.
     pub bytes: Vec<u8>,
     /// What a file of it is named with: `png` or `jpg`.
     pub extension: &'static str,

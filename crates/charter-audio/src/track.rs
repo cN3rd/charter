@@ -23,8 +23,10 @@ pub struct Track {
 /// Why bytes did not decode.
 #[derive(Debug, thiserror::Error)]
 pub enum DecodeError {
+    /// The file could not be recognised or decoded.
     #[error("not audio charter can read: {0}")]
     Unreadable(String),
+    /// The file contains no decodable audio track.
     #[error("the file has no audio track")]
     NoTrack,
 }
@@ -93,8 +95,7 @@ impl Track {
         Ok(Self { rate, frames })
     }
 
-    /// `frames` at `rate` frames per second, or a second of silence at 44.1 kHz for a rate of
-    /// zero.
+    /// `frames` at `rate` frames per second, using 44.1 kHz when the rate is zero.
     #[must_use]
     pub fn from_frames(rate: u32, frames: Vec<[f32; 2]>) -> Self {
         let rate = NonZeroU32::new(rate).unwrap_or(NonZeroU32::MIN.saturating_add(44_099));
@@ -113,6 +114,7 @@ impl Track {
         self.rate
     }
 
+    /// Stereo frames in playback order.
     #[must_use]
     pub fn frames(&self) -> &[[f32; 2]] {
         &self.frames

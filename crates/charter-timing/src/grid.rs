@@ -17,10 +17,13 @@ pub const DEFAULT: u16 = 4;
 /// A kind of line, drawn so that each is told apart by its shape as well as its colour.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Line {
+    /// Start of a measure.
     Downbeat,
+    /// Beat within a measure.
     Beat,
     /// A line between beats: dashed, or dotted for the triplet family.
     Sub {
+        /// Whether to draw this line as a triplet dot.
         triplet: bool,
     },
 }
@@ -28,6 +31,7 @@ pub enum Line {
 /// A grid of lines `1/resolution` of a whole note apart.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Grid {
+    /// Number of divisions in a whole note.
     pub resolution: NonZeroU16,
 }
 
@@ -159,8 +163,11 @@ impl Grid {
 /// Where the nearest grid line to a moment is, and how long a step of the grid is there.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Near {
+    /// Nearest tick on the grid.
     pub line: Tick,
+    /// Audio position of that line.
     pub seconds: f64,
+    /// Duration between the neighbouring lines, in seconds.
     pub step_seconds: f64,
 }
 

@@ -50,9 +50,13 @@ pub enum Request {
     /// of `folders`, keeping the newest `kept` copies of it there; say what fails with
     /// [`Window::snapshot_failed`].
     Snapshot {
+        /// Name used for the dated copies.
         name: String,
+        /// Serialised song to preserve.
         bytes: Vec<u8>,
+        /// Destinations for the copies.
         folders: Vec<PathBuf>,
+        /// Maximum number of copies to retain per destination.
         kept: u32,
     },
     /// Ask the user for a folder to keep snapshots in, and pass it to
@@ -82,10 +86,15 @@ pub enum Request {
     /// `volumes` say how loud the audio and each kind of click play, and `looping` the stretch
     /// to play over and over, in seconds, if any.
     Play {
+        /// Position in the audio where playback starts, in seconds.
         from: f64,
+        /// Playback speed relative to the audio's usual speed.
         rate: f64,
+        /// Tones timed from the start of the audio, in seconds.
         clicks: Vec<(f64, charter_audio::Tone)>,
+        /// Levels for the music and each kind of click.
         volumes: charter_audio::Volumes,
+        /// Interval in the audio to repeat, in seconds.
         looping: Option<(f64, f64)>,
         /// Whether audio played faster or slower than its speed keeps its pitch.
         keep_pitch: bool,
@@ -101,7 +110,9 @@ pub enum Request {
     /// Play `clicks` over silence, each at its time in seconds from now, alongside anything
     /// playing: a taste of a metronome sound.
     Preview {
+        /// Tones timed from now, in seconds.
         clicks: Vec<(f64, charter_audio::Tone)>,
+        /// Levels for the preview's tones.
         volumes: charter_audio::Volumes,
     },
     /// Ask the user to choose an audio file for the open song, and pass it to
@@ -134,7 +145,9 @@ pub enum Request {
     /// [`Window::timing_found`], or call [`Window::weights_needed`] when the beat tracker's
     /// weights are not there yet.
     FindTiming {
+        /// Audio to analyse for beats.
         file: PathBuf,
+        /// Resolution of the song receiving the timing.
         ticks_per_beat: charter_core::TicksPerBeat,
     },
     /// Download the beat tracker's weights, the user having agreed, telling
@@ -736,6 +749,7 @@ impl Window {
         }
     }
 
+    /// The user's current editor choices, to be kept by the host between runs.
     #[must_use]
     pub const fn settings(&self) -> &Settings {
         &self.settings

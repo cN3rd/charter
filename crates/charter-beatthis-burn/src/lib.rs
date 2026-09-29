@@ -28,14 +28,17 @@ const CHUNK: usize = 1500;
 /// trained on its input's edges.
 const BORDER: usize = 6;
 
+/// Failures while loading the model or converting input audio.
 #[expect(
     clippy::error_impl_error,
     reason = "this is the crate's recoverable error type for weights and resampling"
 )]
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// The checkpoint did not load into the network.
     #[error("the weights would not load: {0}")]
     Weights(String),
+    /// The audio could not be converted to the network's sample rate.
     #[error("the audio would not resample: {0}")]
     Resample(String),
 }
@@ -54,9 +57,13 @@ pub struct Tracker {
 /// a beat.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Beats {
+    /// Network beat score at each 50 Hz spectrogram frame.
     pub beat_logits: Vec<f32>,
+    /// Network downbeat score at each spectrogram frame.
     pub downbeat_logits: Vec<f32>,
+    /// Beat positions in seconds from the start of the audio.
     pub beats: Vec<f64>,
+    /// Downbeat positions in seconds, each also a beat.
     pub downbeats: Vec<f64>,
 }
 

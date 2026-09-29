@@ -425,7 +425,9 @@ impl fmt::Display for Tick {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(from = "(NonZeroU16, NonZeroU16)", into = "(NonZeroU16, NonZeroU16)")]
 pub struct TimeSignature {
+    /// Number of denominator-sized beats in a measure.
     pub numerator: NonZeroU16,
+    /// Note value of each beat relative to a whole note.
     pub denominator: NonZeroU16,
 }
 
