@@ -1,7 +1,7 @@
 //! Pointer gestures and context menus for timing rows.
 
 use crate::keyboard::nudge_notches;
-use crate::rows::{GRAB, Row};
+use crate::rows::{GRAB, Ghost, Reach, Row};
 
 use super::{Command, Edit, FINE, Frame, Pos2, Tick, TimingWindow, accuracy, lead, rows};
 
@@ -41,7 +41,7 @@ pub(crate) enum Gesture {
 
 /// The bar positions the anchor being dragged on the grid may reach, if one is; the rest is
 /// dimmed.
-pub(crate) fn reach(window: &TimingWindow, frame: &Frame<'_>) -> Option<(f64, f64)> {
+pub(crate) fn reach(window: &TimingWindow, frame: &Frame<'_>) -> Option<Reach> {
     let Gesture::DragBeat { from, .. } = window.gesture else {
         return None;
     };
@@ -62,7 +62,10 @@ pub(crate) fn reach(window: &TimingWindow, frame: &Frame<'_>) -> Option<(f64, f6
         .iter()
         .find(|pin| pin.tick > last)
         .map(|pin| pin.tick);
-    Some((before.map_or(f64::MIN, bar), after.map_or(f64::MAX, bar)))
+    Some(Reach {
+        from: before.map_or(f64::MIN, bar),
+        to: after.map_or(f64::MAX, bar),
+    })
 }
 
 /// Where in `row` what is under way would land, and whether that is on a snap target: a
@@ -73,11 +76,12 @@ pub(crate) fn ghost(
     row: &Row,
     hover: Option<Pos2>,
     shift: bool,
-) -> Option<(f32, bool)> {
+) -> Option<Ghost> {
     match window.gesture {
-        Gesture::DragBeat { to, .. } if row.holds(&frame.bars, to) => {
-            Some((row.x(&frame.bars, to), window.snap_grid && !shift))
-        }
+        Gesture::DragBeat { to, .. } if row.holds(&frame.bars, to) => Some(Ghost {
+            x: row.x(&frame.bars, to),
+            snapped: window.snap_grid && !shift,
+        }),
         Gesture::DragAudio { to, .. } => {
             let snapped = window.snap_onset
                 && !shift
@@ -85,7 +89,10 @@ pub(crate) fn ghost(
                     .onsets
                     .iter()
                     .any(|onset| (onset.seconds - to).abs() < 1e-9);
-            Some((seconds_x(frame, row, to)?, snapped))
+            Some(Ghost {
+                x: seconds_x(frame, row, to)?,
+                snapped,
+            })
         }
         Gesture::Idle if frame.editable => {
             let pos = hover?;
@@ -97,7 +104,10 @@ pub(crate) fn ghost(
                 .then(|| accuracy::snap(frame.onsets, window.sensitivity, seconds))
                 .flatten();
             let target = snapped.unwrap_or(seconds);
-            Some((seconds_x(frame, row, target)?, snapped.is_some()))
+            Some(Ghost {
+                x: seconds_x(frame, row, target)?,
+                snapped: snapped.is_some(),
+            })
         }
         Gesture::Idle | Gesture::Band { .. } | Gesture::DragBeat { .. } => None,
     }
@@ -826,10 +836,16 @@ mod tests {
             },
             ..TimingWindow::default()
         };
-        let (at, snapped) = ghost(&window, &frame, &row, None, false).unwrap();
-        assert!((at - row.x(&frame.bars, Tick::new(1440))).abs() < 1.0);
-        assert!(snapped);
-        assert_eq!(ghost(&window, &frame, &row, None, true), Some((at, false)));
+        let target = ghost(&window, &frame, &row, None, false).unwrap();
+        assert!((target.x - row.x(&frame.bars, Tick::new(1440))).abs() < 1.0);
+        assert!(target.snapped);
+        assert_eq!(
+            ghost(&window, &frame, &row, None, true),
+            Some(Ghost {
+                x: target.x,
+                snapped: false
+            })
+        );
         window.gesture = pointer::Gesture::Idle;
         assert_eq!(
             anchor_near(&frame, &row, row.x(&frame.bars, Tick::new(960))),

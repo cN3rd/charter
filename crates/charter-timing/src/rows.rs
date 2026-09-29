@@ -462,6 +462,24 @@ pub struct Anchor {
     pub pulse: f32,
 }
 
+/// Where a pending anchor edit would land on a row.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Ghost {
+    /// Screen x-coordinate on the row.
+    pub x: f32,
+    /// Whether the target was snapped to the beat grid or an onset.
+    pub snapped: bool,
+}
+
+/// Bar-position interval a dragged anchor may occupy.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Reach {
+    /// First allowed position.
+    pub from: f64,
+    /// First position beyond the allowed interval.
+    pub to: f64,
+}
+
 /// Everything a row draws.
 #[derive(Debug)]
 pub struct Scene<'a> {
@@ -484,9 +502,9 @@ pub struct Scene<'a> {
     /// Playhead tick.
     pub cursor: Tick,
     /// Where a drag would drop, and whether it is on a snap target.
-    pub ghost: Option<(f32, bool)>,
+    pub ghost: Option<Ghost>,
     /// The bar positions a dragged anchor may reach; the rest is dimmed.
-    pub reach: Option<(f64, f64)>,
+    pub reach: Option<Reach>,
 }
 
 /// Draws `row` of `scene` with `painter`.
@@ -500,8 +518,8 @@ pub fn draw(painter: &egui::Painter, row: &Row, scene: &Scene<'_>) {
     grid(painter, row, audio, scene);
     onsets(painter, row, audio, scene);
     strip(painter, row, scene);
-    if let Some((from, to)) = scene.reach {
-        dim(painter, row, audio, from, to);
+    if let Some(reach) = scene.reach {
+        dim(painter, row, audio, reach.from, reach.to);
     }
     for anchor in scene
         .anchors
@@ -514,13 +532,13 @@ pub fn draw(painter: &egui::Painter, row: &Row, scene: &Scene<'_>) {
         let x = row.x(scene.bars, scene.cursor);
         painter.vline(x, audio.y_range(), Stroke::new(1.5, style::NOW_LINE));
     }
-    if let Some((x, snapped)) = scene.ghost
-        && audio.x_range().contains(x)
+    if let Some(ghost) = scene.ghost
+        && audio.x_range().contains(ghost.x)
     {
-        painter.vline(x, audio.y_range(), Stroke::new(1.0, style::ACCENT));
-        let centre = pos2(x, audio.top() + 7.0);
+        painter.vline(ghost.x, audio.y_range(), Stroke::new(1.0, style::ACCENT));
+        let centre = pos2(ghost.x, audio.top() + 7.0);
         let stroke = Stroke::new(1.5, style::ACCENT);
-        if snapped {
+        if ghost.snapped {
             painter.circle_stroke(centre, 4.0, stroke);
         } else {
             painter.rect_stroke(
