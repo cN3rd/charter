@@ -78,9 +78,9 @@ missing_debug_implementations = "warn"
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
-unwrap_used = "warn"
-expect_used = "warn"
-indexing_slicing = "warn"
+restriction = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+# blanket_clippy_restriction_lints = "allow"
 
 # ponytail: tick/sample arithmetic is everywhere in a charting app and silent wraparound
 # is a nightmare to debug. Drop this if DSP profiling ever shows it costs real time.
