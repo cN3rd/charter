@@ -1661,7 +1661,8 @@ fn taken(objects: &[Object], object: &Object) -> bool {
 fn fits(object: &Object, lanes: u16) -> bool {
     match object.position {
         Position::Lane { index, width } => {
-            u16::from(index).saturating_add(u16::from(width)) <= lanes
+            u32::from(u16::from(index)).saturating_add(u32::from(u16::from(width)))
+                <= u32::from(lanes)
         }
         Position::Plane { .. } => true,
     }
@@ -2708,6 +2709,12 @@ pub(crate) mod tests {
         assert_eq!(selection(&song), [note_at(0, 2)]);
         let chart = song.chart().unwrap();
         assert!(song.is_selected(&chart.objects[0]));
+    }
+
+    #[test]
+    fn a_note_past_the_last_representable_lane_does_not_fit() {
+        let object = super::note(Tick::new(0), LaneIndex::new(u16::MAX), Kind::Tap);
+        assert!(!fits(&object, u16::MAX));
     }
 
     #[test]
