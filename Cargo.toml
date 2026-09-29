@@ -70,9 +70,10 @@ egui_kittest = "0.36.2"
 proptest = { version = "1.11.0", default-features = false, features = ["std"] }
 
 # ponytail: correctness enforced by the compiler, not by review.
-# Loosen an individual lint at the call site with #[allow], don't weaken it here.
+# Loosen an individual lint at the call site with #[expect(.., reason = "..")], don't weaken it here.
 [workspace.lints.rust]
 unsafe_code = "forbid"
+missing_docs = "warn"
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
 missing_debug_implementations = "warn"
 
