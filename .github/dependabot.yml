@@ -1,0 +1,7 @@
+# Bumps the actions in ci.yml to each new major version; minor updates arrive through the major tags.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

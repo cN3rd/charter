@@ -25,7 +25,7 @@ jobs:
       # Warnings fail CI, so the lint table in Cargo.toml stays the whole story.
       RUSTFLAGS: -D warnings
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -47,7 +47,7 @@ jobs:
     name: Kani proofs
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: model-checking/kani-github-action@v1
         with:
           kani-version: 0.68.0
@@ -70,7 +70,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.os == 'windows' && 'x86_64-pc-windows-msvc' || 'x86_64-unknown-linux-gnu' }}
@@ -89,7 +89,7 @@ jobs:
           echo 'C:\Program Files\Git\bin' >> "$GITHUB_PATH"
           echo 'C:\Program Files\Git\usr\bin' >> "$GITHUB_PATH"
       - run: just dist-${{ matrix.os }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: charter-${{ matrix.os }}
           path: |
@@ -106,7 +106,7 @@ jobs:
       contents: write
     steps:
       # The whole history and every tag, to find the last prerelease and list what came after.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: List the commits since the last prerelease
@@ -127,7 +127,7 @@ jobs:
             git log --no-merges --format='- %s (%h)' "$range"
           } > notes.md
           cat notes.md
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
