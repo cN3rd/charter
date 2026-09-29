@@ -15,6 +15,11 @@ use charter_autotiming::estimate;
 use charter_beatthis_burn::Tracker;
 use charter_core::{DEFAULT_TICKS_PER_BEAT, Section};
 
+#[expect(
+    clippy::print_stdout,
+    clippy::use_debug,
+    reason = "this interactive benchmark reports timings and estimates to stdout"
+)]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
     let (Some(weights), Some(audio)) = (args.get(1), args.get(2)) else {
@@ -118,12 +123,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[expect(
+    clippy::print_stdout,
+    reason = "this benchmark prints its error summary"
+)]
+/// Prints the distribution of `errors` in milliseconds for `what`.
 fn report(what: &str, mut errors: Vec<f64>) {
     errors.sort_by(f64::total_cmp);
     let share = |ms: f64| {
         let within = errors.iter().filter(|error| **error <= ms).count();
-        #[allow(clippy::cast_precision_loss)] // beats of a song
-        let share = within as f64 / errors.len().max(1) as f64;
+        let share = count_float(within) / count_float(errors.len().max(1));
         share
     };
     println!(
@@ -135,6 +144,27 @@ fn report(what: &str, mut errors: Vec<f64>) {
         share(10.0) * 100.0,
         share(20.0) * 100.0
     );
+}
+
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_precision_loss,
+    reason = "song-length counts are converted for benchmark percentages"
+)]
+/// A beat count as a floating-point value for benchmark percentages.
+fn count_float(count: usize) -> f64 {
+    count as f64
+}
+
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "the percentile index is bounded by the slice before use"
+)]
+/// A bounded percentile position as an integer slice index.
+fn percentile_index(index: f64) -> usize {
+    index as usize
 }
 
 /// The uninherited timing points of an .osu file as sections.
@@ -166,7 +196,9 @@ fn red_lines(text: &str) -> Vec<Section> {
 fn beats_of(sections: &[Section], end: f64) -> Vec<f64> {
     let mut beats = Vec::new();
     for (at, section) in sections.iter().enumerate() {
-        let until = sections.get(at + 1).map_or(end, |next| next.seconds);
+        let until = sections
+            .get(at.saturating_add(1))
+            .map_or(end, |next| next.seconds);
         let mut beat = section.seconds;
         while beat < until {
             beats.push(beat);
@@ -182,7 +214,7 @@ fn distance(sections: &[Section], seconds: f64) -> f64 {
     let at = sections
         .partition_point(|section| section.seconds <= seconds)
         .max(1)
-        - 1;
+        .saturating_sub(1);
     let Some(section) = sections.get(at) else {
         return f64::INFINITY;
     };
@@ -199,12 +231,7 @@ fn distance(sections: &[Section], seconds: f64) -> f64 {
 
 /// The value a `fraction` of the way through `sorted`, or NaN for none.
 fn percentile(sorted: &[f64], fraction: f64) -> f64 {
-    #[allow(
-        clippy::cast_precision_loss,
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss
-    )] // an index into a song's beats
-    let at = (sorted.len() as f64 * fraction) as usize;
+    let at = percentile_index(count_float(sorted.len()) * fraction);
     sorted
         .get(at.min(sorted.len().saturating_sub(1)))
         .copied()

@@ -142,7 +142,10 @@ fn lag(beats: &[f64], onsets: &[Onset]) -> f64 {
         })
         .collect();
     shifts.sort_by(f64::total_cmp);
-    shifts.get(shifts.len() / 2).copied().unwrap_or(0.0)
+    shifts
+        .get(shifts.len().div_euclid(2))
+        .copied()
+        .unwrap_or(0.0)
 }
 
 /// The beats counted against the song's typical gap between them: a gap of about two counts as
@@ -157,7 +160,10 @@ fn counted(beats: &[(f64, f64, bool)]) -> Vec<Beat> {
         })
         .collect();
     gaps.sort_by(f64::total_cmp);
-    let period = gaps.get(gaps.len() / 2).copied().unwrap_or(f64::INFINITY);
+    let period = gaps
+        .get(gaps.len().div_euclid(2))
+        .copied()
+        .unwrap_or(f64::INFINITY);
     let mut counted: Vec<Beat> = Vec::with_capacity(beats.len());
     for &(seconds, weight, downbeat) in beats {
         let index = match counted.last() {
@@ -167,9 +173,8 @@ fn counted(beats: &[(f64, f64, bool)]) -> Vec<Beat> {
                 if gap < period / 2.0 {
                     continue;
                 }
-                #[allow(clippy::cast_possible_truncation)] // beats in a gap
-                let steps = (gap / period).round().max(1.0) as i64;
-                last.index + steps
+                let steps = rounded_steps((gap / period).round().max(1.0));
+                last.index.saturating_add(steps)
             }
         };
         counted.push(Beat {
@@ -180,6 +185,36 @@ fn counted(beats: &[(f64, f64, bool)]) -> Vec<Beat> {
         });
     }
     counted
+}
+
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    reason = "a beat gap's rounded step count saturates at the integer limits"
+)]
+/// Rounded beat gap as a saturating integer count.
+fn rounded_steps(steps: f64) -> i64 {
+    steps as i64
+}
+
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_precision_loss,
+    reason = "song-length beat counts are converted for the floating-point fit"
+)]
+/// A beat count as a floating-point value for the fit.
+fn beat_float(count: usize) -> f64 {
+    count as f64
+}
+
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_precision_loss,
+    reason = "song-length beat indices are converted for the floating-point fit"
+)]
+/// A counted beat index as a floating-point value for the fit.
+fn index_float(index: i64) -> f64 {
+    index as f64
 }
 
 /// The beats of `stretch` within [`OUTLIER`], or three times the stretch's spread, of its line.
@@ -196,18 +231,24 @@ fn on_line(stretch: &[Beat]) -> impl Iterator<Item = Beat> + '_ {
 /// Sums over a run of beats that give its weighted least-squares line in O(1).
 #[derive(Clone, Copy, Debug, Default)]
 struct Sums {
+    /// Sum of fit weights.
     w: f64,
+    /// Sum of weight times beat index.
     wk: f64,
+    /// Sum of weight times squared beat index.
     wkk: f64,
+    /// Sum of weight times beat time in seconds.
     wt: f64,
+    /// Sum of weight times index times time in seconds.
     wkt: f64,
+    /// Sum of weight times squared time in seconds.
     wtt: f64,
 }
 
 impl Sums {
+    /// The sums after including `beat`.
     fn add(self, beat: &Beat) -> Self {
-        #[allow(clippy::cast_precision_loss)] // beats of a song
-        let k = beat.index as f64;
+        let k = index_float(beat.index);
         let (w, t) = (beat.weight, beat.seconds);
         Self {
             w: self.w + w,
@@ -232,6 +273,10 @@ impl Sums {
 
     /// The line `seconds = start + period × index` fitting the run, and its weighted squared
     /// error.
+    #[expect(
+        clippy::suspicious_operation_groupings,
+        reason = "w·wkk − wk·wk is the normal equations' determinant"
+    )]
     fn line(self) -> (f64, f64, f64) {
         let spread = self.w * self.wkk - self.wk * self.wk;
         let period = (self.w * self.wkt - self.wk * self.wt) / spread;
@@ -241,24 +286,25 @@ impl Sums {
     }
 }
 
-// Every index into the tables is at most `beats.len()`, their last.
-#[allow(clippy::indexing_slicing)]
+#[expect(
+    clippy::indexing_slicing,
+    reason = "every table index is bounded by beats.len()"
+)]
 /// `beats` split into stretches of one tempo each: the partition with the least squared error
 /// from each stretch's line plus a cost for each stretch, a little more for one that does not
 /// start on a downbeat.
 fn split(beats: &[Beat]) -> Vec<&[Beat]> {
     let len = beats.len();
-    let mut sums = vec![Sums::default(); len + 1];
+    let mut sums = vec![Sums::default(); len.saturating_add(1)];
     for (at, beat) in beats.iter().enumerate() {
-        sums[at + 1] = sums[at].add(beat);
+        sums[at.saturating_add(1)] = sums[at].add(beat);
     }
-    #[allow(clippy::cast_precision_loss)] // beats of a song
-    let penalty = 2.0 * JITTER * JITTER * (len as f64).ln().max(1.0) * 8.0;
-    let mut best = vec![f64::INFINITY; len + 1];
-    let mut from = vec![0; len + 1];
+    let penalty = 2.0 * JITTER * JITTER * beat_float(len).ln().max(1.0) * 8.0;
+    let mut best = vec![f64::INFINITY; len.saturating_add(1)];
+    let mut from = vec![0; len.saturating_add(1)];
     best[0] = 0.0;
     for end in MIN_BEATS..=len {
-        for start in (0..=end - MIN_BEATS).rev() {
+        for start in (0..=end.saturating_sub(MIN_BEATS)).rev() {
             if !best[start].is_finite() {
                 continue;
             }
@@ -306,21 +352,22 @@ fn fit(stretch: &[Beat]) -> Option<Fitted> {
             |beat: &Beat| (grid(start, snapped_period, beat) - grid(free, period, beat)).abs();
         (apart(first).max(apart(last)) <= SNAP).then_some((start, snapped_period))
     });
-    let (start, period, is_snapped) = snapped.map_or_else(
+    let (start, final_period, is_snapped) = snapped.map_or_else(
         || {
-            let period = 60.0 / ((bpm * 1000.0).round() / 1000.0);
-            (offset(stretch, period), period, false)
+            let quantized_period = 60.0 / ((bpm * 1000.0).round() / 1000.0);
+            (offset(stretch, quantized_period), quantized_period, false)
         },
-        |(start, period)| (start, period, true),
+        |(snapped_start, snapped_period)| (snapped_start, snapped_period, true),
     );
     let bar = stretch.iter().find(|beat| beat.downbeat).unwrap_or(first);
     Some(Fitted {
         section: Section {
-            seconds: grid(start, period, bar),
-            beat_seconds: period,
+            seconds: grid(start, final_period, bar),
+            beat_seconds: final_period,
             meter: meter(stretch),
         },
-        beats: usize::try_from(last.index - first.index + 1).unwrap_or(0),
+        beats: usize::try_from(last.index.saturating_sub(first.index).saturating_add(1))
+            .unwrap_or(0),
         snapped: is_snapped,
         error: spread,
     })
@@ -328,16 +375,14 @@ fn fit(stretch: &[Beat]) -> Option<Fitted> {
 
 /// Where the grid with `period` puts `beat`'s line, from the line of index 0 at `start`.
 fn grid(start: f64, period: f64, beat: &Beat) -> f64 {
-    #[allow(clippy::cast_precision_loss)] // beats of a song
-    let index = beat.index as f64;
+    let index = index_float(beat.index);
     start + period * index
 }
 
 /// The start of index 0 that best fits `stretch` to a grid of `period`, by weight.
 fn offset(stretch: &[Beat], period: f64) -> f64 {
     let (weighted, weight) = stretch.iter().fold((0.0, 0.0), |(sum, weight), beat| {
-        #[allow(clippy::cast_precision_loss)] // beats of a song
-        let index = beat.index as f64;
+        let index = index_float(beat.index);
         (
             sum + beat.weight * (beat.seconds - period * index),
             weight + beat.weight,
@@ -359,21 +404,21 @@ fn meter(stretch: &[Beat]) -> NonZeroU16 {
         let [earlier, later] = pair else {
             continue;
         };
-        if let Some(count) = usize::try_from(later - earlier)
+        if let Some(count) = usize::try_from(later.saturating_sub(*earlier))
             .ok()
             .and_then(|beats| counts.get_mut(beats))
         {
-            *count += 1;
+            *count = count.saturating_add(1);
         }
     }
-    let (beats, times) = counts
+    let (most_common_beats, times) = counts
         .iter()
         .enumerate()
         .skip(1)
         .max_by_key(|&(beats, times)| (*times, beats == 4))
         .unwrap_or((4, &0));
-    let beats = if *times >= 2 { beats } else { 4 };
-    NonZeroU16::new(u16::try_from(beats).unwrap_or(4)).unwrap_or(NonZeroU16::MIN)
+    let meter_beats = if *times >= 2 { most_common_beats } else { 4 };
+    NonZeroU16::new(u16::try_from(meter_beats).unwrap_or(4)).unwrap_or(NonZeroU16::MIN)
 }
 
 #[cfg(test)]
@@ -387,8 +432,7 @@ mod tests {
         let period = 60.0 / bpm;
         let times: Vec<f64> = (0..count)
             .map(|n| {
-                #[allow(clippy::cast_precision_loss)]
-                let n = n as f64;
+                let n = beat_float(n);
                 // A tracker's beats sit a frame's worth either side of the audio's.
                 start + period * n + 0.008 * (n * 1.7).sin()
             })
@@ -401,8 +445,7 @@ mod tests {
     fn onsets(start: f64, bpm: f64, count: usize) -> Vec<Onset> {
         (0..count)
             .map(|n| {
-                #[allow(clippy::cast_precision_loss)]
-                let n = n as f64;
+                let n = beat_float(n);
                 Onset {
                     seconds: start + 60.0 / bpm * n,
                     strength: 0.8,
