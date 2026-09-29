@@ -135,7 +135,7 @@ impl Player {
             .loading
             .as_ref()
             .map(|(path, _)| path)
-            .or(self.loaded.as_ref().map(|(path, ..)| path))
+            .or_else(|| self.loaded.as_ref().map(|(path, ..)| path))
             .or(self.failed.as_ref());
         if have != wanted.as_ref() {
             if self.playing.is_some() {
@@ -148,12 +148,11 @@ impl Player {
             let project = window.song_folder();
             self.loading = wanted.map(|path| {
                 let (send, receive) = std::sync::mpsc::channel();
-                let file = path.clone();
+                let file = PathBuf::clone(&path);
                 let (cache, onset_cache) = if inline {
                     (None, None)
                 } else {
-                    let file = &file;
-                    let at = |kind: &str| cache_file(project.as_deref(), file, kind);
+                    let at = |kind: &str| cache_file(project.as_deref(), &file, kind);
                     (at("peaks"), at("onsets"))
                 };
                 // The peaks are read or worked out beside the decoding, off the window's thread.
@@ -309,10 +308,27 @@ impl Player {
                     sound.set_playback_rate(rate, Tween::default());
                 }
             }
-            _ => {}
+            Request::Write { .. }
+            | Request::SaveAs { .. }
+            | Request::Open
+            | Request::OpenPath { .. }
+            | Request::Snapshot { .. }
+            | Request::ChooseSnapshotFolder
+            | Request::Autosave { .. }
+            | Request::DropAutosave
+            | Request::CopyAudio { .. }
+            | Request::ChooseAudio
+            | Request::ChooseArtwork
+            | Request::DecodeArtwork { .. }
+            | Request::ReadArtwork { .. }
+            | Request::ChooseTimingFile
+            | Request::ReadTags { .. }
+            | Request::FindTiming { .. }
+            | Request::DownloadWeights => {}
         }
     }
 
+    /// Stops playback and releases its handle.
     fn stop(&mut self) {
         if let Some(mut sound) = self.playing.take() {
             sound.stop();
@@ -383,9 +399,19 @@ fn get_or_retry<T, E>(
 fn preview(clicks: &[(f64, charter_audio::Tone)], volumes: charter_audio::Volumes) -> Track {
     const RATE: u32 = 44_100;
     let last = clicks.iter().map(|(at, _)| *at).fold(0.0, f64::max);
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // a few seconds
-    let frames = ((last + 0.5).clamp(0.0, 10.0) * f64::from(RATE)) as usize;
+    let frames = preview_frames((last + 0.5).clamp(0.0, 10.0) * f64::from(RATE));
     charter_audio::mix(&Track::silence(RATE, frames), clicks, volumes)
+}
+
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "preview duration is clamped to ten seconds"
+)]
+/// Truncates the clamped preview frame count to a buffer length.
+fn preview_frames(frames: f64) -> usize {
+    frames as usize
 }
 
 /// `gain` as kira's volume, silent at its floor.
@@ -418,7 +444,7 @@ fn summarize(
         .and_then(|(cache, source)| kept_peaks(&disk, cache, source));
     let had = kept.is_some();
     if let Some(peaks) = kept {
-        let _ = send.send(Loaded::Peaks(peaks));
+        drop(send.send(Loaded::Peaks(peaks)));
     }
     let audio = load(file).map(|track| {
         let peaks = (!had).then(|| Peaks::of(&track));
@@ -428,25 +454,25 @@ fn summarize(
         (Arc::new(track), peaks)
     });
     let track = audio.as_ref().ok().map(|(track, _)| Arc::clone(track));
-    let _ = send.send(Loaded::Audio(audio));
+    drop(send.send(Loaded::Audio(audio)));
     let Some(track) = track else {
         return;
     };
     // ponytail: worked out on every load, a few tenths of a second a song; keep it in the cache
     // beside the peaks if that shows.
-    let _ = send.send(Loaded::Spectrum(Spectrum::of(&track)));
-    let kept = onset_cache
+    drop(send.send(Loaded::Spectrum(Spectrum::of(&track))));
+    let cached_onsets = onset_cache
         .as_deref()
         .zip(source)
-        .and_then(|(cache, source)| kept_onsets(&disk, cache, source));
-    let onsets = kept.unwrap_or_else(|| {
+        .and_then(|(onset_file, source)| kept_onsets(&disk, onset_file, source));
+    let onsets = cached_onsets.unwrap_or_else(|| {
         let found: Arc<[Onset]> = charter_audio::onsets(&track).into();
-        if let (Some(cache), Some(source)) = (&onset_cache, source) {
-            keep_onsets(&disk, cache, source, &found);
+        if let (Some(onset_file), Some(source)) = (&onset_cache, source) {
+            keep_onsets(&disk, onset_file, source, &found);
         }
         found
     });
-    let _ = send.send(Loaded::Onsets(onsets));
+    drop(send.send(Loaded::Onsets(onsets)));
 }
 
 /// Where what is worked out from `audio`, of the `kind` such as `peaks`, is kept: in the `cache`
@@ -479,9 +505,13 @@ fn kept_peaks(disk: &dyn crate::disk::Disk, cache: &Path, source: u64) -> Option
 /// the peaks are only worked out again.
 fn keep_peaks(disk: &dyn crate::disk::Disk, cache: &Path, source: u64, peaks: &Peaks) {
     if let Some(folder) = cache.parent() {
-        let _ = disk.make_folder(folder);
+        drop(disk.make_folder(folder));
     }
-    let _ = crate::disk::write_whole(disk, cache, &peaks.to_bytes(source));
+    drop(crate::disk::write_whole(
+        disk,
+        cache,
+        &peaks.to_bytes(source),
+    ));
 }
 
 /// The onsets kept at `cache` for the audio whose fingerprint is `source`, if they are there,
@@ -495,9 +525,13 @@ fn kept_onsets(disk: &dyn crate::disk::Disk, cache: &Path, source: u64) -> Optio
 /// them again.
 fn keep_onsets(disk: &dyn crate::disk::Disk, cache: &Path, source: u64, onsets: &[Onset]) {
     if let Some(folder) = cache.parent() {
-        let _ = disk.make_folder(folder);
+        drop(disk.make_folder(folder));
     }
-    let _ = crate::disk::write_whole(disk, cache, &charter_audio::onsets_to_bytes(onsets, source));
+    drop(crate::disk::write_whole(
+        disk,
+        cache,
+        &charter_audio::onsets_to_bytes(onsets, source),
+    ));
 }
 
 /// `track` as sound data kira plays.
@@ -518,6 +552,15 @@ fn sound(track: &Track) -> StaticSoundData {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[expect(
+        clippy::as_conversions,
+        clippy::cast_precision_loss,
+        reason = "test-only sample phase approximation"
+    )]
+    fn offset_as_f32(offset: usize) -> f32 {
+        offset as f32
+    }
 
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -626,8 +669,8 @@ mod tests {
         let mut window = song_window();
         player.update(&mut window);
         let onsets = window.onsets().expect("onsets");
-        let strong: Vec<_> = onsets.iter().filter(|onset| onset.strength > 0.2).collect();
-        assert_eq!(strong.len(), 2, "{onsets:?}");
+        let strong = onsets.iter().filter(|onset| onset.strength > 0.2).count();
+        assert_eq!(strong, 2, "{onsets:?}");
         assert!((onsets[0].seconds - 0.5).abs() < 0.002);
     }
 
@@ -721,13 +764,12 @@ mod tests {
         assert!((stretched_position(13.7, 1.37) - 10.0).abs() < 1e-12);
     }
 
-    #[allow(clippy::unnecessary_wraps)] // a loader's signature
+    #[expect(clippy::unnecessary_wraps, reason = "matches the loader signature")]
     fn clicking(_: &Path) -> Result<Track, String> {
         let mut frames = vec![[0.0f32; 2]; 44_100 * 2];
         for start in [22_050, 44_100] {
             for (offset, frame) in frames.iter_mut().skip(start).take(1500).enumerate() {
-                #[allow(clippy::cast_precision_loss)]
-                let t = offset as f32 / 44_100.0;
+                let t = offset_as_f32(offset) / 44_100.0;
                 let sample = (std::f32::consts::TAU * 2000.0 * t).sin() * (-t / 0.008).exp();
                 *frame = [sample * 0.8; 2];
             }
@@ -741,13 +783,11 @@ mod tests {
     fn an_audio_device_failure_is_retried_on_the_next_request() {
         let mut device: Option<Result<u8, &str>> = None;
         let mut attempts = 0;
-        assert!(
-            get_or_retry(&mut device, || {
-                attempts += 1;
-                Err("device not found")
-            })
-            .is_err()
-        );
+        get_or_retry(&mut device, || {
+            attempts += 1;
+            Err("device not found")
+        })
+        .unwrap_err();
         let retried = get_or_retry(&mut device, || {
             attempts += 1;
             Ok(7)
@@ -762,7 +802,7 @@ mod tests {
         Err("no such file".to_owned())
     }
 
-    #[allow(clippy::unnecessary_wraps)] // a loader's signature
+    #[expect(clippy::unnecessary_wraps, reason = "matches the loader signature")]
     fn silent(_: &Path) -> Result<Track, String> {
         Ok(Track::silence(1000, 2000))
     }

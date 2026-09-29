@@ -62,13 +62,13 @@ impl Stretched {
         while self.fed < frames.len()
             && source.occupied_frames() < source.demand_hint(CHUNK, self.rate)
         {
-            let end = (self.fed + FEED).min(frames.len());
+            let end = self.fed.saturating_add(FEED).min(frames.len());
             let chunk = frames.get(self.fed..end).unwrap_or_default().as_flattened();
             let taken = source.push(chunk);
             if taken == 0 {
                 break;
             }
-            self.fed += taken;
+            self.fed = self.fed.saturating_add(taken);
         }
         if self.fed >= frames.len() && !self.finished {
             self.finished = source.finish();
@@ -98,16 +98,14 @@ impl Decoder for Stretched {
     }
 
     fn num_frames(&self) -> usize {
-        #[allow(clippy::cast_precision_loss)] // frames of a song, far inside f64
-        let source = self.track.frames().len() as f64;
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // a frame count
-        let frames = (source / self.rate).ceil() as usize;
+        let source = frame_index_as_f64(self.track.frames().len());
+        let frames = frame_index_from_f64((source / self.rate).ceil());
         frames
     }
 
     fn decode(&mut self) -> Result<Vec<Frame>, Infallible> {
         self.feed();
-        let mut out = vec![0.0; CHUNK * 2];
+        let mut out = vec![0.0; CHUNK.saturating_mul(2)];
         self.engine.processor.process(&mut out);
         let (frames, _) = out.as_chunks::<2>();
         Ok(frames
@@ -117,10 +115,8 @@ impl Decoder for Stretched {
     }
 
     fn seek(&mut self, index: usize) -> Result<usize, Infallible> {
-        #[allow(clippy::cast_precision_loss)] // a frame index, far inside f64
-        let at = index as f64 * self.rate;
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // a frame index
-        let at = (at.round() as usize).min(self.track.frames().len());
+        let at = frame_index_as_f64(index) * self.rate;
+        let at = frame_index_from_f64(at.round()).min(self.track.frames().len());
         // A fresh stretcher from the source frame played there: timestretch seeks by rebuilding.
         if let Some(mut engine) = engine(&self.track, self.rate) {
             engine
@@ -134,6 +130,27 @@ impl Decoder for Stretched {
     }
 }
 
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_precision_loss,
+    reason = "the audio frame index is approximate when converted to seconds"
+)]
+/// Converts a source frame index to floating point for rate scaling.
+fn frame_index_as_f64(index: usize) -> f64 {
+    index as f64
+}
+
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a calculated frame index is clamped to the source length"
+)]
+/// Truncates a nonnegative calculated frame index to an array offset.
+fn frame_index_from_f64(index: f64) -> usize {
+    index as usize
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -142,15 +159,13 @@ mod tests {
 
     /// `seconds` of a sine at `hertz`, silent for the first `quiet` seconds.
     fn tone(hertz: f64, seconds: f64, quiet: f64) -> Arc<Track> {
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let frames = (seconds * f64::from(RATE)) as u32;
+        let frames = u32::try_from(frame_index_from_f64(seconds * f64::from(RATE))).unwrap();
         let samples = (0..frames).map(|n| {
             let t = f64::from(n) / f64::from(RATE);
-            #[allow(clippy::cast_possible_truncation)]
             let sample = if t < quiet {
                 0.0
             } else {
-                (0.5 * (std::f64::consts::TAU * hertz * t).sin()) as f32
+                sample_as_f32(0.5 * (std::f64::consts::TAU * hertz * t).sin())
             };
             [sample; 2]
         });
@@ -172,9 +187,18 @@ mod tests {
             .windows(2)
             .filter(|pair| matches!(pair, [a, b] if *a < 0.0 && *b >= 0.0))
             .count();
-        #[allow(clippy::cast_precision_loss)]
-        let hertz = rising as f64 * f64::from(RATE) / samples.len() as f64;
+        let hertz =
+            frame_index_as_f64(rising) * f64::from(RATE) / frame_index_as_f64(samples.len());
         hertz
+    }
+
+    #[expect(
+        clippy::as_conversions,
+        clippy::cast_possible_truncation,
+        reason = "test waveform fits f32"
+    )]
+    fn sample_as_f32(sample: f64) -> f32 {
+        sample as f32
     }
 
     #[test]
@@ -188,7 +212,7 @@ mod tests {
         let mut stretched = Stretched::new(tone(440.0, 3.0, 0.0), 0.5).unwrap();
         assert_eq!(stretched.num_frames(), 6 * 44_100);
         let samples = decoded(&mut stretched, 4 * 44_100);
-        let middle = samples.get(44_100..3 * 44_100).unwrap();
+        let middle = &samples[44_100..3 * 44_100];
         let heard = hertz(middle);
         assert!((heard - 440.0).abs() < 5.0, "{heard} Hz");
     }
@@ -201,7 +225,7 @@ mod tests {
         assert!(quiet.iter().all(|sample| sample.abs() < 1e-3));
         assert_eq!(stretched.seek(5 * 44_100).unwrap(), 5 * 44_100);
         let samples = decoded(&mut stretched, 44_100);
-        let loud = samples.get(22_050..).unwrap();
+        let loud = &samples[22_050..];
         assert!(loud.iter().any(|sample| sample.abs() > 0.1));
         let heard = hertz(loud);
         assert!((heard - 440.0).abs() < 10.0, "{heard} Hz");
@@ -230,7 +254,7 @@ mod tests {
             let mut stretched = Stretched::new(tone(440.0, 3.0, 0.0), rate).unwrap();
             assert_eq!(stretched.num_frames(), length);
             let samples = decoded(&mut stretched, 44_100);
-            let middle = samples.get(22_050..).unwrap();
+            let middle = &samples[22_050..];
             let heard = hertz(middle);
             assert!((heard - 440.0).abs() < 15.0, "{rate}: {heard} Hz");
         }

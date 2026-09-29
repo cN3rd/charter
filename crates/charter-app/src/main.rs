@@ -127,7 +127,15 @@ impl Host {
                     | Request::Rate(_) => {
                         self.player.answer(&request, &mut self.window);
                     }
-                    files => self.answer(files),
+                    file_request @ (Request::Write { .. }
+                    | Request::Autosave { .. }
+                    | Request::CopyAudio { .. }
+                    | Request::ReadTags { .. }
+                    | Request::DecodeArtwork { .. }
+                    | Request::ReadArtwork { .. }
+                    | Request::OpenPath { .. }
+                    | Request::Snapshot { .. }
+                    | Request::DropAutosave) => self.answer(file_request),
                 }
             }
             requests = self.window.take_requests();
@@ -183,13 +191,27 @@ impl Host {
                 if let Some(recovery) = &self.recovery {
                     // Nothing to remove is fine, and a file left over is offered, then
                     // removed, on the next run.
-                    let _ = self.disk.remove(recovery);
+                    drop(self.disk.remove(recovery));
                 }
             }
-            _ => {}
+            Request::SaveAs { .. }
+            | Request::Open
+            | Request::ChooseSnapshotFolder
+            | Request::ChooseTimingFile
+            | Request::ChooseAudio
+            | Request::ChooseArtwork
+            | Request::FindTiming { .. }
+            | Request::DownloadWeights
+            | Request::Play { .. }
+            | Request::Preview { .. }
+            | Request::Volume(_)
+            | Request::Pause
+            | Request::Seek(_)
+            | Request::Rate(_) => {}
         }
     }
 
+    /// Opens the song at `path`, or reports the read failure to the window.
     fn read(&mut self, path: &Path) {
         match self.disk.read(path) {
             Ok(bytes) => self.window.open(path, &bytes),
@@ -208,7 +230,7 @@ impl Host {
         let before = if let Some((to, _)) = &artwork {
             let old = if self.disk.exists(to) {
                 match self.disk.read(to) {
-                    Ok(bytes) => Some(bytes),
+                    Ok(original_bytes) => Some(original_bytes),
                     Err(error) => {
                         self.window
                             .saved(Saved::Failed(format!("{}: {error}", to.display())));
@@ -223,7 +245,7 @@ impl Host {
             None
         };
         let copied = copied.and_then(|()| match &artwork {
-            Some((to, bytes)) => self.write_artwork(to, bytes),
+            Some((to, artwork_bytes)) => self.write_artwork(to, artwork_bytes),
             None => Ok(()),
         });
         let wrote_artwork = copied.is_ok();
@@ -235,10 +257,10 @@ impl Host {
             Err(error) => {
                 if wrote_artwork && let Some((to, old)) = before {
                     // Best effort: the save says it failed either way.
-                    let _ = match old {
+                    drop(match old {
                         Some(old) => disk::write_whole(self.disk.as_ref(), &to, &old),
                         None => self.disk.remove(&to),
-                    };
+                    });
                 }
                 Saved::Failed(error)
             }
@@ -267,8 +289,8 @@ impl Host {
                 .unwrap_or_default()
                 .into_iter()
                 .filter(|path| {
-                    let file = path.file_name().and_then(|file| file.to_str());
-                    file.is_some_and(|file| is_copy_of(file, name))
+                    let candidate = path.file_name().and_then(|file_name| file_name.to_str());
+                    candidate.is_some_and(|file_name| is_copy_of(file_name, name))
                 })
                 .collect();
             copies.sort();
@@ -277,7 +299,7 @@ impl Host {
                 .saturating_sub(usize::try_from(kept).unwrap_or(usize::MAX));
             for old in copies.iter().take(extra) {
                 // A copy left over is only a little disk.
-                let _ = self.disk.remove(old);
+                drop(self.disk.remove(old));
             }
         }
     }
@@ -310,7 +332,7 @@ impl Host {
             self.window.saved(Saved::Failed(why));
             return;
         };
-        let folder = file.parent().unwrap_or(Path::new(""));
+        let folder = file.parent().unwrap_or_else(|| Path::new(""));
         if file != chosen && self.disk.exists(&file) {
             let why = format!(
                 "{} already holds a song. Choose that file to replace it, or another name",
@@ -500,18 +522,24 @@ fn kept_settings(storage: &dyn eframe::Storage) -> Settings {
 
 /// `secs`, seconds since 1970, as a date and time in UTC that sorts as it reads:
 /// `2026-09-29 05.40.12 UTC`.
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "calendar arithmetic is bounded by u64 seconds divided into days"
+)]
 fn stamp(secs: u64) -> String {
-    let days = i64::try_from(secs / 86_400).unwrap_or(i64::MAX);
-    let seconds = secs % 86_400;
+    let days = i64::try_from(secs.div_euclid(86_400)).unwrap_or(i64::MAX);
+    let seconds = secs.rem_euclid(86_400);
     // Days to a civil date, after Howard Hinnant's `civil_from_days`.
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
     let day_of_era = z.rem_euclid(146_097);
-    let year_of_era =
-        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let shifted_month = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * shifted_month + 2) / 5 + 1;
+    let year_of_era = (day_of_era - day_of_era.div_euclid(1460) + day_of_era.div_euclid(36_524)
+        - day_of_era.div_euclid(146_096))
+    .div_euclid(365);
+    let day_of_year =
+        day_of_era - (365 * year_of_era + year_of_era.div_euclid(4) - year_of_era.div_euclid(100));
+    let shifted_month = (5 * day_of_year + 2).div_euclid(153);
+    let day = day_of_year - (153 * shifted_month + 2).div_euclid(5) + 1;
     let month = if shifted_month < 10 {
         shifted_month + 3
     } else {
@@ -520,9 +548,9 @@ fn stamp(secs: u64) -> String {
     let year = year_of_era + era * 400 + i64::from(month <= 2);
     format!(
         "{year:04}-{month:02}-{day:02} {:02}.{:02}.{:02} UTC",
-        seconds / 3600,
-        seconds / 60 % 60,
-        seconds % 60
+        seconds.div_euclid(3600),
+        seconds.div_euclid(60).rem_euclid(60),
+        seconds.rem_euclid(60)
     )
 }
 
@@ -546,7 +574,8 @@ fn picture(bytes: Vec<u8>) -> Option<Picture> {
         .ok()?
         .thumbnail(512, 512)
         .to_rgba8();
-    let size = [preview.width(), preview.height()].map(|side| side as usize);
+    let size =
+        [preview.width(), preview.height()].map(|side| usize::try_from(side).unwrap_or(usize::MAX));
     let image = eframe::egui::ColorImage::from_rgba_unmultiplied(size, preview.as_raw());
     Some((bytes, image))
 }
@@ -952,10 +981,6 @@ mod tests {
                 metronome: true,
             };
             eframe::set_value(&mut storage, OLD_SETTINGS, &old);
-            eprintln!(
-                "PROBE {:?}",
-                eframe::Storage::get_string(&storage, OLD_SETTINGS)
-            );
             let settings = kept_settings(&storage);
             assert_eq!(settings.note_ticks, on, "{sound:?}");
             assert!(settings.metronome);

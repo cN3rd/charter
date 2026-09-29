@@ -75,7 +75,7 @@ impl Finder {
         let (send, receive) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let found = timing_of(&file, &weights, ticks_per_beat, onsets);
-            let _ = send.send(Progress::Found(found));
+            drop(send.send(Progress::Found(found)));
         });
         self.work = Some(receive);
     }
@@ -91,7 +91,7 @@ impl Finder {
         let (send, receive) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let done = fetch(&weights, &send);
-            let _ = send.send(Progress::Weights(done));
+            drop(send.send(Progress::Weights(done)));
         });
         self.work = Some(receive);
     }
@@ -200,20 +200,29 @@ fn copy_weights(
         }
         file.write_all(buffer.get(..count).unwrap_or_default())
             .map_err(|why| why.to_string())?;
-        read += count as u64;
+        read = read.saturating_add(u64::try_from(count).unwrap_or(u64::MAX));
         if let Some(length) = length.filter(|length| *length > 0)
-            && read * 100 / length > told
+            && read.saturating_mul(100).div_euclid(length) > told
         {
-            told = read * 100 / length;
-            #[allow(clippy::cast_precision_loss)] // a share of a download
-            let share = read as f32 / length as f32;
-            let _ = progress.send(Progress::Downloaded(share));
+            told = read.saturating_mul(100).div_euclid(length);
+            let share = download_share(read, length);
+            drop(progress.send(Progress::Downloaded(share)));
         }
     }
     if length.is_some_and(|length| length > 0 && read != length) {
         return Err("incomplete beat tracker download".into());
     }
     Ok(())
+}
+
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_precision_loss,
+    reason = "download progress is approximate"
+)]
+/// Approximate fraction of the weights downloaded, from 0 to 1.
+fn download_share(read: u64, length: u64) -> f32 {
+    read as f32 / length as f32
 }
 
 #[cfg(test)]
@@ -337,7 +346,7 @@ mod tests {
         copy_weights(
             &mut Cursor::new(&bytes),
             &mut output,
-            Some(bytes.len() as u64),
+            Some(u64::try_from(bytes.len()).unwrap()),
             &send,
         )
         .unwrap();

@@ -69,6 +69,10 @@ impl Disk for Real {
         let mut files = Vec::new();
         for entry in std::fs::read_dir(folder)? {
             let entry = entry?;
+            #[expect(
+                clippy::filetype_is_file,
+                reason = "snapshot listings exclude symlinks"
+            )]
             if entry.file_type()?.is_file() {
                 files.push(entry.path());
             }
@@ -94,7 +98,7 @@ pub fn write_whole(disk: &dyn Disk, path: &Path, bytes: &[u8]) -> io::Result<()>
         .and_then(|()| disk.rename(&beside, path));
     if written.is_err() {
         // The write already failed; a partial file left over is the lesser problem.
-        let _ = disk.remove(&beside);
+        drop(disk.remove(&beside));
     }
     written
 }
@@ -126,7 +130,7 @@ pub fn copy_whole(disk: &dyn Disk, from: &Path, to: &Path) -> io::Result<()> {
         .copy(from, &beside)
         .and_then(|()| disk.rename(&beside, to));
     if copied.is_err() {
-        let _ = disk.remove(&beside);
+        drop(disk.remove(&beside));
     }
     copied
 }
@@ -223,9 +227,10 @@ pub mod memory {
         fn copy(&self, from: &Path, to: &Path) -> io::Result<()> {
             let bytes = self.read(from)?;
             if self.partial_copy_fail {
-                self.files
-                    .borrow_mut()
-                    .insert(to.to_path_buf(), bytes[..bytes.len() / 2].to_vec());
+                self.files.borrow_mut().insert(
+                    to.to_path_buf(),
+                    bytes[..bytes.len().div_euclid(2)].to_vec(),
+                );
                 return Err(io::Error::other("the disk is full"));
             }
             self.write(to, &bytes)
