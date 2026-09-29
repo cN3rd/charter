@@ -1025,6 +1025,27 @@ mod tests {
         assert!(sent(&harness, &egui::ViewportCommand::Close));
     }
     #[test]
+    fn a_failed_save_while_closing_keeps_the_dirty_song_and_asks_again() {
+        let mut harness = edited_four_taps();
+        close(&mut harness);
+        harness.run();
+        harness.get_by_label("Save").click();
+        harness.run();
+        assert!(matches!(request(&mut harness), Request::Write { .. }));
+
+        harness
+            .state_mut()
+            .saved(Saved::Failed("the disk is full".to_owned()));
+        harness.run();
+        close(&mut harness);
+        assert!(sent(&harness, &egui::ViewportCommand::CancelClose));
+        harness.run();
+
+        assert!(asks_to_save(&harness));
+        assert_eq!(harness.state().title(), "*four.json - charter");
+    }
+
+    #[test]
     fn cancel_keeps_the_window_and_its_changes() {
         let mut harness = edited_four_taps();
         close(&mut harness);
@@ -1048,6 +1069,26 @@ mod tests {
         harness.run();
         assert_eq!(harness.state().title(), "example.json - charter");
     }
+    #[test]
+    fn recovering_over_unsaved_changes_asks_before_replacing_them() {
+        let (_, bytes) = autosaved_four_taps();
+        let mut harness = editable_four_taps();
+        harness.key_press(egui::Key::Num2);
+        harness.run();
+        assert_eq!(lanes_at(&harness, 0), [0, 1]);
+
+        harness.state_mut().recover(&bytes);
+        harness.run();
+        harness.get_by_label("Restore").click();
+        harness.run();
+
+        assert!(asks_to_save(&harness));
+        assert_eq!(lanes_at(&harness, 0), [0, 1]);
+        harness.get_by_label("Don't save").click();
+        harness.run();
+        assert_eq!(lanes_at(&harness, 0), [0, 3]);
+    }
+
     #[test]
     fn a_save_that_fails_leaves_everything_as_it_was() {
         let mut harness = edited_four_taps();
