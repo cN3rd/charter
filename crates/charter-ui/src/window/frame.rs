@@ -352,7 +352,7 @@ impl Window {
             self.requests.push(request);
         }
         if self.dialogs.finding == Finding::Asking
-            && let Some(download) = panels::ask_to_download_weights(ui)
+            && let Some(download) = panels::ask_to_download_weights(ui, self.dialogs.tracker)
         {
             if download {
                 self.requests.push(Request::DownloadWeights);

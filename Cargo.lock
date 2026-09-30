@@ -850,6 +850,7 @@ dependencies = [
  "burn-cuda",
  "burn-dispatch",
  "burn-flex",
+ "burn-ir",
  "burn-ndarray",
  "burn-nn",
  "burn-optim",
@@ -950,6 +951,7 @@ checksum = "681478c5438ab6c753a55b85f5b42e5bd4c1f69a8564f2afa2f698ac396ba556"
 dependencies = [
  "burn-backend",
  "burn-cubecl",
+ "burn-fusion",
  "cubecl",
 ]
 
@@ -999,6 +1001,7 @@ checksum = "a6c66b49136fc11f59773054358f401fbec7fa0d69615f55ef22c29cf241c9b7"
 dependencies = [
  "burn-backend",
  "burn-cubecl",
+ "burn-fusion",
  "cubecl",
 ]
 
@@ -1135,6 +1138,7 @@ checksum = "66af82fdaaf2ad0fa4b0dae90119aa94f333105d76d520e0eb48917717c06fde"
 dependencies = [
  "burn-backend",
  "burn-cubecl",
+ "burn-fusion",
  "cubecl",
 ]
 
@@ -1227,10 +1231,13 @@ checksum = "38b5a3e9096977462cd22bf713087f9777e427f7693508871f86f5b1e8347a70"
 dependencies = [
  "aligned-vec",
  "bon",
+ "burn-cubecl",
  "burn-flex",
+ "burn-fusion",
  "burn-ir",
  "burn-tensor",
  "bytemuck",
+ "cubecl",
  "derive-new",
  "half",
  "image",
@@ -1249,6 +1256,7 @@ checksum = "6eb009254af15922cb37814f3b3b61043046193ba2fde97c3879a25fbd51a92e"
 dependencies = [
  "burn-backend",
  "burn-cubecl",
+ "burn-fusion",
  "cubecl",
 ]
 
@@ -1472,6 +1480,7 @@ dependencies = [
 name = "charter-app"
 version = "0.0.0"
 dependencies = [
+ "burn",
  "charter-audio",
  "charter-autotiming",
  "charter-beatthis-burn",
@@ -1487,6 +1496,7 @@ dependencies = [
  "serde",
  "system-fonts",
  "timestretch",
+ "timingator",
  "ureq 3.4.2",
 ]
 
@@ -1494,7 +1504,9 @@ dependencies = [
 name = "charter-audio"
 version = "0.0.0"
 dependencies = [
+ "audioadapter-buffers",
  "proptest",
+ "rubato",
  "rustfft",
  "serde",
  "symphonia-wrap",
@@ -1514,12 +1526,10 @@ dependencies = [
 name = "charter-beatthis-burn"
 version = "0.0.0"
 dependencies = [
- "audioadapter-buffers",
  "burn",
  "burn-flex",
  "burn-store",
  "charter-audio",
- "rubato",
  "rustfft",
  "thiserror 2.0.20",
 ]

@@ -224,6 +224,63 @@ opt-level = 3
 [profile.dev.package.timingator]
 opt-level = 3
 
+# Mapperatorinator's timing model runs on the graphics card, but unoptimized, burn's fusion and
+# cubecl's kernel launches keep the CPU the bottleneck: a song took nine minutes instead of one.
+
+[profile.dev.package."burn-cubecl"]
+opt-level = 3
+
+[profile.dev.package."burn-cubecl-fusion"]
+opt-level = 3
+
+[profile.dev.package."burn-fusion"]
+opt-level = 3
+
+[profile.dev.package."burn-ir"]
+opt-level = 3
+
+[profile.dev.package."burn-wgpu"]
+opt-level = 3
+
+[profile.dev.package."cubecl"]
+opt-level = 3
+
+[profile.dev.package."cubecl-common"]
+opt-level = 3
+
+[profile.dev.package."cubecl-core"]
+opt-level = 3
+
+[profile.dev.package."cubecl-ir"]
+opt-level = 3
+
+[profile.dev.package."cubecl-runtime"]
+opt-level = 3
+
+[profile.dev.package."cubecl-std"]
+opt-level = 3
+
+[profile.dev.package."cubecl-wgpu"]
+opt-level = 3
+
+[profile.dev.package."cubecl-zspace"]
+opt-level = 3
+
+[profile.dev.package."naga"]
+opt-level = 3
+
+[profile.dev.package."wgpu"]
+opt-level = 3
+
+[profile.dev.package."wgpu-core"]
+opt-level = 3
+
+[profile.dev.package."wgpu-hal"]
+opt-level = 3
+
+[profile.dev.package."wgpu-types"]
+opt-level = 3
+
 [profile.dev.package."burn-backend"]
 opt-level = 3
 

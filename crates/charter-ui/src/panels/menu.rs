@@ -162,13 +162,27 @@ pub(crate) fn menu_bar(
             if ui.add_enabled(editable && importable, import).clicked() {
                 actions.push(Action::ShowImport);
             }
-            let find = egui::Button::new("Find timing from the audio…");
-            if ui
-                .add_enabled(editable && findable, find)
-                .on_hover_text("Beat This! finds the beats; charter fits tempo sections to them")
-                .clicked()
-            {
-                actions.push(Action::FindTiming);
+            let finders = [
+                (
+                    "Find timing with Beat This!…",
+                    "Beat This! finds the beats; charter fits tempo sections to them",
+                    crate::Tracker::BeatThis,
+                ),
+                (
+                    "Find timing with Mapperatorinator…",
+                    "Mapperatorinator's timing model writes the timing points itself; it runs on \
+                     the graphics card and takes a minute or two",
+                    crate::Tracker::Mapperatorinator,
+                ),
+            ];
+            for (label, hover, tracker) in finders {
+                if ui
+                    .add_enabled(editable && findable, egui::Button::new(label))
+                    .on_hover_text(hover)
+                    .clicked()
+                {
+                    actions.push(Action::FindTiming(tracker));
+                }
             }
             let reset = egui::Button::new("Reset timing…");
             if ui.add_enabled(editable, reset).clicked() {

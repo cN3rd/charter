@@ -427,7 +427,7 @@ mod tests {
             Action::Redo,
             Action::Copy,
             Action::Paste(None),
-            Action::FindTiming,
+            Action::FindTiming(crate::Tracker::BeatThis),
             Action::TogglePlay,
             Action::Save,
             Action::SaveAs,

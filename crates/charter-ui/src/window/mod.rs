@@ -28,6 +28,16 @@ use crate::{import, keys, latency, minimap, panels, recovery, style, timing_pane
 /// The extensions of the audio files a song can play.
 const AUDIO: [&str; 4] = ["ogg", "mp3", "wav", "flac"];
 
+/// Which model finds a song's timing from its audio.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Tracker {
+    /// Beat This! finds the beats on the CPU, and charter fits tempo sections to them.
+    #[default]
+    BeatThis,
+    /// Mapperatorinator's timing model writes the timing points itself, on the graphics card.
+    Mapperatorinator,
+}
+
 /// Something only the program hosting the window can do. The host answers a save through
 /// [`Window::saved`], and an open by passing the file to [`Window::open`].
 #[derive(Debug, PartialEq)]
@@ -157,6 +167,8 @@ pub enum Request {
         file: PathBuf,
         /// Resolution of the song receiving the timing.
         ticks_per_beat: charter_core::TicksPerBeat,
+        /// The model to find it with.
+        tracker: Tracker,
     },
     /// Download the beat tracker's weights, the user having agreed, telling
     /// [`Window::weights_progress`] how far it has got, then find the timing asked for.
@@ -604,8 +616,8 @@ pub(crate) enum Action {
     ToggleTicks,
     /// Tunes each lane's note ticks to a pitch of its own, or back.
     ToggleTunedLanes,
-    /// Finds the song's timing from its audio.
-    FindTiming,
+    /// Finds the song's timing from its audio with this model.
+    FindTiming(Tracker),
     /// Draws the notefield's grid down to this note value.
     SetGrid(std::num::NonZeroU16),
 }
@@ -841,6 +853,8 @@ struct Dialogs {
     resetting: bool,
     /// Where finding the timing from the audio has got to.
     finding: Finding,
+    /// The model finding it, or last asked to.
+    tracker: Tracker,
     /// Unsaved changes from an earlier run, waiting on whether to restore them.
     restoring: Option<Restoring>,
     /// The dialog that starts a song, while it shows.
@@ -2027,7 +2041,7 @@ pub(crate) mod test_support {
     pub(crate) fn find_from_the_menu(harness: &mut Harness<'_, Window>) {
         harness.query_all_by_label("Timing").next().unwrap().click();
         harness.run();
-        harness.get_by_label("Find timing from the audio…").click();
+        harness.get_by_label("Find timing with Beat This!…").click();
         harness.run();
     }
 

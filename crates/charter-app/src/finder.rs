@@ -1,18 +1,33 @@
-//! Finding a song's timing from its audio, off the window's thread: the beat tracker's weights
-//! downloaded once the user agrees, then the song's beats tracked and a tempo map fitted to them.
+//! Finding a song's timing from its audio, off the window's thread: the model's weights
+//! downloaded once the user agrees, then either Beat This!'s beats with a tempo map fitted to
+//! them, or Mapperatorinator's timing points.
 
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 
 use charter_audio::{Onset, Track};
-use charter_core::{TicksPerBeat, Timing};
-use charter_ui::Window;
+use charter_core::{Section, TicksPerBeat, Timing};
+use charter_ui::{Tracker, Window};
 
-/// Where the authors publish the weights of Beat This!'s `final0` model, the one the reference
-/// uses by default.
-const WEIGHTS_URL: &str =
-    "https://cloud.cp.jku.at/public.php/dav/files/7ik4RrBKTS273gp/final0.ckpt";
+/// Where each model's weights come from, and the file they are kept in within the data folder.
+/// Beat This!'s are its authors' `final0`, the one the reference uses by default;
+/// Mapperatorinator's are its V32 model pruned to what timing reads.
+const fn source(tracker: Tracker) -> (&'static str, &'static str) {
+    match tracker {
+        Tracker::BeatThis => (
+            "https://cloud.cp.jku.at/public.php/dav/files/7ik4RrBKTS273gp/final0.ckpt",
+            "beat_this-final0.ckpt",
+        ),
+        Tracker::Mapperatorinator => (
+            "https://huggingface.co/cnf3rd/timingator-v32-f16-gguf/resolve/main/timingator-v32-f16.gguf",
+            "timingator-v32-f16.gguf",
+        ),
+    }
+}
+
+/// A song waiting on its model's weights: its audio, resolution, onsets and the model.
+type Waiting = (PathBuf, TicksPerBeat, Option<Vec<Onset>>, Tracker);
 
 /// What a thread of the finder has to say.
 enum Progress {
@@ -27,10 +42,10 @@ enum Progress {
 /// Finds timing when the window asks, a job at a time.
 #[derive(Default)]
 pub(crate) struct Finder {
-    /// Where the weights are kept, when the user's data folder is known.
-    weights: Option<PathBuf>,
-    /// The audio and resolution waiting on the weights.
-    waiting: Option<(PathBuf, TicksPerBeat, Option<Vec<Onset>>)>,
+    /// The data folder the weights are kept in, when the user's is known.
+    folder: Option<PathBuf>,
+    /// The song waiting on its model's weights.
+    waiting: Option<Waiting>,
     /// Receiver for the current download or analysis job, if one is running.
     work: Option<Receiver<Progress>>,
 }
@@ -38,60 +53,74 @@ pub(crate) struct Finder {
 impl std::fmt::Debug for Finder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Finder")
-            .field("weights", &self.weights)
+            .field("folder", &self.folder)
             .field("busy", &self.work.is_some())
             .finish_non_exhaustive()
     }
 }
 
 impl Finder {
-    /// A finder keeping the weights at `weights`.
-    pub(crate) fn new(weights: Option<PathBuf>) -> Self {
+    /// A finder keeping the weights in `folder`.
+    pub(crate) fn new(folder: Option<PathBuf>) -> Self {
         Self {
-            weights,
+            folder,
             ..Self::default()
         }
     }
 
-    /// Starts finding the timing of the audio in `file` at `ticks_per_beat`, with the `onsets`
-    /// already found in it, or asks the window to let the weights download first.
+    /// Where `tracker`'s weights are kept, or tells the window there is nowhere to keep them.
+    fn weights(&self, tracker: Tracker, window: &mut Window) -> Option<PathBuf> {
+        let folder = self.folder.as_ref();
+        if folder.is_none() {
+            window.timing_found(Err(
+                "charter has no data folder to keep the beat tracker in".into(),
+            ));
+        }
+        folder.map(|folder| folder.join(source(tracker).1))
+    }
+
+    /// Starts finding the timing of the audio in `file` at `ticks_per_beat` with `tracker`, with
+    /// the `onsets` already found in it, or asks the window to let the weights download first.
     pub(crate) fn find(
         &mut self,
         file: PathBuf,
         ticks_per_beat: TicksPerBeat,
         onsets: Option<Vec<Onset>>,
+        tracker: Tracker,
         window: &mut Window,
     ) {
-        let Some(weights) = self.weights.clone() else {
-            window.timing_found(Err(
-                "charter has no data folder to keep the beat tracker in".into(),
-            ));
+        let Some(weights) = self.weights(tracker, window) else {
             return;
         };
         if !weights.exists() {
-            self.waiting = Some((file, ticks_per_beat, onsets));
+            self.waiting = Some((file, ticks_per_beat, onsets, tracker));
             window.weights_needed();
             return;
         }
         let (send, receive) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let found = timing_of(&file, &weights, ticks_per_beat, onsets);
+            let found = match tracker {
+                Tracker::BeatThis => timing_of(&file, &weights, ticks_per_beat, onsets),
+                Tracker::Mapperatorinator => mapperatorinator(&file, &weights, ticks_per_beat),
+            };
             drop(send.send(Progress::Found(found)));
         });
         self.work = Some(receive);
     }
 
-    /// Downloads the weights, the user having agreed, then finds the timing waiting on them.
+    /// Downloads the waiting song's model's weights, the user having agreed, then finds its
+    /// timing.
     pub(crate) fn download(&mut self, window: &mut Window) {
-        let Some(weights) = self.weights.clone() else {
-            window.timing_found(Err(
-                "charter has no data folder to keep the beat tracker in".into(),
-            ));
+        let tracker = self
+            .waiting
+            .as_ref()
+            .map_or(Tracker::BeatThis, |waiting| waiting.3);
+        let Some(weights) = self.weights(tracker, window) else {
             return;
         };
         let (send, receive) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let done = fetch(&weights, &send);
+            let done = fetch(source(tracker).0, &weights, &send);
             drop(send.send(Progress::Weights(done)));
         });
         self.work = Some(receive);
@@ -108,8 +137,8 @@ impl Finder {
                 Ok(Progress::Downloaded(share)) => window.weights_progress(share),
                 Ok(Progress::Weights(Ok(()))) => {
                     self.work = None;
-                    if let Some((file, ticks_per_beat, onsets)) = self.waiting.take() {
-                        self.find(file, ticks_per_beat, onsets, window);
+                    if let Some((file, ticks_per_beat, onsets, tracker)) = self.waiting.take() {
+                        self.find(file, ticks_per_beat, onsets, tracker, window);
                     }
                     return true;
                 }
@@ -162,17 +191,96 @@ fn timing_of(
         .ok_or_else(|| "the audio has too few beats to fit a tempo to".to_owned())
 }
 
-/// Downloads the weights to `weights` through a partial file beside it, telling `progress` how
-/// far it has got about every hundredth.
-fn fetch(weights: &Path, progress: &Sender<Progress>) -> Result<(), String> {
+/// The timing of the audio in `file` as Mapperatorinator's timing model, with the weights at
+/// `weights`, finds it on the graphics card.
+fn mapperatorinator(
+    file: &Path,
+    weights: &Path,
+    ticks_per_beat: TicksPerBeat,
+) -> Result<Timing, String> {
+    use burn::backend::wgpu::{Wgpu, WgpuDevice};
+    use timingator::audio::SAMPLE_RATE;
+
+    let bytes = std::fs::read(file).map_err(|why| format!("{}: {why}", file.display()))?;
+    let extension = file.extension().and_then(|extension| extension.to_str());
+    let track = Track::decode(bytes, extension).map_err(|why| why.to_string())?;
+    let rate = u32::try_from(SAMPLE_RATE).map_err(|why| why.to_string())?;
+    let mut samples = charter_audio::resample(&track.to_mono(), track.rate().get(), rate)
+        .map_err(|why| why.to_string())?;
+    // As timingator's `audio::normalize`: divided by the peak.
+    let peak = samples
+        .iter()
+        .fold(0.0_f32, |peak, sample| peak.max(sample.abs()));
+    if peak > 0.0 {
+        for sample in &mut samples {
+            *sample /= peak;
+        }
+    }
+    let model = std::fs::read(weights).map_err(|why| format!("{}: {why}", weights.display()))?;
+    let unreadable = |why: &dyn std::fmt::Display| format!("{}: {why}", weights.display());
+    let tokenizer = timingator::gguf::Gguf::parse(&model)
+        .map_err(|why| unreadable(&why))?
+        .metadata
+        .get("timingator.tokenizer")
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .ok_or_else(|| unreadable(&"no timingator.tokenizer"))?;
+    let tokenizer =
+        timingator::tokenizer::Tokenizer::from_json(&tokenizer).map_err(|why| unreadable(&why))?;
+    let device = WgpuDevice::default();
+    let model =
+        timingator::model::Model::<Wgpu>::load(&model, &device).map_err(|why| unreadable(&why))?;
+    let found = timingator::run(
+        &model,
+        &tokenizer,
+        &samples,
+        &timingator::Options::default(),
+        |_, _| {},
+    )
+    .map_err(|why| why.to_string())?;
+    let sections = sections(&found.timing_points)?;
+    charter_core::sectioned(&sections, ticks_per_beat)
+        .map(|made| made.timing)
+        .map_err(|why| match why {
+            charter_core::SectionError::Empty => {
+                "the model found no timing in the audio".to_owned()
+            }
+            charter_core::SectionError::OutOfRange(_) => why.to_string(),
+        })
+}
+
+/// Mapperatorinator's osu! timing points as the sections of a tempo map.
+fn sections(points: &[timingator::timing::TimingPoint]) -> Result<Vec<Section>, String> {
+    points
+        .iter()
+        .map(|point| {
+            let meter = u16::try_from(point.meter)
+                .ok()
+                .and_then(std::num::NonZeroU16::new)
+                .ok_or_else(|| format!("the model found a bar of {} beats", point.meter))?;
+            #[expect(
+                clippy::as_conversions,
+                clippy::cast_precision_loss,
+                reason = "microsecond offsets of a song are far inside f64's exact range"
+            )]
+            let seconds = point.offset_us as f64 / 1e6;
+            Ok(Section {
+                seconds,
+                beat_seconds: point.ms_per_beat / 1000.0,
+                meter,
+            })
+        })
+        .collect()
+}
+
+/// Downloads the weights at `url` to `weights` through a partial file beside it, telling
+/// `progress` how far it has got about every hundredth.
+fn fetch(url: &str, weights: &Path, progress: &Sender<Progress>) -> Result<(), String> {
     let partial = crate::disk::partial_path(weights);
     if let Some(folder) = weights.parent() {
         std::fs::create_dir_all(folder).map_err(|why| format!("{}: {why}", folder.display()))?;
     }
     let downloaded = (|| {
-        let mut response = ureq::get(WEIGHTS_URL)
-            .call()
-            .map_err(|why| why.to_string())?;
+        let mut response = ureq::get(url).call().map_err(|why| why.to_string())?;
         let body = response.body_mut();
         let length = body.content_length();
         let mut reader = body.as_reader();
@@ -262,6 +370,7 @@ mod tests {
                 PathBuf::from("/songs/a.ogg"),
                 charter_core::TicksPerBeat::default(),
                 None,
+                Tracker::BeatThis,
             )),
             ..Finder::default()
         };
@@ -282,6 +391,7 @@ mod tests {
                 PathBuf::from("/songs/a.ogg"),
                 charter_core::TicksPerBeat::default(),
                 None,
+                Tracker::BeatThis,
             )),
             ..Finder::default()
         };
@@ -457,11 +567,49 @@ mod tests {
             PathBuf::from("/songs/a.ogg"),
             charter_core::TicksPerBeat::default(),
             None,
+            Tracker::Mapperatorinator,
             &mut window,
         );
         assert!(!finder.update(&mut window));
         finder.download(&mut window);
         assert!(finder.work.is_none());
+    }
+
+    #[test]
+    fn the_models_timing_points_become_sections_and_a_bar_of_no_beats_is_refused() {
+        use timingator::timing::TimingPoint;
+        let point = |offset_us, ms_per_beat, meter| TimingPoint {
+            offset_us,
+            ms_per_beat,
+            meter,
+        };
+        let found = sections(&[point(4_000, 600.0, 4), point(2_382_000, 300.0, 7)]).unwrap();
+        assert_eq!(found.len(), 2);
+        assert!((found[0].seconds - 0.004).abs() < 1e-12);
+        assert!((found[1].beat_seconds - 0.3).abs() < 1e-12);
+        assert_eq!(found[1].meter.get(), 7);
+        for meter in [0, -1, 70_000] {
+            sections(&[point(0, 500.0, meter)]).unwrap_err();
+        }
+    }
+
+    #[test]
+    fn each_model_keeps_its_own_weights_in_the_data_folder() {
+        let finder = Finder::new(Some(PathBuf::from("/data")));
+        let mut window = window();
+        assert_eq!(
+            finder.weights(Tracker::BeatThis, &mut window),
+            Some(PathBuf::from("/data/beat_this-final0.ckpt"))
+        );
+        assert_eq!(
+            finder.weights(Tracker::Mapperatorinator, &mut window),
+            Some(PathBuf::from("/data/timingator-v32-f16.gguf"))
+        );
+        assert!(
+            source(Tracker::Mapperatorinator)
+                .0
+                .starts_with("https://huggingface.co/")
+        );
     }
 
     #[test]

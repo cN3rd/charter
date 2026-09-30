@@ -96,19 +96,27 @@ pub(crate) fn ask_to_restore(ui: &Ui, name: &str) -> Option<bool> {
 }
 
 /// Whether to download the beat tracker's weights, which the user answers: true for Download.
-pub(crate) fn ask_to_download_weights(ui: &Ui) -> Option<bool> {
+pub(crate) fn ask_to_download_weights(ui: &Ui, tracker: crate::Tracker) -> Option<bool> {
     let mut answer = None;
     egui::Modal::new(egui::Id::new("download weights")).show(ui.ctx(), |ui| {
         ui.set_max_width(420.0);
         let question = "Download the beat tracker?";
         ui.label(RichText::new(question).family(style::titles(ui)).size(15.0));
         ui.add_space(4.0);
-        ui.label(
-            "Finding the timing uses Beat This!, a beat tracker from the Institute of \
-             Computational Perception at JKU Linz, released under the MIT licence. Its weights \
-             are 81 MB, downloaded once from the authors' server, cloud.cp.jku.at, into \
-             charter's data folder. Nothing about the song is sent.",
-        );
+        ui.label(match tracker {
+            crate::Tracker::BeatThis => {
+                "Finding the timing uses Beat This!, a beat tracker from the Institute of \
+                 Computational Perception at JKU Linz, released under the MIT licence. Its \
+                 weights are 81 MB, downloaded once from the authors' server, cloud.cp.jku.at, \
+                 into charter's data folder. Nothing about the song is sent."
+            }
+            crate::Tracker::Mapperatorinator => {
+                "Finding the timing uses the timing model of Mapperatorinator by OliBomby, \
+                 released under the MIT licence, and runs on the graphics card. Its weights are \
+                 416 MB, downloaded once from Hugging Face, huggingface.co, into charter's data \
+                 folder. Nothing about the song is sent."
+            }
+        });
         ui.add_space(14.0);
         ui.horizontal(|ui| {
             if ui.add(style::primary("Download")).clicked() {

@@ -48,9 +48,10 @@ and its licence copied into `licenses/` by the `_licenses` recipe in the `justfi
 
 A song's audio, artwork and chart files are the user's, beside the song, and never packaged.
 
-The Beat This! weights, `final0.ckpt` at 81 MB, are left out on purpose: they are needed only by
-[automatic timing](./autotiming.md). The first time Timing › "Find timing from the audio…" runs,
-charter asks before downloading them from the authors' server into its data folder, as
-`beat_this-final0.ckpt`. The folder is eframe's storage directory for charter, the same one that
+The Beat This! weights, `final0.ckpt` at 81 MB, and Mapperatorinator's, 416 MB, are left out on
+purpose: they are needed only by [automatic timing](./autotiming.md). The first time Timing ›
+"Find timing with Beat This!…" or "Find timing with Mapperatorinator…" runs, charter asks before
+downloading its model's weights into its data folder: Beat This!'s from the authors' server as
+`beat_this-final0.ckpt`, Mapperatorinator's from Hugging Face as `timingator-v32-f16.gguf`. The folder is eframe's storage directory for charter, the same one that
 holds the settings and the crash-recovery file; on Linux that is `~/.local/share/charter`
 (or under `$XDG_DATA_HOME`), and on Windows `%APPDATA%\charter\data`.

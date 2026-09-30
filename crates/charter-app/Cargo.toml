@@ -9,6 +9,9 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
+# ponytail: wgpu for Mapperatorinator's timing model, which took over 15 minutes a song on the CPU
+# and takes one or two on a graphics card; fusion and autotune as timingator runs it.
+burn = { workspace = true, features = ["wgpu", "fusion", "autotune"] }
 charter-audio.workspace = true
 charter-autotiming.workspace = true
 charter-beatthis-burn.workspace = true
@@ -21,6 +24,7 @@ eframe = { workspace = true, features = ["persistence"] }
 image.workspace = true
 kira.workspace = true
 rfd.workspace = true
+timingator.workspace = true
 serde.workspace = true
 system-fonts.workspace = true
 timestretch.workspace = true

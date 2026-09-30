@@ -43,7 +43,7 @@ impl Window {
             Action::TogglePlay => self.toggle_play(),
             Action::Audition(from) => self.audition(from),
             Action::AskResetTiming => self.dialogs.resetting = true,
-            Action::FindTiming => self.find_timing(),
+            Action::FindTiming(tracker) => self.find_timing(tracker),
             Action::Loop { from, to } => self.toggle_loop(from, to),
             Action::ToggleRate => self.toggle_rate(),
             Action::MuteMetronome(muted) => {

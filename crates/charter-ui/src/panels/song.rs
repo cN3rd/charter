@@ -627,7 +627,11 @@ mod tests {
                 "Import",
                 "Keep mine",
             ),
-            (ask_to_download_weights, "Download", "Cancel"),
+            (
+                |ui: &Ui| ask_to_download_weights(ui, crate::Tracker::BeatThis),
+                "Download",
+                "Cancel",
+            ),
             (ask_to_reset_timing, "Reset", "Cancel"),
         ];
         for (dialog, yes, no) in dialogs {

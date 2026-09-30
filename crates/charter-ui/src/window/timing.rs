@@ -1,6 +1,6 @@
 //! Timing import and automatic timing discovery.
 
-use super::{Finding, Request, Window, found_message};
+use super::{Finding, Request, Tracker, Window, found_message};
 
 impl Window {
     /// Loads pasted timing text from a file into the import window.
@@ -13,7 +13,7 @@ impl Window {
         self.failure = Some(format!("Could not read the timing: {why}"));
     }
     /// Starts automatic timing, or asks for tracker weights before it can.
-    pub(super) fn find_timing(&mut self) {
+    pub(super) fn find_timing(&mut self, tracker: Tracker) {
         let (Some(song), Some(file)) = (&self.song, self.audio_file()) else {
             self.failure = Some("Finding the timing needs the song's audio".to_owned());
             return;
@@ -22,8 +22,10 @@ impl Window {
         self.requests.push(Request::FindTiming {
             file,
             ticks_per_beat,
+            tracker,
         });
         self.dialogs.finding = Finding::Running;
+        self.dialogs.tracker = tracker;
     }
     /// Accepts automatic timing from the host or shows why it failed.
     pub fn timing_found(&mut self, found: Result<charter_core::Timing, String>) {
@@ -627,6 +629,7 @@ mod tests {
             [Request::FindTiming {
                 file: PathBuf::from("/songs/a.ogg"),
                 ticks_per_beat: charter_core::TicksPerBeat::default(),
+                tracker: crate::Tracker::BeatThis,
             }]
         );
         assert!(
@@ -665,6 +668,40 @@ mod tests {
         harness.state_mut().weights_progress(0.42);
         harness.run();
         assert!(harness.query_by_label_contains("42%").is_some());
+    }
+    #[test]
+    #[expect(
+        clippy::non_ascii_literal,
+        reason = "the test clicks the menu label with its ellipsis"
+    )]
+    fn mapperatorinator_is_offered_beside_beat_this_with_its_own_download() {
+        let mut harness = playable();
+        harness.query_all_by_label("Timing").next().unwrap().click();
+        harness.run();
+        harness
+            .get_by_label("Find timing with Mapperatorinator…")
+            .click();
+        harness.run();
+        assert_eq!(
+            harness.state_mut().take_requests(),
+            [Request::FindTiming {
+                file: PathBuf::from("/songs/a.ogg"),
+                ticks_per_beat: charter_core::TicksPerBeat::default(),
+                tracker: crate::Tracker::Mapperatorinator,
+            }]
+        );
+        harness.state_mut().weights_needed();
+        harness.run();
+        assert!(harness.query_by_label_contains("416 MB").is_some());
+        harness.get_by_label("Download").click();
+        harness.run();
+        harness.state_mut().weights_progress(0.5);
+        harness.run();
+        assert!(
+            harness
+                .query_by_label_contains("Mapperatorinator weights, 50%")
+                .is_some()
+        );
     }
     #[test]
     fn timing_found_takes_the_songs_place_in_one_step_and_says_what_it_is() {

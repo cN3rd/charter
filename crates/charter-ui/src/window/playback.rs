@@ -71,7 +71,11 @@ impl Window {
     pub(super) fn audio_state(&self) -> String {
         match self.dialogs.finding {
             Finding::Downloading(share) => {
-                return format!("Downloading the Beat This! weights, {:.0}%", share * 100.0);
+                let name = match self.dialogs.tracker {
+                    super::Tracker::BeatThis => "Beat This!",
+                    super::Tracker::Mapperatorinator => "Mapperatorinator",
+                };
+                return format!("Downloading the {name} weights, {:.0}%", share * 100.0);
             }
             Finding::Running => return "Finding the timing…".to_owned(),
             Finding::Idle | Finding::Asking => {}

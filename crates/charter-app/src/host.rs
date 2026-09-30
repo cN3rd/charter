@@ -95,10 +95,11 @@ impl Host {
                     Request::FindTiming {
                         file,
                         ticks_per_beat,
+                        tracker,
                     } => {
                         let onsets = self.window.onsets().map(<[_]>::to_vec);
                         self.finder
-                            .find(file, ticks_per_beat, onsets, &mut self.window);
+                            .find(file, ticks_per_beat, onsets, tracker, &mut self.window);
                     }
                     Request::DownloadWeights => self.finder.download(&mut self.window),
                     Request::Play { .. }

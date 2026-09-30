@@ -126,9 +126,7 @@ fn main() -> eframe::Result {
                 window,
                 recovery: eframe::storage_dir(APP).map(|folder| folder.join("recovery.json")),
                 player: player::Player::default(),
-                finder: finder::Finder::new(
-                    eframe::storage_dir(APP).map(|folder| folder.join("beat_this-final0.ckpt")),
-                ),
+                finder: finder::Finder::new(eframe::storage_dir(APP)),
                 disk: Box::new(disk::Real),
             };
             if let Some(path) = std::env::args_os().nth(1) {

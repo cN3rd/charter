@@ -164,6 +164,8 @@ _licenses os:
     cp "$hits/LICENSE-AUDIO" "$folder/licenses/hit-sounds-LICENSE.txt"
     cp "$hits/CC0-1.0.txt" "$folder/licenses/hit-sounds-CC0-1.0.txt"
     cp "$hits/PROVENANCE.md" "$folder/licenses/hit-sounds-PROVENANCE.md"
+    cp third-party/timingator/LICENSE "$folder/licenses/timingator-LICENSE.txt"
+    cp third-party/timingator/NOTICE "$folder/licenses/timingator-NOTICE.txt"
     cargo metadata --format-version 1 --filter-platform "$target" | {{ python }} -c '
     import json, sys
     meta = json.load(sys.stdin)
