@@ -114,6 +114,34 @@ pub struct ImportedTiming {
     pub left_out: Vec<String>,
 }
 
+/// A file format a plugin reads whole songs from and writes them to, such as Tap Tap Revenge's
+/// `.ttr2_track`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SongFormat {
+    /// What its users call it, such as `Tap Tap Revenge track`.
+    pub name: String,
+    /// The extensions its files end in, without the dot, the usual one first.
+    pub extensions: Vec<String>,
+}
+
+/// A song read from another program's format, with what the format held that it leaves out.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImportedSong {
+    /// The song, which the plugin that read it accepts.
+    pub document: ValidDocument,
+    /// What the file held that the song leaves out, in words for the user.
+    pub left_out: Vec<String>,
+}
+
+/// A song written in another program's format, with what the song held that the file leaves out.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExportedSong {
+    /// The file's contents.
+    pub bytes: Vec<u8>,
+    /// What the song held that the file leaves out, in words for the user.
+    pub left_out: Vec<String>,
+}
+
 /// A game's rules over the documents that name it as their ruleset, past the format's own.
 ///
 /// The editor opens a document for editing only when the plugin for its ruleset accepts it, and
@@ -205,6 +233,41 @@ pub trait RulesetPlugin: Debug {
         let _: (&str, &ValidDocument) = (text, into);
         Err(format!("{} imports no timing", self.id()).into())
     }
+
+    /// The file formats this plugin reads songs from and writes them to, the usual one first.
+    fn song_formats(&self) -> Vec<SongFormat> {
+        Vec::new()
+    }
+
+    /// The song in `bytes`, a file of the plugin's [song format](Self::song_formats) at index
+    /// `format`, as a song of this game. The bytes are untrusted.
+    ///
+    /// # Errors
+    ///
+    /// Returns why `bytes` holds no song of the format, or the plugin has no such format.
+    fn import_song(
+        &self,
+        format: usize,
+        bytes: &[u8],
+    ) -> Result<ImportedSong, Box<dyn Error + Send + Sync>> {
+        let _: (usize, &[u8]) = (format, bytes);
+        Err(format!("{} imports no songs", self.id()).into())
+    }
+
+    /// `song`, which this plugin accepts, as a file of its [song format](Self::song_formats) at
+    /// index `format`.
+    ///
+    /// # Errors
+    ///
+    /// Returns why the song cannot be written, such as nothing in it the format holds.
+    fn export_song(
+        &self,
+        format: usize,
+        song: &ValidDocument,
+    ) -> Result<ExportedSong, Box<dyn Error + Send + Sync>> {
+        let _: (usize, &ValidDocument) = (format, song);
+        Err(format!("{} exports no songs", self.id()).into())
+    }
 }
 
 #[cfg(test)]
@@ -263,6 +326,19 @@ mod tests {
         .unwrap();
         let refused = Checks.import_timing("", &document).unwrap_err();
         assert_eq!(refused.to_string(), "checks imports no timing");
+    }
+
+    #[test]
+    fn a_plugin_that_only_checks_reads_and_writes_no_song_format() {
+        assert!(Checks.song_formats().is_empty());
+        let unread = Checks.import_song(0, b"").unwrap_err();
+        assert_eq!(unread.to_string(), "checks imports no songs");
+        let document = ValidDocument::from_json(
+            br#"{"format_version":1,"ruleset":{"id":"checks","version":"1"},"metadata":{"title":"t","artist":"a","audio":"a.ogg"},"timing":{"anchors":[{"tick":0,"seconds":0}],"tempo":120,"events":[]}}"#,
+        )
+        .unwrap();
+        let unwritten = Checks.export_song(0, &document).unwrap_err();
+        assert_eq!(unwritten.to_string(), "checks exports no songs");
     }
 
     #[test]

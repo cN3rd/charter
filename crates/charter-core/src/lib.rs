@@ -77,8 +77,8 @@ pub use path::ResourcePath;
     reason = "ruleset plugin types form the flat format extension API"
 )]
 pub use plugin::{
-    Difficulties, DifficultyPreset, ImportedTiming, Layout, NewChart, NewSong, NoteChange,
-    RulesetPlugin, SettingScope, TextSetting,
+    Difficulties, DifficultyPreset, ExportedSong, ImportedSong, ImportedTiming, Layout, NewChart,
+    NewSong, NoteChange, RulesetPlugin, SettingScope, SongFormat, TextSetting,
 };
 #[expect(
     clippy::pub_use,
