@@ -388,7 +388,8 @@ and the notes over a waveform that stays put.
 - Timing > Find timing with Beat This!… and Find timing with Mapperatorinator… draft the open
   chart's timing from its audio and put it in place as one step, as
   [automatic timing](autotiming.md) describes; the first time each runs, it asks before
-  downloading its model, and the status bar shows its progress.
+  downloading its model, and the status bar shows its progress. Mapperatorinator needs a
+  graphics card; without one, it asks whether to run on the CPU, which is much slower.
 - Timing > Import timing… reads another program's timing, pasted or from a file, and shows what
   it holds before it replaces the open chart's tempo, meters and offset as one step. Each ruleset
   plugin may read a format through `RulesetPlugin::import_timing`; osu!mania reads osu!'s

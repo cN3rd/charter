@@ -77,8 +77,11 @@ impl Window {
                 };
                 return format!("Downloading the {name} weights, {:.0}%", share * 100.0);
             }
-            Finding::Running => return "Finding the timing…".to_owned(),
-            Finding::Idle | Finding::Asking => {}
+            Finding::Running(None) => return "Finding the timing…".to_owned(),
+            Finding::Running(Some(share)) => {
+                return format!("Finding the timing, {:.0}%", share * 100.0);
+            }
+            Finding::Idle | Finding::Asking | Finding::NoGpu => {}
         }
         match (self.audio_file(), self.loaded()) {
             (None, _) => "No audio",

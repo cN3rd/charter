@@ -102,6 +102,7 @@ impl Host {
                             .find(file, ticks_per_beat, onsets, tracker, &mut self.window);
                     }
                     Request::DownloadWeights => self.finder.download(&mut self.window),
+                    Request::FindTimingOnCpu => self.finder.find_on_cpu(&mut self.window),
                     Request::Play { .. }
                     | Request::Preview { .. }
                     | Request::Volume(_)
@@ -185,6 +186,7 @@ impl Host {
             | Request::ChooseArtwork
             | Request::FindTiming { .. }
             | Request::DownloadWeights
+            | Request::FindTimingOnCpu
             | Request::Play { .. }
             | Request::Preview { .. }
             | Request::Volume(_)

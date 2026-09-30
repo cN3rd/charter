@@ -35,6 +35,10 @@ enum Progress {
     Downloaded(f32),
     /// The weights are in place, or why they are not.
     Weights(Result<(), String>),
+    /// Finding the timing is this share of the way done.
+    Finding(f32),
+    /// There is no graphics card to find the timing of this audio at this resolution on.
+    NoGpu(PathBuf, TicksPerBeat),
     /// The timing found, or why none was.
     Found(Result<Timing, String>),
 }
@@ -89,6 +93,21 @@ impl Finder {
         tracker: Tracker,
         window: &mut Window,
     ) {
+        self.start((file, ticks_per_beat, onsets, tracker), false, window);
+    }
+
+    /// Finds the timing waiting on the user's agreement to run on the CPU.
+    pub(crate) fn find_on_cpu(&mut self, window: &mut Window) {
+        if let Some(waiting) = self.waiting.take() {
+            self.start(waiting, true, window);
+        }
+    }
+
+    /// Starts finding the timing `job` asks for, on the CPU when `on_cpu` and otherwise on the
+    /// graphics card when its model wants one, or asks the window to let the weights download
+    /// first.
+    fn start(&mut self, job: Waiting, on_cpu: bool, window: &mut Window) {
+        let (file, ticks_per_beat, onsets, tracker) = job;
         let Some(weights) = self.weights(tracker, window) else {
             return;
         };
@@ -99,9 +118,26 @@ impl Finder {
         }
         let (send, receive) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
+            use burn::backend::flex::{Flex, FlexDevice};
+            use burn::backend::wgpu::{Wgpu, WgpuDevice};
+
+            let tell = |share| drop(send.send(Progress::Finding(share)));
             let found = match tracker {
                 Tracker::BeatThis => timing_of(&file, &weights, ticks_per_beat, onsets),
-                Tracker::Mapperatorinator => mapperatorinator(&file, &weights, ticks_per_beat),
+                Tracker::Mapperatorinator if on_cpu => {
+                    mapperatorinator::<Flex>(&file, &weights, ticks_per_beat, &FlexDevice, tell)
+                }
+                Tracker::Mapperatorinator if gpu() => mapperatorinator::<Wgpu>(
+                    &file,
+                    &weights,
+                    ticks_per_beat,
+                    &WgpuDevice::DefaultDevice,
+                    tell,
+                ),
+                Tracker::Mapperatorinator => {
+                    drop(send.send(Progress::NoGpu(file, ticks_per_beat)));
+                    return;
+                }
             };
             drop(send.send(Progress::Found(found)));
         });
@@ -135,6 +171,13 @@ impl Finder {
         loop {
             match work.try_recv() {
                 Ok(Progress::Downloaded(share)) => window.weights_progress(share),
+                Ok(Progress::Finding(share)) => window.finding_progress(share),
+                Ok(Progress::NoGpu(file, ticks_per_beat)) => {
+                    self.work = None;
+                    self.waiting = Some((file, ticks_per_beat, None, Tracker::Mapperatorinator));
+                    window.gpu_missing();
+                    return false;
+                }
                 Ok(Progress::Weights(Ok(()))) => {
                     self.work = None;
                     if let Some((file, ticks_per_beat, onsets, tracker)) = self.waiting.take() {
@@ -191,14 +234,32 @@ fn timing_of(
         .ok_or_else(|| "the audio has too few beats to fit a tempo to".to_owned())
 }
 
+/// Whether burn finds a graphics card to run on, rather than none or a software renderer that
+/// would be slower than the CPU backend. Asked once, since asking sets the device up.
+fn gpu() -> bool {
+    use burn::backend::wgpu::graphics::AutoGraphicsApi;
+    use burn::backend::wgpu::{RuntimeOptions, WgpuDevice, init_setup};
+
+    static GPU: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *GPU.get_or_init(|| {
+        // ponytail: cubecl panics when wgpu has no adapter, and names the adapter's type only in
+        // wgpu's own enum; its Debug name saves depending on that wgpu for one comparison.
+        std::panic::catch_unwind(|| {
+            init_setup::<AutoGraphicsApi>(&WgpuDevice::DefaultDevice, RuntimeOptions::default())
+        })
+        .is_ok_and(|setup| format!("{:?}", setup.adapter.get_info().device_type) != "Cpu")
+    })
+}
+
 /// The timing of the audio in `file` as Mapperatorinator's timing model, with the weights at
-/// `weights`, finds it on the graphics card.
-fn mapperatorinator(
+/// `weights`, finds it on `device`, telling `progress` the share of the way it has got.
+fn mapperatorinator<B: burn::prelude::Backend>(
     file: &Path,
     weights: &Path,
     ticks_per_beat: TicksPerBeat,
+    device: &B::Device,
+    mut progress: impl FnMut(f32),
 ) -> Result<Timing, String> {
-    use burn::backend::wgpu::{Wgpu, WgpuDevice};
     use timingator::audio::SAMPLE_RATE;
 
     let bytes = std::fs::read(file).map_err(|why| format!("{}: {why}", file.display()))?;
@@ -226,15 +287,15 @@ fn mapperatorinator(
         .ok_or_else(|| unreadable(&"no timingator.tokenizer"))?;
     let tokenizer =
         timingator::tokenizer::Tokenizer::from_json(&tokenizer).map_err(|why| unreadable(&why))?;
-    let device = WgpuDevice::default();
     let model =
-        timingator::model::Model::<Wgpu>::load(&model, &device).map_err(|why| unreadable(&why))?;
+        timingator::model::Model::<B>::load(&model, device).map_err(|why| unreadable(&why))?;
+    let count = |windows: usize| u64::try_from(windows).unwrap_or(u64::MAX);
     let found = timingator::run(
         &model,
         &tokenizer,
         &samples,
         &timingator::Options::default(),
-        |_, _| {},
+        |done, all| progress(download_share(count(done), count(all))),
     )
     .map_err(|why| why.to_string())?;
     let sections = sections(&found.timing_points)?;
@@ -346,7 +407,8 @@ fn copy_weights(
     clippy::cast_precision_loss,
     reason = "download progress is approximate"
 )]
-/// Approximate fraction of the weights downloaded, from 0 to 1.
+/// Approximate fraction of `length` that `read` is, from 0 to 1: of the weights downloaded, or
+/// of the windows decoded.
 fn download_share(read: u64, length: u64) -> f32 {
     read as f32 / length as f32
 }
@@ -410,6 +472,33 @@ mod tests {
                 .contains("the beat tracker did not download: server refused the request")
         );
         assert!(!finder.update(&mut window));
+    }
+
+    #[test]
+    fn no_graphics_card_asks_first_and_keeps_the_song_for_the_cpu() {
+        let mut window = window();
+        let mut finder = Finder::default();
+        let (send, receive) = std::sync::mpsc::channel();
+        finder.work = Some(receive);
+        send.send(Progress::Finding(0.5)).unwrap();
+        send.send(Progress::NoGpu(
+            PathBuf::from("/songs/a.ogg"),
+            charter_core::TicksPerBeat::default(),
+        ))
+        .unwrap();
+
+        assert!(!finder.update(&mut window));
+        assert!(finder.work.is_none());
+        assert_eq!(
+            finder
+                .waiting
+                .as_ref()
+                .map(|waiting| (&waiting.0, waiting.3)),
+            Some((&PathBuf::from("/songs/a.ogg"), Tracker::Mapperatorinator))
+        );
+        assert!(window.message().is_none());
+        finder.find_on_cpu(&mut window);
+        assert!(finder.waiting.is_none());
     }
 
     #[test]

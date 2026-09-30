@@ -130,6 +130,33 @@ pub(crate) fn ask_to_download_weights(ui: &Ui, tracker: crate::Tracker) -> Optio
     answer
 }
 
+/// Whether to find the timing on the CPU, there being no graphics card, which the user answers:
+/// true for Run on the CPU.
+pub(crate) fn ask_to_run_on_cpu(ui: &Ui) -> Option<bool> {
+    let mut answer = None;
+    egui::Modal::new(egui::Id::new("run on cpu")).show(ui.ctx(), |ui| {
+        ui.set_max_width(420.0);
+        let question = "No graphics card found";
+        ui.label(RichText::new(question).family(style::titles(ui)).size(15.0));
+        ui.add_space(4.0);
+        ui.label(
+            "Mapperatorinator runs on the graphics card, and charter found none it can use. It can \
+             run on the CPU instead, but much more slowly: a few minutes of song can take over a \
+             quarter of an hour, during which the timing cannot be found again.",
+        );
+        ui.add_space(14.0);
+        ui.horizontal(|ui| {
+            if ui.add(style::primary("Run on the CPU")).clicked() {
+                answer = Some(true);
+            }
+            if ui.button("Cancel").clicked() {
+                answer = Some(false);
+            }
+        });
+    });
+    answer
+}
+
 /// Whether to reset the open chart's timing, which the user answers: true for Reset.
 pub(crate) fn ask_to_reset_timing(ui: &Ui) -> Option<bool> {
     let mut answer = None;

@@ -394,7 +394,8 @@ impl Player {
             | Request::ChooseTimingFile
             | Request::ReadTags { .. }
             | Request::FindTiming { .. }
-            | Request::DownloadWeights => {}
+            | Request::DownloadWeights
+            | Request::FindTimingOnCpu => {}
         }
     }
 

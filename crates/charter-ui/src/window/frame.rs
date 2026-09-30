@@ -75,7 +75,7 @@ impl Window {
             || self.dialogs.offer.is_some()
             || self.calibration.is_open()
             || self.dialogs.resetting
-            || self.dialogs.finding == Finding::Asking;
+            || matches!(self.dialogs.finding, Finding::Asking | Finding::NoGpu);
         // A button that Tab focused wants no letters, so only a text field counts.
         let typing = ui
             .ctx()
@@ -357,6 +357,16 @@ impl Window {
             if download {
                 self.requests.push(Request::DownloadWeights);
                 self.dialogs.finding = Finding::Downloading(0.0);
+            } else {
+                self.dialogs.finding = Finding::Idle;
+            }
+        }
+        if self.dialogs.finding == Finding::NoGpu
+            && let Some(on_cpu) = panels::ask_to_run_on_cpu(ui)
+        {
+            if on_cpu {
+                self.requests.push(Request::FindTimingOnCpu);
+                self.dialogs.finding = Finding::Running(None);
             } else {
                 self.dialogs.finding = Finding::Idle;
             }

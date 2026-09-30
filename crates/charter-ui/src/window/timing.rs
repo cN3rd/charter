@@ -24,7 +24,7 @@ impl Window {
             ticks_per_beat,
             tracker,
         });
-        self.dialogs.finding = Finding::Running;
+        self.dialogs.finding = Finding::Running(None);
         self.dialogs.tracker = tracker;
     }
     /// Accepts automatic timing from the host or shows why it failed.
@@ -700,6 +700,46 @@ mod tests {
         assert!(
             harness
                 .query_by_label_contains("Mapperatorinator weights, 50%")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn without_a_graphics_card_the_user_chooses_whether_to_find_it_on_the_cpu() {
+        let mut harness = playable();
+        find_from_the_menu(&mut harness);
+        harness.state_mut().take_requests();
+        harness.state_mut().gpu_missing();
+        harness.run();
+        assert!(
+            harness
+                .query_by_label_contains("No graphics card")
+                .is_some()
+        );
+        harness.get_by_label("Cancel").click();
+        harness.run();
+        assert_eq!(harness.state_mut().take_requests(), []);
+        assert!(
+            harness
+                .query_by_label_contains("Finding the timing")
+                .is_none()
+        );
+
+        find_from_the_menu(&mut harness);
+        harness.state_mut().take_requests();
+        harness.state_mut().gpu_missing();
+        harness.run();
+        harness.get_by_label("Run on the CPU").click();
+        harness.run();
+        assert_eq!(
+            harness.state_mut().take_requests(),
+            [Request::FindTimingOnCpu]
+        );
+        harness.state_mut().finding_progress(0.25);
+        harness.run();
+        assert!(
+            harness
+                .query_by_label_contains("Finding the timing, 25%")
                 .is_some()
         );
     }

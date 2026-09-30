@@ -173,6 +173,9 @@ pub enum Request {
     /// Download the beat tracker's weights, the user having agreed, telling
     /// [`Window::weights_progress`] how far it has got, then find the timing asked for.
     DownloadWeights,
+    /// Find the timing asked for on the CPU, the user having agreed after
+    /// [`Window::gpu_missing`].
+    FindTimingOnCpu,
 }
 
 /// Where finding the song's timing from its audio has got to.
@@ -185,8 +188,10 @@ enum Finding {
     Asking,
     /// Downloading the weights, this share of them so far.
     Downloading(f32),
-    /// The host is finding it.
-    Running,
+    /// Waiting on the user to agree to find it on the CPU, there being no graphics card.
+    NoGpu,
+    /// The host is finding it, this share of the way when it says.
+    Running(Option<f32>),
 }
 
 /// What tags read from an audio file would change, waiting on whether to take them.
@@ -930,6 +935,17 @@ impl Window {
     /// Takes that the beat tracker's weights are not downloaded yet, so the user is asked.
     pub const fn weights_needed(&mut self) {
         self.dialogs.finding = Finding::Asking;
+    }
+
+    /// Takes that there is no graphics card to find the timing on, so the user is asked whether
+    /// to find it on the CPU instead.
+    pub const fn gpu_missing(&mut self) {
+        self.dialogs.finding = Finding::NoGpu;
+    }
+
+    /// Takes that finding the timing is `share` of the way done.
+    pub const fn finding_progress(&mut self, share: f32) {
+        self.dialogs.finding = Finding::Running(Some(share.clamp(0.0, 1.0)));
     }
 
     /// Takes that `share` of the beat tracker's weights has downloaded.

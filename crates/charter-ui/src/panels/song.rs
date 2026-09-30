@@ -620,7 +620,7 @@ mod tests {
 
     #[test]
     fn each_confirmation_button_returns_the_answer_it_names() {
-        let dialogs: [Confirmation; 4] = [
+        let dialogs: [Confirmation; 5] = [
             (|ui: &Ui| ask_to_restore(ui, "Demo"), "Restore", "Discard"),
             (
                 |ui: &Ui| offer_tags(ui, Some("New title"), Some("Artist")),
@@ -633,6 +633,7 @@ mod tests {
                 "Cancel",
             ),
             (ask_to_reset_timing, "Reset", "Cancel"),
+            (ask_to_run_on_cpu, "Run on the CPU", "Cancel"),
         ];
         for (dialog, yes, no) in dialogs {
             answer_dialog(dialog, yes, true);
