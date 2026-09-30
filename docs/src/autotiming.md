@@ -56,6 +56,16 @@ lines, at the steepest rise of each hit's envelope; they now sit at a hit's star
 2 ms from the lines. Beat This!'s own beats run about 35 ms later than the onsets on both songs,
 which is why the refinement learns the lag before it looks for each beat's onset.
 
+## Mapperatorinator's super timing
+
+`third-party/timingator` vendors a second approach, not wired in yet: a Rust port of
+[Mapperatorinator](https://github.com/OliBomby/Mapperatorinator)'s super timing generator. Its
+V32 model hears 16.4 seconds of audio at a time and writes beat, measure and timing point events;
+twenty passes at shifted offsets are fused into one beat grid and then osu! timing points. Its
+weights, pruned to what timing reads and stored as float16, are one 416 MB GGUF file at
+[cnf3rd/timingator-v32-f16-gguf](https://huggingface.co/cnf3rd/timingator-v32-f16-gguf). The
+crate's README has the file's URL and checksum.
+
 ## Known gaps
 
 - A beatless or sparse intro can still come out as a stretch or two at a wrong tempo.

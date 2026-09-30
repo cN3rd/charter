@@ -44,9 +44,9 @@ fmt-check:
 
 # Run the Kani proofs of every crate Kani can build
 # ponytail: burn pulls in backtrace, which fails to compile under Kani's nightly (an ambiguous
-# `unreachable!`), so the two crates linking burn are left out. Drop the exclusions once it builds.
+# `unreachable!`), so the crates linking burn are left out. Drop the exclusions once it builds.
 kani:
-    cargo kani --workspace --exclude charter-beatthis-burn --exclude charter-app
+    cargo kani --workspace --exclude charter-beatthis-burn --exclude charter-app --exclude timingator
 
 # Build the book into docs/book
 docs:

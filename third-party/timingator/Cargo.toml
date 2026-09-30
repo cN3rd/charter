@@ -1,0 +1,16 @@
+[package]
+name = "timingator"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+rust-version.workspace = true
+description = "Song timing from audio: Mapperatorinator's super timing generator in Rust and burn"
+
+[dependencies]
+anyhow = "1"
+burn.workspace = true
+half = "2.7"
+rustfft.workspace = true
+safetensors = "0.7.0"
+serde.workspace = true
+serde_json.workspace = true

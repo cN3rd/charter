@@ -7669,6 +7669,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "timingator"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "burn",
+ "half",
+ "rustfft",
+ "safetensors 0.7.0",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "tiny-keccak"
 version = "2.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

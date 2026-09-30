@@ -1,0 +1,33 @@
+timingator is a trimmed, standalone copy of the timing part of Mapperatorinator.
+
+Mapperatorinator
+  https://github.com/OliBomby/Mapperatorinator, commit 0e2b0e387aab4b35c64b0b11b12d47578dea7587
+  Copyright (c) 2024 OliBomby, MIT License (the LICENSE file in this repository).
+  Every file under src/timingator/ except timing_point.py, api.py's TimingModel, cli.py and the
+  package __init__/__main__ modules is copied or adapted from it; each says at its top which
+  upstream file it comes from and what changed. The Rust crate under rust/ is a port of the same
+  code; each module says at its top which upstream files it ports.
+
+Model weights
+  The checkpoints (default OliBomby/Mapperatorinator-v32 on Hugging Face) are downloaded at run
+  time and are not part of this repository. They are published by OliBomby under their own terms.
+
+VarWhisper backbone
+  src/timingator/model/varwhisper/ builds on the Whisper implementation in Hugging Face
+  Transformers (https://github.com/huggingface/transformers), Apache License 2.0.
+
+slider
+  timing_point.py mirrors the constructor of slider's TimingPoint
+  (https://github.com/llllllllll/slider, LGPL-3.0) so the adapted code can call it unchanged; no
+  slider code is copied.
+
+SciPy
+  rust/src/signal.rs ports scipy.ndimage.gaussian_filter1d and scipy.signal.find_peaks
+  (https://github.com/scipy/scipy), Copyright (c) 2001-2002 Enthought, Inc. and 2003-2024 SciPy
+  Developers, BSD 3-Clause License.
+
+ggml
+  rust/src/gguf.rs and quant/ggml.py follow the GGUF format and the block formats of ggml
+  (https://github.com/ggml-org/ggml, as used in llama.cpp), Copyright (c) 2023-2024 The ggml
+  authors, MIT License. quant/calib.py implements GPTQ (Frantar et al., 2022,
+  arXiv:2210.17323).
