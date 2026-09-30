@@ -272,6 +272,7 @@ impl Window {
                     song: created_song,
                     restored: false,
                     audio,
+                    note: None,
                 });
             }
             Err(error) => {
@@ -365,6 +366,7 @@ impl Window {
                 song,
                 restored: true,
                 audio,
+                note: None,
             });
         } else {
             self.drop_autosave();
@@ -416,6 +418,7 @@ impl Window {
                 song: Box::new(song),
                 restored: false,
                 audio: None,
+                note: None,
             }),
             Err(error) => self.refuse(path, &error),
         }
@@ -520,6 +523,7 @@ impl Window {
             song,
             restored: false,
             audio: None,
+            note: None,
         });
     }
     /// Asks before replacing unsaved work, otherwise continues immediately.
@@ -542,6 +546,7 @@ impl Window {
                 mut song,
                 restored,
                 audio,
+                note,
             } => {
                 if restored {
                     self.autosave.due = None;
@@ -562,7 +567,7 @@ impl Window {
                 self.autosave.snapshotted = self.song.as_ref().map(Song::revision);
                 self.autosave.snapshot_due = None;
                 self.zoom = Zoom::default().by(self.settings.zoom / 100.0);
-                self.failure = None;
+                self.failure = note;
                 self.typing.placed = false;
                 self.typing.holding.clear();
                 self.typing.pressed.clear();

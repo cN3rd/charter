@@ -97,7 +97,7 @@ expected `E1` for it. Do not silence that by adding frontmatter.
 | `crates/charter-timing` | the timing window in egui: the audio one measure a row, anchors pinning beats to the audio; hands its edits back as commands; `lib.rs` holds the state, `draw.rs`, `pointer.rs` and `keyboard.rs` its drawing and input |
 | `crates/charter-ui` | the editor window in egui: notefield, panels, keys, settings; hosts the timing window; asks its host for files and dialogs; the static mock as an example. `window/`, `panels/` and `notefield/` are split one file per concern, each `impl Window` block beside the state sub-struct it owns |
 | `crates/charter-app` | binary front end, thin: registers the built-in ruleset plugins, answers the window's file and dialog requests with `std::fs` and rfd, plays the song's audio through kira, keeps settings in eframe's storage; its file I/O goes through a `Disk` trait so it is tested in memory |
-| `plugins/stepmania`, `plugins/ttr`, `plugins/osu-mania` | ruleset plugins: typed game models over `charter-core`, each with a `Plugin` the editor checks songs and edits through |
+| `plugins/stepmania`, `plugins/ttr`, `plugins/osu-mania` | ruleset plugins: typed game models over `charter-core`, each with a `Plugin` the editor checks songs and edits through; `ttr` reads and writes `.ttr2_track` (`track.rs`) and EOF MIDI (`midi.rs`) through one model (`exchange.rs`) |
 | `third-party/symphonia-wrap` | build-time facade over `symphonia`, read its README first |
 | `third-party/timingator` | DSP: vendored port of Mapperatorinator's super timing, the alternative to Beat This! in Timing › Find timing; osu! timing points from audio by the V32 model in burn on wgpu; weights on Hugging Face, read its README first |
 
@@ -130,7 +130,8 @@ atomic commits with `/commit`. `.github/skills/README.md` lists every skill and 
 ## Current state
 
 `charter-core` implements the format chapter, and the three ruleset plugins model their games on top
-of it without file import or export, and start empty songs. The editor starts songs from a dialog,
+of it and start empty songs; Tap Tap Revenge also imports and exports the game's `.ttr2_track` and
+Editor on Fire MIDI through File › Import song… and Export song…. The editor starts songs from a dialog,
 draws charts generically, moves the cursor by snap and by measure, and edits a song whose ruleset
 plugin accepts it: lane keys and Ctrl with the mouse place taps, holds and mines, the mouse selects
 and Delete removes the selection, every edit is checked by the format and the plugin, the tempo and

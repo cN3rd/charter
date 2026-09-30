@@ -289,6 +289,10 @@ impl Player {
     }
 
     /// Does what the window asked of playback; other requests are left to the caller.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "every request is named, and most are the caller's to answer"
+    )]
     pub(crate) fn answer(&mut self, request: &Request, window: &mut Window) {
         match request {
             Request::Play {
@@ -392,6 +396,9 @@ impl Player {
             | Request::DecodeArtwork { .. }
             | Request::ReadArtwork { .. }
             | Request::ChooseTimingFile
+            | Request::ChooseImport { .. }
+            | Request::ChooseExport { .. }
+            | Request::WriteExport { .. }
             | Request::ReadTags { .. }
             | Request::FindTiming { .. }
             | Request::DownloadWeights

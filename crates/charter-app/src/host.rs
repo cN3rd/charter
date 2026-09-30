@@ -75,6 +75,18 @@ impl Host {
                             self.read_timing(&path);
                         }
                     }
+                    Request::ChooseImport { formats } => {
+                        let file = filtered(rfd::FileDialog::new(), &formats).pick_file();
+                        if let Some(path) = file {
+                            self.read_import(&path);
+                        }
+                    }
+                    Request::ChooseExport { name, formats } => {
+                        let dialog = filtered(rfd::FileDialog::new(), &formats);
+                        if let Some(path) = dialog.set_file_name(name).save_file() {
+                            self.window.export_song(&path);
+                        }
+                    }
                     Request::ChooseAudio => {
                         let audio = rfd::FileDialog::new()
                             .add_filter("audio", &["ogg", "mp3", "wav", "flac"])
@@ -119,6 +131,7 @@ impl Host {
                     | Request::ReadArtwork { .. }
                     | Request::OpenPath { .. }
                     | Request::Snapshot { .. }
+                    | Request::WriteExport { .. }
                     | Request::DropAutosave) => self.answer(file_request),
                 }
             }
@@ -130,6 +143,11 @@ impl Host {
     pub(crate) fn answer(&mut self, request: Request) {
         match request {
             Request::Write { path, bytes } => self.write(path, &bytes),
+            Request::WriteExport { path, bytes } => {
+                if let Err(error) = disk::write_whole(self.disk.as_ref(), &path, &bytes) {
+                    self.window.export_failed(&path, &error.to_string());
+                }
+            }
             Request::Autosave { bytes } => self.autosave(&bytes),
             Request::CopyAudio { from, to } => {
                 if let Err(error) = disk::copy_whole(self.disk.as_ref(), &from, &to) {
@@ -182,6 +200,8 @@ impl Host {
             | Request::Open
             | Request::ChooseSnapshotFolder
             | Request::ChooseTimingFile
+            | Request::ChooseImport { .. }
+            | Request::ChooseExport { .. }
             | Request::ChooseAudio
             | Request::ChooseArtwork
             | Request::FindTiming { .. }
@@ -341,6 +361,14 @@ impl Host {
         self.write(file, bytes);
     }
 
+    /// Hands the window the song at `path` to import, or says why it could not be read.
+    pub(crate) fn read_import(&mut self, path: &Path) {
+        match self.disk.read(path) {
+            Ok(bytes) => self.window.import_song(path, &bytes),
+            Err(error) => self.window.refuse(path, &error),
+        }
+    }
+
     /// Hands the text of the file at `path` to the import timing window.
     pub(crate) fn read_timing(&mut self, path: &Path) {
         match self.disk.read(path) {
@@ -382,4 +410,11 @@ impl Host {
             Err(error) => self.window.refuse(recovery, &error),
         }
     }
+}
+
+/// `dialog` offering a filter for each of `formats`, a name and its extensions.
+fn filtered(dialog: rfd::FileDialog, formats: &[(String, Vec<String>)]) -> rfd::FileDialog {
+    formats.iter().fold(dialog, |dialog, (name, extensions)| {
+        dialog.add_filter(name, extensions)
+    })
 }

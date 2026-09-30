@@ -44,6 +44,8 @@ impl Window {
             Action::Audition(from) => self.audition(from),
             Action::AskResetTiming => self.dialogs.resetting = true,
             Action::FindTiming(tracker) => self.find_timing(tracker),
+            Action::ImportSong => self.ask_import(),
+            Action::ExportSong => self.ask_export(),
             Action::Loop { from, to } => self.toggle_loop(from, to),
             Action::ToggleRate => self.toggle_rate(),
             Action::MuteMetronome(muted) => {

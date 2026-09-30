@@ -438,6 +438,10 @@ and the notes over a waveform that stays put.
   `autosaves` folder beside a saved song's file, each switched on its own and both off to start.
   A song unchanged since its last copy is not copied again, and each folder keeps the newest 20
   copies of a song unless the page says otherwise, removing only that song's dated copies.
+- File › Import song… opens a song in any format a plugin reads, such as a Tap Tap Revenge
+  `.ttr2_track` or an Editor on Fire MIDI file, as a new unsaved song whose audio is the file its
+  format names beside it; Export song… writes the open song in a format its plugin writes. Both
+  say what the conversion left out.
 - File › Open recent lists the last ten songs opened or saved, the latest first, and clears them;
   a song that no longer opens leaves the list, and Restore defaults keeps it. Settings… sits at the
   bottom of Edit, and the demo song in Help.

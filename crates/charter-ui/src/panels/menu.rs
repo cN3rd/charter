@@ -13,6 +13,7 @@ pub(crate) fn menu_bar(
     ui: &mut Ui,
     (song, recent): (Option<&Song>, &[std::path::PathBuf]),
     (playing, importable, findable, colour_notes_by_layer): (bool, bool, bool, bool),
+    (songs_importable, song_exportable): (bool, bool),
     actions: &mut Vec<Action>,
 ) {
     let song_open = song.is_some();
@@ -36,6 +37,15 @@ pub(crate) fn menu_bar(
             }
             if item(ui, "Save as…", SAVE_AS, song_open) {
                 actions.push(Action::SaveAs);
+            }
+            ui.separator();
+            let import = egui::Button::new("Import song…");
+            if ui.add_enabled(songs_importable, import).clicked() {
+                actions.push(Action::ImportSong);
+            }
+            let export = egui::Button::new("Export song…");
+            if ui.add_enabled(song_exportable, export).clicked() {
+                actions.push(Action::ExportSong);
             }
             ui.separator();
             let choose = egui::Button::new("Choose audio…");

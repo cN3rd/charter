@@ -170,6 +170,28 @@ pub enum Request {
         /// The model to find it with.
         tracker: Tracker,
     },
+    /// Ask the user for a song in one of `formats`, each a name and the extensions its files end
+    /// in, and pass its path and bytes to [`Window::import_song`].
+    ChooseImport {
+        /// Formats a plugin reads songs from, with their extensions.
+        formats: Vec<(String, Vec<String>)>,
+    },
+    /// Ask where to write the open song in one of `formats`, suggesting the name `name`, and pass
+    /// the path to [`Window::export_song`].
+    ChooseExport {
+        /// Suggested file name, without an extension.
+        name: String,
+        /// Formats the song's plugin writes, with their extensions.
+        formats: Vec<(String, Vec<String>)>,
+    },
+    /// Write `bytes`, the open song in another program's format, to `path`, saying through
+    /// [`Window::export_failed`] if it could not.
+    WriteExport {
+        /// Destination the user chose.
+        path: PathBuf,
+        /// The exported file.
+        bytes: Vec<u8>,
+    },
     /// Download the beat tracker's weights, the user having agreed, telling
     /// [`Window::weights_progress`] how far it has got, then find the timing asked for.
     DownloadWeights,
@@ -283,6 +305,8 @@ enum Discard {
         restored: bool,
         /// The audio file dropped on the song, when an autosave kept it.
         audio: Option<PathBuf>,
+        /// What to tell the user once it is open, such as what an import left out.
+        note: Option<String>,
     },
 }
 
@@ -623,6 +647,10 @@ pub(crate) enum Action {
     ToggleTunedLanes,
     /// Finds the song's timing from its audio with this model.
     FindTiming(Tracker),
+    /// Asks for a song in another program's format to open.
+    ImportSong,
+    /// Asks where to write the open song in another program's format.
+    ExportSong,
     /// Draws the notefield's grid down to this note value.
     SetGrid(std::num::NonZeroU16),
 }
@@ -872,6 +900,7 @@ mod apply;
 mod artwork;
 mod clipboard;
 mod files;
+mod formats;
 mod frame;
 mod playback;
 mod timing;

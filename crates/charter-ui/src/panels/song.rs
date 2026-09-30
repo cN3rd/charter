@@ -1288,7 +1288,13 @@ mod tests {
             .unwrap();
             let mut harness = Harness::builder().build_ui_state(
                 |ui, (song, actions): &mut (Song, Vec<Action>)| {
-                    menu_bar(ui, (Some(song), &[]), (false, true, true, false), actions);
+                    menu_bar(
+                        ui,
+                        (Some(song), &[]),
+                        (false, true, true, false),
+                        (true, true),
+                        actions,
+                    );
                 },
                 (song, Vec::new()),
             );

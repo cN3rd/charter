@@ -156,6 +156,7 @@ impl Window {
                 let importable = import::offered(self.plugins);
                 let findable = self.audio_file().is_some() && self.dialogs.finding == Finding::Idle;
                 let recent = &self.settings.recent;
+                let formats = (self.songs_importable(), self.song_exportable());
                 panels::menu_bar(
                     ui,
                     (song, recent),
@@ -165,6 +166,7 @@ impl Window {
                         findable,
                         self.settings.colour_notes_by_layer,
                     ),
+                    formats,
                     &mut actions,
                 );
             });

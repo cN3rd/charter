@@ -1026,6 +1026,81 @@ mod tests {
         assert!(message.contains("map.osu") && message.contains("access denied"));
     }
 
+    /// A new Tap Tap Revenge song as its game's own track file.
+    fn ttr2_track() -> Vec<u8> {
+        let song = charter_core::NewSong {
+            metadata: charter_core::Metadata {
+                title: "sudo".to_owned(),
+                artist: "Mr. Bill".to_owned(),
+                audio: charter_core::ResourcePath::new("audio.ogg").unwrap(),
+                preview: None,
+                artwork: None,
+                genre: None,
+                ext: charter_core::Extensions::new(),
+            },
+            layout: 0,
+            charts: vec![charter_core::NewChart {
+                name: "Extreme".to_owned(),
+                level: Some(3),
+            }],
+        };
+        let document = charter_ttr::Plugin.new_song(&song).unwrap();
+        charter_ttr::Plugin.export_song(0, &document).unwrap().bytes
+    }
+
+    #[test]
+    fn an_imported_song_is_read_from_disk_and_opened() {
+        let path = "/t/sudo.track/taptrack.ttr2_track";
+        let mut host = host(Memory::with(&[(path, &ttr2_track())]));
+        host.window = Window::new(PLUGINS);
+        host.read_import(Path::new(path));
+        assert_eq!(
+            host.window.message(),
+            Some("Imported Tap Tap Revenge track as a Tap Tap Revenge song.")
+        );
+        assert_eq!(host.window.title(), "sudo.json - charter");
+    }
+
+    #[test]
+    fn an_unreadable_import_says_why_and_opens_nothing() {
+        let path = "/t/notes.mid";
+        let mut host = host(Memory {
+            unreadable: vec![PathBuf::from(path)],
+            ..Memory::with(&[(path, b"MThd")])
+        });
+        host.window = Window::new(PLUGINS);
+        host.read_import(Path::new(path));
+        let message = host.window.message().unwrap();
+        assert!(message.contains("notes.mid did not open") && message.contains("access denied"));
+        assert_eq!(host.window.title(), "charter");
+    }
+
+    #[test]
+    fn an_export_is_written_whole_or_its_failure_reported() {
+        let mut host = host(Memory {
+            unwritable: vec![PathBuf::from("/full/notes.mid.partial")],
+            ..Memory::default()
+        });
+        host.handle_requests(vec![Request::WriteExport {
+            path: PathBuf::from("/out/notes.mid"),
+            bytes: b"MThd".to_vec(),
+        }]);
+        assert_eq!(
+            host.disk.read(Path::new("/out/notes.mid")).unwrap(),
+            b"MThd"
+        );
+        host.handle_requests(vec![Request::WriteExport {
+            path: PathBuf::from("/full/notes.mid"),
+            bytes: b"MThd".to_vec(),
+        }]);
+        assert!(
+            host.window
+                .message()
+                .unwrap()
+                .starts_with("/full/notes.mid was not written")
+        );
+    }
+
     #[test]
     fn project_file_keeps_names_with_dots_and_does_not_nest_an_existing_project() {
         assert_eq!(
