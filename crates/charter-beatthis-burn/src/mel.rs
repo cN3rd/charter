@@ -6,12 +6,8 @@
 
 use std::f64::consts::PI;
 
-use audioadapter_buffers::owned::InterleavedOwned;
-use rubato::{Fft, FixedSync, Resampler};
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex;
-
-use crate::Error;
 
 /// The sample rate the network was trained at.
 pub(crate) const RATE: u32 = 22_050;
@@ -29,33 +25,6 @@ const F_MIN: f64 = 30.0;
 const F_MAX: f64 = 11_000.0;
 /// Scale applied to mel magnitudes before `ln(1 + x)`.
 const LOG_MULTIPLIER: f32 = 1000.0;
-
-/// `samples`, mono audio at `rate`, at the network's [`RATE`].
-///
-/// # Errors
-///
-/// Returns [`Error::Resample`] for a rate the resampler cannot convert from.
-pub(crate) fn resample(samples: &[f32], rate: u32) -> Result<Vec<f32>, Error> {
-    if rate == RATE || samples.is_empty() {
-        return Ok(samples.to_vec());
-    }
-    let why = |error: &dyn std::fmt::Display| Error::Resample(error.to_string());
-    let input =
-        InterleavedOwned::new_from(samples.to_vec(), 1, samples.len()).map_err(|e| why(&e))?;
-    let input_rate = usize::try_from(rate).map_err(|e| why(&e))?;
-    let mut resampler = Fft::<f32>::new(
-        input_rate,
-        usize::try_from(RATE).map_err(|e| why(&e))?,
-        1024,
-        1,
-        FixedSync::Input,
-    )
-    .map_err(|e| why(&e))?;
-    let output = resampler
-        .process_all(&input, samples.len(), None)
-        .map_err(|e| why(&e))?;
-    Ok(output.take_data())
-}
 
 /// The log-mel spectrogram of `samples`, mono audio at [`RATE`], a frame every 441 samples from
 /// the first, each centred on its hop.
@@ -268,39 +237,6 @@ mod tests {
         assert_eq!(
             reflected(&[1.0, 2.0, 3.0], 2),
             [3.0, 2.0, 1.0, 2.0, 3.0, 2.0, 1.0]
-        );
-    }
-
-    #[test]
-    fn audio_at_twice_the_rate_resamples_to_half_the_samples() {
-        let samples = vec![0.25; 44_100];
-        let resampled = resample(&samples, 44_100).unwrap();
-        assert!(resampled.len().abs_diff(22_050) <= 1, "{}", resampled.len());
-        assert!(
-            resampled[1000..21_000]
-                .iter()
-                .all(|s| (s - 0.25).abs() < 1e-3)
-        );
-        assert_eq!(resample(&samples, RATE).unwrap().len(), 44_100);
-    }
-
-    #[test]
-    fn native_rate_is_unchanged_and_invalid_rate_is_reported() {
-        let samples = [0.0, 0.25, -0.5, 1.0];
-        assert_eq!(resample(&samples, RATE).unwrap(), samples);
-        assert!(matches!(resample(&samples, 0), Err(Error::Resample(_))));
-        assert!(resample(&[], 44_100).unwrap().is_empty());
-    }
-
-    #[test]
-    fn non_integer_rate_conversion_preserves_duration_and_level() {
-        let samples = vec![0.25; 4_800];
-        let got = resample(&samples, 48_000).unwrap();
-        assert!(got.len().abs_diff(2_205) <= 1, "{}", got.len());
-        assert!(
-            got[200..2_000]
-                .iter()
-                .all(|sample| (sample - 0.25).abs() < 1e-3)
         );
     }
 

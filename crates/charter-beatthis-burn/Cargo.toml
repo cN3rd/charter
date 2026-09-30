@@ -9,13 +9,9 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
-audioadapter-buffers.workspace = true
 burn.workspace = true
 burn-flex.workspace = true
 burn-store.workspace = true
-rubato.workspace = true
+charter-audio.workspace = true
 rustfft.workspace = true
 thiserror.workspace = true
-
-[dev-dependencies]
-charter-audio.workspace = true

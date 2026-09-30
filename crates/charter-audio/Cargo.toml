@@ -9,6 +9,8 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
+audioadapter-buffers.workspace = true
+rubato.workspace = true
 rustfft.workspace = true
 symphonia-wrap.workspace = true
 serde.workspace = true

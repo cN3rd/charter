@@ -4,6 +4,7 @@
 mod click;
 mod onsets;
 mod peaks;
+mod resample;
 mod spectrum;
 mod tags;
 mod track;
@@ -102,6 +103,12 @@ pub use onsets::{Onset, onsets, onsets_from_bytes, onsets_to_bytes};
     reason = "waveform peaks and fingerprints are part of the flat audio API"
 )]
 pub use peaks::{Extent, Peaks, fingerprint};
+#[expect(
+    clippy::pub_use,
+    clippy::useless_attribute,
+    reason = "resampling is part of the flat audio API"
+)]
+pub use resample::{ResampleError, resample};
 #[expect(
     clippy::pub_use,
     clippy::useless_attribute,

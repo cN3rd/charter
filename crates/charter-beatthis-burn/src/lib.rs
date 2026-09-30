@@ -9,7 +9,7 @@
 mod mel;
 mod model;
 
-use mel::{FPS, log_mel, resample};
+use mel::{FPS, log_mel};
 
 use std::path::Path;
 
@@ -120,7 +120,8 @@ impl Tracker {
     ///
     /// Returns [`Error::Resample`] when the audio cannot be brought to the network's rate.
     pub fn track(&self, samples: &[f32], rate: u32) -> Result<Beats, Error> {
-        let audio = resample(samples, rate)?;
+        let audio = charter_audio::resample(samples, rate, mel::RATE)
+            .map_err(|why| Error::Resample(why.to_string()))?;
         let spect = log_mel(&audio);
         let (beat_logits, downbeat_logits) = self.logits(&spect);
         Ok(peaks(beat_logits, downbeat_logits))
