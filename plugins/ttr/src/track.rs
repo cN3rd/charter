@@ -1,0 +1,643 @@
+//! Tap Tap Revenge's `.ttr2_track`: a keyed archive, as Apple's `NSKeyedArchiver` writes one, in a
+//! binary or XML property list. Its root is a dictionary from each level's number, 1 for Easy to
+//! 4 for Extreme, to a `KBMidiFile`: the level's tempo changes, and tracks of `KBMidiEvent`s, each
+//! a MIDI note switched on or off at a moment of the audio or a line of text.
+//!
+//! [`plist`] reads and writes the property list; this module walks the archive's fixed shape
+//! itself. The keyed-archive crates decode any object graph by recursion, which a hostile file
+//! can make overflow the stack or grow without bound, and none writes custom classes.
+
+use std::collections::{HashMap, VecDeque};
+use std::io::Cursor;
+
+use plist::{Dictionary, Uid, Value};
+
+use crate::Difficulty;
+use crate::exchange::{Change, Key, Level, MAX_NOTES, Played, Report, Track, beats_at};
+
+/// A `KBMidiEvent` switching a note on, or off with a velocity of zero.
+const NOTE_ON: i64 = 0;
+/// A `KBMidiEvent` switching a note off.
+const NOTE_OFF: i64 = 1;
+/// A `KBMidiEvent` holding text, such as `TITLE: Sing`.
+const TEXT: i64 = 2;
+
+/// The track in `bytes`, and what of it the song leaves out in `report`.
+///
+/// # Errors
+///
+/// Returns why `bytes` holds no track: not a property list, not a keyed archive, or more notes
+/// than any chart.
+pub(crate) fn read(bytes: &[u8], report: &mut Report) -> Result<Track, String> {
+    let archive = Value::from_reader(Cursor::new(bytes))
+        .map_err(|why| format!("not a property list: {why}"))?;
+    let not_archive = || "not a keyed archive of levels".to_owned();
+    let mut archive = archive.into_dictionary().ok_or_else(not_archive)?;
+    let Some(Value::Array(objects)) = archive.remove("$objects") else {
+        return Err(not_archive());
+    };
+    let top = archive.remove("$top").ok_or_else(not_archive)?;
+    let objects = Objects(&objects);
+    let root = objects.field(&top, "root").ok_or_else(not_archive)?;
+    let keys = objects.items(objects.field(root, "NS.keys").ok_or_else(not_archive)?);
+    let files = objects.items(objects.field(root, "NS.objects").ok_or_else(not_archive)?);
+    let mut track = Track::default();
+    let mut notes = 0_usize;
+    for (key, file) in keys.into_iter().zip(files) {
+        let level = key
+            .as_signed_integer()
+            .or_else(|| key.as_string()?.trim().parse().ok());
+        let Some(difficulty) = level.and_then(difficulty_of) else {
+            report.add(format!(
+                "level {}, which is none of Easy, Medium, Hard and Extreme",
+                level.map_or_else(|| "without a number".to_owned(), |level| level.to_string())
+            ));
+            continue;
+        };
+        let (read, title, artist) = read_file(&objects, file, difficulty, &mut notes, report)?;
+        if track.levels.is_empty() {
+            track.title = title;
+            track.artist = artist;
+        }
+        track.levels.push(read);
+    }
+    Ok(track)
+}
+
+/// The difficulty the game numbers `level`.
+fn difficulty_of(level: i64) -> Option<Difficulty> {
+    let index = usize::try_from(level.checked_sub(1)?).ok()?;
+    Difficulty::ALL.get(index).copied()
+}
+
+/// The level in the `KBMidiFile` `file`, with the title and artist it names, counting its notes
+/// into `notes`.
+fn read_file(
+    objects: &Objects<'_>,
+    file: &Value,
+    difficulty: Difficulty,
+    notes: &mut usize,
+    report: &mut Report,
+) -> Result<(Level, String, String), String> {
+    let text = |key| objects.field(file, key).and_then(Value::as_string);
+    let mut title = text("title").unwrap_or_default().to_owned();
+    let mut artist = text("copyrightInfo").unwrap_or_default().to_owned();
+    let mut tempo: Vec<Change> = objects
+        .field(file, "tempoChanges")
+        .map(|changes| objects.items(changes))
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|change| {
+            Some(Change {
+                seconds: number(objects.field(change, "startTime")?)?,
+                bpm: number(objects.field(change, "tempo")?)?,
+                meter: charter_core::TimeSignature::default().numerator,
+            })
+        })
+        .collect();
+    if tempo.is_empty() {
+        let bpm = ["exactTempo", "tempo"]
+            .into_iter()
+            .filter_map(|key| objects.field(file, key).and_then(number))
+            .find(|&bpm| bpm > 0.0)
+            .unwrap_or(120.0);
+        tempo.push(Change {
+            seconds: 0.0,
+            bpm,
+            meter: charter_core::TimeSignature::default().numerator,
+        });
+    }
+    tempo.sort_by(|a, b| a.seconds.total_cmp(&b.seconds));
+    let mut open: HashMap<Key, VecDeque<f64>> = HashMap::new();
+    let mut played: Vec<Played> = Vec::new();
+    let tracks = objects
+        .field(file, "tracks")
+        .map(|tracks| objects.items(tracks))
+        .unwrap_or_default();
+    for events in tracks
+        .into_iter()
+        .filter_map(|track| objects.field(track, "events"))
+    {
+        for event in objects.items(events) {
+            *notes = notes.saturating_add(1);
+            if *notes > MAX_NOTES {
+                return Err("the file holds more notes than any chart".to_owned());
+            }
+            let integer = |key| objects.field(event, key).and_then(Value::as_signed_integer);
+            let kind = integer("type");
+            if kind == Some(TEXT) {
+                let line = objects.field(event, "text").and_then(Value::as_string);
+                if let Some(named) = line.and_then(|line| line.strip_prefix("TITLE:")) {
+                    named.trim().clone_into(&mut title);
+                } else if let Some(named) = line.and_then(|line| line.strip_prefix("ARTIST:")) {
+                    named.trim().clone_into(&mut artist);
+                }
+                continue;
+            }
+            let Some(time) = objects.field(event, "time").and_then(number) else {
+                continue;
+            };
+            let note = integer("note").unwrap_or_default();
+            let Some(key) = u8::try_from(note).ok().and_then(Key::of) else {
+                if matches!(kind, Some(NOTE_ON | NOTE_OFF)) {
+                    report.add(format!(
+                        "notes on MIDI key {note}, none of the six of a three-column level"
+                    ));
+                }
+                continue;
+            };
+            match (kind, integer("velocity").unwrap_or_default()) {
+                (Some(NOTE_ON), velocity) if velocity > 0 => {
+                    open.entry(key).or_default().push_back(time);
+                }
+                (Some(NOTE_ON | NOTE_OFF), _) => {
+                    if let Some(on) = open.get_mut(&key).and_then(VecDeque::pop_front) {
+                        played.push(Played { key, on, off: time });
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    // A note never switched off is a tap.
+    played.extend(
+        open.into_iter()
+            .flat_map(|(key, ons)| ons.into_iter().map(move |on| Played { key, on, off: on })),
+    );
+    played.sort_by(|a, b| a.on.total_cmp(&b.on));
+    let level = Level {
+        difficulty,
+        tempo,
+        notes: played,
+    };
+    Ok((level, title, artist))
+}
+
+/// A number stored as a real or an integer.
+fn number(value: &Value) -> Option<f64> {
+    value.as_real().or_else(|| {
+        value
+            .as_signed_integer()
+            .and_then(|integer| i32::try_from(integer).ok())
+            .map(f64::from)
+    })
+}
+
+/// The objects of a keyed archive, which references index.
+struct Objects<'a>(&'a [Value]);
+
+impl<'a> Objects<'a> {
+    /// `value`, or the object it references: a binary property list stores a reference as a
+    /// [`Value::Uid`], an XML one as a dictionary holding only `CF$UID`.
+    #[expect(
+        clippy::wildcard_enum_match_arm,
+        reason = "any other value is a value, not a reference"
+    )]
+    fn object(&self, value: &'a Value) -> Option<&'a Value> {
+        let reference = match value {
+            Value::Uid(uid) => Some(uid.get()),
+            Value::Dictionary(fields) if fields.len() == 1 => {
+                fields.get("CF$UID").and_then(Value::as_unsigned_integer)
+            }
+            _ => None,
+        };
+        match reference {
+            Some(index) => self.0.get(usize::try_from(index).ok()?),
+            None => Some(value),
+        }
+    }
+
+    /// The field `key` of `object`, or the object it references.
+    fn field(&self, object: &'a Value, key: &str) -> Option<&'a Value> {
+        self.object(self.object(object)?.as_dictionary()?.get(key)?)
+    }
+
+    /// The items of the array `list`, an `NSArray` or a plain one, each followed to its object.
+    #[expect(
+        clippy::wildcard_enum_match_arm,
+        reason = "any other value holds no items"
+    )]
+    fn items(&self, list: &'a Value) -> Vec<&'a Value> {
+        let items = self.object(list).and_then(|list| match list {
+            Value::Array(items) => Some(items),
+            Value::Dictionary(fields) => fields.get("NS.objects").and_then(Value::as_array),
+            _ => None,
+        });
+        items
+            .into_iter()
+            .flatten()
+            .filter_map(|item| self.object(item))
+            .collect()
+    }
+}
+
+/// `track` as a binary `.ttr2_track`, the form the game's own tracks take.
+pub(crate) fn write(track: &Track) -> Vec<u8> {
+    let mut archive = Archive::default();
+    let (keys, files): (Vec<Value>, Vec<Value>) = track
+        .levels
+        .iter()
+        .map(|level| {
+            let number = level.difficulty.index().saturating_add(1);
+            let key = archive.add(Value::Integer(u64::try_from(number).unwrap_or(0).into()));
+            (Value::Uid(key), Value::Uid(archive.file(track, level)))
+        })
+        .unzip();
+    let root = archive.object(
+        &["NSMutableDictionary", "NSDictionary"],
+        [
+            ("NS.keys", Value::Array(keys)),
+            ("NS.objects", Value::Array(files)),
+        ],
+    );
+    let mut top = Dictionary::new();
+    top.insert("root".to_owned(), Value::Uid(root));
+    let mut keyed = Dictionary::new();
+    keyed.insert("$archiver".to_owned(), "NSKeyedArchiver".into());
+    keyed.insert("$version".to_owned(), 100_000_u64.into());
+    keyed.insert("$top".to_owned(), top.into());
+    keyed.insert("$objects".to_owned(), Value::Array(archive.objects));
+    let mut bytes = Vec::new();
+    #[expect(
+        clippy::expect_used,
+        reason = "a plist of strings, numbers and references always writes into memory"
+    )]
+    Value::Dictionary(keyed)
+        .to_writer_binary(&mut bytes)
+        .expect("an archive writes into memory");
+    bytes
+}
+
+/// A keyed archive being written: its objects, the first `$null`, and the classes among them.
+struct Archive {
+    /// Every object, which references index.
+    objects: Vec<Value>,
+    /// Where each class's entry is.
+    classes: HashMap<&'static str, Uid>,
+}
+
+impl Default for Archive {
+    fn default() -> Self {
+        Self {
+            objects: vec![Value::String("$null".to_owned())],
+            classes: HashMap::new(),
+        }
+    }
+}
+
+impl Archive {
+    /// Adds `value` as an object, and where it is.
+    fn add(&mut self, value: Value) -> Uid {
+        self.objects.push(value);
+        Uid::new(u64::try_from(self.objects.len().saturating_sub(1)).unwrap_or(0))
+    }
+
+    /// The entry of the class `names` begins with, the class first and its ancestors after, added
+    /// on first use.
+    fn class(&mut self, names: &[&'static str]) -> Uid {
+        let name = names.first().copied().unwrap_or("NSObject");
+        if let Some(&uid) = self.classes.get(name) {
+            return uid;
+        }
+        let mut entry = Dictionary::new();
+        entry.insert("$classname".to_owned(), name.into());
+        let lineage = names.iter().chain(&["NSObject"]).map(|&class| class.into());
+        entry.insert("$classes".to_owned(), Value::Array(lineage.collect()));
+        let uid = self.add(entry.into());
+        self.classes.insert(name, uid);
+        uid
+    }
+
+    /// Adds an object of the class `names` begins with, holding `fields`.
+    fn object<const N: usize>(
+        &mut self,
+        names: &[&'static str],
+        fields: [(&str, Value); N],
+    ) -> Uid {
+        let class = self.class(names);
+        let mut object: Dictionary = fields
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), value))
+            .collect();
+        object.insert("$class".to_owned(), Value::Uid(class));
+        self.add(object.into())
+    }
+
+    /// Adds an `NSMutableArray` of `items`.
+    fn array(&mut self, items: Vec<Uid>) -> Uid {
+        let items = items.into_iter().map(Value::Uid).collect();
+        self.object(
+            &["NSMutableArray", "NSArray"],
+            [("NS.objects", Value::Array(items))],
+        )
+    }
+
+    /// Adds `text` as a string object.
+    fn text(&mut self, text: &str) -> Value {
+        Value::Uid(self.add(text.into()))
+    }
+
+    /// Adds a `KBMidiEvent`.
+    fn event(&mut self, kind: i64, key: u8, seconds: f64, beats: f64, text: Option<&str>) -> Uid {
+        let text = text.map_or(Value::Uid(Uid::new(0)), |text| self.text(text));
+        let on = kind == NOTE_ON;
+        self.object(
+            &["KBMidiEvent"],
+            [
+                ("type", kind.into()),
+                ("time", seconds.into()),
+                ("timeInQuarterNotes", beats.into()),
+                ("note", u64::from(key).into()),
+                ("channel", 0_u64.into()),
+                ("velocity", if on { 100_u64 } else { 0 }.into()),
+                ("text", text),
+            ],
+        )
+    }
+
+    /// Adds `level` of `track` as a `KBMidiFile`: a track of its title and artist, and one of its
+    /// notes.
+    fn file(&mut self, track: &Track, level: &Level) -> Uid {
+        let tempo = &level.tempo;
+        let changes = tempo
+            .iter()
+            .map(|change| {
+                self.object(
+                    &["KBMidiTempoMap"],
+                    [
+                        ("startTime", change.seconds.into()),
+                        ("tempo", change.bpm.into()),
+                    ],
+                )
+            })
+            .collect();
+        let changes = self.array(changes);
+        let title = format!("TITLE: {}", track.title);
+        let artist = format!("ARTIST: {}", track.artist);
+        let lines = [title, artist]
+            .iter()
+            .map(|line| self.event(TEXT, 0, 0.0, 0.0, Some(line)))
+            .collect();
+        let lines = self.array(lines);
+        let lines = self.object(&["KBMidiTrack"], [("events", Value::Uid(lines))]);
+        let mut switches: Vec<(f64, i64, u8)> = level
+            .notes
+            .iter()
+            .flat_map(|note| {
+                let key = note.key.midi();
+                [(note.on, NOTE_ON, key), (note.off, NOTE_OFF, key)]
+            })
+            .collect();
+        // A note ending where the next on its key starts switches off first.
+        switches.sort_by(|a, b| a.0.total_cmp(&b.0).then(b.1.cmp(&a.1)));
+        let notes = switches
+            .into_iter()
+            .map(|(seconds, kind, key)| {
+                self.event(kind, key, seconds, beats_at(tempo, seconds), None)
+            })
+            .collect();
+        let notes = self.array(notes);
+        let notes = self.object(&["KBMidiTrack"], [("events", Value::Uid(notes))]);
+        let tracks = self.array(vec![lines, notes]);
+        let named = self.text(&track.title);
+        let performer = self.text(&track.artist);
+        let raw = Value::Uid(self.add(Value::Data(Vec::new())));
+        let first = tempo.first().map_or(120.0, |change| change.bpm);
+        self.object(
+            &["KBMidiFile"],
+            [
+                ("title", named),
+                ("copyrightInfo", performer),
+                ("trackID", 0_u64.into()),
+                ("timeDivision", 480.0.into()),
+                ("exactTempo", first.into()),
+                ("rawData", raw),
+                ("tempoChanges", Value::Uid(changes)),
+                ("tracks", Value::Uid(tracks)),
+            ],
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::num::NonZeroU16;
+
+    use proptest::prelude::*;
+
+    use super::*;
+
+    fn four() -> NonZeroU16 {
+        NonZeroU16::new(4).unwrap()
+    }
+
+    fn track() -> Track {
+        let played = |key, on: f64, off: f64| Played { key, on, off };
+        Track {
+            title: "House Music".to_owned(),
+            artist: "Benny Benassi".to_owned(),
+            levels: vec![
+                Level {
+                    difficulty: Difficulty::Easy,
+                    tempo: vec![Change {
+                        seconds: 0.0,
+                        bpm: 130.000_13,
+                        meter: four(),
+                    }],
+                    notes: vec![
+                        played(Key::Middle, 3.0, 3.115),
+                        played(Key::Middle, 3.115, 3.5),
+                    ],
+                },
+                Level {
+                    difficulty: Difficulty::Extreme,
+                    tempo: vec![
+                        Change {
+                            seconds: 0.5,
+                            bpm: 100.0,
+                            meter: four(),
+                        },
+                        Change {
+                            seconds: 10.0,
+                            bpm: 150.0,
+                            meter: four(),
+                        },
+                    ],
+                    notes: vec![
+                        played(Key::ShakeDown, 3.0, 3.1),
+                        played(Key::Left, 12.0, 13.0),
+                    ],
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn a_written_track_reads_back_as_it_was() {
+        let mut report = Report::default();
+        let bytes = write(&track());
+        assert!(bytes.starts_with(b"bplist00"));
+        assert_eq!(read(&bytes, &mut report).unwrap(), track());
+        assert!(report.into_lines().is_empty());
+    }
+
+    #[test]
+    fn a_written_note_carries_the_beat_the_game_counts_it_on() {
+        let bytes = write(&track());
+        let archive = Value::from_reader(Cursor::new(bytes)).unwrap();
+        let objects = archive.as_dictionary().unwrap()["$objects"]
+            .as_array()
+            .unwrap();
+        let beats: Vec<f64> = objects
+            .iter()
+            .filter_map(Value::as_dictionary)
+            .filter(|event| event.get("note").and_then(Value::as_signed_integer) == Some(60))
+            .filter_map(|event| event["timeInQuarterNotes"].as_real())
+            .collect();
+        // 12 s at 100 BPM from 0.5 s, then 150 BPM from 10 s: 20.83 beats, then 5 more.
+        assert!((beats[0] - (10.0 * 100.0 / 60.0 + 2.0 * 150.0 / 60.0)).abs() < 1e-9);
+    }
+
+    /// An XML archive as `MidiToTTR` writes one: the level's key a string, references `CF$UID`
+    /// dictionaries, and `events` holding what is given.
+    fn xml(level: &str, events: &str) -> String {
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>$archiver</key><string>NSKeyedArchiver</string>
+<key>$version</key><integer>100000</integer>
+<key>$top</key><dict><key>root</key><dict><key>CF$UID</key><integer>1</integer></dict></dict>
+<key>$objects</key><array>
+<string>$null</string>
+<dict><key>NS.keys</key><array><dict><key>CF$UID</key><integer>2</integer></dict></array>
+<key>NS.objects</key><array><dict><key>CF$UID</key><integer>3</integer></dict></array></dict>
+<string>{level}</string>
+<dict><key>title</key><dict><key>CF$UID</key><integer>4</integer></dict>
+<key>exactTempo</key><real>90</real>
+<key>tracks</key><dict><key>CF$UID</key><integer>5</integer></dict></dict>
+<string>Untitled</string>
+<dict><key>NS.objects</key><array><dict><key>CF$UID</key><integer>6</integer></dict></array></dict>
+<dict><key>events</key><array>{events}</array></dict>
+<string>TITLE:sudo</string>
+</array></dict></plist>"#
+        )
+    }
+
+    /// An inline `KBMidiEvent`.
+    fn event(kind: i64, note: i64, velocity: i64, time: f64) -> String {
+        format!(
+            "<dict><key>type</key><integer>{kind}</integer><key>note</key><integer>{note}</integer>\
+             <key>velocity</key><integer>{velocity}</integer><key>time</key><real>{time}</real></dict>"
+        )
+    }
+
+    #[test]
+    fn an_xml_archive_as_midi_to_ttr_writes_it_reads() {
+        let title = "<dict><key>type</key><integer>2</integer>\
+                     <key>text</key><dict><key>CF$UID</key><integer>7</integer></dict></dict>";
+        let events = [
+            title.to_owned(),
+            event(0, 62, 100, 1.0),
+            event(0, 62, 0, 2.0),
+            event(0, 60, 100, 3.0),
+            event(0, 70, 100, 4.0),
+        ]
+        .concat();
+        let mut report = Report::default();
+        let track = read(xml("4", &events).as_bytes(), &mut report).unwrap();
+        assert_eq!(track.title, "sudo");
+        let [extreme] = track.levels.as_slice() else {
+            panic!("one level: {track:?}");
+        };
+        assert_eq!(extreme.difficulty, Difficulty::Extreme);
+        assert!((extreme.tempo[0].bpm - 90.0).abs() < f64::EPSILON);
+        assert_eq!(
+            extreme.notes,
+            [
+                Played {
+                    key: Key::Middle,
+                    on: 1.0,
+                    off: 2.0
+                },
+                Played {
+                    key: Key::Left,
+                    on: 3.0,
+                    off: 3.0
+                },
+            ]
+        );
+        assert_eq!(
+            report.into_lines(),
+            ["notes on MIDI key 70, none of the six of a three-column level"]
+        );
+    }
+
+    #[test]
+    fn a_kids_level_is_left_out() {
+        let mut report = Report::default();
+        let track = read(xml("0", "").as_bytes(), &mut report).unwrap();
+        assert!(track.levels.is_empty());
+        assert_eq!(
+            report.into_lines(),
+            ["level 0, which is none of Easy, Medium, Hard and Extreme"]
+        );
+    }
+
+    #[test]
+    fn what_is_not_a_keyed_archive_is_refused() {
+        let mut report = Report::default();
+        assert!(
+            read(b"MThd", &mut report)
+                .unwrap_err()
+                .starts_with("not a property list")
+        );
+        let mut empty = Vec::new();
+        Value::Dictionary(Dictionary::new())
+            .to_writer_binary(&mut empty)
+            .unwrap();
+        assert_eq!(
+            read(&empty, &mut report).unwrap_err(),
+            "not a keyed archive of levels"
+        );
+        let dangling = xml("4", "").replace("<integer>3</integer>", "<integer>99</integer>");
+        assert!(
+            read(dangling.as_bytes(), &mut report)
+                .unwrap()
+                .levels
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn lists_sharing_their_entries_cannot_make_reading_unbounded() {
+        let events = "<dict><key>CF$UID</key><integer>6</integer></dict>".repeat(2048);
+        let tracks = "<dict><key>CF$UID</key><integer>6</integer></dict>".repeat(1024);
+        let shared = xml("4", &events).replace(
+            "<dict><key>NS.objects</key><array><dict><key>CF$UID</key><integer>6</integer></dict></array></dict>",
+            &format!("<dict><key>NS.objects</key><array>{tracks}</array></dict>"),
+        );
+        let mut report = Report::default();
+        assert_eq!(
+            read(shared.as_bytes(), &mut report).unwrap_err(),
+            "the file holds more notes than any chart"
+        );
+    }
+
+    proptest! {
+        #![proptest_config(crate::proptest_config())]
+
+        #[test]
+        fn arbitrary_bytes_never_panic(bytes in proptest::collection::vec(any::<u8>(), 0..512)) {
+            drop(read(&bytes, &mut Report::default()));
+        }
+
+        #[test]
+        fn a_damaged_track_never_panics(at in 0_usize..4096, byte in any::<u8>()) {
+            let mut bytes = write(&track());
+            if let Some(slot) = bytes.get_mut(at) {
+                *slot = byte;
+            }
+            drop(read(&bytes, &mut Report::default()));
+        }
+    }
+}

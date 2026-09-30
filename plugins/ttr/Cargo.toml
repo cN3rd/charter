@@ -10,5 +10,10 @@ workspace = true
 
 [dependencies]
 charter-core.workspace = true
+midly.workspace = true
+plist.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

@@ -10,4 +10,5 @@ What each chart format can express, and where they structurally disagree.
 - [`.mid`](mid.md) — MIDI, as used by guitar-family editors
 - [`.mc`](mc.md) — Malody JSON
 - [`.tmpr`](tmpr.md) — Tempora sync project file
+- [`.ttr2_track`](ttr2_track.md) — Tap Tap Revenge's keyed archive of notes timed in seconds
 - [Interoperability](interoperability.md) — where conversion is structurally lossy

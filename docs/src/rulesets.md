@@ -70,6 +70,23 @@ out. Any song can take timing from any plugin's format, so a plugin keeps its ow
 such as osu!mania's scroll speeds, only for songs of its game. osu!mania reads osu!'s
 `[TimingPoints]`, pasted alone or in a whole `.osu` file.
 
+A plugin can read and write whole songs in other programs' formats: `song_formats` lists them,
+each a name and its extensions, and `import_song` and `export_song` convert bytes to a song of its
+game and back, each with a list of what the conversion left out. The bytes are untrusted, and a
+same-format round trip leaves nothing out. Tap Tap Revenge reads and writes the game's
+[`.ttr2_track`](research/formats/ttr2_track.md) and the Editor on Fire MIDI files MidiToTTR
+converts, both through one model of the game's files: each level's notes switched on and off at
+moments of the audio. A level becomes a three-lane chart of its difficulty, keys 60, 62 and 64 its
+taps, or holds when held over 0.3 seconds, and 61, 63 and 65 its left, right and down shakes;
+notes landing on a lane and tick already taken are dropped. Export writes each chart with three
+lanes and one of the four levels, and leaves out, saying so, other charts, slices and mega taps,
+markers, themes, artwork, genre and preview, which `info.plist` holds, and in MIDI the artist,
+which EOF keeps in `song.ini`. `plist` reads and writes the property list and `midly` the MIDI
+file; the plugin walks the archive's fixed shape itself, since the keyed-archive crates decode by
+unbounded recursion and none writes custom classes. A MIDI file has one tempo map, the first
+level's, and starts at the audio's start, so export leads in with a tempo that puts the song's
+first beat on a whole MIDI beat; imported back, the song's grid starts at the audio's start.
+
 | Ruleset | Namespace | Kinds | Timing | Chart settings |
 |---|---|---|---|---|
 | StepMania | `sm` | `tap`, `hold`, `roll`, `mine`, `lift`, `fake`, `sm.auto_keysound` | Anchors, tempo, every core event kind, `sm.tickcount`, `sm.combo`, `sm.speed`, `sm.scroll`, `sm.fake` | `style`, `difficulty`, `meter`, `description` |

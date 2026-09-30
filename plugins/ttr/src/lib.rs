@@ -9,21 +9,40 @@
 //! [`Song::to_document`] writes this ruleset's data alone. A song is checked when built, by
 //! reading or by [`Song::new`], so writing one cannot fail. [`Plugin`] hands the editor the same
 //! check, so a document is editable only while it reads as a song.
+//!
+//! [`Plugin`] also imports and exports songs as the game's `.ttr2_track` files and as the MIDI
+//! files Editor on Fire charts them in, both through the shared model in `exchange`.
+
+mod exchange;
+mod midi;
+mod track;
 
 use std::collections::BTreeMap;
 
 use serde_json::Value;
 
 use charter_core::{
-    Anchor, Bpm, Chart as CoreChart, Difficulties, DifficultyPreset, Document, Extensions,
-    FORMAT_VERSION, InvalidValue, Key, Kind, LaneCount, LaneIndex, Layout, Location, Marker,
-    Metadata, Name, Namespace, NewSong, NoteChange, Object, Origin, Position, Ruleset,
-    RulesetPlugin, SettingScope, Settings, Shape, Stream, TextSetting, Tick, Ticks, TicksPerBeat,
-    TimeSignature, Timing, TimingEvent, TimingKind, ValidDocument,
+    Anchor, Bpm, Chart as CoreChart, Difficulties, DifficultyPreset, Document, ExportedSong,
+    Extensions, FORMAT_VERSION, ImportedSong, InvalidValue, Key, Kind, LaneCount, LaneIndex,
+    Layout, Location, Marker, Metadata, Name, Namespace, NewSong, NoteChange, Object, Origin,
+    Position, Ruleset, RulesetPlugin, SettingScope, Settings, Shape, SongFormat, Stream,
+    TextSetting, Tick, Ticks, TicksPerBeat, TimeSignature, Timing, TimingEvent, TimingKind,
+    ValidDocument,
 };
 
 /// The ruleset namespace.
 const ID: &str = "ttr";
+
+/// Property tests run from a fixed seed and keep no regression files, so they repeat exactly
+/// and touch no files.
+#[cfg(test)]
+fn proptest_config() -> proptest::test_runner::Config {
+    proptest::test_runner::Config {
+        failure_persistence: None,
+        rng_seed: proptest::test_runner::RngSeed::Fixed(0),
+        ..proptest::test_runner::Config::default()
+    }
+}
 
 /// A song, checked against this ruleset and every document rule when built, and unchangeable
 /// after.
@@ -681,9 +700,55 @@ impl TryFrom<&ValidDocument> for Song {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Plugin;
 
+/// The song formats [`Plugin`] reads and writes, in the order it lists them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SongFile {
+    /// The game's own `.ttr2_track`.
+    Track,
+    /// A MIDI file as Editor on Fire charts the game.
+    Midi,
+}
+
+/// Every song format, the game's own first.
+const SONG_FILES: [SongFile; 2] = [SongFile::Track, SongFile::Midi];
+
+impl SongFile {
+    /// The format as the editor lists it.
+    fn format(self) -> SongFormat {
+        let (name, extensions): (&str, &[&str]) = match self {
+            Self::Track => ("Tap Tap Revenge track", &["ttr2_track"]),
+            Self::Midi => ("Editor on Fire MIDI", &["mid", "midi"]),
+        };
+        SongFormat {
+            name: name.to_owned(),
+            extensions: extensions
+                .iter()
+                .map(|&extension| extension.to_owned())
+                .collect(),
+        }
+    }
+
+    /// The audio file a song of this format plays, where the game or EOF keeps it beside the
+    /// chart.
+    const fn audio(self) -> &'static str {
+        match self {
+            Self::Track => "audio.m4a",
+            Self::Midi => "guitar.ogg",
+        }
+    }
+
+    /// The format at `index` among [`SONG_FILES`].
+    fn at(index: usize) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        SONG_FILES
+            .get(index)
+            .copied()
+            .ok_or_else(|| "Tap Tap Revenge has no such song format".into())
+    }
+}
+
 #[expect(
     clippy::missing_trait_methods,
-    reason = "Tap Tap Revenge uses the trait's defaults for `layout_kind`, Lanes, and `timing_format` and `import_timing`: it reads no timing format"
+    reason = "Tap Tap Revenge uses the trait's defaults for `layout_kind`, Lanes, and `timing_format` and `import_timing`: it reads no timing format alone"
 )]
 impl RulesetPlugin for Plugin {
     fn id(&self) -> &str {
@@ -801,6 +866,51 @@ impl RulesetPlugin for Plugin {
                 .map(|level| level.name().to_owned())
                 .collect(),
             presets,
+        })
+    }
+
+    fn song_formats(&self) -> Vec<SongFormat> {
+        SONG_FILES.iter().map(|file| file.format()).collect()
+    }
+
+    fn import_song(
+        &self,
+        format: usize,
+        bytes: &[u8],
+    ) -> Result<ImportedSong, Box<dyn std::error::Error + Send + Sync>> {
+        let file = SongFile::at(format)?;
+        let mut report = exchange::Report::default();
+        let track = match file {
+            SongFile::Track => track::read(bytes, &mut report)?,
+            SongFile::Midi => midi::read(bytes, &mut report)?,
+        };
+        let document = exchange::to_song(track, file.audio(), &mut report)?;
+        Ok(ImportedSong {
+            document,
+            left_out: report.into_lines(),
+        })
+    }
+
+    fn export_song(
+        &self,
+        format: usize,
+        song: &ValidDocument,
+    ) -> Result<ExportedSong, Box<dyn std::error::Error + Send + Sync>> {
+        let file = SongFile::at(format)?;
+        let mut report = exchange::Report::default();
+        let track = exchange::from_song(song, &mut report)?;
+        let bytes = match file {
+            SongFile::Track => track::write(&track),
+            SongFile::Midi => {
+                if !track.artist.is_empty() {
+                    report.add("the artist, which EOF keeps in song.ini rather than the MIDI file");
+                }
+                midi::write(&track, &mut report)
+            }
+        };
+        Ok(ExportedSong {
+            bytes,
+            left_out: report.into_lines(),
         })
     }
 
@@ -1774,6 +1884,109 @@ mod tests {
     fn a_new_song_refuses_a_lane_count_it_does_not_have_or_no_charts() {
         Plugin.new_song(&new_song(3, &["Easy"])).unwrap_err();
         Plugin.new_song(&new_song(0, &[])).unwrap_err();
+    }
+
+    /// A three-lane song with an Easy and an Extreme chart, a note of each kind the game's files
+    /// hold, as a document.
+    fn exchangeable() -> ValidDocument {
+        let hold = json!({ "tick": 1920, "position": { "lane": { "index": 1 } },
+                           "kind": "hold", "shape": { "sustain": { "duration": 1920 } } });
+        let shake = |tick: i32, index: u16| lane_object(tick, index, 1, "ttr.shake");
+        let mut value = document(json!([lane_object(960, 0, 1, "tap")]));
+        value["timing"] =
+            json!({ "anchors": [ { "tick": 0, "seconds": 0.5 } ], "tempo": 128.0, "events": [] });
+        value["charts"][0]["settings"] = json!({ "difficulty": "easy" });
+        value["charts"].as_array_mut().unwrap().push(json!({ "name": "Customs", "lanes": 3,
+            "settings": { "difficulty": "extreme" },
+            "objects": [lane_object(0, 2, 1, "tap"), hold, shake(4800, 0), shake(5760, 2), shake(6720, 1)] }));
+        ValidDocument::from_json(&serde_json::to_vec(&value).unwrap()).unwrap()
+    }
+
+    /// Each chart's notes as their ticks, kinds and positions.
+    fn placed(document: &ValidDocument) -> Vec<Vec<(i64, Kind, Position)>> {
+        document
+            .charts()
+            .map(|chart| {
+                chart
+                    .objects()
+                    .map(|object| (i64::from(object.tick), object.kind.clone(), object.position))
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// Each chart's notes as their moments to the microsecond, kinds and positions.
+    fn heard(document: &ValidDocument) -> Vec<Vec<(i64, Kind, Position)>> {
+        document
+            .charts()
+            .map(|chart| {
+                let timing = chart.timing();
+                chart
+                    .objects()
+                    .map(|object| {
+                        let seconds = timing.time_at(object.tick).seconds();
+                        #[expect(
+                            clippy::as_conversions,
+                            clippy::cast_possible_truncation,
+                            reason = "a test's moments are a few seconds"
+                        )]
+                        let micros = (seconds * 1e6).round() as i64;
+                        (micros, object.kind.clone(), object.position)
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_plugin_lists_the_game_s_track_and_eof_s_midi() {
+        let formats = Plugin.song_formats();
+        let names: Vec<&str> = formats.iter().map(|format| format.name.as_str()).collect();
+        assert_eq!(names, ["Tap Tap Revenge track", "Editor on Fire MIDI"]);
+        assert_eq!(formats[0].extensions, ["ttr2_track"]);
+        assert_eq!(formats[1].extensions, ["mid", "midi"]);
+        let unknown = Plugin.import_song(2, b"").unwrap_err();
+        assert_eq!(
+            unknown.to_string(),
+            "Tap Tap Revenge has no such song format"
+        );
+        Plugin.export_song(2, &exchangeable()).unwrap_err();
+    }
+
+    #[test]
+    fn a_song_comes_back_from_either_format_on_the_same_ticks() {
+        let song = exchangeable();
+        for format in 0..2 {
+            let exported = Plugin.export_song(format, &song).unwrap();
+            let imported = Plugin.import_song(format, &exported.bytes).unwrap();
+            assert!(imported.left_out.is_empty(), "{:?}", imported.left_out);
+            assert_eq!(heard(&imported.document), heard(&song), "format {format}");
+            let back = Song::try_from(&imported.document).unwrap();
+            let names: Vec<&str> = back
+                .charts()
+                .iter()
+                .map(|chart| chart.name.as_str())
+                .collect();
+            assert_eq!(names, ["Easy", "Extreme"]);
+            assert_eq!(back.metadata().title, "t");
+            Plugin.check(&imported.document).unwrap();
+        }
+        let midi = Plugin.export_song(1, &song).unwrap();
+        assert_eq!(
+            midi.left_out,
+            ["the artist, which EOF keeps in song.ini rather than the MIDI file"]
+        );
+        let track = Plugin.export_song(0, &song).unwrap();
+        assert!(track.left_out.is_empty());
+        let imported = Plugin.import_song(0, &track.bytes).unwrap();
+        // The game's file keeps the ticks too; MIDI's lead-in starts the grid at the audio's
+        // start, a beat earlier here.
+        assert_eq!(placed(&imported.document), placed(&song));
+        assert_eq!(imported.document.document().metadata.artist, "a");
+        assert_eq!(
+            imported.document.document().metadata.audio.as_str(),
+            "audio.m4a"
+        );
     }
 }
 

@@ -54,6 +54,12 @@ timestretch = "0.15.0"
 # ponytail: blocking, rustls; charter's one download, the beat tracker's weights, needs no runtime.
 ureq = "3.4.2"
 audioadapter-buffers = "5.1.0"
+# ponytail: reads and writes XML and binary property lists, keyed archives' containers; its serde
+# support is off, as nothing here maps plists onto types.
+plist = { version = "1.10.1", default-features = false }
+# ponytail: Standard MIDI Files in and out; the rayon-backed parallel track parsing is off, as a
+# chart's MIDI is small.
+midly = { version = "0.5.3", default-features = false, features = ["std"] }
 egui = "0.36.2"
 eframe = "0.36.2"
 rfd = "0.17.2"

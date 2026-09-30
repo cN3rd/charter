@@ -21,6 +21,7 @@
     - [.mid](./research/formats/mid.md)
     - [.mc](./research/formats/mc.md)
     - [.tmpr](./research/formats/tmpr.md)
+    - [.ttr2_track](./research/formats/ttr2_track.md)
     - [Interoperability](./research/formats/interoperability.md)
   - [Topics](./research/topics/index.md)
     - [Row resolution](./research/topics/row-resolution.md)
