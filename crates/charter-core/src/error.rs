@@ -160,7 +160,7 @@ pub enum Rule {
     /// Warps may not cover the same ticks.
     #[error("warp overlaps the previous one")]
     OverlappingWarps,
-    /// Two notes occupy the same lane and tick.
+    /// Two notes of shared kinds occupy the same lane and tick.
     #[error("two objects cover one lane on tick {tick}")]
     LaneTaken {
         /// Tick where the notes collide.

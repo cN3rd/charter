@@ -615,9 +615,11 @@ implementations disagreeing.
 - `objects`, timing `events` and `markers` are sorted by `tick`. Order among items on one tick
   carries no meaning, and writers preserve it. Sorted order makes diffs stable and lets range
   queries be a binary search, which is how Moonscraper queries the visible window.
-- No two top-level objects on one tick cover a common lane. Two taps in one lane at one instant is
-  universally invalid, and it is cheap to check. The rule stops there: two `Plane` points may
-  legitimately coincide, and where children may sit is the ruleset's judgement.
+- No two top-level objects of shared kinds on one tick cover a common lane. Two taps in one lane at
+  one instant is universally invalid, and it is cheap to check. The rule stops there: two `Plane`
+  points may legitimately coincide, and where children and objects of a ruleset's own kinds may sit
+  is the ruleset's judgement, as a Tap Tap Revenge shake is a gesture drawn in the column of its
+  direction, which a tap in that column may share an instant with.
 - At most one timing event per `tick` and kind; `other` events are keyed by `tick` and name. Import
   adapters resolve duplicates rather than passing them on.
 - At most one marker per `tick` and kind, since two sections starting on one tick name one part

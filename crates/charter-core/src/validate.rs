@@ -84,7 +84,11 @@ fn check_objects(doc: &Document, c: usize, chart: &Chart) -> Result<(), Violatio
             taken.clear();
             group = Some((object.tick, j));
         }
-        taken.extend(object.position.lanes());
+        // Whether a ruleset's own kind may share a lane is its judgement, such as a Tap Tap
+        // Revenge shake beside a tap in the column of its direction.
+        if object.kind.namespace().is_none() {
+            taken.extend(object.position.lanes());
+        }
     }
     check_lane_group(c, group, &mut taken)
 }
@@ -618,6 +622,14 @@ mod tests {
                 Rule::LaneTaken { tick: Tick::new(0) }
             );
         }
+    }
+
+    #[test]
+    fn a_ruleset_s_own_kind_may_share_a_lane_with_any_note() {
+        let shake = json!({ "tick": 0, "position": { "lane": { "index": 0 } }, "kind": "ttr.shake", "shape": "instant" });
+        let mut doc = chart_of(json!([lane(0, 0), shake, shake]));
+        doc["ruleset"]["id"] = json!("ttr");
+        check(&doc).unwrap();
     }
 
     #[test]
