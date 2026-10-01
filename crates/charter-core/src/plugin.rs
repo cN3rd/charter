@@ -141,12 +141,32 @@ pub struct ImportedSong {
 }
 
 /// A song written in another program's format, with what the song held that the file leaves out.
+///
+/// A format that keeps a song as a folder, such as a Tap Tap Revenge track, names the main file
+/// and writes the files beside it: some it makes, and some the song's own resources copied in.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExportedSong {
     /// The file's contents.
     pub bytes: Vec<u8>,
+    /// The name the main file must have, such as `taptrack.ttr2_track`, in the folder the user
+    /// chose its place in; none to keep the name the user gave it.
+    pub file_name: Option<String>,
+    /// Files made beside the main one, by name, such as an `info.plist`.
+    pub beside: BTreeMap<String, Vec<u8>>,
+    /// The song's resources copied beside the main file, each under a name, such as its audio as
+    /// `audio.m4a`.
+    pub copies: Vec<(String, SongResource)>,
     /// What the song held that the file leaves out, in words for the user.
     pub left_out: Vec<String>,
+}
+
+/// A file of the song's own that an export copies beside its main file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SongResource {
+    /// The song's audio.
+    Audio,
+    /// The song's artwork.
+    Artwork,
 }
 
 /// A game's rules over the documents that name it as their ruleset, past the format's own.
@@ -264,7 +284,7 @@ pub trait RulesetPlugin: Debug {
     }
 
     /// `song`, which this plugin accepts, as a file of its [song format](Self::song_formats) at
-    /// index `format`.
+    /// index `format`. `audio_seconds` is how long the song's audio lasts, when the editor knows.
     ///
     /// # Errors
     ///
@@ -273,8 +293,9 @@ pub trait RulesetPlugin: Debug {
         &self,
         format: usize,
         song: &ValidDocument,
+        audio_seconds: Option<f64>,
     ) -> Result<ExportedSong, Box<dyn Error + Send + Sync>> {
-        let _: (usize, &ValidDocument) = (format, song);
+        let _: (usize, &ValidDocument, Option<f64>) = (format, song, audio_seconds);
         Err(format!("{} exports no songs", self.id()).into())
     }
 }
@@ -346,7 +367,7 @@ mod tests {
             br#"{"format_version":1,"ruleset":{"id":"checks","version":"1"},"metadata":{"title":"t","artist":"a","audio":"a.ogg"},"timing":{"anchors":[{"tick":0,"seconds":0}],"tempo":120,"events":[]}}"#,
         )
         .unwrap();
-        let unwritten = Checks.export_song(0, &document).unwrap_err();
+        let unwritten = Checks.export_song(0, &document, None).unwrap_err();
         assert_eq!(unwritten.to_string(), "checks exports no songs");
     }
 

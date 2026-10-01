@@ -25,8 +25,8 @@ use charter_core::{
     Anchor, Bpm, Chart as CoreChart, Difficulties, DifficultyPreset, Document, ExportedSong,
     Extensions, FORMAT_VERSION, ImportedSong, InvalidValue, Key, Kind, LaneCount, LaneIndex,
     Layout, Location, Marker, Metadata, Name, Namespace, NewSong, NoteChange, Object, Origin,
-    Position, Ruleset, RulesetPlugin, SettingScope, Settings, Shape, SongFormat, Stream,
-    TextSetting, Tick, Ticks, TicksPerBeat, TimeSignature, Timing, TimingEvent, TimingKind,
+    Position, Ruleset, RulesetPlugin, SettingScope, Settings, Shape, SongFormat, SongResource,
+    Stream, TextSetting, Tick, Ticks, TicksPerBeat, TimeSignature, Timing, TimingEvent, TimingKind,
     ValidDocument,
 };
 
@@ -932,35 +932,44 @@ impl RulesetPlugin for Plugin {
         &self,
         format: usize,
         song: &ValidDocument,
+        audio_seconds: Option<f64>,
     ) -> Result<ExportedSong, Box<dyn std::error::Error + Send + Sync>> {
         let file = SongFile::at(format)?;
+        let parsed = Song::try_from(song)?;
         let mut report = exchange::Report::default();
         let track = exchange::from_song(song, file.preset(), &mut report)?;
-        let bytes = match file {
-            SongFile::Track(_) => {
-                for level in track
-                    .levels
-                    .iter()
-                    .filter(|level| level.lanes != Lanes::Three)
-                {
-                    report.add(format!(
-                        "the {} level's {} columns, which the track's info.plist sets as columnCountPerLevel",
-                        level.difficulty.name(),
-                        level.lanes.width()
-                    ));
-                }
-                track::write(&track)
-            }
+        let metadata = parsed.metadata();
+        if metadata.preview.is_some() {
+            report.add("the preview, which the game has no place for");
+        }
+        let exported = match file {
+            SongFile::Track(_) => track_folder(&parsed, &track, audio_seconds, &mut report),
             SongFile::Midi(layout) => {
-                if !track.artist.is_empty() {
-                    report.add("the artist, which EOF keeps in song.ini rather than the MIDI file");
+                let themed = parsed.theme().is_some()
+                    || parsed.charts().iter().any(|chart| chart.theme.is_some());
+                let elsewhere = [
+                    ("the artist", !metadata.artist.is_empty()),
+                    ("the genre", metadata.genre.is_some()),
+                    ("the artwork", metadata.artwork.is_some()),
+                    ("the theme", themed),
+                ];
+                for (what, set) in elsewhere {
+                    if set {
+                        report.add(format!("{what}, which a MIDI file has no place for"));
+                    }
                 }
-                midi::write(&track, layout, &mut report)
+                ExportedSong {
+                    bytes: midi::write(&track, layout, &mut report),
+                    file_name: None,
+                    beside: BTreeMap::new(),
+                    copies: Vec::new(),
+                    left_out: Vec::new(),
+                }
             }
         };
         Ok(ExportedSong {
-            bytes,
             left_out: report.into_lines(),
+            ..exported
         })
     }
 
@@ -1015,6 +1024,61 @@ impl RulesetPlugin for Plugin {
         )?
         .with_theme(Some(default_theme));
         Ok(song.to_document())
+    }
+}
+
+/// `track`, of `song`, as the folder the game keeps a track in: `taptrack.ttr2_track`, its
+/// `info.plist`, and the song's audio and artwork copied in as the game names them, when the game
+/// can play them; what it cannot is said in `report`.
+fn track_folder(
+    song: &Song,
+    track: &exchange::Track,
+    audio_seconds: Option<f64>,
+    report: &mut exchange::Report,
+) -> ExportedSong {
+    let metadata = song.metadata();
+    let extension = |path: &str| {
+        std::path::Path::new(path)
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .map(str::to_lowercase)
+            .unwrap_or_default()
+    };
+    let mut copies = Vec::new();
+    // The game plays AAC, and MP3 named as AAC, as custom tracks do.
+    match extension(metadata.audio.as_str()).as_str() {
+        "m4a" | "mp4" | "aac" | "mp3" => copies.push(("audio.m4a".to_owned(), SongResource::Audio)),
+        other => report.add(format!(
+            "the audio, which is {}: the game plays AAC or MP3 as audio.m4a",
+            if other.is_empty() {
+                "of no known kind".to_owned()
+            } else {
+                format!(".{other}")
+            }
+        )),
+    }
+    if let Some(artwork) = &metadata.artwork {
+        if extension(artwork.as_str()) == "png" {
+            for name in ["artwork.png", "artwork@2x.png"] {
+                copies.push((name.to_owned(), SongResource::Artwork));
+            }
+        } else {
+            report.add("the artwork, which the game reads as a PNG");
+        }
+    }
+    if audio_seconds.is_none() {
+        report.add("how long the audio lasts, which info.plist holds, as the audio has not loaded");
+    }
+    let beside = BTreeMap::from([(
+        "info.plist".to_owned(),
+        track::info(song, track, audio_seconds),
+    )]);
+    ExportedSong {
+        bytes: track::write(track),
+        file_name: Some("taptrack.ttr2_track".to_owned()),
+        beside,
+        copies,
+        left_out: Vec::new(),
     }
 }
 
@@ -2052,7 +2116,7 @@ mod tests {
             unknown.to_string(),
             "Tap Tap Revenge has no such song format"
         );
-        Plugin.export_song(5, &exchangeable()).unwrap_err();
+        Plugin.export_song(5, &exchangeable(), None).unwrap_err();
     }
 
     /// The plain Tap Tap Revenge track among the formats, and Editor on Fire's MIDI.
@@ -2062,7 +2126,7 @@ mod tests {
     #[test]
     fn a_tour_track_reads_side_and_middle_keys_as_slices_and_a_mega_tap() {
         let song = exchangeable();
-        let track = Plugin.export_song(TRACK, &song).unwrap().bytes;
+        let track = Plugin.export_song(TRACK, &song, None).unwrap().bytes;
         let tour = Plugin.import_song(1, &track, &BTreeMap::new()).unwrap();
         let kinds = |document: &ValidDocument| -> Vec<String> {
             let chart = document.charts().nth(1).unwrap();
@@ -2084,36 +2148,63 @@ mod tests {
                 named("mega_tap")
             ]
         );
-        let tour_track = Plugin.export_song(1, &tour.document).unwrap();
+        let tour_track = Plugin.export_song(1, &tour.document, Some(60.0)).unwrap();
         assert!(tour_track.left_out.is_empty(), "{:?}", tour_track.left_out);
         assert_eq!(tour_track.bytes, track, "Tour's notes sit on the same keys");
     }
 
     #[test]
-    fn a_four_lane_level_reads_its_columns_from_info_plist_and_says_export_needs_them() {
+    fn a_four_lane_level_comes_back_with_its_columns_from_the_exported_info_plist() {
         let mut value = document(json!([lane_object(0, 3, 1, "tap")]));
         value["charts"][0]["lanes"] = json!(4);
         value["charts"][0]["settings"] = json!({ "difficulty": "hard" });
+        value["metadata"]["audio"] = json!("song.mp3");
         let song = ValidDocument::from_json(&serde_json::to_vec(&value).unwrap()).unwrap();
-        let exported = Plugin.export_song(TRACK, &song).unwrap();
+        let exported = Plugin.export_song(TRACK, &song, None).unwrap();
         assert_eq!(
             exported.left_out,
-            [
-                "the Hard level's 4 columns, which the track's info.plist sets as columnCountPerLevel"
-            ]
+            ["how long the audio lasts, which info.plist holds, as the audio has not loaded"]
         );
-        let mut info = Vec::new();
-        let mut counts = plist::Dictionary::new();
-        counts.insert("3".to_owned(), plist::Value::Integer(4.into()));
-        let mut plist_info = plist::Dictionary::new();
-        plist_info.insert(
-            "columnCountPerLevel".to_owned(),
-            plist::Value::Dictionary(counts),
+        assert_eq!(exported.file_name.as_deref(), Some("taptrack.ttr2_track"));
+        assert_eq!(
+            exported.copies,
+            [("audio.m4a".to_owned(), SongResource::Audio)]
         );
-        plist::Value::Dictionary(plist_info)
-            .to_writer_xml(&mut info)
+        let companions = exported.beside.clone();
+        let info =
+            plist::Value::from_reader(std::io::Cursor::new(&companions["info.plist"])).unwrap();
+        let info = info.as_dictionary().unwrap();
+        assert_eq!(
+            info["availableDifficultyLevels"],
+            plist::Value::Array(vec![3_u64.into()])
+        );
+        assert_eq!(info["kTTRDownloadableItemTitleKey"], "t".into());
+        assert_eq!(info["kTTRDownloadableItemSubtitleKey"], "a".into());
+        assert_eq!(info["themeName"], DEFAULT_THEME.into());
+        // What info.plist holds comes back with the song.
+        let mut themed = value.clone();
+        themed["settings"] = json!({ "theme": "Muse" });
+        themed["charts"][0]["settings"]["theme"] = json!("Slipknot");
+        themed["metadata"]["genre"] = json!("Rock");
+        let themed = ValidDocument::from_json(&serde_json::to_vec(&themed).unwrap()).unwrap();
+        let bundle = Plugin.export_song(TRACK, &themed, Some(1.0)).unwrap();
+        let back = Plugin
+            .import_song(TRACK, &bundle.bytes, &bundle.beside)
             .unwrap();
-        let companions = BTreeMap::from([("info.plist".to_owned(), info)]);
+        let back = Song::try_from(&back.document).unwrap();
+        assert_eq!(back.theme(), Some("Muse"));
+        assert_eq!(
+            back.charts()[0].theme.as_ref().map(Name::as_str),
+            Some("Slipknot")
+        );
+        assert_eq!(back.metadata().genre.as_deref(), Some("Rock"));
+        assert_eq!(
+            (
+                back.metadata().title.as_str(),
+                back.metadata().artist.as_str()
+            ),
+            ("t", "a")
+        );
         let imported = Plugin
             .import_song(TRACK, &exported.bytes, &companions)
             .unwrap();
@@ -2135,7 +2226,7 @@ mod tests {
     #[test]
     fn tap_tap_reloaded_midi_plays_the_middle_note_as_a_mega_tap_and_has_no_side_keys() {
         let song = exchangeable();
-        let reloaded = Plugin.export_song(4, &song).unwrap();
+        let reloaded = Plugin.export_song(4, &song, None).unwrap();
         assert_eq!(
             reloaded.left_out,
             [
@@ -2143,7 +2234,7 @@ mod tests {
                 "a left shake, which Tap Tap Revenge: Tour plays as a left slice",
                 "a right shake, which Tap Tap Revenge: Tour plays as a right slice",
                 "left and right shakes and slices, which Tap Tap Reloaded's layout has no key for (2 times)",
-                "the artist, which EOF keeps in song.ini rather than the MIDI file",
+                "the artist, which a MIDI file has no place for",
             ]
         );
         let imported = Plugin
@@ -2162,7 +2253,7 @@ mod tests {
     fn a_song_comes_back_from_either_format_on_the_same_ticks() {
         let song = exchangeable();
         for format in [TRACK, MIDI] {
-            let exported = Plugin.export_song(format, &song).unwrap();
+            let exported = Plugin.export_song(format, &song, None).unwrap();
             let imported = Plugin
                 .import_song(format, &exported.bytes, &BTreeMap::new())
                 .unwrap();
@@ -2178,13 +2269,19 @@ mod tests {
             assert_eq!(back.metadata().title, "t");
             Plugin.check(&imported.document).unwrap();
         }
-        let midi = Plugin.export_song(MIDI, &song).unwrap();
+        let midi = Plugin.export_song(MIDI, &song, None).unwrap();
         assert_eq!(
             midi.left_out,
-            ["the artist, which EOF keeps in song.ini rather than the MIDI file"]
+            ["the artist, which a MIDI file has no place for"]
         );
-        let track = Plugin.export_song(TRACK, &song).unwrap();
-        assert!(track.left_out.is_empty());
+        let track = Plugin.export_song(TRACK, &song, None).unwrap();
+        assert_eq!(
+            track.left_out,
+            [
+                "how long the audio lasts, which info.plist holds, as the audio has not loaded",
+                "the audio, which is .ogg: the game plays AAC or MP3 as audio.m4a",
+            ]
+        );
         let imported = Plugin
             .import_song(TRACK, &track.bytes, &BTreeMap::new())
             .unwrap();

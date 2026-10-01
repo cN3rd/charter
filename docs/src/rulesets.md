@@ -74,7 +74,10 @@ A plugin can read and write whole songs in other programs' formats: `song_format
 each a name and its extensions, and `import_song` and `export_song` convert bytes to a song of its
 game and back, each with a list of what the conversion left out. The bytes are untrusted, and a
 same-format round trip leaves nothing out. A format may name `companions`, files it keeps beside
-the song's, which the host reads and the import is handed by name. Formats may share an
+the song's, which the host reads and the import is handed by name. An export may name its main
+file, make files beside it and have the song's audio and artwork copied in under names of its
+own, as a format that keeps a song as a folder does; the editor passes it how long the audio
+lasts, when the audio has loaded. Formats may share an
 extension, as one file read the ways different games play it, and the editor asks which game a
 file is for.
 
@@ -91,16 +94,22 @@ so each format is offered once for each game:
 | Editor on Fire MIDI | Left and right shakes | Down shake |
 | Tap Tap Reloaded MIDI | None | Mega tap, on the level's key 4 |
 
+A track is exported as the folder the game keeps it in: `taptrack.ttr2_track` in the folder the
+user chose a place in, an `info.plist` beside it with the title, artist, genre, levels, their
+columns and themes and how long the audio lasts, the audio copied as `audio.m4a` when it is AAC or
+MP3, which the game plays under that name, and PNG artwork as `artwork.png` and `artwork@2x.png`.
+Imported back with that `info.plist`, the song is what was exported. A track's import takes the
+title, artist, genre and themes from its `info.plist` too, as the game shows them.
+
 A level becomes a chart of its difficulty with the columns `info.plist` gives it, three without
 one: three lanes take keys 60, 62 and 64 as taps, or holds when held over 0.15 seconds, and 61, 63
 and 65 as the table says, and four or five take keys from 60 up, left to right. Notes landing on a
 lane and tick a note of the same kind already takes are dropped, as are levels other than the four
 and keys a level has no place for, and tempo changes after the last note. Export writes a kind the
 chosen game plays as another, such as a slice in a Tap Tap Revenge track, as that one, and leaves
-out, saying so, charts of no level, shakes and the like in four or five lanes, markers, themes,
-artwork, genre and preview, which `info.plist` holds, a level's column count, which `info.plist`
-holds too, and in MIDI the artist, which EOF keeps in `song.ini`, and levels of four or five lanes,
-as a MIDI file has no column count. `plist` reads and writes the property list and `midly` the MIDI
+out, saying so, charts of no level, shakes and the like in four or five lanes, markers, the
+preview, audio the game cannot play and artwork that is not PNG, and in MIDI the artist, genre,
+artwork and themes and levels of four or five lanes, as a MIDI file has no place for them. `plist` reads and writes the property list and `midly` the MIDI
 file; the plugin walks the archive's fixed shape itself, since the keyed-archive crates decode by
 unbounded recursion and none writes custom classes. A MIDI file has one tempo map, the first
 level's, and starts at the audio's start, so export leads in with a tempo that puts the song's

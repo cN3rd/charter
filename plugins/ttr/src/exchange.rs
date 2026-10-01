@@ -46,6 +46,10 @@ pub(crate) struct Track {
     pub(crate) title: String,
     /// Who performs the song.
     pub(crate) artist: String,
+    /// The song's genre, which a track's `info.plist` holds.
+    pub(crate) genre: Option<String>,
+    /// The theme every level plays in unless it names its own, which `info.plist` holds.
+    pub(crate) theme: Option<String>,
     /// The levels, easiest first.
     pub(crate) levels: Vec<Level>,
 }
@@ -55,6 +59,8 @@ pub(crate) struct Track {
 pub(crate) struct Level {
     /// Which level it is.
     pub(crate) difficulty: Difficulty,
+    /// The theme it plays in, over the song's, which `info.plist` holds.
+    pub(crate) theme: Option<String>,
     /// Its columns, which `info.plist` sets beside a track.
     pub(crate) lanes: Lanes,
     /// The tempo from each moment it changes, earliest first.
@@ -292,7 +298,7 @@ pub(crate) fn to_song(
                 lanes: level.lanes,
                 name: level.difficulty.name().to_owned(),
                 difficulty: Some(level.difficulty),
-                theme: None,
+                theme: named(level.theme.as_deref(), report),
                 tempo: own_tempo(level, report)?,
                 notes: Vec::new(),
             })
@@ -304,9 +310,10 @@ pub(crate) fn to_song(
         audio: ResourcePath::new(audio).map_err(|why| why.to_string())?,
         preview: None,
         artwork: None,
-        genre: None,
+        genre: track.genre,
         ext: charter_core::Extensions::new(),
     };
+    let theme = named(track.theme.as_deref(), report);
     let unplaced = Song::new(
         metadata.clone(),
         ticks_per_beat,
@@ -328,8 +335,19 @@ pub(crate) fn to_song(
     Ok(
         Song::new(metadata, ticks_per_beat, tempo, Vec::new(), charts)
             .map_err(|why| why.to_string())?
+            .with_theme(theme)
             .to_document(),
     )
+}
+
+/// `theme` as a theme name, or none, said in `report`, when it cannot be one.
+fn named(theme: Option<&str>, report: &mut Report) -> Option<charter_core::Name> {
+    let theme = theme?;
+    let name = charter_core::Name::new(theme).ok();
+    if name.is_none() {
+        report.add(format!("the theme {theme:?}, which is not a theme name"));
+    }
+    name
 }
 
 /// The tempo map `changes` make, or 120 BPM from the start of the audio without any.
@@ -447,23 +465,6 @@ pub(crate) fn from_song(
     for _ in song.markers() {
         report.add("a section or bookmark marker");
     }
-    let metadata = song.metadata();
-    let kept_elsewhere = [
-        (
-            "the theme",
-            song.theme().is_some() || song.charts().iter().any(|chart| chart.theme.is_some()),
-        ),
-        ("the artwork", metadata.artwork.is_some()),
-        ("the genre", metadata.genre.is_some()),
-        ("the preview", metadata.preview.is_some()),
-    ];
-    for (what, set) in kept_elsewhere {
-        if set {
-            report.add(format!(
-                "{what}, which a track's info.plist holds, not this file"
-            ));
-        }
-    }
     let mut levels: Vec<Level> = Vec::new();
     for (chart, placed) in song.charts().iter().zip(valid.charts()) {
         let Some(difficulty) = chart.difficulty else {
@@ -484,6 +485,7 @@ pub(crate) fn from_song(
         let timing = placed.timing();
         levels.push(Level {
             difficulty,
+            theme: None,
             lanes: chart.lanes,
             tempo: changes_of(timing, report),
             notes: played_of(chart, preset, timing, ticks_per_beat, report),
@@ -496,6 +498,8 @@ pub(crate) fn from_song(
     Ok(Track {
         title: song.metadata().title.clone(),
         artist: song.metadata().artist.clone(),
+        genre: None,
+        theme: None,
         levels,
     })
 }
@@ -608,6 +612,7 @@ mod tests {
     fn level(difficulty: Difficulty, notes: Vec<Played>) -> Level {
         Level {
             difficulty,
+            theme: None,
             lanes: Lanes::Three,
             tempo: vec![Change {
                 seconds: 0.0,
@@ -630,6 +635,8 @@ mod tests {
         let track = Track {
             title: "Sing".to_owned(),
             artist: "My Chemical Romance".to_owned(),
+            genre: None,
+            theme: None,
             levels,
         };
         Song::try_from(&to_song(track, "audio.m4a", preset, report).unwrap()).unwrap()
@@ -940,7 +947,6 @@ mod tests {
             [
                 "a left slice, which Tap Tap Revenge plays as a left shake",
                 "the chart \"Unlevelled\", which is none of the four levels",
-                "the theme, which a track's info.plist holds, not this file",
             ]
         );
     }

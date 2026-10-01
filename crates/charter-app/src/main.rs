@@ -1045,7 +1045,10 @@ mod tests {
             }],
         };
         let document = charter_ttr::Plugin.new_song(&song).unwrap();
-        charter_ttr::Plugin.export_song(0, &document).unwrap().bytes
+        charter_ttr::Plugin
+            .export_song(0, &document, None)
+            .unwrap()
+            .bytes
     }
 
     /// A plugin with one song format, read with an `info.plist` beside it, whose import fails
@@ -1141,23 +1144,51 @@ mod tests {
             unwritable: vec![PathBuf::from("/full/notes.mid.partial")],
             ..Memory::default()
         });
-        host.handle_requests(vec![Request::WriteExport {
-            path: PathBuf::from("/out/notes.mid"),
+        let export = |path: &str| Request::WriteExport {
+            path: PathBuf::from(path),
             bytes: b"MThd".to_vec(),
-        }]);
+            beside: Vec::new(),
+            copies: Vec::new(),
+        };
+        host.handle_requests(vec![export("/out/notes.mid")]);
         assert_eq!(
             host.disk.read(Path::new("/out/notes.mid")).unwrap(),
             b"MThd"
         );
-        host.handle_requests(vec![Request::WriteExport {
-            path: PathBuf::from("/full/notes.mid"),
-            bytes: b"MThd".to_vec(),
-        }]);
+        host.handle_requests(vec![export("/full/notes.mid")]);
         assert!(
             host.window
                 .message()
                 .unwrap()
                 .starts_with("/full/notes.mid was not written")
+        );
+    }
+
+    #[test]
+    fn a_track_folder_is_made_with_its_files_and_copies_replacing_old_ones() {
+        let mut host = host(Memory::with(&[
+            ("/songs/song.mp3", b"new audio"),
+            ("/out/sudo.track/audio.m4a", b"old audio"),
+        ]));
+        let folder = PathBuf::from("/out/sudo.track");
+        host.handle_requests(vec![Request::WriteExport {
+            path: folder.join("taptrack.ttr2_track"),
+            bytes: b"bplist00".to_vec(),
+            beside: vec![(folder.join("info.plist"), b"<plist/>".to_vec())],
+            copies: vec![
+                (PathBuf::from("/songs/song.mp3"), folder.join("audio.m4a")),
+                (PathBuf::from("/songs/gone.png"), folder.join("artwork.png")),
+            ],
+        }]);
+        let read = |name: &str| host.disk.read(&folder.join(name)).unwrap();
+        assert_eq!(read("taptrack.ttr2_track"), b"bplist00");
+        assert_eq!(read("info.plist"), b"<plist/>");
+        assert_eq!(read("audio.m4a"), b"new audio");
+        assert!(
+            host.window
+                .message()
+                .unwrap()
+                .starts_with("/out/sudo.track/artwork.png was not written")
         );
     }
 

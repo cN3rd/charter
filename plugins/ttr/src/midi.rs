@@ -176,6 +176,8 @@ pub(crate) fn read(bytes: &[u8], layout: Layout, report: &mut Report) -> Result<
     Ok(Track {
         title,
         artist: String::new(),
+        genre: None,
+        theme: None,
         levels,
     })
 }
@@ -287,6 +289,7 @@ fn level(levels: &mut Vec<Level>, difficulty: Difficulty) -> &mut Level {
         .unwrap_or_else(|| {
             levels.push(Level {
                 difficulty,
+                theme: None,
                 lanes: Lanes::Three,
                 tempo: Vec::new(),
                 notes: Vec::new(),
@@ -497,15 +500,19 @@ mod tests {
         let track = Track {
             title: "sudo".to_owned(),
             artist: String::new(),
+            genre: None,
+            theme: None,
             levels: vec![
                 Level {
                     difficulty: Difficulty::Medium,
+                    theme: None,
                     lanes: Lanes::Three,
                     tempo: tempo.clone(),
                     notes: vec![played(0, 0.5, 0.625), played(5, 4.4, 4.5)],
                 },
                 Level {
                     difficulty: Difficulty::Extreme,
+                    theme: None,
                     lanes: Lanes::Three,
                     tempo,
                     notes: vec![played(4, 1.0, 3.0), played(4, 3.0, 3.1)],
@@ -543,8 +550,11 @@ mod tests {
         let track = Track {
             title: String::new(),
             artist: String::new(),
+            genre: None,
+            theme: None,
             levels: vec![Level {
                 difficulty: Difficulty::Easy,
+                theme: None,
                 lanes: Lanes::Three,
                 tempo: vec![change(0.75, 120.0)],
                 notes: vec![played(2, 0.75, 0.8)],

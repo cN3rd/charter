@@ -146,9 +146,30 @@ impl Host {
     pub(crate) fn answer(&mut self, request: Request) {
         match request {
             Request::Write { path, bytes } => self.write(path, &bytes),
-            Request::WriteExport { path, bytes } => {
-                if let Err(error) = disk::write_whole(self.disk.as_ref(), &path, &bytes) {
-                    self.window.export_failed(&path, &error.to_string());
+            Request::WriteExport {
+                path,
+                bytes,
+                beside,
+                copies,
+            } => {
+                let disk = self.disk.as_ref();
+                if let Some(folder) = path.parent()
+                    && let Err(error) = disk.make_folder(folder)
+                {
+                    return self.window.export_failed(folder, &error.to_string());
+                }
+                let written = std::iter::once((&path, &bytes))
+                    .chain(beside.iter().map(|(place, made)| (place, made)))
+                    .map(|(place, made)| (place, disk::write_whole(disk, place, made)))
+                    .chain(
+                        copies
+                            .iter()
+                            .map(|(from, to)| (to, disk::copy_over(disk, from, to))),
+                    );
+                for (place, result) in written {
+                    if let Err(error) = result {
+                        self.window.export_failed(place, &error.to_string());
+                    }
                 }
             }
             Request::Autosave { bytes } => self.autosave(&bytes),

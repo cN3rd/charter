@@ -17,7 +17,7 @@ use std::io::Cursor;
 use plist::{Dictionary, Uid, Value};
 
 use crate::exchange::{Change, KEYS, Level, MAX_NOTES, Played, Report, Track, beats_at};
-use crate::{Difficulty, Lanes};
+use crate::{Difficulty, Lanes, Song};
 
 /// The MIDI key of a level's lowest note.
 const LOWEST: i64 = 60;
@@ -89,7 +89,19 @@ pub(crate) fn read(
         if let Some(&lanes) = info.columns.get(&number) {
             level.lanes = lanes;
         }
+        // A level in the song's theme keeps none of its own.
+        level.theme = info
+            .themes
+            .get(&number)
+            .filter(|&theme| info.theme.as_ref() != Some(theme))
+            .cloned();
     }
+    // The game shows info.plist's title and artist; Muse's tracks title their archives "No File
+    // Selected".
+    track.title = info.title.unwrap_or(track.title);
+    track.artist = info.artist.unwrap_or(track.artist);
+    track.genre = info.genre;
+    track.theme = info.theme;
     Ok(track)
 }
 
@@ -100,6 +112,16 @@ struct Info {
     levels: Vec<i64>,
     /// Each level's columns, by number, from `columnCountPerLevel`.
     columns: BTreeMap<i64, Lanes>,
+    /// The title the game shows, from `kTTRDownloadableItemTitleKey`.
+    title: Option<String>,
+    /// The artist it shows, from `kTTRDownloadableItemSubtitleKey`.
+    artist: Option<String>,
+    /// The genre, from `kTTRGenre`.
+    genre: Option<String>,
+    /// The theme of every level that names none, from `themeName`.
+    theme: Option<String>,
+    /// Each level's theme, by number, from `levelThemes`.
+    themes: BTreeMap<i64, String>,
 }
 
 impl Info {
@@ -132,8 +154,137 @@ impl Info {
                 Some((level.trim().parse().ok()?, lanes?))
             })
             .collect();
-        Self { levels, columns }
+        let text = |key| {
+            field(key)
+                .and_then(Value::as_string)
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .map(str::to_owned)
+        };
+        let themes = field("levelThemes")
+            .and_then(Value::as_dictionary)
+            .into_iter()
+            .flatten()
+            .filter_map(|(level, theme)| {
+                Some((level.trim().parse().ok()?, theme.as_string()?.to_owned()))
+            })
+            .collect();
+        Self {
+            levels,
+            columns,
+            title: text("kTTRDownloadableItemTitleKey"),
+            artist: text("kTTRDownloadableItemSubtitleKey"),
+            genre: text("kTTRGenre"),
+            theme: text("themeName"),
+            themes,
+        }
     }
+}
+
+/// The `info.plist` a track folder holding `track`, of `song`, keeps beside it, as the game's own
+/// and custom tracks write theirs: its title and artist, levels, columns and themes, the files the
+/// folder holds, and how long `audio_seconds` says the audio lasts.
+pub(crate) fn info(song: &Song, track: &Track, audio_seconds: Option<f64>) -> Vec<u8> {
+    let number = |level: &Level| level.difficulty.index().saturating_add(1);
+    let numbers: Vec<Value> = track
+        .levels
+        .iter()
+        .map(|level| Value::Integer(u64::try_from(number(level)).unwrap_or(0).into()))
+        .collect();
+    let columns: Dictionary = track
+        .levels
+        .iter()
+        .map(|level| {
+            let lanes = u64::from(u16::from(level.lanes.width()));
+            (number(level).to_string(), Value::Integer(lanes.into()))
+        })
+        .collect();
+    let level_theme = |level: &Level| {
+        song.charts()
+            .iter()
+            .find(|chart| chart.difficulty == Some(level.difficulty))
+            .and_then(|chart| chart.theme.as_ref().map(charter_core::Name::as_str))
+            .or_else(|| song.theme())
+    };
+    let themes: Dictionary = track
+        .levels
+        .iter()
+        .filter_map(|level| Some((number(level).to_string(), Value::from(level_theme(level)?))))
+        .collect();
+    let theme = song
+        .theme()
+        .or_else(|| track.levels.iter().find_map(level_theme))
+        .unwrap_or(crate::DEFAULT_THEME);
+    let file = |name: &str| {
+        let mut command = Dictionary::new();
+        command.insert(
+            "kTTRDownloadableItemPreferredFilenameKey".to_owned(),
+            name.into(),
+        );
+        command.insert("kTTRDownloadableItemSourceURLKey".to_owned(), "null".into());
+        Value::Dictionary(command)
+    };
+    let mut commands: Vec<Value> = ["audio.m4a", "artwork.png", "taptrack.ttr2_track"]
+        .into_iter()
+        .map(file)
+        .collect();
+    let mut needed: Vec<&str> = themes.values().filter_map(Value::as_string).collect();
+    needed.push(theme);
+    needed.sort_unstable();
+    needed.dedup();
+    commands.extend(needed.into_iter().map(|dependency| {
+        let mut command = Dictionary::new();
+        let path = format!("Themes/{dependency}.ttrTheme");
+        command.insert("kTTRDownloadableItemDependencyKey".to_owned(), path.into());
+        command.insert("kTTRDownloadableItemSourceURLKey".to_owned(), "null".into());
+        command.insert("kTTRDownloadableItemVersionKey".to_owned(), 0_u64.into());
+        Value::Dictionary(command)
+    }));
+    let metadata = song.metadata();
+    let mut info = Dictionary::new();
+    if let Some(seconds) = audio_seconds {
+        info.insert("audioFileDuration".to_owned(), seconds.into());
+    }
+    info.insert(
+        "availableDifficultyLevels".to_owned(),
+        Value::Array(numbers),
+    );
+    info.insert("bossLevels".to_owned(), Value::Array(Vec::new()));
+    info.insert("columnCountPerLevel".to_owned(), Value::Dictionary(columns));
+    info.insert(
+        "kTTRDownloadableItemCommandsKey".to_owned(),
+        Value::Array(commands),
+    );
+    info.insert(
+        "kTTRDownloadableItemTitleKey".to_owned(),
+        metadata.title.as_str().into(),
+    );
+    info.insert(
+        "kTTRDownloadableItemSubtitleKey".to_owned(),
+        metadata.artist.as_str().into(),
+    );
+    info.insert("kTTRDownloadableItemTypeKey".to_owned(), "track".into());
+    let unique = format!("{}: {}", metadata.artist, metadata.title);
+    info.insert(
+        "kTTRDownloadableItemUniqueIdentifierKey".to_owned(),
+        unique.into(),
+    );
+    info.insert("kTTRDownloadableItemVersionKey".to_owned(), 0_u64.into());
+    if let Some(genre) = &metadata.genre {
+        info.insert("kTTRGenre".to_owned(), genre.as_str().into());
+    }
+    info.insert("levelThemes".to_owned(), Value::Dictionary(themes));
+    info.insert("lockedLevels".to_owned(), Value::Array(Vec::new()));
+    info.insert("themeName".to_owned(), theme.into());
+    let mut bytes = Vec::new();
+    #[expect(
+        clippy::expect_used,
+        reason = "a plist of strings, numbers and lists always writes into memory"
+    )]
+    Value::Dictionary(info)
+        .to_writer_xml(&mut bytes)
+        .expect("an info.plist writes into memory");
+    bytes
 }
 
 /// The difficulty the game numbers `level`.
@@ -233,6 +384,7 @@ fn read_file(
     played.sort_by(|a, b| a.on.total_cmp(&b.on));
     let level = Level {
         difficulty,
+        theme: None,
         lanes: Lanes::Three,
         tempo,
         notes: played,
@@ -503,9 +655,12 @@ mod tests {
         Track {
             title: "House Music".to_owned(),
             artist: "Benny Benassi".to_owned(),
+            genre: None,
+            theme: None,
             levels: vec![
                 Level {
                     difficulty: Difficulty::Easy,
+                    theme: None,
                     lanes: Lanes::Three,
                     tempo: vec![Change {
                         seconds: 0.0,
@@ -516,6 +671,7 @@ mod tests {
                 },
                 Level {
                     difficulty: Difficulty::Extreme,
+                    theme: None,
                     lanes: Lanes::Three,
                     tempo: vec![
                         Change {

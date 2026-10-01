@@ -150,6 +150,15 @@ pub(crate) fn copy_whole(disk: &dyn Disk, from: &Path, to: &Path) -> io::Result<
             format!("{} already holds different audio", to.display()),
         ));
     }
+    copy_over(disk, from, to)
+}
+
+/// Copies `from` to `to` through a partial file beside it, replacing whatever is there.
+///
+/// # Errors
+///
+/// The source cannot be read or copied, or the copy cannot be moved; the file at `to` is as it was.
+pub(crate) fn copy_over(disk: &dyn Disk, from: &Path, to: &Path) -> io::Result<()> {
     if let Some(folder) = to.parent() {
         disk.make_folder(folder)?;
     }

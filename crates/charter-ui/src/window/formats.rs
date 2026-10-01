@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use charter_core::{RulesetPlugin, SongFormat};
+use charter_core::{RulesetPlugin, SongFormat, SongResource};
 use charter_editor::Song;
 
 use super::{Discard, Request, Window};
@@ -250,15 +250,47 @@ impl Window {
                 let Some(song) = &self.song else {
                     return;
                 };
-                match plugin.export_song(index, song.document()) {
+                let seconds = match self.loaded() {
+                    Some(&super::Loaded::Ready(seconds)) => Some(seconds),
+                    _ => None,
+                };
+                match plugin.export_song(index, song.document(), seconds) {
                     Ok(exported) => {
+                        let folder = path.parent().map(Path::to_path_buf).unwrap_or_default();
+                        let path = exported
+                            .file_name
+                            .as_ref()
+                            .map_or(path, |main| folder.join(main));
+                        let mut left_out = exported.left_out;
+                        let copies = exported
+                            .copies
+                            .iter()
+                            .filter_map(|(copy, resource)| {
+                                let from = match resource {
+                                    SongResource::Audio => self.audio_file(),
+                                    SongResource::Artwork => self.artwork_file(),
+                                };
+                                if from.is_none() {
+                                    left_out
+                                        .push(format!("{copy}, as the song's file is not chosen"));
+                                }
+                                Some((from?, folder.join(copy)))
+                            })
+                            .collect();
+                        let beside = exported
+                            .beside
+                            .into_iter()
+                            .map(|(made, bytes)| (folder.join(made), bytes))
+                            .collect();
                         self.failure = Some(described(
                             &format!("Exported {name} to {}", path.display()),
-                            &exported.left_out,
+                            &left_out,
                         ));
                         self.requests.push(Request::WriteExport {
                             path,
                             bytes: exported.bytes,
+                            beside,
+                            copies,
                         });
                     }
                     Err(why) => {
@@ -405,7 +437,7 @@ mod tests {
             note: Note::Tap,
         });
         let track = charter_ttr::Plugin
-            .export_song(0, song.song.as_ref().unwrap().document())
+            .export_song(0, song.song.as_ref().unwrap().document(), None)
             .unwrap()
             .bytes;
         let mut harness = window(Window::new(GAMES));
@@ -488,7 +520,7 @@ mod tests {
             note: Note::Tap,
         });
         assert!(app.modified());
-        let midi = charter_ttr::Plugin.export_song(3, app.song.as_ref().unwrap().document());
+        let midi = charter_ttr::Plugin.export_song(3, app.song.as_ref().unwrap().document(), None);
         let mut harness = window(app);
         harness.state_mut().import_song(
             std::path::Path::new("/eof/notes.mid"),
@@ -526,7 +558,7 @@ mod tests {
         let written: Vec<_> = taken
             .iter()
             .filter_map(|request| {
-                if let Request::WriteExport { path, bytes } = request {
+                if let Request::WriteExport { path, bytes, .. } = request {
                     Some((path, bytes))
                 } else {
                     None
@@ -541,9 +573,8 @@ mod tests {
         assert_eq!(
             harness.state().message(),
             Some(
-                "Exported Editor on Fire MIDI to /out/notes.mid, leaving out the artist, which EOF \
-                 keeps in song.ini rather than the MIDI file; the theme, which a track's \
-                 info.plist holds, not this file."
+                "Exported Editor on Fire MIDI to /out/notes.mid, leaving out the artist, which a \
+                 MIDI file has no place for; the theme, which a MIDI file has no place for."
             )
         );
     }
@@ -553,7 +584,7 @@ mod tests {
         let mut app = opened(&ttr_song());
         app.export_song(std::path::Path::new("/out/taptrack"));
         let requests = app.take_requests();
-        let [Request::WriteExport { path, bytes }] = requests.as_slice() else {
+        let [Request::WriteExport { path, bytes, .. }] = requests.as_slice() else {
             panic!("an export writes a file");
         };
         assert_eq!(path, &PathBuf::from("/out/taptrack.ttr2_track"));
@@ -562,6 +593,65 @@ mod tests {
         assert_eq!(
             app.message(),
             Some("/out/taptrack.ttr2_track was not written: disk full")
+        );
+    }
+
+    #[test]
+    fn a_track_is_written_as_the_game_s_folder_with_its_info_audio_and_artwork() {
+        let mut song = ttr_song().document().clone();
+        song.metadata.audio = ResourcePath::new("song.mp3").unwrap();
+        song.metadata.artwork = Some(ResourcePath::new("cover.png").unwrap());
+        song.metadata.preview = Some(charter_core::Preview {
+            start_seconds: charter_core::AudioTime::try_from(30.0).unwrap(),
+            length_seconds: None,
+        });
+        let mut app = opened(&charter_core::ValidDocument::new(song).unwrap());
+        app.audio_ready(std::path::Path::new("/songs/song.mp3"), 129.5);
+        app.export_song(std::path::Path::new("/out/sudo.track/sudo.ttr2_track"));
+        let mut harness = window(app);
+        pick(&mut harness, "Tap Tap Revenge track", "Export");
+        let requests = harness.state_mut().take_requests();
+        let Some(Request::WriteExport {
+            path,
+            bytes,
+            beside,
+            copies,
+        }) = requests
+            .iter()
+            .find(|request| matches!(request, Request::WriteExport { .. }))
+        else {
+            panic!("an export writes a file: {requests:?}");
+        };
+        let folder = PathBuf::from("/out/sudo.track");
+        assert_eq!(path, &folder.join("taptrack.ttr2_track"));
+        assert!(bytes.starts_with(b"bplist00"));
+        let [(info, plist)] = beside.as_slice() else {
+            panic!("one file beside: {beside:?}");
+        };
+        assert_eq!(info, &folder.join("info.plist"));
+        let plist = String::from_utf8_lossy(plist);
+        assert!(plist.contains("<real>129.5</real>"), "{plist}");
+        assert!(plist.contains("<string>TTRDJ</string>"), "{plist}");
+        assert_eq!(
+            copies,
+            &[
+                (PathBuf::from("/songs/song.mp3"), folder.join("audio.m4a")),
+                (
+                    PathBuf::from("/songs/cover.png"),
+                    folder.join("artwork.png")
+                ),
+                (
+                    PathBuf::from("/songs/cover.png"),
+                    folder.join("artwork@2x.png")
+                ),
+            ]
+        );
+        assert_eq!(
+            harness.state().message(),
+            Some(
+                "Exported Tap Tap Revenge track to /out/sudo.track/taptrack.ttr2_track, leaving \
+                 out the preview, which the game has no place for."
+            )
         );
     }
 

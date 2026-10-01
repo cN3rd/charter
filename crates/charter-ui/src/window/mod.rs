@@ -187,13 +187,18 @@ pub enum Request {
         /// Formats the song's plugin writes, with their extensions.
         formats: Vec<(String, Vec<String>)>,
     },
-    /// Write `bytes`, the open song in another program's format, to `path`, saying through
-    /// [`Window::export_failed`] if it could not.
+    /// Write `bytes`, the open song in another program's format, to `path`, the files `beside` it
+    /// and copies of the song's own, each from its file to its place, saying through
+    /// [`Window::export_failed`] what could not be.
     WriteExport {
-        /// Destination the user chose.
+        /// Destination of the main file.
         path: PathBuf,
         /// The exported file.
         bytes: Vec<u8>,
+        /// Files made beside it, each with its place.
+        beside: Vec<(PathBuf, Vec<u8>)>,
+        /// The song's files copied beside it, each from where it is to its place.
+        copies: Vec<(PathBuf, PathBuf)>,
     },
     /// Download the beat tracker's weights, the user having agreed, telling
     /// [`Window::weights_progress`] how far it has got, then find the timing asked for.

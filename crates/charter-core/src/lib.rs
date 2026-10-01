@@ -78,7 +78,7 @@ pub use path::ResourcePath;
 )]
 pub use plugin::{
     Difficulties, DifficultyPreset, ExportedSong, ImportedSong, ImportedTiming, Layout, NewChart,
-    NewSong, NoteChange, RulesetPlugin, SettingScope, SongFormat, TextSetting,
+    NewSong, NoteChange, RulesetPlugin, SettingScope, SongFormat, SongResource, TextSetting,
 };
 #[expect(
     clippy::pub_use,
