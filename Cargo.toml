@@ -168,6 +168,11 @@ multiple_inherent_impl = "allow"
 
 # ponytail: tick/sample arithmetic is everywhere in a charting app and silent wraparound
 # is a nightmare to debug. Drop this if DSP profiling ever shows it costs real time.
+# Dependencies keep line tables, enough for a backtrace's file and line, but not the full debug
+# info: they compile faster and the binary links in a fraction of the time.
+[profile.dev.package."*"]
+debug = "line-tables-only"
+
 [profile.release]
 overflow-checks = true
 
