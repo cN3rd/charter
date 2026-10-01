@@ -494,7 +494,7 @@ pub(crate) fn show(
         );
     }
     if let Some(Gesture::Hold { lane, from }) = *gesture
-        && let Some(to) = latest.and_then(&line)
+        && let Some(to) = latest.and_then(line)
         && let Some(rect) = hold_preview_rect(columns, timing, view, lane, from, to)
     {
         clipped.rect_filled(rect, 2.0, style::HOLD.gamma_multiply(0.7));

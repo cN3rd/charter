@@ -141,6 +141,15 @@ pub_with_shorthand = "allow"
 default_numeric_fallback = "allow"
 # Fights match ergonomics: `if let Some(x) = &field` is how the codebase binds by reference.
 pattern_type_mismatch = "allow"
+# Bans `..` in struct patterns, new in Rust 1.99: naming every ignored field is noise, and a field
+# added later is what `..` is for.
+rest_pattern_accessible_field = "allow"
+# Bans definitions in `mod.rs`, new in Rust 1.99: a module's root holds its central type, as
+# `Window` in `charter-ui/src/window/mod.rs`, with each concern in a file beside it.
+definition_in_module_root = "allow"
+# Wants `assert_eq!(x, [] as [T; 0])` for `assert!(x.is_empty())`, new in Rust 1.99: the cast
+# trips `as_conversions`, and a failing test names the line either way.
+assert_is_empty = "allow"
 # Fat LTO in the dist profile inlines across crates already; `#[inline]` everywhere is noise.
 missing_inline_in_public_items = "allow"
 # Checked and left as the house style: short closure names, inline paths, `'a`, `pub(crate)`

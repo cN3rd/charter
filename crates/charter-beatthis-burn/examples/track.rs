@@ -46,6 +46,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         first(&found.downbeats, 4)
     );
     if let Some(out) = args.get(3) {
+        #[expect(
+            clippy::little_endian_bytes,
+            reason = "the parity fixture reads the logits back as little-endian float32"
+        )]
         let bytes: Vec<u8> = found
             .beat_logits
             .iter()

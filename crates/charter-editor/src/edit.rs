@@ -244,9 +244,7 @@ fn apply_op(document: &mut Document, chart: usize, op: &Op) -> bool {
                     }
                     objects.remove(*index);
                 }
-                Op::Replace {
-                    index, old, new, ..
-                } => {
+                Op::Replace { index, old, new } => {
                     if objects.get(*index) != Some(old) {
                         return false;
                     }
