@@ -549,6 +549,35 @@ mod tests {
     }
 
     #[test]
+    fn a_picture_chosen_as_artwork_is_taken_by_its_own_name() {
+        let mut host = host(Memory::with(&[("/p/art.png", &png(2, 2))]));
+        host.window = Window::new(PLUGINS);
+        host.window.open(Path::new("/s/Song/Song.json"), &sm_song());
+        host.choose_artwork(Path::new("/p/art.png"));
+        assert_eq!(host.window.message(), None);
+        assert_eq!(
+            host.window
+                .artwork_write_for(Path::new("/s/Song/Song.json")),
+            Some((PathBuf::from("/s/Song/art.png"), png(2, 2)))
+        );
+    }
+
+    #[test]
+    fn an_audio_file_chosen_as_artwork_is_read_for_its_cover() {
+        let mut host = host(Memory::with(&[("/m/track.flac", b"not tagged")]));
+        host.window = Window::new(PLUGINS);
+        host.window.open(Path::new("/s/Song/Song.json"), &sm_song());
+        host.choose_artwork(Path::new("/m/track.flac"));
+        assert!(
+            host.window
+                .message()
+                .is_some_and(|message| message.contains("has no cover in its tags")),
+            "{:?}",
+            host.window.message()
+        );
+    }
+
+    #[test]
     fn saving_writes_the_cover_new_audio_holds_into_the_song_folder() {
         let mut host = host(Memory::with(&[("/m/track.flac", b"audio")]));
         host.window = Window::new(PLUGINS);

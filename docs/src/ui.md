@@ -38,7 +38,8 @@ and sets its preview, where a song list starts playing it, as a time and a lengt
 clearing the time takes the preview away. Its artwork is a PNG or JPEG named beside the song,
 typed or chosen with the button beside the field or File › Choose artwork…, and a preview of it
 shows under the field. Audio chosen for a song without artwork brings the cover its tags hold, as
-`cover.jpg` or `cover.png`. A chosen or embedded picture is written beside the song when it is
+`cover.jpg` or `cover.png`, and an audio file chosen as the artwork gives its cover the same way,
+whatever artwork the song had. A chosen or embedded picture is written beside the song when it is
 saved, and a song saved to a new folder takes its artwork along. A picture not yet beside the
 song counts as an unsaved change, is kept in the autosave, and a save never writes it over a
 different picture of the same name that the song did not name; it stops and says so instead. Each change is one step, and the ruleset shows as it

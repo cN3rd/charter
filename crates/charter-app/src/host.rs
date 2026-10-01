@@ -24,6 +24,13 @@ pub(crate) struct Host {
     pub(crate) disk: Box<dyn Disk>,
 }
 
+/// The audio files charter plays.
+const AUDIO: [&str; 4] = ["ogg", "mp3", "wav", "flac"];
+/// The pictures a song's artwork can be.
+const PICTURES: [&str; 3] = ["png", "jpg", "jpeg"];
+/// What can be chosen as a song's artwork: a picture, or audio whose tags hold a cover.
+const ARTWORK: [&str; 7] = ["png", "jpg", "jpeg", "ogg", "mp3", "wav", "flac"];
+
 #[expect(
     clippy::missing_trait_methods,
     reason = "eframe's defaults for saving, clearing, exiting and input are what charter wants"
@@ -93,7 +100,7 @@ impl Host {
                     }
                     Request::ChooseAudio => {
                         let audio = rfd::FileDialog::new()
-                            .add_filter("audio", &["ogg", "mp3", "wav", "flac"])
+                            .add_filter("audio", &AUDIO)
                             .pick_file();
                         if let Some(path) = audio {
                             self.window.use_audio(&path);
@@ -101,11 +108,12 @@ impl Host {
                     }
                     Request::ChooseArtwork => {
                         let file = rfd::FileDialog::new()
-                            .add_filter("picture", &["png", "jpg", "jpeg"])
+                            .add_filter("picture or audio with a cover", &ARTWORK)
+                            .add_filter("picture", &PICTURES)
+                            .add_filter("audio with a cover", &AUDIO)
                             .pick_file();
                         if let Some(path) = file {
-                            let picture = self.disk.read(&path).ok().and_then(picture);
-                            self.window.use_artwork(&path, picture);
+                            self.choose_artwork(&path);
                         }
                     }
                     Request::FindTiming {
@@ -350,6 +358,27 @@ impl Host {
                 // A copy left over is only a little disk.
                 drop(self.disk.remove(old));
             }
+        }
+    }
+
+    /// Takes `path`, chosen as the song's artwork, as it: a picture by its own name, or the
+    /// cover in an audio file's tags.
+    pub(crate) fn choose_artwork(&mut self, path: &Path) {
+        let bytes = self.disk.read(path).ok();
+        let extension = path.extension().and_then(|extension| extension.to_str());
+        let audio = extension.is_some_and(|extension| {
+            AUDIO
+                .iter()
+                .any(|known| known.eq_ignore_ascii_case(extension))
+        });
+        if audio {
+            let cover = bytes
+                .map(|bytes| charter_audio::tags(bytes, extension))
+                .and_then(|tags| tags.artwork)
+                .and_then(|artwork| Some((artwork.extension, picture(artwork.bytes)?)));
+            self.window.artwork_ripped(path, cover);
+        } else {
+            self.window.use_artwork(path, bytes.and_then(picture));
         }
     }
 

@@ -17,6 +17,19 @@ impl Window {
             .map(|name| name.to_string_lossy().into_owned());
         self.take_artwork(name.unwrap_or_default(), picture);
     }
+    /// Takes the cover embedded in `file`, an audio file chosen as the song's artwork, as
+    /// `cover.<extension>` beside the song; `cover` is its extension and picture, or `None` when
+    /// its tags hold no picture.
+    pub fn artwork_ripped(&mut self, file: &Path, cover: Option<(&str, Picture)>) {
+        let Some((extension, picture)) = cover else {
+            self.failure = Some(format!(
+                "{} cannot give the song's artwork: it has no cover in its tags",
+                file.display()
+            ));
+            return;
+        };
+        self.take_artwork(format!("cover.{extension}"), picture);
+    }
     /// Stores cover art embedded in a chosen audio file, or applies it to a song without artwork.
     pub fn artwork_embedded(&mut self, file: &Path, extension: &str, picture: Picture) {
         if self
@@ -239,6 +252,36 @@ mod tests {
         assert!(
             harness
                 .query_by_label_contains("is not a PNG or JPEG picture")
+                .is_some()
+        );
+    }
+    #[test]
+    fn an_audio_file_chosen_as_artwork_gives_its_cover_saved_beside_the_song() {
+        let mut harness = four_taps_at("/songs/Four/four.json");
+        harness.state_mut().artwork_ripped(
+            Path::new("/music/track.flac"),
+            Some(("jpg", picture(b"jpeg"))),
+        );
+        harness.run();
+        assert_eq!(artwork_name(&harness).as_deref(), Some("cover.jpg"));
+        assert_eq!(
+            harness
+                .state()
+                .artwork_write_for(Path::new("/songs/Four/four.json")),
+            Some((PathBuf::from("/songs/Four/cover.jpg"), b"jpeg".to_vec()))
+        );
+    }
+    #[test]
+    fn an_audio_file_without_a_cover_is_refused_as_artwork() {
+        let mut harness = four_taps_at("/songs/four.json");
+        harness
+            .state_mut()
+            .artwork_ripped(Path::new("/music/track.flac"), None);
+        harness.run();
+        assert_eq!(artwork_name(&harness), None);
+        assert!(
+            harness
+                .query_by_label_contains("has no cover in its tags")
                 .is_some()
         );
     }
