@@ -157,6 +157,38 @@ pub(crate) fn ask_to_run_on_cpu(ui: &Ui) -> Option<bool> {
     answer
 }
 
+/// Which of `names` a file is, for formats that share its extension: the index the user picks
+/// with `verb`, such as Import, or false for Cancel. `chosen` is the pick so far.
+pub(crate) fn choose_format(
+    ui: &Ui,
+    verb: &str,
+    names: &[String],
+    chosen: &mut usize,
+) -> Option<bool> {
+    let mut answer = None;
+    egui::Modal::new(egui::Id::new("choose format")).show(ui.ctx(), |ui| {
+        ui.set_max_width(420.0);
+        let question = "Which game is the file for?";
+        ui.label(RichText::new(question).family(style::titles(ui)).size(15.0));
+        ui.add_space(4.0);
+        ui.label("Games read the same kind of file their own ways, so the notes depend on which.");
+        ui.add_space(8.0);
+        for (index, name) in names.iter().enumerate() {
+            ui.radio_value(chosen, index, name.as_str());
+        }
+        ui.add_space(14.0);
+        ui.horizontal(|ui| {
+            if ui.add(style::primary(verb)).clicked() {
+                answer = Some(true);
+            }
+            if ui.button("Cancel").clicked() {
+                answer = Some(false);
+            }
+        });
+    });
+    answer
+}
+
 /// Whether to reset the open chart's timing, which the user answers: true for Reset.
 pub(crate) fn ask_to_reset_timing(ui: &Ui) -> Option<bool> {
     let mut answer = None;

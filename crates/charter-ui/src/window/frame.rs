@@ -75,6 +75,7 @@ impl Window {
             || self.dialogs.offer.is_some()
             || self.calibration.is_open()
             || self.dialogs.resetting
+            || self.dialogs.choosing.is_some()
             || matches!(self.dialogs.finding, Finding::Asking | Finding::NoGpu);
         // A button that Tab focused wants no letters, so only a text field counts.
         let typing = ui
@@ -373,6 +374,7 @@ impl Window {
                 self.dialogs.finding = Finding::Idle;
             }
         }
+        self.choose_format(ui);
         if self.dialogs.resetting
             && let Some(answer) = panels::ask_to_reset_timing(ui)
         {

@@ -41,7 +41,7 @@ mod transport;
 
 pub(crate) use dialogs::{
     Answer, ask_to_download_weights, ask_to_reset_timing, ask_to_restore, ask_to_run_on_cpu,
-    ask_to_save, offer_tags, read_only, toast,
+    ask_to_save, choose_format, offer_tags, read_only, toast,
 };
 pub(crate) use empty::{empty, no_audio};
 pub(crate) use entry::entry;

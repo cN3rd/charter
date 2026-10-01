@@ -357,6 +357,12 @@ pub enum Error {
         /// Invalid value.
         found: String,
     },
+    /// Two shakes, slices or mega taps cover one lane on one tick.
+    #[error("{at}: two shakes, slices or mega taps on one lane at once")]
+    Crowded {
+        /// Location of the second.
+        at: Location,
+    },
     /// Chart with an unsupported column count.
     #[error("{at} has {} lanes; a chart has 3, 4 or 5", .lanes.map_or_else(|| "no".to_owned(), |lanes| lanes.to_string()))]
     Lanes {
@@ -400,6 +406,9 @@ impl Song {
         }
         if charts.is_empty() {
             return Err(Error::NoCharts);
+        }
+        for (c, chart) in charts.iter().enumerate() {
+            uncrowded(c, chart)?;
         }
         if let Some(key) = metadata.ext.keys().next() {
             return Err(Error::UnknownKey {
@@ -700,31 +709,55 @@ impl TryFrom<&ValidDocument> for Song {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Plugin;
 
-/// The song formats [`Plugin`] reads and writes, in the order it lists them.
+/// The song formats [`Plugin`] reads and writes, in the order it lists them: a file, and how its
+/// keys are played.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SongFile {
-    /// The game's own `.ttr2_track`.
-    Track,
-    /// A MIDI file as Editor on Fire charts the game.
-    Midi,
+    /// The game's own `.ttr2_track`, its keys played as the preset's game plays them.
+    Track(exchange::Preset),
+    /// A MIDI file as Editor on Fire charts the game, its keys laid out as given.
+    Midi(midi::Layout),
 }
 
 /// Every song format, the game's own first.
-const SONG_FILES: [SongFile; 2] = [SongFile::Track, SongFile::Midi];
+const SONG_FILES: [SongFile; 5] = [
+    SongFile::Track(exchange::Preset::Revenge),
+    SongFile::Track(exchange::Preset::Tour),
+    SongFile::Track(exchange::Preset::TapThemes),
+    SongFile::Midi(midi::Layout::Standard),
+    SongFile::Midi(midi::Layout::Reloaded),
+];
 
 impl SongFile {
     /// The format as the editor lists it.
     fn format(self) -> SongFormat {
-        let (name, extensions): (&str, &[&str]) = match self {
-            Self::Track => ("Tap Tap Revenge track", &["ttr2_track"]),
-            Self::Midi => ("Editor on Fire MIDI", &["mid", "midi"]),
+        use exchange::Preset;
+        let name = match self {
+            Self::Track(Preset::Revenge) => "Tap Tap Revenge track",
+            Self::Track(Preset::Tour) => "Tap Tap Revenge: Tour track",
+            Self::Track(Preset::TapThemes) => "Tap Tap Revenge track, custom tap theme",
+            Self::Midi(midi::Layout::Standard) => "Editor on Fire MIDI",
+            Self::Midi(midi::Layout::Reloaded) => "Tap Tap Reloaded MIDI",
         };
+        let (extensions, companions): (&[&str], &[&str]) = match self {
+            Self::Track(_) => (&["ttr2_track"], &["info.plist"]),
+            Self::Midi(_) => (&["mid", "midi"], &[]),
+        };
+        let owned = |names: &[&str]| names.iter().map(|&each| each.to_owned()).collect();
         SongFormat {
             name: name.to_owned(),
-            extensions: extensions
-                .iter()
-                .map(|&extension| extension.to_owned())
-                .collect(),
+            extensions: owned(extensions),
+            companions: owned(companions),
+        }
+    }
+
+    /// How this format's keys are played. Tap Tap Reloaded's middle note is the big note
+    /// Tour's mega tap is.
+    const fn preset(self) -> exchange::Preset {
+        match self {
+            Self::Track(preset) => preset,
+            Self::Midi(midi::Layout::Standard) => exchange::Preset::Revenge,
+            Self::Midi(midi::Layout::Reloaded) => exchange::Preset::Tour,
         }
     }
 
@@ -732,8 +765,8 @@ impl SongFile {
     /// chart.
     const fn audio(self) -> &'static str {
         match self {
-            Self::Track => "audio.m4a",
-            Self::Midi => "guitar.ogg",
+            Self::Track(_) => "audio.m4a",
+            Self::Midi(_) => "guitar.ogg",
         }
     }
 
@@ -877,14 +910,18 @@ impl RulesetPlugin for Plugin {
         &self,
         format: usize,
         bytes: &[u8],
+        companions: &BTreeMap<String, Vec<u8>>,
     ) -> Result<ImportedSong, Box<dyn std::error::Error + Send + Sync>> {
         let file = SongFile::at(format)?;
         let mut report = exchange::Report::default();
         let track = match file {
-            SongFile::Track => track::read(bytes, &mut report)?,
-            SongFile::Midi => midi::read(bytes, &mut report)?,
+            SongFile::Track(_) => {
+                let info = companions.get("info.plist").map(Vec::as_slice);
+                track::read(bytes, info, &mut report)?
+            }
+            SongFile::Midi(layout) => midi::read(bytes, layout, &mut report)?,
         };
-        let document = exchange::to_song(track, file.audio(), &mut report)?;
+        let document = exchange::to_song(track, file.audio(), file.preset(), &mut report)?;
         Ok(ImportedSong {
             document,
             left_out: report.into_lines(),
@@ -898,14 +935,27 @@ impl RulesetPlugin for Plugin {
     ) -> Result<ExportedSong, Box<dyn std::error::Error + Send + Sync>> {
         let file = SongFile::at(format)?;
         let mut report = exchange::Report::default();
-        let track = exchange::from_song(song, &mut report)?;
+        let track = exchange::from_song(song, file.preset(), &mut report)?;
         let bytes = match file {
-            SongFile::Track => track::write(&track),
-            SongFile::Midi => {
+            SongFile::Track(_) => {
+                for level in track
+                    .levels
+                    .iter()
+                    .filter(|level| level.lanes != Lanes::Three)
+                {
+                    report.add(format!(
+                        "the {} level's {} columns, which the track's info.plist sets as columnCountPerLevel",
+                        level.difficulty.name(),
+                        level.lanes.width()
+                    ));
+                }
+                track::write(&track)
+            }
+            SongFile::Midi(layout) => {
                 if !track.artist.is_empty() {
                     report.add("the artist, which EOF keeps in song.ini rather than the MIDI file");
                 }
-                midi::write(&track, &mut report)
+                midi::write(&track, layout, &mut report)
             }
         };
         Ok(ExportedSong {
@@ -997,7 +1047,7 @@ fn read_chart(c: usize, chart: &CoreChart) -> Result<Chart, Error> {
             })?),
         };
     reject_own_keys(&chart.ext, Location::ChartExt(c))?;
-    let notes = chart
+    let notes: Vec<Note> = chart
         .objects
         .iter()
         .enumerate()
@@ -1030,6 +1080,30 @@ fn read_chart(c: usize, chart: &CoreChart) -> Result<Chart, Error> {
         tempo,
         notes,
     })
+}
+
+/// Fails on two shakes, slices or mega taps of chart `c` covering one lane on one tick. The
+/// format leaves this ruleset's own kinds to share lanes with taps and holds, as a shake shares
+/// the column of its direction and the game plays both; two of them on one lane are a mistake.
+fn uncrowded(c: usize, chart: &Chart) -> Result<(), Error> {
+    let mut gestures: std::collections::HashSet<(i64, u16)> = std::collections::HashSet::new();
+    for (j, note) in chart.notes.iter().enumerate() {
+        if matches!(note.kind, NoteKind::Tap { .. } | NoteKind::Hold { .. }) {
+            continue;
+        }
+        let Position::Lane { index, width } = chart.lanes.position(note.kind) else {
+            continue;
+        };
+        let first = u16::from(index);
+        for lane in first..first.saturating_add(u16::from(width)) {
+            if !gestures.insert((i64::from(note.tick), lane)) {
+                return Err(Error::Crowded {
+                    at: Location::Object { chart: c, index: j },
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The note type at its expected position for `lanes`, if representable.
@@ -1369,7 +1443,7 @@ mod tests {
     }
 
     #[test]
-    fn a_mega_tap_covers_every_lane_of_its_tick() {
+    fn a_mega_tap_covers_every_lane_of_its_tick_beside_taps_but_not_shakes() {
         let mega = json!([lane_object(0, 0, 5, "ttr.mega_tap")]);
         let mut value = document(mega.clone());
         value["charts"][0]["lanes"] = json!(5);
@@ -1392,14 +1466,27 @@ mod tests {
                 lane: LaneIndex::new(4),
             },
         });
-        let crowded = Song::new(
-            song.metadata().clone(),
-            song.ticks_per_beat(),
-            song.tempo().clone(),
-            song.markers().to_vec(),
-            charts,
+        let with = |levels: Vec<Chart>| {
+            Song::new(
+                song.metadata().clone(),
+                song.ticks_per_beat(),
+                song.tempo().clone(),
+                song.markers().to_vec(),
+                levels,
+            )
+        };
+        // A tap shares the instant, as the game plays both.
+        with(charts.clone()).unwrap();
+        let mut shaken = charts;
+        shaken[0].notes.push(Note {
+            tick: Tick::new(0),
+            kind: NoteKind::Shake(Shake::Left),
+        });
+        let crowded = with(shaken).unwrap_err();
+        assert_eq!(
+            crowded.to_string(),
+            "charts[0].objects[2]: two shakes, slices or mega taps on one lane at once"
         );
-        assert!(matches!(crowded, Err(Error::Document(_))));
     }
 
     #[test]
@@ -1939,26 +2026,146 @@ mod tests {
     }
 
     #[test]
-    fn the_plugin_lists_the_game_s_track_and_eof_s_midi() {
+    fn the_plugin_lists_each_game_s_track_and_midi_layout() {
         let formats = Plugin.song_formats();
         let names: Vec<&str> = formats.iter().map(|format| format.name.as_str()).collect();
-        assert_eq!(names, ["Tap Tap Revenge track", "Editor on Fire MIDI"]);
-        assert_eq!(formats[0].extensions, ["ttr2_track"]);
-        assert_eq!(formats[1].extensions, ["mid", "midi"]);
-        let unknown = Plugin.import_song(2, b"").unwrap_err();
+        assert_eq!(
+            names,
+            [
+                "Tap Tap Revenge track",
+                "Tap Tap Revenge: Tour track",
+                "Tap Tap Revenge track, custom tap theme",
+                "Editor on Fire MIDI",
+                "Tap Tap Reloaded MIDI",
+            ]
+        );
+        for track in &formats[..3] {
+            assert_eq!(track.extensions, ["ttr2_track"]);
+            assert_eq!(track.companions, ["info.plist"]);
+        }
+        for midi in &formats[3..] {
+            assert_eq!(midi.extensions, ["mid", "midi"]);
+            assert!(midi.companions.is_empty());
+        }
+        let unknown = Plugin.import_song(5, b"", &BTreeMap::new()).unwrap_err();
         assert_eq!(
             unknown.to_string(),
             "Tap Tap Revenge has no such song format"
         );
-        Plugin.export_song(2, &exchangeable()).unwrap_err();
+        Plugin.export_song(5, &exchangeable()).unwrap_err();
+    }
+
+    /// The plain Tap Tap Revenge track among the formats, and Editor on Fire's MIDI.
+    const TRACK: usize = 0;
+    const MIDI: usize = 3;
+
+    #[test]
+    fn a_tour_track_reads_side_and_middle_keys_as_slices_and_a_mega_tap() {
+        let song = exchangeable();
+        let track = Plugin.export_song(TRACK, &song).unwrap().bytes;
+        let tour = Plugin.import_song(1, &track, &BTreeMap::new()).unwrap();
+        let kinds = |document: &ValidDocument| -> Vec<String> {
+            let chart = document.charts().nth(1).unwrap();
+            chart
+                .objects()
+                .map(|object| format!("{:?}", object.kind))
+                .collect()
+        };
+        let named = |name: &str| {
+            format!("Other(Key {{ namespace: Namespace(\"ttr\"), name: Name({name:?}) }})")
+        };
+        assert_eq!(
+            kinds(&tour.document),
+            [
+                "Tap".to_owned(),
+                "Hold".to_owned(),
+                named("slice"),
+                named("slice"),
+                named("mega_tap")
+            ]
+        );
+        let tour_track = Plugin.export_song(1, &tour.document).unwrap();
+        assert!(tour_track.left_out.is_empty(), "{:?}", tour_track.left_out);
+        assert_eq!(tour_track.bytes, track, "Tour's notes sit on the same keys");
+    }
+
+    #[test]
+    fn a_four_lane_level_reads_its_columns_from_info_plist_and_says_export_needs_them() {
+        let mut value = document(json!([lane_object(0, 3, 1, "tap")]));
+        value["charts"][0]["lanes"] = json!(4);
+        value["charts"][0]["settings"] = json!({ "difficulty": "hard" });
+        let song = ValidDocument::from_json(&serde_json::to_vec(&value).unwrap()).unwrap();
+        let exported = Plugin.export_song(TRACK, &song).unwrap();
+        assert_eq!(
+            exported.left_out,
+            [
+                "the Hard level's 4 columns, which the track's info.plist sets as columnCountPerLevel"
+            ]
+        );
+        let mut info = Vec::new();
+        let mut counts = plist::Dictionary::new();
+        counts.insert("3".to_owned(), plist::Value::Integer(4.into()));
+        let mut plist_info = plist::Dictionary::new();
+        plist_info.insert(
+            "columnCountPerLevel".to_owned(),
+            plist::Value::Dictionary(counts),
+        );
+        plist::Value::Dictionary(plist_info)
+            .to_writer_xml(&mut info)
+            .unwrap();
+        let companions = BTreeMap::from([("info.plist".to_owned(), info)]);
+        let imported = Plugin
+            .import_song(TRACK, &exported.bytes, &companions)
+            .unwrap();
+        assert!(imported.left_out.is_empty(), "{:?}", imported.left_out);
+        assert_eq!(placed(&imported.document), placed(&song));
+        // Without info.plist the level has three columns, where key 3 is a right shake.
+        let three = Plugin
+            .import_song(TRACK, &exported.bytes, &BTreeMap::new())
+            .unwrap();
+        let chart = three.document.charts().next().unwrap();
+        assert_eq!(chart.lanes, LaneCount::new(3));
+        let kinds: Vec<String> = chart
+            .objects()
+            .map(|object| format!("{:?}", object.kind))
+            .collect();
+        assert!(kinds[0].contains("shake"), "{kinds:?}");
+    }
+
+    #[test]
+    fn tap_tap_reloaded_midi_plays_the_middle_note_as_a_mega_tap_and_has_no_side_keys() {
+        let song = exchangeable();
+        let reloaded = Plugin.export_song(4, &song).unwrap();
+        assert_eq!(
+            reloaded.left_out,
+            [
+                "a down shake, which Tap Tap Revenge: Tour plays as a mega tap",
+                "a left shake, which Tap Tap Revenge: Tour plays as a left slice",
+                "a right shake, which Tap Tap Revenge: Tour plays as a right slice",
+                "left and right shakes and slices, which Tap Tap Reloaded's layout has no key for (2 times)",
+                "the artist, which EOF keeps in song.ini rather than the MIDI file",
+            ]
+        );
+        let imported = Plugin
+            .import_song(4, &reloaded.bytes, &BTreeMap::new())
+            .unwrap();
+        let extreme = imported.document.charts().nth(1).unwrap();
+        let kinds: Vec<String> = extreme
+            .objects()
+            .map(|object| format!("{:?}", object.kind))
+            .collect();
+        assert_eq!(kinds.len(), 3);
+        assert!(kinds[2].contains("mega_tap"), "{kinds:?}");
     }
 
     #[test]
     fn a_song_comes_back_from_either_format_on_the_same_ticks() {
         let song = exchangeable();
-        for format in 0..2 {
+        for format in [TRACK, MIDI] {
             let exported = Plugin.export_song(format, &song).unwrap();
-            let imported = Plugin.import_song(format, &exported.bytes).unwrap();
+            let imported = Plugin
+                .import_song(format, &exported.bytes, &BTreeMap::new())
+                .unwrap();
             assert!(imported.left_out.is_empty(), "{:?}", imported.left_out);
             assert_eq!(heard(&imported.document), heard(&song), "format {format}");
             let back = Song::try_from(&imported.document).unwrap();
@@ -1971,14 +2178,16 @@ mod tests {
             assert_eq!(back.metadata().title, "t");
             Plugin.check(&imported.document).unwrap();
         }
-        let midi = Plugin.export_song(1, &song).unwrap();
+        let midi = Plugin.export_song(MIDI, &song).unwrap();
         assert_eq!(
             midi.left_out,
             ["the artist, which EOF keeps in song.ini rather than the MIDI file"]
         );
-        let track = Plugin.export_song(0, &song).unwrap();
+        let track = Plugin.export_song(TRACK, &song).unwrap();
         assert!(track.left_out.is_empty());
-        let imported = Plugin.import_song(0, &track.bytes).unwrap();
+        let imported = Plugin
+            .import_song(TRACK, &track.bytes, &BTreeMap::new())
+            .unwrap();
         // The game's file keeps the ticks too; MIDI's lead-in starts the grid at the audio's
         // start, a beat earlier here.
         assert_eq!(placed(&imported.document), placed(&song));

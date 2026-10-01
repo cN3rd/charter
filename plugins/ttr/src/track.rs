@@ -3,17 +3,24 @@
 //! 4 for Extreme, to a `KBMidiFile`: the level's tempo changes, and tracks of `KBMidiEvent`s, each
 //! a MIDI note switched on or off at a moment of the audio or a line of text.
 //!
+//! A level's column count is not in the file but in the `info.plist` beside it, as
+//! `columnCountPerLevel`, a dictionary from each level's number to its columns, 3 when a level
+//! has none.
+//!
 //! [`plist`] reads and writes the property list; this module walks the archive's fixed shape
 //! itself. The keyed-archive crates decode any object graph by recursion, which a hostile file
 //! can make overflow the stack or grow without bound, and none writes custom classes.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::io::Cursor;
 
 use plist::{Dictionary, Uid, Value};
 
-use crate::Difficulty;
-use crate::exchange::{Change, Key, Level, MAX_NOTES, Played, Report, Track, beats_at};
+use crate::exchange::{Change, KEYS, Level, MAX_NOTES, Played, Report, Track, beats_at};
+use crate::{Difficulty, Lanes};
+
+/// The MIDI key of a level's lowest note.
+const LOWEST: i64 = 60;
 
 /// A `KBMidiEvent` switching a note on, or off with a velocity of zero.
 const NOTE_ON: i64 = 0;
@@ -22,13 +29,18 @@ const NOTE_OFF: i64 = 1;
 /// A `KBMidiEvent` holding text, such as `TITLE: Sing`.
 const TEXT: i64 = 2;
 
-/// The track in `bytes`, and what of it the song leaves out in `report`.
+/// The track in `bytes`, its levels' columns as `info`, the `info.plist` beside it, sets them,
+/// and what of it the song leaves out in `report`.
 ///
 /// # Errors
 ///
 /// Returns why `bytes` holds no track: not a property list, not a keyed archive, or more notes
 /// than any chart.
-pub(crate) fn read(bytes: &[u8], report: &mut Report) -> Result<Track, String> {
+pub(crate) fn read(
+    bytes: &[u8],
+    info: Option<&[u8]>,
+    report: &mut Report,
+) -> Result<Track, String> {
     let archive = Value::from_reader(Cursor::new(bytes))
         .map_err(|why| format!("not a property list: {why}"))?;
     let not_archive = || "not a keyed archive of levels".to_owned();
@@ -41,12 +53,21 @@ pub(crate) fn read(bytes: &[u8], report: &mut Report) -> Result<Track, String> {
     let root = objects.field(&top, "root").ok_or_else(not_archive)?;
     let keys = objects.items(objects.field(root, "NS.keys").ok_or_else(not_archive)?);
     let files = objects.items(objects.field(root, "NS.objects").ok_or_else(not_archive)?);
+    let info = info
+        .map(|info| Info::read(info, report))
+        .unwrap_or_default();
     let mut track = Track::default();
     let mut notes = 0_usize;
+    let single = keys.len() == 1;
     for (key, file) in keys.into_iter().zip(files) {
-        let level = key
-            .as_signed_integer()
-            .or_else(|| key.as_string()?.trim().parse().ok());
+        // A track of one level may number it apart from info.plist, as Muse's tracks do, under
+        // 0 or 4 for a level info.plist offers as 3; the game plays it as info.plist says.
+        let level = match (single, info.levels.as_slice()) {
+            (true, &[offered]) => Some(offered),
+            _ => key
+                .as_signed_integer()
+                .or_else(|| key.as_string()?.trim().parse().ok()),
+        };
         let Some(difficulty) = level.and_then(difficulty_of) else {
             report.add(format!(
                 "level {}, which is none of Easy, Medium, Hard and Extreme",
@@ -54,14 +75,65 @@ pub(crate) fn read(bytes: &[u8], report: &mut Report) -> Result<Track, String> {
             ));
             continue;
         };
-        let (read, title, artist) = read_file(&objects, file, difficulty, &mut notes, report)?;
+        let (read, title, artist) = read_file(&objects, file, difficulty, &mut notes)?;
         if track.levels.is_empty() {
             track.title = title;
             track.artist = artist;
         }
         track.levels.push(read);
     }
+    for level in &mut track.levels {
+        let number = i64::try_from(level.difficulty.index())
+            .unwrap_or(0)
+            .saturating_add(1);
+        if let Some(&lanes) = info.columns.get(&number) {
+            level.lanes = lanes;
+        }
+    }
     Ok(track)
+}
+
+/// What a track's `info.plist` says of its levels.
+#[derive(Debug, Default)]
+struct Info {
+    /// The levels it offers, by number, from `availableDifficultyLevels`.
+    levels: Vec<i64>,
+    /// Each level's columns, by number, from `columnCountPerLevel`.
+    columns: BTreeMap<i64, Lanes>,
+}
+
+impl Info {
+    /// What `info`, the bytes of an `info.plist`, says, saying in `report` what does not read.
+    fn read(info: &[u8], report: &mut Report) -> Self {
+        let Ok(info) = Value::from_reader(Cursor::new(info)) else {
+            report.add("the info.plist beside the track, which is not a property list");
+            return Self::default();
+        };
+        let field = |key| info.as_dictionary()?.get(key);
+        let levels = field("availableDifficultyLevels")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_signed_integer)
+            .collect();
+        let columns = field("columnCountPerLevel")
+            .and_then(Value::as_dictionary)
+            .into_iter()
+            .flatten()
+            .filter_map(|(level, count)| {
+                let lanes = count
+                    .as_signed_integer()
+                    .and_then(|count| u16::try_from(count).ok())
+                    .and_then(charter_core::LaneCount::new)
+                    .and_then(Lanes::of);
+                if lanes.is_none() {
+                    report.add("a column count other than 3, 4 or 5 in info.plist");
+                }
+                Some((level.trim().parse().ok()?, lanes?))
+            })
+            .collect();
+        Self { levels, columns }
+    }
 }
 
 /// The difficulty the game numbers `level`.
@@ -77,7 +149,6 @@ fn read_file(
     file: &Value,
     difficulty: Difficulty,
     notes: &mut usize,
-    report: &mut Report,
 ) -> Result<(Level, String, String), String> {
     let text = |key| objects.field(file, key).and_then(Value::as_string);
     let mut title = text("title").unwrap_or_default().to_owned();
@@ -108,7 +179,7 @@ fn read_file(
         });
     }
     tempo.sort_by(|a, b| a.seconds.total_cmp(&b.seconds));
-    let mut open: HashMap<Key, VecDeque<f64>> = HashMap::new();
+    let mut open: HashMap<u8, VecDeque<f64>> = HashMap::new();
     let mut played: Vec<Played> = Vec::new();
     let tracks = objects
         .field(file, "tracks")
@@ -137,15 +208,10 @@ fn read_file(
             let Some(time) = objects.field(event, "time").and_then(number) else {
                 continue;
             };
+            // Keys repeat each octave: one of Tap Tap Reloaded's tracks plays its level on 96 up.
             let note = integer("note").unwrap_or_default();
-            let Some(key) = u8::try_from(note).ok().and_then(Key::of) else {
-                if matches!(kind, Some(NOTE_ON | NOTE_OFF)) {
-                    report.add(format!(
-                        "notes on MIDI key {note}, none of the six of a three-column level"
-                    ));
-                }
-                continue;
-            };
+            let key = u8::try_from(note.saturating_sub(LOWEST).rem_euclid(i64::from(KEYS)))
+                .unwrap_or(KEYS);
             match (kind, integer("velocity").unwrap_or_default()) {
                 (Some(NOTE_ON), velocity) if velocity > 0 => {
                     open.entry(key).or_default().push_back(time);
@@ -167,6 +233,7 @@ fn read_file(
     played.sort_by(|a, b| a.on.total_cmp(&b.on));
     let level = Level {
         difficulty,
+        lanes: Lanes::Three,
         tempo,
         notes: played,
     };
@@ -384,7 +451,7 @@ impl Archive {
             .notes
             .iter()
             .flat_map(|note| {
-                let key = note.key.midi();
+                let key = note.key.saturating_add(60);
                 [(note.on, NOTE_ON, key), (note.off, NOTE_OFF, key)]
             })
             .collect();
@@ -439,18 +506,17 @@ mod tests {
             levels: vec![
                 Level {
                     difficulty: Difficulty::Easy,
+                    lanes: Lanes::Three,
                     tempo: vec![Change {
                         seconds: 0.0,
                         bpm: 130.000_13,
                         meter: four(),
                     }],
-                    notes: vec![
-                        played(Key::Middle, 3.0, 3.115),
-                        played(Key::Middle, 3.115, 3.5),
-                    ],
+                    notes: vec![played(2, 3.0, 3.115), played(2, 3.115, 3.5)],
                 },
                 Level {
                     difficulty: Difficulty::Extreme,
+                    lanes: Lanes::Three,
                     tempo: vec![
                         Change {
                             seconds: 0.5,
@@ -463,10 +529,7 @@ mod tests {
                             meter: four(),
                         },
                     ],
-                    notes: vec![
-                        played(Key::ShakeDown, 3.0, 3.1),
-                        played(Key::Left, 12.0, 13.0),
-                    ],
+                    notes: vec![played(5, 3.0, 3.1), played(0, 12.0, 13.0)],
                 },
             ],
         }
@@ -477,7 +540,7 @@ mod tests {
         let mut report = Report::default();
         let bytes = write(&track());
         assert!(bytes.starts_with(b"bplist00"));
-        assert_eq!(read(&bytes, &mut report).unwrap(), track());
+        assert_eq!(read(&bytes, None, &mut report).unwrap(), track());
         assert!(report.into_lines().is_empty());
     }
 
@@ -544,7 +607,7 @@ mod tests {
         ]
         .concat();
         let mut report = Report::default();
-        let track = read(xml("4", &events).as_bytes(), &mut report).unwrap();
+        let track = read(xml("4", &events).as_bytes(), None, &mut report).unwrap();
         assert_eq!(track.title, "sudo");
         let [extreme] = track.levels.as_slice() else {
             panic!("one level: {track:?}");
@@ -555,27 +618,30 @@ mod tests {
             extreme.notes,
             [
                 Played {
-                    key: Key::Middle,
+                    key: 2,
                     on: 1.0,
                     off: 2.0
                 },
                 Played {
-                    key: Key::Left,
+                    key: 0,
                     on: 3.0,
                     off: 3.0
                 },
+                // Key 70 is the level's eleventh, which no preset plays in three lanes.
+                Played {
+                    key: 10,
+                    on: 4.0,
+                    off: 4.0
+                },
             ]
         );
-        assert_eq!(
-            report.into_lines(),
-            ["notes on MIDI key 70, none of the six of a three-column level"]
-        );
+        assert!(report.into_lines().is_empty());
     }
 
     #[test]
     fn a_kids_level_is_left_out() {
         let mut report = Report::default();
-        let track = read(xml("0", "").as_bytes(), &mut report).unwrap();
+        let track = read(xml("0", "").as_bytes(), None, &mut report).unwrap();
         assert!(track.levels.is_empty());
         assert_eq!(
             report.into_lines(),
@@ -587,7 +653,7 @@ mod tests {
     fn what_is_not_a_keyed_archive_is_refused() {
         let mut report = Report::default();
         assert!(
-            read(b"MThd", &mut report)
+            read(b"MThd", None, &mut report)
                 .unwrap_err()
                 .starts_with("not a property list")
         );
@@ -596,12 +662,12 @@ mod tests {
             .to_writer_binary(&mut empty)
             .unwrap();
         assert_eq!(
-            read(&empty, &mut report).unwrap_err(),
+            read(&empty, None, &mut report).unwrap_err(),
             "not a keyed archive of levels"
         );
         let dangling = xml("4", "").replace("<integer>3</integer>", "<integer>99</integer>");
         assert!(
-            read(dangling.as_bytes(), &mut report)
+            read(dangling.as_bytes(), None, &mut report)
                 .unwrap()
                 .levels
                 .is_empty()
@@ -618,7 +684,7 @@ mod tests {
         );
         let mut report = Report::default();
         assert_eq!(
-            read(shared.as_bytes(), &mut report).unwrap_err(),
+            read(shared.as_bytes(), None, &mut report).unwrap_err(),
             "the file holds more notes than any chart"
         );
     }
@@ -628,7 +694,7 @@ mod tests {
 
         #[test]
         fn arbitrary_bytes_never_panic(bytes in proptest::collection::vec(any::<u8>(), 0..512)) {
-            drop(read(&bytes, &mut Report::default()));
+            drop(read(&bytes, None, &mut Report::default()));
         }
 
         #[test]
@@ -637,7 +703,7 @@ mod tests {
             if let Some(slot) = bytes.get_mut(at) {
                 *slot = byte;
             }
-            drop(read(&bytes, &mut Report::default()));
+            drop(read(&bytes, None, &mut Report::default()));
         }
     }
 }

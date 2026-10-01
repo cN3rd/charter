@@ -171,10 +171,13 @@ pub enum Request {
         tracker: Tracker,
     },
     /// Ask the user for a song in one of `formats`, each a name and the extensions its files end
-    /// in, and pass its path and bytes to [`Window::import_song`].
+    /// in, and pass its path and bytes to [`Window::import_song`] with those of the `companions`
+    /// found beside it, by name.
     ChooseImport {
         /// Formats a plugin reads songs from, with their extensions.
         formats: Vec<(String, Vec<String>)>,
+        /// Files a format reads beside the song's, by name, such as `info.plist`.
+        companions: Vec<String>,
     },
     /// Ask where to write the open song in one of `formats`, suggesting the name `name`, and pass
     /// the path to [`Window::export_song`].
@@ -894,6 +897,8 @@ struct Dialogs {
     new_song: Option<new_song::Draft>,
     /// Tags that would change the title and artist, waiting on whether to take them.
     offer: Option<Offer>,
+    /// A file to import or export, waiting on which of the formats sharing its extension it is.
+    choosing: Option<formats::Choosing>,
 }
 
 mod apply;

@@ -1048,17 +1048,77 @@ mod tests {
         charter_ttr::Plugin.export_song(0, &document).unwrap().bytes
     }
 
+    /// A plugin with one song format, read with an `info.plist` beside it, whose import fails
+    /// naming the companions it was handed.
+    #[derive(Debug)]
+    struct Companions;
+
+    #[expect(
+        clippy::missing_trait_methods,
+        reason = "a test plugin: the trait's defaults for everything but importing"
+    )]
+    impl charter_core::RulesetPlugin for Companions {
+        fn id(&self) -> &'static str {
+            "companions"
+        }
+
+        fn check(
+            &self,
+            _: &charter_core::ValidDocument,
+        ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            Ok(())
+        }
+
+        fn song_formats(&self) -> Vec<charter_core::SongFormat> {
+            vec![charter_core::SongFormat {
+                name: "track".to_owned(),
+                extensions: vec!["ttr2_track".to_owned()],
+                companions: vec!["info.plist".to_owned(), "missing.plist".to_owned()],
+            }]
+        }
+
+        fn import_song(
+            &self,
+            _: usize,
+            bytes: &[u8],
+            companions: &std::collections::BTreeMap<String, Vec<u8>>,
+        ) -> Result<charter_core::ImportedSong, Box<dyn std::error::Error + Send + Sync>> {
+            let found: Vec<String> = companions
+                .iter()
+                .map(|(name, beside)| format!("{name} {}", String::from_utf8_lossy(beside)))
+                .collect();
+            Err(format!("{} with {found:?}", String::from_utf8_lossy(bytes)).into())
+        }
+    }
+
     #[test]
-    fn an_imported_song_is_read_from_disk_and_opened() {
+    fn an_import_is_read_from_disk_with_the_companions_found_beside_it() {
+        let path = "/t/sudo.track/taptrack.ttr2_track";
+        let mut host = host(Memory::with(&[
+            (path, b"notes"),
+            ("/t/sudo.track/info.plist", b"columns"),
+        ]));
+        host.window = Window::new(&[&Companions]);
+        host.read_import(
+            Path::new(path),
+            &["info.plist".to_owned(), "missing.plist".to_owned()],
+        );
+        assert_eq!(
+            host.window.message(),
+            Some(
+                "/t/sudo.track/taptrack.ttr2_track did not import: notes with [\"info.plist columns\"]"
+            )
+        );
+    }
+
+    #[test]
+    fn a_track_several_games_read_waits_on_which_before_opening() {
         let path = "/t/sudo.track/taptrack.ttr2_track";
         let mut host = host(Memory::with(&[(path, &ttr2_track())]));
         host.window = Window::new(PLUGINS);
-        host.read_import(Path::new(path));
-        assert_eq!(
-            host.window.message(),
-            Some("Imported Tap Tap Revenge track as a Tap Tap Revenge song.")
-        );
-        assert_eq!(host.window.title(), "sudo.json - charter");
+        host.read_import(Path::new(path), &["info.plist".to_owned()]);
+        assert_eq!(host.window.message(), None);
+        assert_eq!(host.window.title(), "charter");
     }
 
     #[test]
@@ -1069,7 +1129,7 @@ mod tests {
             ..Memory::with(&[(path, b"MThd")])
         });
         host.window = Window::new(PLUGINS);
-        host.read_import(Path::new(path));
+        host.read_import(Path::new(path), &[]);
         let message = host.window.message().unwrap();
         assert!(message.contains("notes.mid did not open") && message.contains("access denied"));
         assert_eq!(host.window.title(), "charter");

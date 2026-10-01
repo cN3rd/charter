@@ -75,10 +75,13 @@ impl Host {
                             self.read_timing(&path);
                         }
                     }
-                    Request::ChooseImport { formats } => {
+                    Request::ChooseImport {
+                        formats,
+                        companions,
+                    } => {
                         let file = filtered(rfd::FileDialog::new(), &formats).pick_file();
                         if let Some(path) = file {
-                            self.read_import(&path);
+                            self.read_import(&path, &companions);
                         }
                     }
                     Request::ChooseExport { name, formats } => {
@@ -361,12 +364,20 @@ impl Host {
         self.write(file, bytes);
     }
 
-    /// Hands the window the song at `path` to import, or says why it could not be read.
-    pub(crate) fn read_import(&mut self, path: &Path) {
-        match self.disk.read(path) {
-            Ok(bytes) => self.window.import_song(path, &bytes),
-            Err(error) => self.window.refuse(path, &error),
-        }
+    /// Hands the window the song at `path` to import with those of the `companions` beside it
+    /// that can be read, or says why the song could not be.
+    pub(crate) fn read_import(&mut self, path: &Path, companions: &[String]) {
+        let bytes = match self.disk.read(path) {
+            Ok(bytes) => bytes,
+            Err(error) => return self.window.refuse(path, &error),
+        };
+        let folder = path.parent().unwrap_or_else(|| Path::new(""));
+        // A companion missing or unreadable is one the format goes without.
+        let found = companions
+            .iter()
+            .filter_map(|name| Some((name.clone(), self.disk.read(&folder.join(name)).ok()?)))
+            .collect();
+        self.window.import_song(path, &bytes, &found);
     }
 
     /// Hands the text of the file at `path` to the import timing window.

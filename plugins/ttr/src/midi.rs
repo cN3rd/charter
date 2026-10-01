@@ -1,8 +1,8 @@
 //! Tap Tap Revenge songs as MIDI files, the way Editor on Fire charts them for `MidiToTTR`: a
-//! track named `PART GUITAR` holds every level, Easy on keys 60 to 65, Medium twelve keys up,
-//! then Hard and Extreme, each level's six keys the three columns and three shakes of
-//! [`Key`]. The time of a tick counts from the start of the audio, whatever MIDI delay the
-//! project has, since the game plays notes at their moments.
+//! track named `PART GUITAR` holds every level, Easy on keys 60 to 71, Medium twelve keys up,
+//! then Hard and Extreme. The keys of a level are laid out as [`Layout`] says. A MIDI file holds
+//! no column count, so its levels have three columns. The time of a tick counts from the start of
+//! the audio, whatever MIDI delay the project has, since the game plays notes at their moments.
 //!
 //! [`midly`] reads and writes the file; this module maps its notes and tempo map.
 
@@ -11,8 +11,45 @@ use std::collections::{HashMap, VecDeque};
 use midly::num::{u7, u15, u24, u28};
 use midly::{Format, Header, MetaMessage, MidiMessage, Smf, Timing, TrackEvent, TrackEventKind};
 
-use crate::Difficulty;
-use crate::exchange::{Change, Key, Level, MAX_NOTES, Played, Report, Track, beats_at};
+use crate::exchange::{Change, Level, MAX_NOTES, Played, Report, Track, beats_at};
+use crate::{Difficulty, Lanes};
+
+/// How a MIDI file lays out a level's keys, from the level's lowest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Layout {
+    /// As the track's own: the left column, left side, middle column, right side, right column
+    /// and the middle note, keys 0 to 5.
+    Standard,
+    /// Tap Tap Reloaded's: the left, middle and right columns on keys 0, 1 and 2, and the middle
+    /// note on 4.
+    Reloaded,
+}
+
+impl Layout {
+    /// A track's key, from the level's lowest, for this layout's `key`, if it has one.
+    const fn track_key(self, key: u8) -> Option<u8> {
+        match (self, key) {
+            (Self::Standard, key) => Some(key),
+            (Self::Reloaded, 0) => Some(0),
+            (Self::Reloaded, 1) => Some(2),
+            (Self::Reloaded, 2) => Some(4),
+            (Self::Reloaded, 4) => Some(5),
+            (Self::Reloaded, _) => None,
+        }
+    }
+
+    /// This layout's key for a track's `key`, if it has one.
+    const fn midi_key(self, key: u8) -> Option<u8> {
+        match (self, key) {
+            (Self::Standard, key) => Some(key),
+            (Self::Reloaded, 0) => Some(0),
+            (Self::Reloaded, 2) => Some(1),
+            (Self::Reloaded, 4) => Some(2),
+            (Self::Reloaded, 5) => Some(4),
+            (Self::Reloaded, _) => None,
+        }
+    }
+}
 
 /// The track EOF charts guitar in, which holds every level.
 const GUITAR: &[u8] = b"PART GUITAR";
@@ -45,13 +82,14 @@ enum Event {
     },
 }
 
-/// The track in `bytes`, and what of it the song leaves out in `report`.
+/// The track in `bytes`, its keys laid out as `layout`, and what of it the song leaves out in
+/// `report`.
 ///
 /// # Errors
 ///
 /// Returns why `bytes` holds no track: not a MIDI file, one timed in frames, or more notes than
 /// any chart.
-pub(crate) fn read(bytes: &[u8], report: &mut Report) -> Result<Track, String> {
+pub(crate) fn read(bytes: &[u8], layout: Layout, report: &mut Report) -> Result<Track, String> {
     let smf = Smf::parse(bytes).map_err(|why| format!("not a MIDI file: {why}"))?;
     let Timing::Metrical(per_beat) = smf.header.timing else {
         return Err("a MIDI file timed in frames rather than beats".to_owned());
@@ -69,7 +107,7 @@ pub(crate) fn read(bytes: &[u8], report: &mut Report) -> Result<Track, String> {
     let mut beat = DEFAULT_BEAT;
     let mut meter = charter_core::TimeSignature::default().numerator;
     let (mut seconds, mut at) = (0.0, 0_u64);
-    let mut open: HashMap<(usize, Key), VecDeque<f64>> = HashMap::new();
+    let mut open: HashMap<(usize, u8), VecDeque<f64>> = HashMap::new();
     let mut levels: Vec<Level> = Vec::new();
     for (tick, event) in events(&smf, report)? {
         seconds += beats(tick.saturating_sub(at), per_beat) * f64::from(beat) / 1e6;
@@ -83,7 +121,7 @@ pub(crate) fn read(bytes: &[u8], report: &mut Report) -> Result<Track, String> {
                 meter = std::num::NonZeroU16::new(u16::from(beats)).unwrap_or(meter);
             }
             Event::Note { key, on } => {
-                let Some((difficulty, key)) = level_key(key, on, report) else {
+                let Some((difficulty, key)) = level_key(key, layout, on, report) else {
                     continue;
                 };
                 let waiting = open.entry((difficulty.index(), key)).or_default();
@@ -219,8 +257,9 @@ fn beats(ticks: u64, per_beat: f64) -> f64 {
     ticks / per_beat
 }
 
-/// The level and key MIDI key `key` plays, or none, saying so in `report` when it switches on.
-fn level_key(key: u8, on: bool, report: &mut Report) -> Option<(Difficulty, Key)> {
+/// The level and track key MIDI key `key` of `layout` plays, or none, saying so in `report` when
+/// it switches on.
+fn level_key(key: u8, layout: Layout, on: bool, report: &mut Report) -> Option<(Difficulty, u8)> {
     let above = key.checked_sub(LOWEST);
     let difficulty =
         above.and_then(|above| Difficulty::ALL.get(usize::from(above.div_euclid(OCTAVE))));
@@ -230,11 +269,10 @@ fn level_key(key: u8, on: bool, report: &mut Report) -> Option<(Difficulty, Key)
         }
         return None;
     };
-    let lane = above.map_or(0, |above| above % OCTAVE);
-    let found = Key::of(LOWEST.saturating_add(lane));
+    let found = above.and_then(|above| layout.track_key(above % OCTAVE));
     if found.is_none() && on {
         report.add(format!(
-            "notes on MIDI key {key}, none of the six of a three-column {} level",
+            "notes on MIDI key {key}, which the layout gives no note in a {} level",
             difficulty.name()
         ));
     }
@@ -249,6 +287,7 @@ fn level(levels: &mut Vec<Level>, difficulty: Difficulty) -> &mut Level {
         .unwrap_or_else(|| {
             levels.push(Level {
                 difficulty,
+                lanes: Lanes::Three,
                 tempo: Vec::new(),
                 notes: Vec::new(),
             });
@@ -264,7 +303,7 @@ fn level(levels: &mut Vec<Level>, difficulty: Difficulty) -> &mut Level {
 /// `track` as a MIDI file EOF opens: a tempo track named after the song, and `PART GUITAR`
 /// holding every level. A MIDI file has one tempo, the first level's; a level whose tempo differs
 /// keeps its notes' moments but not its beats, as `report` says.
-pub(crate) fn write(track: &Track, report: &mut Report) -> Vec<u8> {
+pub(crate) fn write(track: &Track, layout: Layout, report: &mut Report) -> Vec<u8> {
     let first = track.levels.first();
     let tempo = first.map(|level| level.tempo.clone()).unwrap_or_default();
     for level in track.levels.iter().skip(1) {
@@ -314,22 +353,7 @@ pub(crate) fn write(track: &Track, report: &mut Report) -> Vec<u8> {
             timing.push((at, TrackEventKind::Meta(signature)));
         }
     }
-    // Each switch as its tick, whether it is on, and its key.
-    let mut switches: Vec<(u32, bool, u8)> = Vec::new();
-    for level in &track.levels {
-        let octave = u8::try_from(level.difficulty.index())
-            .unwrap_or(0)
-            .saturating_mul(OCTAVE);
-        for note in &level.notes {
-            let (Some(on), Some(off)) = (tick(note.on), tick(note.off)) else {
-                report.add("a note before the audio starts, which a MIDI file cannot hold");
-                continue;
-            };
-            let key = note.key.midi().saturating_add(octave);
-            switches.push((on, true, key));
-            switches.push((off.max(on.saturating_add(1)), false, key));
-        }
-    }
+    let mut switches = switches(track, layout, &tick, report);
     // A note ending where the next on its key starts switches off first.
     switches.sort_by_key(|&(at, on, _)| (at, on));
     // Every switch is a note-on, off at velocity zero, as TTRToMidi writes them.
@@ -363,6 +387,45 @@ pub(crate) fn write(track: &Track, report: &mut Report) -> Vec<u8> {
     smf.write_std(&mut bytes)
         .expect("a MIDI file writes into memory");
     bytes
+}
+
+/// Each note of `track`'s three-lane levels switched on and off, as its tick, whether it switches
+/// on, and its MIDI key in `layout`, with `tick` placing a moment; what has no place is said in
+/// `report`.
+fn switches(
+    track: &Track,
+    layout: Layout,
+    tick: &impl Fn(f64) -> Option<u32>,
+    report: &mut Report,
+) -> Vec<(u32, bool, u8)> {
+    let mut switches: Vec<(u32, bool, u8)> = Vec::new();
+    for level in &track.levels {
+        if level.lanes != Lanes::Three {
+            report.add(format!(
+                "the {}-lane {} level, as a MIDI file holds no column count",
+                level.lanes.width(),
+                level.difficulty.name()
+            ));
+            continue;
+        }
+        let octave = u8::try_from(level.difficulty.index())
+            .unwrap_or(0)
+            .saturating_mul(OCTAVE);
+        for note in &level.notes {
+            let (Some(on), Some(off)) = (tick(note.on), tick(note.off)) else {
+                report.add("a note before the audio starts, which a MIDI file cannot hold");
+                continue;
+            };
+            let Some(key) = layout.midi_key(note.key) else {
+                report.add("left and right shakes and slices, which Tap Tap Reloaded's layout has no key for");
+                continue;
+            };
+            let key = LOWEST.saturating_add(octave).saturating_add(key);
+            switches.push((on, true, key));
+            switches.push((off.max(on.saturating_add(1)), false, key));
+        }
+    }
+    switches
 }
 
 /// `tempo`, with a tempo from the start of the audio to its first change that puts that change
@@ -416,7 +479,7 @@ mod tests {
         NonZeroU16::new(beats).unwrap()
     }
 
-    fn played(key: Key, on: f64, off: f64) -> Played {
+    fn played(key: u8, on: f64, off: f64) -> Played {
         Played { key, on, off }
     }
 
@@ -437,21 +500,25 @@ mod tests {
             levels: vec![
                 Level {
                     difficulty: Difficulty::Medium,
+                    lanes: Lanes::Three,
                     tempo: tempo.clone(),
-                    notes: vec![
-                        played(Key::Left, 0.5, 0.625),
-                        played(Key::ShakeDown, 4.4, 4.5),
-                    ],
+                    notes: vec![played(0, 0.5, 0.625), played(5, 4.4, 4.5)],
                 },
                 Level {
                     difficulty: Difficulty::Extreme,
+                    lanes: Lanes::Three,
                     tempo,
-                    notes: vec![played(Key::Right, 1.0, 3.0), played(Key::Right, 3.0, 3.1)],
+                    notes: vec![played(4, 1.0, 3.0), played(4, 3.0, 3.1)],
                 },
             ],
         };
         let mut report = Report::default();
-        let back = read(&write(&track, &mut report), &mut report).unwrap();
+        let back = read(
+            &write(&track, Layout::Standard, &mut report),
+            Layout::Standard,
+            &mut report,
+        )
+        .unwrap();
         assert!(report.into_lines().is_empty());
         assert_eq!(back.title, "sudo");
         assert_eq!(back.levels.len(), 2);
@@ -478,11 +545,12 @@ mod tests {
             artist: String::new(),
             levels: vec![Level {
                 difficulty: Difficulty::Easy,
+                lanes: Lanes::Three,
                 tempo: vec![change(0.75, 120.0)],
-                notes: vec![played(Key::Middle, 0.75, 0.8)],
+                notes: vec![played(2, 0.75, 0.8)],
             }],
         };
-        let bytes = write(&track, &mut Report::default());
+        let bytes = write(&track, Layout::Standard, &mut Report::default());
         let smf = Smf::parse(&bytes).unwrap();
         let tempos: Vec<u32> = smf.tracks[0]
             .iter()
@@ -504,7 +572,7 @@ mod tests {
             first_note.map(|(tick, _)| tick),
             Some(2 * u32::from(PER_BEAT))
         );
-        let back = read(&bytes, &mut Report::default()).unwrap();
+        let back = read(&bytes, Layout::Standard, &mut Report::default()).unwrap();
         assert!((back.levels[0].notes[0].on - 0.75).abs() < 1e-9);
     }
 
@@ -585,7 +653,7 @@ mod tests {
     #[test]
     fn an_eof_guitar_track_reads_as_levels_by_octave() {
         let mut report = Report::default();
-        let track = read(&eof(), &mut report).unwrap();
+        let track = read(&eof(), Layout::Standard, &mut report).unwrap();
         assert_eq!(track.title, "sudo");
         let levels: Vec<Difficulty> = track.levels.iter().map(|level| level.difficulty).collect();
         assert_eq!(levels, [Difficulty::Easy, Difficulty::Extreme]);
@@ -593,12 +661,14 @@ mod tests {
         assert_eq!(
             extreme.notes,
             [
-                played(Key::Left, 0.5, 0.75),
-                played(Key::ShakeDown, 0.75, 1.0)
+                played(0, 0.5, 0.75),
+                played(5, 0.75, 1.0),
+                // Key 103, Extreme's seventh, is a level's note for the layout to place.
+                played(7, 0.75, 0.75)
             ]
         );
         // Tick 1440 is two beats at 120 BPM, then one at 240: 1.25 s.
-        assert_eq!(track.levels[0].notes, [played(Key::Middle, 1.25, 1.75)]);
+        assert_eq!(track.levels[0].notes, [played(2, 1.25, 1.75)]);
         assert_eq!(
             extreme.tempo,
             [
@@ -617,7 +687,6 @@ mod tests {
         assert_eq!(
             report.into_lines(),
             [
-                "notes on MIDI key 103, none of the six of a three-column Extreme level",
                 "notes outside keys 60 to 107, which hold no level",
                 "the notes of the track PART BASS, as the song is PART GUITAR's",
             ]
@@ -628,7 +697,7 @@ mod tests {
     fn what_is_not_a_beat_timed_midi_file_is_refused() {
         let mut report = Report::default();
         assert!(
-            read(b"bplist00", &mut report)
+            read(b"bplist00", Layout::Standard, &mut report)
                 .unwrap_err()
                 .starts_with("not a MIDI file")
         );
@@ -639,7 +708,7 @@ mod tests {
         let mut bytes = Vec::new();
         smf.write_std(&mut bytes).unwrap();
         assert_eq!(
-            read(&bytes, &mut report).unwrap_err(),
+            read(&bytes, Layout::Standard, &mut report).unwrap_err(),
             "a MIDI file timed in frames rather than beats"
         );
     }
@@ -649,7 +718,7 @@ mod tests {
 
         #[test]
         fn arbitrary_bytes_never_panic(bytes in proptest::collection::vec(any::<u8>(), 0..512)) {
-            drop(read(&bytes, &mut Report::default()));
+            drop(read(&bytes, Layout::Standard, &mut Report::default()));
         }
 
         #[test]
@@ -658,7 +727,7 @@ mod tests {
             if let Some(slot) = bytes.get_mut(at) {
                 *slot = byte;
             }
-            drop(read(&bytes, &mut Report::default()));
+            drop(read(&bytes, Layout::Standard, &mut Report::default()));
         }
     }
 }

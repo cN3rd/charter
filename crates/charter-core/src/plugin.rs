@@ -1,5 +1,6 @@
 //! What a ruleset plugin tells the editor about its game.
 
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt::Debug;
 
@@ -116,12 +117,18 @@ pub struct ImportedTiming {
 
 /// A file format a plugin reads whole songs from and writes them to, such as Tap Tap Revenge's
 /// `.ttr2_track`.
+///
+/// Formats may share extensions, as one file format read the ways different games play it; the
+/// editor then asks which is meant.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SongFormat {
     /// What its users call it, such as `Tap Tap Revenge track`.
     pub name: String,
     /// The extensions its files end in, without the dot, the usual one first.
     pub extensions: Vec<String>,
+    /// Files the format keeps beside the song's, by name, which an import is handed when they are
+    /// there, such as a Tap Tap Revenge track's `info.plist`.
+    pub companions: Vec<String>,
 }
 
 /// A song read from another program's format, with what the format held that it leaves out.
@@ -240,7 +247,8 @@ pub trait RulesetPlugin: Debug {
     }
 
     /// The song in `bytes`, a file of the plugin's [song format](Self::song_formats) at index
-    /// `format`, as a song of this game. The bytes are untrusted.
+    /// `format`, as a song of this game, with the format's `companions` found beside it, by name.
+    /// The bytes are untrusted.
     ///
     /// # Errors
     ///
@@ -249,8 +257,9 @@ pub trait RulesetPlugin: Debug {
         &self,
         format: usize,
         bytes: &[u8],
+        companions: &BTreeMap<String, Vec<u8>>,
     ) -> Result<ImportedSong, Box<dyn Error + Send + Sync>> {
-        let _: (usize, &[u8]) = (format, bytes);
+        let _: (usize, &[u8], &BTreeMap<String, Vec<u8>>) = (format, bytes, companions);
         Err(format!("{} imports no songs", self.id()).into())
     }
 
@@ -331,7 +340,7 @@ mod tests {
     #[test]
     fn a_plugin_that_only_checks_reads_and_writes_no_song_format() {
         assert!(Checks.song_formats().is_empty());
-        let unread = Checks.import_song(0, b"").unwrap_err();
+        let unread = Checks.import_song(0, b"", &BTreeMap::new()).unwrap_err();
         assert_eq!(unread.to_string(), "checks imports no songs");
         let document = ValidDocument::from_json(
             br#"{"format_version":1,"ruleset":{"id":"checks","version":"1"},"metadata":{"title":"t","artist":"a","audio":"a.ogg"},"timing":{"anchors":[{"tick":0,"seconds":0}],"tempo":120,"events":[]}}"#,

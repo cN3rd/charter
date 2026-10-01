@@ -3,9 +3,10 @@
 //! moments of it. The game plays a note at its moment, so moments, not beats, carry over, and a
 //! note held longer than [`HOLD_SECONDS`] is a hold.
 //!
-//! Only three-column levels are known: their notes are MIDI keys 60 to 65, a tap in each column
-//! and a shake left, right and down between them. How the game's files hold four or five columns,
-//! slices and mega taps is not known, so those are left out and said so.
+//! A note is a key, counted from the lowest of its level, 60 in a track. A level of four or five
+//! columns plays keys 0 up, left to right. A level of three plays keys 0, 2 and 4 as its columns,
+//! and 1, 3 and 5 as whatever its theme makes them, which depends on the game the track is for:
+//! see [`Preset`].
 
 use std::collections::{BTreeMap, HashSet};
 use std::num::NonZeroU16;
@@ -15,16 +16,28 @@ use charter_core::{
     TicksPerBeat, TimeSignature, Timing, TimingKind, Valid, ValidDocument, sectioned,
 };
 
-use crate::{Chart, Difficulty, Lanes, Note, NoteKind, Shake, Song, Tempo, read_tempo};
+use crate::{Chart, Difficulty, Lanes, Note, NoteKind, Shake, Side, Song, Tempo, read_tempo};
 
 /// Seconds a note must last to be a hold; a shorter one is a tap.
-// ponytail: MidiToTTR's figure; the game keeps its own as `tapAndHoldThresholdDuration`, which no
-// shipped file or theme states. Measure it in the game if holds come out as taps.
-pub(crate) const HOLD_SECONDS: f64 = 0.3;
+// ponytail: the themes' `tapAndHoldThresholdDuration` with the game's short-holds option on; off,
+// most themes hold from 1 second, and TTRDJ and Tour themes set none.
+pub(crate) const HOLD_SECONDS: f64 = 0.15;
 
 /// The most notes a file may hold across its levels, well past any chart, so a hostile file
 /// whose lists share their entries cannot make reading it take unbounded time.
 pub(crate) const MAX_NOTES: usize = 1 << 20;
+
+/// What keys 1, 3 and 5 of a three-column level are, as the themes of each game make them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Preset {
+    /// Tap Tap Revenge's own themes and custom themes like them: shakes left, right and down.
+    Revenge,
+    /// Tap Tap Revenge: Tour: slices left and right, and the big note across every column.
+    Tour,
+    /// Custom themes that give the keys columns of their own, such as MCR and Warmen: taps in the
+    /// left, right and middle columns that cannot be held.
+    TapThemes,
+}
 
 /// A song as the game's files hold it.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -42,6 +55,8 @@ pub(crate) struct Track {
 pub(crate) struct Level {
     /// Which level it is.
     pub(crate) difficulty: Difficulty,
+    /// Its columns, which `info.plist` sets beside a track.
+    pub(crate) lanes: Lanes,
     /// The tempo from each moment it changes, earliest first.
     pub(crate) tempo: Vec<Change>,
     /// The notes, earliest first.
@@ -62,83 +77,136 @@ pub(crate) struct Change {
 /// One note of a level, switched on and off at moments of the audio.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Played {
-    /// What the player does.
-    pub(crate) key: Key,
+    /// Its key, counted from the level's lowest, below [`KEYS`].
+    pub(crate) key: u8,
     /// Seconds into the audio it starts.
     pub(crate) on: f64,
     /// Seconds into the audio it ends.
     pub(crate) off: f64,
 }
 
-/// The MIDI keys of a three-column level.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub(crate) enum Key {
-    /// Key 60, the left column.
-    Left,
-    /// Key 61, a shake left.
-    ShakeLeft,
-    /// Key 62, the middle column.
-    Middle,
-    /// Key 63, a shake right.
-    ShakeRight,
-    /// Key 64, the right column.
-    Right,
-    /// Key 65, a shake down.
-    ShakeDown,
+/// Keys a level has, an octave.
+pub(crate) const KEYS: u8 = 12;
+
+/// The columns of a three-column level's keys 0, 2 and 4.
+const COLUMN_KEYS: [u8; 3] = [0, 2, 4];
+
+impl Preset {
+    /// The note `key` plays in a level of `lanes`, held for `held` when it can be, or none when
+    /// the level has no such key.
+    fn kind(self, key: u8, lanes: Lanes, held: Option<Ticks>) -> Option<NoteKind> {
+        let column = |lane: u16, holds: bool| {
+            let lane = LaneIndex::new(lane);
+            Some(match held.filter(|_| holds) {
+                Some(duration) => NoteKind::Hold { lane, duration },
+                None => NoteKind::Tap { lane },
+            })
+        };
+        if lanes != Lanes::Three {
+            return (u16::from(key) < u16::from(lanes.width()))
+                .then(|| column(key.into(), true))?;
+        }
+        match (key, self) {
+            (0, _) => column(0, true),
+            (2, _) => column(1, true),
+            (4, _) => column(2, true),
+            (1, Self::Revenge) => Some(NoteKind::Shake(Shake::Left)),
+            (3, Self::Revenge) => Some(NoteKind::Shake(Shake::Right)),
+            (5, Self::Revenge) => Some(NoteKind::Shake(Shake::Down)),
+            (1, Self::Tour) => Some(NoteKind::Slice(Side::Left)),
+            (3, Self::Tour) => Some(NoteKind::Slice(Side::Right)),
+            (5, Self::Tour) => Some(NoteKind::MegaTap),
+            (1, Self::TapThemes) => column(0, false),
+            (3, Self::TapThemes) => column(2, false),
+            (5, Self::TapThemes) => column(1, false),
+            _ => None,
+        }
+    }
+
+    /// The key `kind` is written on in a level of `lanes`, and whether it holds; none, said in
+    /// `report`, for a note such a level has no key for. A kind this game plays as another, such
+    /// as a slice in Tap Tap Revenge, is written as that one and said so.
+    fn key(self, kind: NoteKind, lanes: Lanes, report: &mut Report) -> Option<(u8, bool)> {
+        let lane = match kind {
+            NoteKind::Tap { lane } | NoteKind::Hold { lane, .. } => Some(u16::from(lane)),
+            NoteKind::Shake(_) | NoteKind::Slice(_) | NoteKind::MegaTap => None,
+        };
+        let holds = matches!(kind, NoteKind::Hold { .. });
+        if lanes != Lanes::Three {
+            if lane.is_none() {
+                report.add(format!(
+                    "a shake, slice or mega tap in a {}-lane level, which has keys for its columns alone",
+                    lanes.width()
+                ));
+            }
+            return lane
+                .and_then(|lane| u8::try_from(lane).ok())
+                .map(|key| (key, holds));
+        }
+        if let Some(lane) = lane {
+            return COLUMN_KEYS.get(usize::from(lane)).map(|&key| (key, holds));
+        }
+        let (key, plays_as) = match (kind, self) {
+            (NoteKind::Shake(Shake::Left), Self::Revenge)
+            | (NoteKind::Slice(Side::Left), Self::Tour) => (1, None),
+            (NoteKind::Shake(Shake::Right), Self::Revenge)
+            | (NoteKind::Slice(Side::Right), Self::Tour) => (3, None),
+            (NoteKind::Shake(Shake::Down), Self::Revenge) | (NoteKind::MegaTap, Self::Tour) => {
+                (5, None)
+            }
+            (NoteKind::Slice(Side::Left) | NoteKind::Shake(Shake::Left), _) => {
+                (1, Some(self.name(1)))
+            }
+            (NoteKind::Slice(Side::Right) | NoteKind::Shake(Shake::Right), _) => {
+                (3, Some(self.name(3)))
+            }
+            _ => (5, Some(self.name(5))),
+        };
+        if let Some(plays_as) = plays_as {
+            report.add(format!(
+                "{}, which {} plays as {plays_as}",
+                kind_name(kind),
+                self.game()
+            ));
+        }
+        Some((key, false))
+    }
+
+    /// What this game plays key 1, 3 or 5 of a three-column level as, in words.
+    const fn name(self, key: u8) -> &'static str {
+        match (self, key) {
+            (Self::Revenge, 1) => "a left shake",
+            (Self::Revenge, 3) => "a right shake",
+            (Self::Revenge, _) => "a down shake",
+            (Self::Tour, 1) => "a left slice",
+            (Self::Tour, 3) => "a right slice",
+            (Self::Tour, _) => "a mega tap",
+            (Self::TapThemes, 1) => "a tap in the left column",
+            (Self::TapThemes, 3) => "a tap in the right column",
+            (Self::TapThemes, _) => "a tap in the middle column",
+        }
+    }
+
+    /// The game this preset is for, in words.
+    const fn game(self) -> &'static str {
+        match self {
+            Self::Revenge => "Tap Tap Revenge",
+            Self::Tour => "Tap Tap Revenge: Tour",
+            Self::TapThemes => "a custom tap theme",
+        }
+    }
 }
 
-impl Key {
-    /// Every key, lowest first.
-    const ALL: [Self; 6] = [
-        Self::Left,
-        Self::ShakeLeft,
-        Self::Middle,
-        Self::ShakeRight,
-        Self::Right,
-        Self::ShakeDown,
-    ];
-
-    /// The key's MIDI note number.
-    pub(crate) const fn midi(self) -> u8 {
-        match self {
-            Self::Left => 60,
-            Self::ShakeLeft => 61,
-            Self::Middle => 62,
-            Self::ShakeRight => 63,
-            Self::Right => 64,
-            Self::ShakeDown => 65,
-        }
-    }
-
-    /// The key with MIDI note number `note`, if it is one.
-    pub(crate) fn of(note: u8) -> Option<Self> {
-        Self::ALL.into_iter().find(|key| key.midi() == note)
-    }
-
-    /// The column a tap or hold on this key takes, or none for a shake.
-    const fn column(self) -> Option<u16> {
-        match self {
-            Self::Left => Some(0),
-            Self::Middle => Some(1),
-            Self::Right => Some(2),
-            Self::ShakeLeft | Self::ShakeRight | Self::ShakeDown => None,
-        }
-    }
-
-    /// The note this key plays when held for `held`, or a tap, or a shake.
-    const fn kind(self, held: Option<Ticks>) -> NoteKind {
-        match (self.column(), held, self) {
-            (Some(lane), Some(duration), _) => NoteKind::Hold {
-                lane: LaneIndex::new(lane),
-                duration,
-            },
-            (Some(lane), None, _) => NoteKind::Tap {
-                lane: LaneIndex::new(lane),
-            },
-            (None, _, Self::ShakeLeft) => NoteKind::Shake(Shake::Left),
-            (None, _, Self::ShakeRight) => NoteKind::Shake(Shake::Right),
-            (None, _, _) => NoteKind::Shake(Shake::Down),
-        }
+/// A shake, slice or mega tap, in words.
+const fn kind_name(kind: NoteKind) -> &'static str {
+    match kind {
+        NoteKind::Shake(Shake::Left) => "a left shake",
+        NoteKind::Shake(Shake::Right) => "a right shake",
+        NoteKind::Shake(Shake::Down) => "a down shake",
+        NoteKind::Slice(Side::Left) => "a left slice",
+        NoteKind::Slice(Side::Right) => "a right slice",
+        NoteKind::MegaTap => "a mega tap",
+        NoteKind::Tap { .. } | NoteKind::Hold { .. } => "a tap",
     }
 }
 
@@ -174,6 +242,7 @@ impl Report {
 pub(crate) fn to_song(
     track: Track,
     audio: &str,
+    preset: Preset,
     report: &mut Report,
 ) -> Result<ValidDocument, String> {
     let mut levels: Vec<Level> = Vec::new();
@@ -188,6 +257,24 @@ pub(crate) fn to_song(
         }
     }
     levels.sort_by_key(|level| level.difficulty.index());
+    // A tempo change after every note, such as one the Glam As You Club Mix of Poker Face places
+    // a thousand hours in, changes nothing the game plays.
+    let end = levels
+        .iter()
+        .flat_map(|level| &level.notes)
+        .map(|note| note.off.max(note.on))
+        .filter(|end| end.is_finite())
+        .fold(0.0_f64, f64::max);
+    for level in &mut levels {
+        let first = level.tempo.first().copied();
+        let before = level.tempo.len();
+        level
+            .tempo
+            .retain(|change| change.seconds <= end || Some(*change) == first);
+        for _ in level.tempo.len()..before {
+            report.add("a tempo change after the last note");
+        }
+    }
     let first = levels
         .first()
         .ok_or("the file has no Easy, Medium, Hard or Extreme level")?;
@@ -202,7 +289,7 @@ pub(crate) fn to_song(
         .iter()
         .map(|level| {
             Ok(Chart {
-                lanes: Lanes::Three,
+                lanes: level.lanes,
                 name: level.difficulty.name().to_owned(),
                 difficulty: Some(level.difficulty),
                 theme: None,
@@ -234,7 +321,7 @@ pub(crate) fn to_song(
         .zip(unplaced.charts())
         .zip(&levels)
         .map(|((chart, placed), level)| Chart {
-            notes: notes_of(&level.notes, placed.timing(), report),
+            notes: notes_of(level, preset, placed.timing(), report),
             ..chart
         })
         .collect();
@@ -283,11 +370,19 @@ fn tempo_of(
     read_tempo(&made.timing, Stream::Song).map_err(|why| why.to_string())
 }
 
-/// `played` as notes on `timing`'s ticks, without those on a lane and tick an earlier one took.
-fn notes_of(played: &[Played], timing: Valid<'_, Timing>, report: &mut Report) -> Vec<Note> {
-    let mut taken: HashSet<(i64, u16)> = HashSet::new();
-    let mut notes = Vec::with_capacity(played.len());
-    for note in played {
+/// `level`'s notes as `preset` plays them, on `timing`'s ticks, without those on a lane and tick
+/// an earlier one took.
+fn notes_of(
+    level: &Level,
+    preset: Preset,
+    timing: Valid<'_, Timing>,
+    report: &mut Report,
+) -> Vec<Note> {
+    // Taps and holds take their columns, and shakes, slices and mega taps theirs, apart: a tap and
+    // a shake may share a column at once, as the game plays both.
+    let mut taken: HashSet<(i64, u16, bool)> = HashSet::new();
+    let mut notes = Vec::with_capacity(level.notes.len());
+    for note in &level.notes {
         if !note.on.is_finite() || !note.off.is_finite() {
             report.add("a note at a moment that is not a time");
             continue;
@@ -296,20 +391,28 @@ fn notes_of(played: &[Played], timing: Valid<'_, Timing>, report: &mut Report) -
         let held = (note.off - note.on > HOLD_SECONDS)
             .then(|| tick.ticks_until(nearest(timing, note.off)))
             .flatten();
-        let kind = note.key.kind(held);
-        let Position::Lane { index, width } = Lanes::Three.position(kind) else {
+        let Some(kind) = preset.kind(note.key, level.lanes, held) else {
+            report.add(format!(
+                "notes on a key a {}-lane {} level has no column for",
+                level.lanes.width(),
+                level.difficulty.name()
+            ));
+            continue;
+        };
+        let Position::Lane { index, width } = level.lanes.position(kind) else {
             continue;
         };
         let first = u16::from(index);
         let lanes = first..first.saturating_add(u16::from(width));
+        let column = matches!(kind, NoteKind::Tap { .. } | NoteKind::Hold { .. });
         if lanes
             .clone()
-            .any(|lane| taken.contains(&(i64::from(tick), lane)))
+            .any(|lane| taken.contains(&(i64::from(tick), lane, column)))
         {
             report.add("a note on a column and tick another note already takes");
             continue;
         }
-        taken.extend(lanes.map(|lane| (i64::from(tick), lane)));
+        taken.extend(lanes.map(|lane| (i64::from(tick), lane, column)));
         notes.push(Note { tick, kind });
     }
     notes.sort_by_key(|note| i64::from(note.tick));
@@ -334,7 +437,11 @@ fn nearest(timing: Valid<'_, Timing>, seconds: f64) -> Tick {
 ///
 /// Returns why nothing of the song can be written: no chart with three lanes is one of the four
 /// levels.
-pub(crate) fn from_song(valid: &ValidDocument, report: &mut Report) -> Result<Track, String> {
+pub(crate) fn from_song(
+    valid: &ValidDocument,
+    preset: Preset,
+    report: &mut Report,
+) -> Result<Track, String> {
     let song = Song::try_from(valid).map_err(|why| why.to_string())?;
     let ticks_per_beat = song.ticks_per_beat();
     for _ in song.markers() {
@@ -366,14 +473,6 @@ pub(crate) fn from_song(valid: &ValidDocument, report: &mut Report) -> Result<Tr
             ));
             continue;
         };
-        if chart.lanes != Lanes::Three {
-            report.add(format!(
-                "the chart {:?}, which has {} lanes where the game's files hold 3",
-                chart.name,
-                chart.lanes.width()
-            ));
-            continue;
-        }
         if levels.iter().any(|level| level.difficulty == difficulty) {
             report.add(format!(
                 "the chart {:?}, a second {}",
@@ -385,12 +484,13 @@ pub(crate) fn from_song(valid: &ValidDocument, report: &mut Report) -> Result<Tr
         let timing = placed.timing();
         levels.push(Level {
             difficulty,
+            lanes: chart.lanes,
             tempo: changes_of(timing, report),
-            notes: played_of(&chart.notes, timing, ticks_per_beat, report),
+            notes: played_of(chart, preset, timing, ticks_per_beat, report),
         });
     }
     if levels.is_empty() {
-        return Err("no chart with three lanes is Easy, Medium, Hard or Extreme".to_owned());
+        return Err("no chart is Easy, Medium, Hard or Extreme".to_owned());
     }
     levels.sort_by_key(|level| level.difficulty.index());
     Ok(Track {
@@ -442,9 +542,10 @@ fn changes_of(timing: Valid<'_, Timing>, report: &mut Report) -> Vec<Change> {
         .collect()
 }
 
-/// `notes` at their moments on `timing`.
+/// `chart`'s notes on the keys `preset` plays them on, at their moments on `timing`.
 fn played_of(
-    notes: &[Note],
+    chart: &Chart,
+    preset: Preset,
     timing: Valid<'_, Timing>,
     ticks_per_beat: TicksPerBeat,
     report: &mut Report,
@@ -452,25 +553,16 @@ fn played_of(
     let seconds = |tick: Tick| timing.time_at(tick).seconds();
     // The game's own tracks end a tap a sixteenth after it starts.
     let sixteenth = Ticks::new(u32::from(u16::from(ticks_per_beat)).div_euclid(4));
-    notes
+    chart
+        .notes
         .iter()
         .filter_map(|note| {
             let on = seconds(note.tick);
-            let (key, end) = match note.kind {
-                NoteKind::Tap { lane } => (column_key(lane)?, None),
-                NoteKind::Hold { lane, duration } => (column_key(lane)?, Some(duration)),
-                NoteKind::Shake(Shake::Left) => (Key::ShakeLeft, None),
-                NoteKind::Shake(Shake::Right) => (Key::ShakeRight, None),
-                NoteKind::Shake(Shake::Down) => (Key::ShakeDown, None),
-                NoteKind::Slice(_) | NoteKind::MegaTap => {
-                    report.add("a slice or mega tap, which the game's files are not known to hold");
-                    return None;
-                }
-            };
-            let off = if let Some(duration) = end {
+            let (key, _) = preset.key(note.kind, chart.lanes, report)?;
+            let off = if let NoteKind::Hold { duration, .. } = note.kind {
                 let off = note.tick.checked_add(duration).map_or(on, seconds);
                 if off - on <= HOLD_SECONDS {
-                    report.add("a hold of 0.3 seconds or less, which the game plays as a tap");
+                    report.add("a hold of 0.15 seconds or less, which the game plays as a tap");
                 }
                 off
             } else {
@@ -482,13 +574,6 @@ fn played_of(
             Some(Played { key, on, off })
         })
         .collect()
-}
-
-/// The key of a tap or hold in column `lane` of three.
-fn column_key(lane: LaneIndex) -> Option<Key> {
-    Key::ALL
-        .into_iter()
-        .find(|key| key.column() == Some(u16::from(lane)))
 }
 
 /// The quarter notes from the start of the audio to `seconds` on `tempo`, the tempo before the
@@ -523,6 +608,7 @@ mod tests {
     fn level(difficulty: Difficulty, notes: Vec<Played>) -> Level {
         Level {
             difficulty,
+            lanes: Lanes::Three,
             tempo: vec![Change {
                 seconds: 0.0,
                 bpm: 120.0,
@@ -532,39 +618,168 @@ mod tests {
         }
     }
 
-    fn played(key: Key, on: f64, off: f64) -> Played {
+    fn played(key: u8, on: f64, off: f64) -> Played {
         Played { key, on, off }
     }
 
     fn song(levels: Vec<Level>, report: &mut Report) -> Song {
+        song_as(levels, Preset::Revenge, report)
+    }
+
+    fn song_as(levels: Vec<Level>, preset: Preset, report: &mut Report) -> Song {
         let track = Track {
             title: "Sing".to_owned(),
             artist: "My Chemical Romance".to_owned(),
             levels,
         };
-        Song::try_from(&to_song(track, "audio.m4a", report).unwrap()).unwrap()
+        Song::try_from(&to_song(track, "audio.m4a", preset, report).unwrap()).unwrap()
     }
 
     #[test]
-    fn each_key_is_its_midi_note_and_back() {
-        for (key, note) in Key::ALL.into_iter().zip(60..) {
-            assert_eq!(key.midi(), note);
-            assert_eq!(Key::of(note), Some(key));
+    fn each_game_plays_the_side_and_middle_keys_of_three_lanes_its_own_way() {
+        let tap = |lane| {
+            Some(NoteKind::Tap {
+                lane: LaneIndex::new(lane),
+            })
+        };
+        let beat = Ticks::new(960);
+        let read = |preset: Preset| -> Vec<Option<NoteKind>> {
+            (0..7)
+                .map(|key| preset.kind(key, Lanes::Three, beat))
+                .collect()
+        };
+        let hold = |lane| {
+            Some(NoteKind::Hold {
+                lane: LaneIndex::new(lane),
+                duration: beat.unwrap(),
+            })
+        };
+        let columns = [hold(0), hold(1), hold(2)];
+        assert_eq!(
+            read(Preset::Revenge),
+            [
+                columns[0],
+                Some(NoteKind::Shake(Shake::Left)),
+                columns[1],
+                Some(NoteKind::Shake(Shake::Right)),
+                columns[2],
+                Some(NoteKind::Shake(Shake::Down)),
+                None,
+            ]
+        );
+        assert_eq!(
+            read(Preset::Tour),
+            [
+                columns[0],
+                Some(NoteKind::Slice(Side::Left)),
+                columns[1],
+                Some(NoteKind::Slice(Side::Right)),
+                columns[2],
+                Some(NoteKind::MegaTap),
+                None,
+            ]
+        );
+        // A tap theme's own columns for the side and middle keys cannot hold.
+        assert_eq!(
+            read(Preset::TapThemes),
+            [
+                columns[0],
+                tap(0),
+                columns[1],
+                tap(2),
+                columns[2],
+                tap(1),
+                None
+            ]
+        );
+    }
+
+    #[test]
+    fn four_and_five_lanes_play_their_keys_left_to_right_whatever_the_game() {
+        for preset in [Preset::Revenge, Preset::Tour, Preset::TapThemes] {
+            for lanes in [Lanes::Four, Lanes::Five] {
+                let width = u8::try_from(u16::from(lanes.width())).unwrap();
+                for key in 0..KEYS {
+                    let expected = (key < width).then(|| NoteKind::Tap {
+                        lane: LaneIndex::new(key.into()),
+                    });
+                    assert_eq!(preset.kind(key, lanes, None), expected);
+                }
+            }
         }
-        assert_eq!(Key::of(59), None);
-        assert_eq!(Key::of(66), None);
+    }
+
+    #[test]
+    fn a_kind_a_game_plays_otherwise_is_written_on_that_key_and_said_so() {
+        let mut report = Report::default();
+        assert_eq!(
+            Preset::Revenge.key(NoteKind::Slice(Side::Right), Lanes::Three, &mut report),
+            Some((3, false))
+        );
+        assert_eq!(
+            Preset::Tour.key(NoteKind::Shake(Shake::Down), Lanes::Three, &mut report),
+            Some((5, false))
+        );
+        assert_eq!(
+            Preset::Tour.key(NoteKind::MegaTap, Lanes::Three, &mut report),
+            Some((5, false))
+        );
+        let hold = NoteKind::Hold {
+            lane: LaneIndex::new(3),
+            duration: Ticks::new(1).unwrap(),
+        };
+        assert_eq!(
+            Preset::Tour.key(hold, Lanes::Five, &mut report),
+            Some((3, true))
+        );
+        assert_eq!(
+            Preset::Revenge.key(NoteKind::MegaTap, Lanes::Four, &mut report),
+            None
+        );
+        assert_eq!(
+            report.into_lines(),
+            [
+                "a down shake, which Tap Tap Revenge: Tour plays as a mega tap",
+                "a right slice, which Tap Tap Revenge plays as a right shake",
+                "a shake, slice or mega tap in a 4-lane level, which has keys for its columns alone",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_four_lane_level_imports_as_a_four_lane_chart() {
+        let mut report = Report::default();
+        let mut wide = level(
+            Difficulty::Hard,
+            vec![played(3, 1.0, 2.0), played(5, 1.5, 1.6)],
+        );
+        wide.lanes = Lanes::Four;
+        let song = song_as(vec![wide], Preset::Tour, &mut report);
+        let chart = &song.charts()[0];
+        assert_eq!(chart.lanes, Lanes::Four);
+        assert_eq!(
+            chart.notes.iter().map(|note| note.kind).collect::<Vec<_>>(),
+            [NoteKind::Hold {
+                lane: LaneIndex::new(3),
+                duration: Ticks::new(1920).unwrap()
+            }]
+        );
+        assert_eq!(
+            report.into_lines(),
+            ["notes on a key a 4-lane Hard level has no column for"]
+        );
     }
 
     #[test]
     fn keys_become_taps_holds_and_shakes_in_three_lanes() {
         let mut report = Report::default();
         let notes = vec![
-            played(Key::Left, 0.5, 0.6),
-            played(Key::Middle, 1.0, 2.0),
-            played(Key::Right, 1.5, 1.5),
-            played(Key::ShakeLeft, 2.0, 2.1),
-            played(Key::ShakeRight, 2.5, 2.6),
-            played(Key::ShakeDown, 3.0, 4.0),
+            played(0, 0.5, 0.6),
+            played(2, 1.0, 2.0),
+            played(4, 1.5, 1.5),
+            played(1, 2.0, 2.1),
+            played(3, 2.5, 2.6),
+            played(5, 3.0, 4.0),
         ];
         let song = song(vec![level(Difficulty::Hard, notes)], &mut report);
         assert!(report.into_lines().is_empty());
@@ -613,10 +828,10 @@ mod tests {
     fn a_note_on_a_taken_column_and_tick_and_a_second_level_are_left_out() {
         let mut report = Report::default();
         let notes = vec![
-            played(Key::Left, 1.0, 1.1),
-            played(Key::Left, 1.0, 1.1),
-            played(Key::ShakeLeft, 1.0, 1.1),
-            played(Key::Middle, f64::NAN, 1.1),
+            played(0, 1.0, 1.1),
+            played(0, 1.0, 1.1),
+            played(1, 1.0, 1.1),
+            played(2, f64::NAN, 1.1),
         ];
         let levels = vec![
             level(Difficulty::Easy, notes),
@@ -624,12 +839,13 @@ mod tests {
         ];
         let song = song(levels, &mut report);
         assert_eq!(song.charts().len(), 1);
-        assert_eq!(song.charts()[0].notes.len(), 1);
+        // The shake shares the left column with the tap, as the game plays both.
+        assert_eq!(song.charts()[0].notes.len(), 2);
         assert_eq!(
             report.into_lines(),
             [
                 "a note at a moment that is not a time",
-                "a note on a column and tick another note already takes (2 times)",
+                "a note on a column and tick another note already takes",
                 "a second Easy level",
             ]
         );
@@ -638,7 +854,7 @@ mod tests {
     #[test]
     fn a_level_with_its_own_tempo_keeps_it_and_levels_come_easiest_first() {
         let mut report = Report::default();
-        let mut hard = level(Difficulty::Hard, vec![played(Key::Left, 1.0, 1.0)]);
+        let mut hard = level(Difficulty::Hard, vec![played(0, 1.0, 1.0)]);
         hard.tempo[0].bpm = 150.0;
         let song = song(vec![hard, level(Difficulty::Easy, Vec::new())], &mut report);
         let names: Vec<&str> = song.charts().iter().map(|c| c.name.as_str()).collect();
@@ -651,7 +867,8 @@ mod tests {
     #[test]
     fn a_track_without_a_level_or_a_tempo_is_refused_or_given_120_bpm() {
         let mut report = Report::default();
-        let none = to_song(Track::default(), "audio.m4a", &mut report).unwrap_err();
+        let none =
+            to_song(Track::default(), "audio.m4a", Preset::Revenge, &mut report).unwrap_err();
         assert!(none.contains("no Easy, Medium, Hard or Extreme level"));
         let mut untimed = level(Difficulty::Medium, Vec::new());
         untimed.tempo.clear();
@@ -666,9 +883,9 @@ mod tests {
     fn a_song_exports_as_moments_with_what_the_files_cannot_hold_left_out() {
         let mut report = Report::default();
         let notes = vec![
-            played(Key::Left, 0.5, 0.6),
-            played(Key::Middle, 1.0, 2.0),
-            played(Key::ShakeDown, 3.0, 3.1),
+            played(0, 0.5, 0.6),
+            played(2, 1.0, 2.0),
+            played(5, 3.0, 3.1),
         ];
         let song = song(vec![level(Difficulty::Extreme, notes)], &mut report);
         let mut charts = song.charts().to_vec();
@@ -698,28 +915,31 @@ mod tests {
         )
         .unwrap()
         .with_theme(Some(charter_core::Name::new("TTRDJ").unwrap()));
-        let track = from_song(&song.to_document(), &mut report).unwrap();
+        let track = from_song(&song.to_document(), Preset::Revenge, &mut report).unwrap();
         assert_eq!(track.title, "Sing");
-        let [extreme] = track.levels.as_slice() else {
-            panic!("one level: {:?}", track.levels);
+        let [easy, extreme] = track.levels.as_slice() else {
+            panic!("two levels: {:?}", track.levels);
         };
+        assert_eq!(
+            (easy.difficulty, easy.lanes),
+            (Difficulty::Easy, Lanes::Four)
+        );
         assert_eq!(extreme.difficulty, Difficulty::Extreme);
-        let keys: Vec<Key> = extreme.notes.iter().map(|note| note.key).collect();
-        assert_eq!(keys, [Key::Left, Key::Middle, Key::ShakeDown]);
+        let keys: Vec<u8> = extreme.notes.iter().map(|note| note.key).collect();
+        assert_eq!(keys, [0, 2, 5, 1]);
         let hold = extreme.notes[1];
         assert!((hold.on - 1.0).abs() < 1e-9 && (hold.off - 2.0).abs() < 1e-9);
         let tap = extreme.notes[0];
         assert!(
-            (tap.off - tap.on - 0.125).abs() < 1e-9,
-            "a sixteenth at 120 BPM"
+            (tap.off - tap.on - HOLD_SECONDS / 2.0).abs() < 1e-9,
+            "a sixteenth at 120 BPM, kept within half the hold threshold"
         );
         assert_eq!(extreme.tempo.len(), 1);
         assert_eq!(
             report.into_lines(),
             [
-                "a slice or mega tap, which the game's files are not known to hold",
+                "a left slice, which Tap Tap Revenge plays as a left shake",
                 "the chart \"Unlevelled\", which is none of the four levels",
-                "the chart \"Wide\", which has 4 lanes where the game's files hold 3",
                 "the theme, which a track's info.plist holds, not this file",
             ]
         );

@@ -440,8 +440,9 @@ and the notes over a waveform that stays put.
   copies of a song unless the page says otherwise, removing only that song's dated copies.
 - File › Import song… opens a song in any format a plugin reads, such as a Tap Tap Revenge
   `.ttr2_track` or an Editor on Fire MIDI file, as a new unsaved song whose audio is the file its
-  format names beside it; Export song… writes the open song in a format its plugin writes. Both
-  say what the conversion left out.
+  format names beside it; Export song… writes the open song in a format its plugin writes. When
+  several formats share the file's extension, as a Tap Tap Revenge track does for each game that
+  plays it, a dialog asks which game the file is for. Both say what the conversion left out.
 - File › Open recent lists the last ten songs opened or saved, the latest first, and clears them;
   a song that no longer opens leaves the list, and Restore defaults keeps it. Settings… sits at the
   bottom of Edit, and the demo song in Help.
