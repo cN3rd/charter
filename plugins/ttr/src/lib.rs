@@ -1044,19 +1044,7 @@ fn track_folder(
             .map(str::to_lowercase)
             .unwrap_or_default()
     };
-    let mut copies = Vec::new();
-    // The game plays AAC, and MP3 named as AAC, as custom tracks do.
-    match extension(metadata.audio.as_str()).as_str() {
-        "m4a" | "mp4" | "aac" | "mp3" => copies.push(("audio.m4a".to_owned(), SongResource::Audio)),
-        other => report.add(format!(
-            "the audio, which is {}: the game plays AAC or MP3 as audio.m4a",
-            if other.is_empty() {
-                "of no known kind".to_owned()
-            } else {
-                format!(".{other}")
-            }
-        )),
-    }
+    let mut copies = vec![("audio.m4a".to_owned(), SongResource::AacAudio)];
     if let Some(artwork) = &metadata.artwork {
         if extension(artwork.as_str()) == "png" {
             for name in ["artwork.png", "artwork@2x.png"] {
@@ -2168,7 +2156,7 @@ mod tests {
         assert_eq!(exported.file_name.as_deref(), Some("taptrack.ttr2_track"));
         assert_eq!(
             exported.copies,
-            [("audio.m4a".to_owned(), SongResource::Audio)]
+            [("audio.m4a".to_owned(), SongResource::AacAudio)]
         );
         let companions = exported.beside.clone();
         let info =
@@ -2277,10 +2265,7 @@ mod tests {
         let track = Plugin.export_song(TRACK, &song, None).unwrap();
         assert_eq!(
             track.left_out,
-            [
-                "how long the audio lasts, which info.plist holds, as the audio has not loaded",
-                "the audio, which is .ogg: the game plays AAC or MP3 as audio.m4a",
-            ]
+            ["how long the audio lasts, which info.plist holds, as the audio has not loaded"]
         );
         let imported = Plugin
             .import_song(TRACK, &track.bytes, &BTreeMap::new())

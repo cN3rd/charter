@@ -262,21 +262,23 @@ impl Window {
                             .as_ref()
                             .map_or(path, |main| folder.join(main));
                         let mut left_out = exported.left_out;
-                        let copies = exported
-                            .copies
-                            .iter()
-                            .filter_map(|(copy, resource)| {
-                                let from = match resource {
-                                    SongResource::Audio => self.audio_file(),
-                                    SongResource::Artwork => self.artwork_file(),
-                                };
-                                if from.is_none() {
-                                    left_out
-                                        .push(format!("{copy}, as the song's file is not chosen"));
-                                }
-                                Some((from?, folder.join(copy)))
-                            })
-                            .collect();
+                        let (mut copies, mut encodes) = (Vec::new(), Vec::new());
+                        for (copy, resource) in &exported.copies {
+                            let from = match resource {
+                                SongResource::Audio | SongResource::AacAudio => self.audio_file(),
+                                SongResource::Artwork => self.artwork_file(),
+                            };
+                            let Some(from) = from else {
+                                left_out.push(format!("{copy}, as the song's file is not chosen"));
+                                continue;
+                            };
+                            let to = folder.join(copy);
+                            if *resource == SongResource::AacAudio && !is_aac(&from) {
+                                encodes.push((from, to));
+                            } else {
+                                copies.push((from, to));
+                            }
+                        }
                         let beside = exported
                             .beside
                             .into_iter()
@@ -291,6 +293,7 @@ impl Window {
                             bytes: exported.bytes,
                             beside,
                             copies,
+                            encodes,
                         });
                     }
                     Err(why) => {
@@ -305,6 +308,11 @@ impl Window {
     pub fn export_failed(&mut self, path: &Path, why: &str) {
         self.failure = Some(format!("{} was not written: {why}", path.display()));
     }
+}
+
+/// Whether the audio at `path` is AAC already, as its extension says.
+fn is_aac(path: &Path) -> bool {
+    matches!(extension(path).as_deref(), Some("m4a" | "mp4" | "aac"))
 }
 
 /// Whether `format` names `extension` among its own.
@@ -616,6 +624,7 @@ mod tests {
             bytes,
             beside,
             copies,
+            encodes,
         }) = requests
             .iter()
             .find(|request| matches!(request, Request::WriteExport { .. }))
@@ -635,7 +644,6 @@ mod tests {
         assert_eq!(
             copies,
             &[
-                (PathBuf::from("/songs/song.mp3"), folder.join("audio.m4a")),
                 (
                     PathBuf::from("/songs/cover.png"),
                     folder.join("artwork.png")
@@ -645,6 +653,11 @@ mod tests {
                     folder.join("artwork@2x.png")
                 ),
             ]
+        );
+        // MP3 is not AAC, so the host encodes it.
+        assert_eq!(
+            encodes,
+            &[(PathBuf::from("/songs/song.mp3"), folder.join("audio.m4a"))]
         );
         assert_eq!(
             harness.state().message(),

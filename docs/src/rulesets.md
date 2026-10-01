@@ -96,8 +96,10 @@ so each format is offered once for each game:
 
 A track is exported as the folder the game keeps it in: `taptrack.ttr2_track` in the folder the
 user chose a place in, an `info.plist` beside it with the title, artist, genre, levels, their
-columns and themes and how long the audio lasts, the audio copied as `audio.m4a` when it is AAC or
-MP3, which the game plays under that name, and PNG artwork as `artwork.png` and `artwork@2x.png`.
+columns and themes and how long the audio lasts, the audio as `audio.m4a`, AAC in an M4A file as
+the game's own tracks have it, and PNG artwork as `artwork.png` and `artwork@2x.png`. Audio already
+in AAC is copied; any other is converted with ffmpeg, which must then be installed and on the
+`PATH`, and the export says so when it is not.
 Imported back with that `info.plist`, the song is what was exported. A track's import takes the
 title, artist, genre and themes from its `info.plist` too, as the game shows them.
 
@@ -108,7 +110,7 @@ lane and tick a note of the same kind already takes are dropped, as are levels o
 and keys a level has no place for, and tempo changes after the last note. Export writes a kind the
 chosen game plays as another, such as a slice in a Tap Tap Revenge track, as that one, and leaves
 out, saying so, charts of no level, shakes and the like in four or five lanes, markers, the
-preview, audio the game cannot play and artwork that is not PNG, and in MIDI the artist, genre,
+preview and artwork that is not PNG, and in MIDI the artist, genre,
 artwork and themes and levels of four or five lanes, as a MIDI file has no place for them. `plist` reads and writes the property list and `midly` the MIDI
 file; the plugin walks the archive's fixed shape itself, since the keyed-archive crates decode by
 unbounded recursion and none writes custom classes. A MIDI file has one tempo map, the first

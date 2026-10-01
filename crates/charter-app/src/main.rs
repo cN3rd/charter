@@ -1149,6 +1149,7 @@ mod tests {
             bytes: b"MThd".to_vec(),
             beside: Vec::new(),
             copies: Vec::new(),
+            encodes: Vec::new(),
         };
         host.handle_requests(vec![export("/out/notes.mid")]);
         assert_eq!(
@@ -1175,21 +1176,43 @@ mod tests {
             path: folder.join("taptrack.ttr2_track"),
             bytes: b"bplist00".to_vec(),
             beside: vec![(folder.join("info.plist"), b"<plist/>".to_vec())],
-            copies: vec![
-                (PathBuf::from("/songs/song.mp3"), folder.join("audio.m4a")),
-                (PathBuf::from("/songs/gone.png"), folder.join("artwork.png")),
-            ],
+            copies: vec![(PathBuf::from("/songs/gone.png"), folder.join("artwork.png"))],
+            encodes: vec![(PathBuf::from("/songs/song.mp3"), folder.join("audio.m4a"))],
         }]);
         let read = |name: &str| host.disk.read(&folder.join(name)).unwrap();
         assert_eq!(read("taptrack.ttr2_track"), b"bplist00");
         assert_eq!(read("info.plist"), b"<plist/>");
-        assert_eq!(read("audio.m4a"), b"new audio");
+        assert_eq!(read("audio.m4a"), b"aac:new audio");
         assert!(
             host.window
                 .message()
                 .unwrap()
                 .starts_with("/out/sudo.track/artwork.png was not written")
         );
+    }
+
+    #[test]
+    fn audio_that_cannot_be_encoded_is_reported_and_leaves_no_partial_file() {
+        let mut host = host(Memory {
+            no_encoder: true,
+            ..Memory::with(&[("/songs/song.ogg", b"vorbis")])
+        });
+        host.handle_requests(vec![Request::WriteExport {
+            path: PathBuf::from("/out/taptrack.ttr2_track"),
+            bytes: b"bplist00".to_vec(),
+            beside: Vec::new(),
+            copies: Vec::new(),
+            encodes: vec![(
+                PathBuf::from("/songs/song.ogg"),
+                PathBuf::from("/out/audio.m4a"),
+            )],
+        }]);
+        assert_eq!(
+            host.window.message(),
+            Some("/out/audio.m4a was not written: ffmpeg is not installed")
+        );
+        assert!(!host.disk.exists(Path::new("/out/audio.m4a.partial")));
+        assert!(host.disk.exists(Path::new("/out/taptrack.ttr2_track")));
     }
 
     #[test]

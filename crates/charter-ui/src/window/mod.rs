@@ -199,6 +199,9 @@ pub enum Request {
         beside: Vec<(PathBuf, Vec<u8>)>,
         /// The song's files copied beside it, each from where it is to its place.
         copies: Vec<(PathBuf, PathBuf)>,
+        /// The song's audio encoded as AAC in an MP4 container beside it, from where it is to its
+        /// place.
+        encodes: Vec<(PathBuf, PathBuf)>,
     },
     /// Download the beat tracker's weights, the user having agreed, telling
     /// [`Window::weights_progress`] how far it has got, then find the timing asked for.

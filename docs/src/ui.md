@@ -443,8 +443,9 @@ and the notes over a waveform that stays put.
   format names beside it; Export song… writes the open song in a format its plugin writes. When
   several formats share the file's extension, as a Tap Tap Revenge track does for each game that
   plays it, a dialog asks which game the file is for. A Tap Tap Revenge track is exported as the
-  game's folder, its chart named `taptrack.ttr2_track` in the folder chosen, with an `info.plist`
-  and the song's audio and artwork copied in. Both say what the conversion left out.
+  game's folder, its chart named `taptrack.ttr2_track` in the folder chosen, with an `info.plist`,
+  the song's artwork copied in and its audio converted to AAC with ffmpeg when it is not AAC
+  already. Both say what the conversion left out.
 - File › Open recent lists the last ten songs opened or saved, the latest first, and clears them;
   a song that no longer opens leaves the list, and Restore defaults keeps it. Settings… sits at the
   bottom of Edit, and the demo song in Help.

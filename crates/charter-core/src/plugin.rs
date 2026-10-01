@@ -163,8 +163,10 @@ pub struct ExportedSong {
 /// A file of the song's own that an export copies beside its main file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SongResource {
-    /// The song's audio.
+    /// The song's audio, as it is.
     Audio,
+    /// The song's audio as AAC in an MP4 container, encoded when it is in another format.
+    AacAudio,
     /// The song's artwork.
     Artwork,
 }

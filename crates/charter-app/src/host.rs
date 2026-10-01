@@ -151,6 +151,7 @@ impl Host {
                 bytes,
                 beside,
                 copies,
+                encodes,
             } => {
                 let disk = self.disk.as_ref();
                 if let Some(folder) = path.parent()
@@ -165,6 +166,11 @@ impl Host {
                         copies
                             .iter()
                             .map(|(from, to)| (to, disk::copy_over(disk, from, to))),
+                    )
+                    .chain(
+                        encodes
+                            .iter()
+                            .map(|(from, to)| (to, disk::encode_over(disk, from, to))),
                     );
                 for (place, result) in written {
                     if let Err(error) = result {
