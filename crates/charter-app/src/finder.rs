@@ -10,6 +10,8 @@ use charter_audio::{Onset, Track};
 use charter_core::{Section, TicksPerBeat, Timing};
 use charter_ui::{Tracker, Window};
 
+use crate::report::chain;
+
 /// Where each model's weights come from, and the file they are kept in within the data folder.
 /// Beat This!'s are its authors' `final0`, the one the reference uses by default;
 /// Mapperatorinator's are its V32 model pruned to what timing reads.
@@ -218,18 +220,19 @@ fn timing_of(
 ) -> Result<Timing, String> {
     // ponytail: the tracker reads its weights by path and a song's audio is read once here, so
     // the finder goes to the file system directly rather than through the host's Disk.
-    let bytes = std::fs::read(file).map_err(|why| format!("{}: {why}", file.display()))?;
+    let bytes =
+        std::fs::read(file).map_err(|why| format!("{}: {}", file.display(), chain(&why)))?;
     let extension = file.extension().and_then(|extension| extension.to_str());
-    let track = Track::decode(bytes, extension).map_err(|why| why.to_string())?;
+    let track = Track::decode(bytes, extension).map_err(|why| chain(&why).to_string())?;
     let mono = track.to_mono();
     let tracker = charter_beatthis_burn::Tracker::from_checkpoint(weights)
-        .map_err(|why| format!("{}: {why}", weights.display()))?;
+        .map_err(|why| format!("{}: {}", weights.display(), chain(&why)))?;
     let beats = tracker
         .track(&mono, track.rate().get())
-        .map_err(|why| why.to_string())?;
+        .map_err(|why| chain(&why).to_string())?;
     let onsets = onsets.unwrap_or_else(|| charter_audio::onsets(&track));
     charter_autotiming::estimate(&beats.beats, &beats.downbeats, &onsets, ticks_per_beat)
-        .map_err(|why| why.to_string())?
+        .map_err(|why| chain(&why).to_string())?
         .map(|found| found.timing)
         .ok_or_else(|| "the audio has too few beats to fit a tempo to".to_owned())
 }
@@ -244,7 +247,7 @@ fn gpu() -> bool {
     *GPU.get_or_init(|| {
         // ponytail: cubecl panics when wgpu has no adapter, and names the adapter's type only in
         // wgpu's own enum; its Debug name saves depending on that wgpu for one comparison.
-        std::panic::catch_unwind(|| {
+        crate::report::quietly(|| {
             init_setup::<AutoGraphicsApi>(&WgpuDevice::DefaultDevice, RuntimeOptions::default())
         })
         .is_ok_and(|setup| format!("{:?}", setup.adapter.get_info().device_type) != "Cpu")
@@ -262,12 +265,13 @@ fn mapperatorinator<B: burn::prelude::Backend>(
 ) -> Result<Timing, String> {
     use timingator::audio::SAMPLE_RATE;
 
-    let bytes = std::fs::read(file).map_err(|why| format!("{}: {why}", file.display()))?;
+    let bytes =
+        std::fs::read(file).map_err(|why| format!("{}: {}", file.display(), chain(&why)))?;
     let extension = file.extension().and_then(|extension| extension.to_str());
-    let track = Track::decode(bytes, extension).map_err(|why| why.to_string())?;
-    let rate = u32::try_from(SAMPLE_RATE).map_err(|why| why.to_string())?;
+    let track = Track::decode(bytes, extension).map_err(|why| chain(&why).to_string())?;
+    let rate = u32::try_from(SAMPLE_RATE).map_err(|why| chain(&why).to_string())?;
     let mut samples = charter_audio::resample(&track.to_mono(), track.rate().get(), rate)
-        .map_err(|why| why.to_string())?;
+        .map_err(|why| chain(&why).to_string())?;
     // As timingator's `audio::normalize`: divided by the peak.
     let peak = samples
         .iter()
@@ -277,8 +281,9 @@ fn mapperatorinator<B: burn::prelude::Backend>(
             *sample /= peak;
         }
     }
-    let model = std::fs::read(weights).map_err(|why| format!("{}: {why}", weights.display()))?;
-    let unreadable = |why: &dyn std::fmt::Display| format!("{}: {why}", weights.display());
+    let model =
+        std::fs::read(weights).map_err(|why| format!("{}: {}", weights.display(), chain(&why)))?;
+    let unreadable = |why: &dyn std::fmt::Display| format!("{}: {why:#}", weights.display());
     let tokenizer = timingator::gguf::Gguf::parse(&model)
         .map_err(|why| unreadable(&why))?
         .metadata
@@ -297,7 +302,7 @@ fn mapperatorinator<B: burn::prelude::Backend>(
         &timingator::Options::default(),
         |done, all| progress(download_share(count(done), count(all))),
     )
-    .map_err(|why| why.to_string())?;
+    .map_err(|why| format!("{why:#}"))?;
     let sections = sections(&found.timing_points)?;
     charter_core::sectioned(&sections, ticks_per_beat)
         .map(|made| made.timing)
@@ -338,21 +343,30 @@ fn sections(points: &[timingator::timing::TimingPoint]) -> Result<Vec<Section>, 
 fn fetch(url: &str, weights: &Path, progress: &Sender<Progress>) -> Result<(), String> {
     let partial = crate::disk::partial_path(weights);
     if let Some(folder) = weights.parent() {
-        std::fs::create_dir_all(folder).map_err(|why| format!("{}: {why}", folder.display()))?;
+        std::fs::create_dir_all(folder)
+            .map_err(|why| format!("{}: {}", folder.display(), chain(&why)))?;
     }
     let downloaded = (|| {
-        let mut response = ureq::get(url).call().map_err(|why| why.to_string())?;
+        let mut response = ureq::get(url)
+            .call()
+            .map_err(|why| chain(&why).to_string())?;
         let body = response.body_mut();
         let length = body.content_length();
         let mut reader = body.as_reader();
         let mut file = std::fs::File::create(&partial)
-            .map_err(|why| format!("{}: {why}", partial.display()))?;
+            .map_err(|why| format!("{}: {}", partial.display(), chain(&why)))?;
         copy_weights(&mut reader, &mut file, length, progress)
             .map_err(|why| format!("{}: {why}", partial.display()))?;
         file.sync_all()
-            .map_err(|why| format!("{}: {why}", partial.display()))?;
-        std::fs::rename(&partial, weights)
-            .map_err(|why| format!("{} to {}: {why}", partial.display(), weights.display()))
+            .map_err(|why| format!("{}: {}", partial.display(), chain(&why)))?;
+        std::fs::rename(&partial, weights).map_err(|why| {
+            format!(
+                "{} to {}: {}",
+                partial.display(),
+                weights.display(),
+                chain(&why)
+            )
+        })
     })();
     cleanup_partial_on_error(downloaded, &partial, |path| std::fs::remove_file(path))
 }
@@ -381,12 +395,12 @@ fn copy_weights(
     loop {
         let count = reader
             .read(&mut buffer)
-            .map_err(|why| format!("reading the beat tracker: {why}"))?;
+            .map_err(|why| format!("reading the beat tracker: {}", chain(&why)))?;
         if count == 0 {
             break;
         }
         file.write_all(buffer.get(..count).unwrap_or_default())
-            .map_err(|why| format!("writing the beat tracker: {why}"))?;
+            .map_err(|why| format!("writing the beat tracker: {}", chain(&why)))?;
         read = read.saturating_add(u64::try_from(count).unwrap_or(u64::MAX));
         if let Some(length) = length.filter(|length| *length > 0)
             && read.saturating_mul(100).div_euclid(length) > told

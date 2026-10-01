@@ -63,6 +63,9 @@ midly = { version = "0.5", default-features = false, features = ["std"] }
 egui = "0.36"
 eframe = "0.36"
 rfd = "0.17"
+# ponytail: panic reports with the location and backtrace, coloured on a terminal and plain in a
+# crash file; span traces are off, as nothing here uses tracing.
+color-eyre = { version = "0.6", default-features = false, features = ["track-caller"] }
 # ponytail: kira's own symphonia is off; charter-audio decodes through symphonia-wrap and hands
 # kira frames.
 kira = { version = "0.12", default-features = false, features = ["cpal"] }

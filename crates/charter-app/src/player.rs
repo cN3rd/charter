@@ -10,6 +10,7 @@ use kira::sound::PlaybackState;
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle, StaticSoundSettings};
 use kira::sound::streaming::{StreamingSoundData, StreamingSoundHandle, StreamingSoundSettings};
 
+use crate::report::chain;
 use crate::stretch::{self, Pitch, Stretched};
 use kira::{AudioManager, AudioManagerSettings, Decibels, DefaultBackend, Frame, Tween};
 
@@ -346,9 +347,9 @@ impl Player {
                     sound(&charter_audio::mix(track, clicks, volumes))
                 };
                 let (path, data) = (path.clone(), data.with_settings(settings));
-                let played = self
-                    .device()
-                    .and_then(|device| device.play(data).map_err(|error| error.to_string()));
+                let played = self.device().and_then(|device| {
+                    device.play(data).map_err(|error| chain(&error).to_string())
+                });
                 match played {
                     Ok(sound) => self.playing = Some(Playing::Plain(sound)),
                     Err(why) => {
@@ -445,7 +446,7 @@ impl Player {
         let data = StreamingSoundData::from_decoder(stretched).with_settings(settings);
         let played = self
             .device()
-            .and_then(|device| device.play(data).map_err(|error| error.to_string()));
+            .and_then(|device| device.play(data).map_err(|error| chain(&error).to_string()));
         match played {
             Ok(sound) => {
                 self.playing = Some(Playing::Stretched {
@@ -464,7 +465,7 @@ impl Player {
     fn device(&mut self) -> Result<&mut AudioManager<DefaultBackend>, String> {
         let device = get_or_retry(&mut self.device, || {
             AudioManager::<DefaultBackend>::new(AudioManagerSettings::default())
-                .map_err(|error| error.to_string())
+                .map_err(|error| chain(&error).to_string())
         });
         device.map_err(|why| why.clone())
     }
@@ -507,9 +508,9 @@ fn decibels(gain: charter_audio::Gain) -> Decibels {
 
 /// Reads and decodes the file at `path`.
 fn load(path: &Path) -> Result<Track, String> {
-    let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
+    let bytes = std::fs::read(path).map_err(|error| chain(&error).to_string())?;
     let extension = path.extension().and_then(|extension| extension.to_str());
-    Track::decode(bytes, extension).map_err(|error| error.to_string())
+    Track::decode(bytes, extension).map_err(|error| chain(&error).to_string())
 }
 
 /// Starts the audio loading job for `path`, either inline for tests or on a worker thread.

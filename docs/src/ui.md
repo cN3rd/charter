@@ -432,6 +432,11 @@ and the notes over a waveform that stays put.
 - Charter's data folder, `~/.local/share/charter` on Linux and `%APPDATA%\charter\data` on
   Windows, holds the recovery file, `recovery.json`, and the settings, in eframe's `app.ron`, only
   those changed from their defaults; the Autosave page says where it is.
+- A crash writes `crash-<seconds since 1970>.txt` to the data folder, the panic's message, where it
+  happened and a backtrace, and says so in a dialog before the window closes. A panic on a worker
+  thread, such as the timing finder's, writes the file without the dialog. On a terminal the panic
+  is also printed as color-eyre's report, with the backtrace when `RUST_BACKTRACE=1` is set. Errors
+  shown in the window name each cause behind them, `: ` apart.
 - Snapshots are separate from the recovery file: every few minutes, 5 unless the Autosave page
   says otherwise, a changed song is copied, dated in UTC as `Song 2026-09-29 05.40.12 UTC.json`, into
   a snapshots folder, `snapshots/<song>` in the data folder or a folder chosen there, and into an

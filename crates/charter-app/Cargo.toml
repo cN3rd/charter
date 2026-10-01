@@ -20,6 +20,7 @@ charter-osu-mania.workspace = true
 charter-stepmania.workspace = true
 charter-ttr.workspace = true
 charter-ui.workspace = true
+color-eyre.workspace = true
 eframe = { workspace = true, features = ["persistence"] }
 image.workspace = true
 kira.workspace = true

@@ -12,6 +12,7 @@ mod disk;
 mod finder;
 mod host;
 mod player;
+mod report;
 mod stretch;
 
 use charter_core::RulesetPlugin;
@@ -100,6 +101,7 @@ fn song_dialog() -> rfd::FileDialog {
 }
 
 fn main() -> eframe::Result {
+    report::install(eframe::storage_dir(APP));
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default().with_inner_size([1280.0, 800.0]),
         ..eframe::NativeOptions::default()

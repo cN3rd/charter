@@ -7,6 +7,7 @@ use charter_ui::{Request, Saved, Window};
 use crate::disk::Disk;
 use crate::finder::Finder;
 use crate::player::Player;
+use crate::report::chain;
 use crate::{SETTINGS, disk, is_copy_of, picture, project_file, song_dialog, stamp};
 
 /// The editor window, and the files and dialogs it asks for.
@@ -157,7 +158,9 @@ impl Host {
                 if let Some(folder) = path.parent()
                     && let Err(error) = disk.make_folder(folder)
                 {
-                    return self.window.export_failed(folder, &error.to_string());
+                    return self
+                        .window
+                        .export_failed(folder, &chain(&error).to_string());
                 }
                 let written = std::iter::once((&path, &bytes))
                     .chain(beside.iter().map(|(place, made)| (place, made)))
@@ -174,14 +177,14 @@ impl Host {
                     );
                 for (place, result) in written {
                     if let Err(error) = result {
-                        self.window.export_failed(place, &error.to_string());
+                        self.window.export_failed(place, &chain(&error).to_string());
                     }
                 }
             }
             Request::Autosave { bytes } => self.autosave(&bytes),
             Request::CopyAudio { from, to } => {
                 if let Err(error) = disk::copy_whole(self.disk.as_ref(), &from, &to) {
-                    let why = format!("{} to {}: {error}", from.display(), to.display());
+                    let why = format!("{} to {}: {}", from.display(), to.display(), chain(&error));
                     self.window.audio_not_copied(&why);
                 }
             }
@@ -257,8 +260,9 @@ impl Host {
     /// Writes the song and its accompanying assets, reporting the outcome to the window.
     pub(crate) fn write(&mut self, path: PathBuf, bytes: &[u8]) {
         let copied = match self.window.audio_copy_for(&path) {
-            Some((from, to)) => disk::copy_whole(self.disk.as_ref(), &from, &to)
-                .map_err(|error| format!("{} to {}: {error}", from.display(), to.display())),
+            Some((from, to)) => disk::copy_whole(self.disk.as_ref(), &from, &to).map_err(|error| {
+                format!("{} to {}: {}", from.display(), to.display(), chain(&error))
+            }),
             None => Ok(()),
         };
         let artwork = self.window.artwork_write_for(&path);
@@ -268,8 +272,11 @@ impl Host {
                 match self.disk.read(to) {
                     Ok(original_bytes) => Some(original_bytes),
                     Err(error) => {
-                        self.window
-                            .saved(Saved::Failed(format!("{}: {error}", to.display())));
+                        self.window.saved(Saved::Failed(format!(
+                            "{}: {}",
+                            to.display(),
+                            chain(&error)
+                        )));
                         return;
                     }
                 }
@@ -287,7 +294,7 @@ impl Host {
         let wrote_artwork = copied.is_ok();
         let saved = match copied.and_then(|()| {
             disk::write_whole(self.disk.as_ref(), &path, bytes)
-                .map_err(|error| format!("{}: {error}", path.display()))
+                .map_err(|error| format!("{}: {}", path.display(), chain(&error)))
         }) {
             Ok(()) => Saved::To(path),
             Err(error) => {
@@ -321,7 +328,7 @@ impl Host {
                 .and_then(|()| disk::write_whole(self.disk.as_ref(), &folder.join(&file), bytes));
             if let Err(error) = written {
                 self.window
-                    .snapshot_failed(&format!("{}: {error}", folder.display()));
+                    .snapshot_failed(&format!("{}: {}", folder.display(), chain(&error)));
                 continue;
             }
             // Copies of this song alone, which a date sorts oldest first.
@@ -363,7 +370,7 @@ impl Host {
             ));
         }
         disk::write_whole(self.disk.as_ref(), to, bytes)
-            .map_err(|error| format!("{}: {error}", to.display()))
+            .map_err(|error| format!("{}: {}", to.display(), chain(&error)))
     }
 
     /// Saves a song the user chose to save as `chosen` into a project folder named for it,
@@ -384,7 +391,7 @@ impl Host {
             return;
         }
         if let Err(error) = self.disk.make_folder(folder) {
-            let why = format!("{}: {error}", folder.display());
+            let why = format!("{}: {}", folder.display(), chain(&error));
             self.window.saved(Saved::Failed(why));
             return;
         }
@@ -414,7 +421,7 @@ impl Host {
                 .window
                 .timing_file_read(&String::from_utf8_lossy(&bytes)),
             Err(error) => {
-                let why = format!("{}: {error}", path.display());
+                let why = format!("{}: {}", path.display(), chain(&error));
                 self.window.timing_file_failed(&why);
             }
         }
@@ -432,7 +439,7 @@ impl Host {
             .map_or(Ok(()), |folder| self.disk.make_folder(folder))
             .and_then(|()| disk::write_whole(self.disk.as_ref(), recovery, bytes));
         if let Err(error) = kept {
-            let why = format!("{}: {error}", recovery.display());
+            let why = format!("{}: {}", recovery.display(), chain(&error));
             self.window.autosave_failed(&why);
         }
     }
