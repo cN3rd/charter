@@ -26,7 +26,7 @@ the snap's next line, making a tap a hold, and `[` shortens them back to a tap. 
 and Ctrl+V cut, copy and paste notes at the cursor, the copy going on the system clipboard as well
 so another charter window can paste it; Ctrl+D duplicates the selection just after itself;
 Ctrl+Left and Ctrl+Right move it a lane, Ctrl+Up and Ctrl+Down by the snap, and Ctrl+M mirrors it
-across the lanes, and Q snaps it to the nearest snap lines, for notes placed by ear. A note dragged with Shift held changes lanes and keeps its time. A right click
+across the lanes, and G snaps it to the nearest snap lines, for notes placed by ear. A note dragged with Shift held changes lanes and keeps its time. A right click
 opens a menu of these edits, leaving the cursor where it is, with the game's own note changes
 under Change to, such as Tap Tap Revenge's arrows, slices and big taps, and Insert pattern here:
 1-1-1-1, 1-2-3-1-2-3 or 1-2-1-2 from the lane clicked, a beat or down to a 64th of one apart.
@@ -107,7 +107,9 @@ and a damaged or outdated file is ignored; deleting the folder only costs the ti
 out again. With the peaks kept, the waveform shows as soon as a song opens, before its audio has
 decoded. Nothing is written for audio outside the project folder. Choosing the song's own file in its folder
 saves over it, and a folder that already holds a song under that name is left alone. Space plays the song's audio from the cursor and pauses it, the
-cursor follows the playback, and moving the cursor while playing seeks. A lane key pressed while
+cursor follows the playback, and moving the cursor while playing seeks. Q plays the half second
+before the cursor and W the half second after it, then pause with the cursor where it was, to
+hear one moment again and again. A lane key pressed while
 playing places its note on the snap line nearest the audio and leaves the playback where it is;
 held past 200 ms, the tap grows into a hold with the playback, ending on the snap line nearest
 where the key comes up, all one step. Shift+Left and Shift+Right,

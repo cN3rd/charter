@@ -609,6 +609,8 @@ pub(crate) enum Action {
     Timing(charter_timing::Edit),
     /// Play from this many seconds into the audio with the metronome on, to hear an edit.
     Audition(f64),
+    /// Play the half second of audio before the cursor, or after it, leaving the cursor be.
+    PlaySnippet(Step),
     /// Ask whether to reset the open chart's timing.
     AskResetTiming,
     /// Put 120 BPM in 4/4 from 0 ms in place of the open chart's timing.
@@ -795,6 +797,8 @@ struct Playback {
     audio: Option<AudioStatus>,
     /// Whether the audio is playing.
     playing: bool,
+    /// Where in the audio, in seconds, the snippet playing stops, while one plays.
+    snippet: Option<f64>,
     /// Current playback speed relative to the audio's own speed.
     rate: Rate,
     /// Whether the audio playing was asked to keep its pitch.
@@ -972,6 +976,7 @@ impl Window {
     /// Takes that the audio played to its end.
     pub const fn playback_ended(&mut self) {
         self.playback.playing = false;
+        self.playback.snippet = None;
     }
 
     /// Takes that the beat tracker's weights are not downloaded yet, so the user is asked.

@@ -106,7 +106,7 @@ const KEYS: [(&str, &[(&str, &str)]); 7] = [
             ("Ctrl+Left, Ctrl+Right", "Move the selection a lane"),
             ("Ctrl+Up, Ctrl+Down", "Move the selection by the snap"),
             ("Ctrl+M", "Mirror the selection across the lanes"),
-            ("Q", "Snap the selection to the nearest snap lines"),
+            ("G", "Snap the selection to the nearest snap lines"),
             ("Shift+Click, Shift+Drag", "Add to the selection"),
             ("Alt+Click, Alt+Drag", "Take from the selection"),
             ("Ctrl+A, Escape", "Select every note, or none"),
@@ -163,6 +163,8 @@ const KEYS: [(&str, &[(&str, &str)]); 7] = [
         "Playback",
         &[
             ("Space", "Play from the cursor, or pause"),
+            ("Q", "Play the half second before the cursor"),
+            ("W", "Play the half second after the cursor"),
             ("Shift+Left, Shift+Right", "Play slower or faster by 10%"),
             (
                 "Ctrl+Shift+Left, Ctrl+Shift+Right",

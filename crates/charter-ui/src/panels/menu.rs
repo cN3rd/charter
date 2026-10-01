@@ -109,7 +109,7 @@ pub(crate) fn menu_bar(
                         Action::ShiftSelection { snaps: 0, lanes: 1 },
                     ),
                     ("Mirror across the lanes", "Ctrl+M", Action::Mirror),
-                    ("Snap to the grid", "Q", Action::Quantize),
+                    ("Snap to the grid", "G", Action::Quantize),
                     (
                         "Lengthen by the snap",
                         "]",

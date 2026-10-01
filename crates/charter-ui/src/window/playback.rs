@@ -1,9 +1,12 @@
 //! Playback and audio-rate state changes.
 
 use super::{
-    AudioStatus, Finding, Loaded, NO_AUDIO, Path, PlayedAudio, Rate, Request, Sounds, Tick, Ui,
-    Window, clicks, grow, latency,
+    AudioStatus, Finding, Loaded, NO_AUDIO, Path, PlayedAudio, Rate, Request, Sounds, Step, Tick,
+    Ui, Window, clicks, grow, latency,
 };
+
+/// How much audio Q and W play before or after the cursor, in seconds.
+const SNIPPET: f64 = 0.5;
 
 impl Window {
     /// Marks the song's audio decoded and ready to play.
@@ -24,6 +27,14 @@ impl Window {
     /// Moves the cursor to the audio position the host says is playing.
     pub fn playhead(&mut self, seconds: f64) {
         if !self.playback.playing {
+            return;
+        }
+        if let Some(until) = self.playback.snippet {
+            if seconds >= until {
+                self.playback.snippet = None;
+                self.playback.playing = false;
+                self.requests.push(Request::Pause);
+            }
             return;
         }
         // What plays now is heard a moment later: the cursor shows what is heard.
@@ -127,6 +138,28 @@ impl Window {
         self.playback.looping = None;
         self.start(from, None, true);
     }
+    /// Plays the [`SNIPPET`] of audio before the cursor, or after it, then pauses, leaving the
+    /// cursor where it is so the same moment can be heard again.
+    pub(super) fn play_snippet(&mut self, side: Step) {
+        let Some(song) = &self.song else {
+            return;
+        };
+        if !matches!(self.loaded(), Some(Loaded::Ready(_))) {
+            // Says why nothing plays.
+            if !self.playback.playing {
+                self.toggle_play();
+            }
+            return;
+        }
+        let at = song.timing().time_at(song.cursor()).seconds();
+        let (from, until) = match side {
+            Step::Earlier => (at - SNIPPET, at),
+            Step::Later => (at, at + SNIPPET),
+        };
+        self.playback.looping = None;
+        self.start(from, None, false);
+        self.playback.snippet = Some(until);
+    }
     /// Starts or stops looping the requested tick span.
     pub(super) fn toggle_loop(&mut self, from: Tick, to: Tick) {
         if self.playback.looping == Some((from, to)) && self.playback.playing {
@@ -167,6 +200,7 @@ impl Window {
         if self.playback.playing {
             self.requests.push(Request::Pause);
         }
+        self.playback.snippet = None;
         let from = from.max(0.0);
         let until = looping.map_or(seconds, |(_, end)| end.min(seconds));
         // From the song's start, so a seek back while playing still ticks.
@@ -210,6 +244,7 @@ impl Window {
     )]
     pub(super) fn toggle_play(&mut self) {
         if std::mem::take(&mut self.playback.playing) {
+            self.playback.snippet = None;
             self.requests.push(Request::Pause);
             return;
         }
@@ -518,6 +553,72 @@ mod tests {
             panic!("expected playback again, got {requests:?}");
         };
         assert!((rate - 0.9).abs() < 1e-9, "{rate}");
+    }
+    #[test]
+    fn q_plays_the_half_second_before_the_cursor_and_stops_there_leaving_it_in_place() {
+        let mut harness = playable();
+        harness.key_press(egui::Key::PageDown);
+        harness.run();
+        harness.state_mut().take_requests();
+        harness.key_press(egui::Key::Q);
+        harness.run();
+        let Request::Play { from, looping, .. } = request(&mut harness) else {
+            panic!("expected play");
+        };
+        assert!((from - 1.5).abs() < 1e-9, "{from}");
+        assert_eq!(looping, None);
+        harness.state_mut().playhead(1.75);
+        harness.run();
+        assert_eq!(harness.state_mut().take_requests(), []);
+        assert!(cursor_shows(&harness, "1:0:0"));
+        harness.state_mut().playhead(2.01);
+        harness.run();
+        assert_eq!(request(&mut harness), Request::Pause);
+        assert!(cursor_shows(&harness, "1:0:0"));
+        harness.key_press(egui::Key::Q);
+        harness.run();
+        assert!(
+            matches!(request(&mut harness), Request::Play { from: again, .. } if (again - 1.5).abs() < 1e-9)
+        );
+    }
+    #[test]
+    fn w_plays_the_half_second_after_the_cursor_and_stops_at_its_end() {
+        let mut harness = playable();
+        harness.key_press(egui::Key::PageDown);
+        harness.run();
+        harness.state_mut().take_requests();
+        harness.key_press(egui::Key::W);
+        harness.run();
+        let Request::Play { from, .. } = request(&mut harness) else {
+            panic!("expected play");
+        };
+        assert!((from - 2.0).abs() < 1e-9, "{from}");
+        harness.state_mut().playhead(2.3);
+        harness.run();
+        assert_eq!(harness.state_mut().take_requests(), []);
+        assert!(cursor_shows(&harness, "1:0:0"));
+        harness.state_mut().playhead(2.5);
+        harness.run();
+        assert_eq!(request(&mut harness), Request::Pause);
+        space(&mut harness);
+        assert!(
+            matches!(request(&mut harness), Request::Play { from: again, .. } if (again - 2.0).abs() < 1e-9)
+        );
+    }
+    #[test]
+    fn space_during_a_snippet_pauses_it_and_then_plays_on_normally() {
+        let mut harness = playable();
+        harness.key_press(egui::Key::W);
+        harness.run();
+        harness.state_mut().take_requests();
+        space(&mut harness);
+        assert_eq!(request(&mut harness), Request::Pause);
+        space(&mut harness);
+        harness.state_mut().take_requests();
+        harness.state_mut().playhead(1.0);
+        harness.run();
+        assert_eq!(harness.state_mut().take_requests(), []);
+        assert!(cursor_shows(&harness, "0:2:0"));
     }
     #[test]
     fn playback_that_ends_stops() {

@@ -42,6 +42,7 @@ impl Window {
             Action::SetGrid(grid) => self.settings.grid = grid,
             Action::TogglePlay => self.toggle_play(),
             Action::Audition(from) => self.audition(from),
+            Action::PlaySnippet(side) => self.play_snippet(side),
             Action::AskResetTiming => self.dialogs.resetting = true,
             Action::FindTiming(tracker) => self.find_timing(tracker),
             Action::ImportSong => self.ask_import(),

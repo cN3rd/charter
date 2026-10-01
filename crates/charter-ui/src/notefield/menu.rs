@@ -120,7 +120,7 @@ pub(super) fn menu_items(
     item(
         ui,
         actions,
-        ("Snap to the grid", "Q", chosen),
+        ("Snap to the grid", "G", chosen),
         Action::Quantize,
     );
     item(

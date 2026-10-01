@@ -150,7 +150,7 @@ mod tests {
     fn ctrl_arrows_move_the_selection_and_ctrl_d_and_ctrl_m_duplicate_and_mirror() {
         let mut harness = editable_four_taps();
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
-        harness.key_press(egui::Key::Q);
+        harness.key_press(egui::Key::G);
         harness.run();
         assert_eq!(note_count(&harness), 4);
         select_note(&mut harness, 3, 720);
