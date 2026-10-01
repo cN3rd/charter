@@ -1,6 +1,17 @@
 # Summary
 
-- [Chapter 1](./chapter_1.md)
+[Introduction](./introduction.md)
+
+- [User guide](./guide/index.md)
+  - [Getting started](./guide/getting-started.md)
+  - [Charting](./guide/charting.md)
+  - [Timing](./guide/timing.md)
+  - [Listening](./guide/listening.md)
+  - [Games, import and export](./guide/games.md)
+  - [Files and recovery](./guide/files.md)
+  - [Settings](./guide/settings.md)
+  - [Keyboard shortcuts](./guide/shortcuts.md)
+- [Project overview](./chapter_1.md)
 - [Research](./research/index.md)
   - [Editors](./research/editors/index.md)
     - [ArrowVortex](./research/editors/arrowvortex.md)

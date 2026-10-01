@@ -1,179 +1,128 @@
 ---
 type: Design Note
 title: User interface draft
-description: Low-fidelity layout of the editor window, with the reasoning behind each region.
+description: Layout of the editor window, the reasoning behind each region, and how what is built so far works inside.
 tags: [ui, layout, draft]
 status: draft
 ---
 
 # User interface draft
 
-**Draft.** A low-fidelity layout to iterate on. The [research topics](research/topics/index.md) it
-draws on are all still open. `cargo run -p charter-ui --example mock` shows it as a static egui
-mock, with a made-up song in each of StepMania, Tap Tap Revenge, osu!mania, Project Sekai and
-Arcaea. `cargo run -p charter-app` is the editor so far. It draws charts in the shared vocabulary's
-glyphs, since no ruleset plugin draws yet, and starts and edits songs of the built-in rulesets.
-The song panel has a Layers section below Charts: each chart's named, coloured layers can be
-shown, ghosted, hidden, soloed, locked, renamed, reordered, merged, deleted or copied to another
-chart. The active layer is shown in the status bar; hidden and ghosted layers make no note ticks.
-Alt+1–9 chooses a layer, Alt+Shift+1–9 moves selected notes there, Ctrl+Shift+N adds one,
-Ctrl+Shift+Up/Down chooses the adjacent row, Ctrl+E merges down and Ctrl+Shift+H shows or hides
-the active row. *View › Colour notes by layer* tints whole notes rather than marking their leading
-edge. Lane
-keys and Ctrl with the mouse place taps, holds and mines; the mouse selects and Delete removes the
-selection; `]` lengthens the selected notes, or those at the cursor when none is selected, to
-the snap's next line, making a tap a hold, and `[` shortens them back to a tap. Ctrl+X, Ctrl+C
-and Ctrl+V cut, copy and paste notes at the cursor, the copy going on the system clipboard as well
-so another charter window can paste it; Ctrl+D duplicates the selection just after itself;
-Ctrl+Left and Ctrl+Right move it a lane, Ctrl+Up and Ctrl+Down by the snap, and Ctrl+M mirrors it
-across the lanes, and G snaps it to the nearest snap lines, for notes placed by ear. A note dragged with Shift held changes lanes and keeps its time. A right click
-opens a menu of these edits, leaving the cursor where it is, with the game's own note changes
-under Change to, such as Tap Tap Revenge's arrows, slices and big taps, and Insert pattern here:
-1-1-1-1, 1-2-3-1-2-3 or 1-2-1-2 from the lane clicked, a beat or down to a 64th of one apart.
-What the menu pastes or places goes on the line clicked. Pastes and patterns leave out places a note already takes. Shift with
-the wheel moves by a measure, and dragging with the middle button pans the chart. Undo and redo
-return to where each edit was made. The song panel's Song section edits
-the song's title and artist in place, chooses its audio with the button beside the file's name,
-and sets its preview, where a song list starts playing it, as a time and a length in seconds;
-clearing the time takes the preview away. Its artwork is a PNG or JPEG named beside the song,
-typed or chosen with the button beside the field or File › Choose artwork…, and a preview of it
-shows under the field. Audio chosen for a song without artwork brings the cover its tags hold, as
-`cover.jpg` or `cover.png`, and an audio file chosen as the artwork gives its cover the same way,
-whatever artwork the song had. A chosen or embedded picture is written beside the song when it is
-saved, and a song saved to a new folder takes its artwork along. A picture not yet beside the
-song counts as an unsaved change, is kept in the autosave, and a save never writes it over a
-different picture of the same name that the song did not name; it stops and says so instead. Each change is one step, and the ruleset shows as it
-is. Settings the song's game reads as text follow as fields of their own, such as Tap Tap
-Revenge's theme, and the open chart's under the chart list. The song panel's Timing section is laid out as osu!'s timing panel is.
-The song's offset comes first: where beat 0 falls in the audio, in milliseconds, stepped by 1 ms
-with its buttons or Alt+Left and Alt+Right, 10 ms with Shift. Under it the starting BPM, the first
-timing point's tempo, can be set from anywhere in the song, beside a button that opens the timing
-window. Below them every timing point is listed by its moment in the audio, such as `0:26.100`,
-a tick's tempo, meter, stops and game events together as one point, with the point in effect at
-the cursor highlighted; clicking a point moves the cursor to it. Under the list are that point's
-time, BPM and meter. A time typed for a tempo point moves it to that moment of the audio, and for
-the first point moves the whole grid, as the offset does; a meter or stop point shows its time,
-which follows its beat. The BPM, with − and + buttons, and the meter, such as 3/4 or 7/8, each show
-what is in effect there and set it on the point, and a button removes the point, except the one
-that starts the tempo. "Add a timing point here" starts one at the cursor at the tempo it has
-there, and says why it cannot when the cursor is on
-one already. Point rows keep their values on one line; hovering shows the full row when a long
-game event is cut short. F7 and F8 still nudge the tempo in effect at the cursor. Every timing
-point stays at its moment of the audio: a BPM set on one changes how many beats fit before the next
-point, and
-the next point with everything after it, notes, events and markers, moves along the grid to keep
-its moment, as EOF's anchors and osu!'s red lines do. What the BPM times, up to the next point or
-to the end, stays where it sounds too while the grid changes under it, unless the Editing page's
-"Keep notes where they sound" is off, which keeps it on its beats. The tempo shown is the shortest decimal that
-puts the next point on the same tick, which is the one typed. A value typed
-into a field applies on Enter or when the field is left; Escape leaves it as it was. Below it the song's markers are
-listed; clicking one jumps the cursor there, a name typed and entered names the section at the
-cursor or starts one, and any marker can be removed, each as one step. Songs open and save through
-native file dialogs, unsaved changes are asked about before they are lost and autosaved, half a
-minute after they are made unless the settings say otherwise, and a settings window holds what the
-user chooses, including which way the notefield runs and the tick on each note and the metronome on
-each beat, which play over the audio and which F3 and F4 turn on and off. A note ticks with a
-click, a beep, or one of four synthesised hit sounds, a hit, a clap, a soft clap and a finish,
-public domain like the metronome's. Tuned lanes, off until Shift+F4, the piano-keys button beside
-the note ticks or the Sounds page turns them on, gives each lane's tick a pitch of its own, lowest
-on the left: a whole tone a lane either side of the chart's middle, closer on charts wider than
-seven lanes so every chart spans an octave at most, by playing the tick faster or slower as a
-tuned drum sounds. Turning it on or off while the ticks play is heard at once. The music, the note ticks and
-the metronome each have a volume, set on the Sounds page or from the toolbar's speaker; each
-turns down only its own sound. With no clicks on, the music's volume changes as it plays; clicks
-are mixed into the audio before it plays, so with them on, a volume changed while playing plays
-on from where it was once the slider is let go. The metronome accents the
-first beat of each measure and has nine sounds to pick from, each with a preview. They are
-synthesised click pairs dedicated to the public domain, bundled under
-`crates/charter-audio/assets/clicks` with their CC0 licence and a provenance note on how they
-were made. A new song takes its game,
-the layout every chart shares, its title, artist and chart names from a dialog; for a game with
-standard levels, such as Tap Tap Revenge, the dialog instead checks any of the levels, each named
-as its game names it, with the plugin's presets to start from. It asks for audio
-until an audio file is dropped on the window or chosen from the banner that asks for it or from
-File > Choose audio…. Under Wayland nothing can be dropped, since winit takes no drops there yet
-([winit#1881](https://github.com/rust-windowing/winit/issues/1881)), so the window offers only
-choosing and says why; saving
-copies that file beside the song. Saving a song somewhere new makes it a project: the name chosen
-becomes a folder holding the song's JSON file under the same name and a copy of its audio, where
-anything worked out from the audio goes. Audio in a relative subfolder keeps that subfolder;
-different audio already at the destination, or a failed copy, refuses the save without changing
-the open song or its JSON. The waveform's peaks are the first such file,
-`cache/<audio>.peaks`, keeping any relative audio subfolder: the finest of the min and max levels
-every view reads, so the notefield,
-the timing window and any view to come draw from the same data at any zoom. The file names the
-audio by a fingerprint of its bytes, so a replaced audio file gets its peaks worked out afresh,
-and a damaged or outdated file is ignored; deleting the folder only costs the time to work them
-out again. With the peaks kept, the waveform shows as soon as a song opens, before its audio has
-decoded. Nothing is written for audio outside the project folder. Choosing the song's own file in its folder
-saves over it, and a folder that already holds a song under that name is left alone. Space plays the song's audio from the cursor and pauses it, the
-cursor follows the playback, and moving the cursor while playing seeks. Q plays 200 ms before
-the cursor and W 200 ms after it, then pause with the cursor where it was, to hear one moment
-again and again; the Sounds page sets the length, from 50 ms to a second. A lane key pressed while
-playing places its note on the snap line nearest the audio and leaves the playback where it is;
-held past 200 ms, the tap grows into a hold with the playback, ending on the snap line nearest
-where the key comes up, all one step. Shift+Left and Shift+Right,
-or the Playback menu, play slower or faster from 10% to 400%, leaving the chart alone. From 10% to
-200% the audio keeps its pitch, stretched as it plays by timestretch's wide-range keylock, a phase
-vocoder; a new speed plays on from the cursor. One stretcher reaches down to 50%, so slower speeds
-pass the audio through several in turn, and since stretching moves the audio by a few milliseconds
-that depend on the speed, a click is played through when playback starts to measure by how much,
-and the audio is fed that much sooner or later so it stays on the cursor. Outside that range, or
-with Keep pitch at other speeds off on the Sounds page, its pitch follows its speed. Either way the
-metronome and note ticks are mixed in after, each at its time scaled to the speed but at its own
-speed and pitch, so a tick at 25% sounds as crisp as at 100%. The status bar says whether the audio is ready, loading,
-missing or unreadable; if playback is tried after a load failure, a message points to choosing
-another audio file. Every message has a Dismiss button. The Edit, Timing and Playback menus
-carry the selection, tempo, marker and playback commands with their keys, F1 lists every key by
-group with a filter, and saving, opening, settings and help keep working while a text field has the
-keyboard. With no song open the centre offers Open song…, New song and the demo. The look follows
-pro audio and creative tools: a transport toolbar under the menus with a large position readout and
-grouped tempo, snap, speed and zoom controls, collapsible sections in the side panels, the notefield
-in a dark well, one blue accent for selection and primary actions, Inter for text and Phosphor for
-icons, bundled under `crates/charter-style/assets/fonts` with Inter's OFL licence, and the system's
-Japanese, Chinese and Korean fonts after them, whatever the locale, so titles in any of those
-scripts draw; the app finds them with the `system-fonts` crate and reads each file once; messages float over
-the canvas rather than moving it. The settings window has a sidebar of pages, Editing, Display,
-Sounds and Autosave, each setting with a line on what it does and on and off choices as switches;
-long pages scroll inside the window so their controls remain reachable on shorter screens;
-a button beside the close button restores every default but the latency calibration, and only the settings changed from
-their defaults are kept between runs, so one left alone follows its default when a later version
-changes it, and one a later version cannot read falls back to its default alone;
-the transport drops secondary tempo, snap, speed, grid and zoom controls as the window narrows,
-leaving playback, position, sound and settings reachable; the menus, keys and settings pages
-still offer the hidden controls. In a narrow window, Settings puts its page choice above the
-controls rather than beside them, so the controls remain within the window. The shortcut sheet
-stacks each key above its explanation when there is not room for two columns.
-While settings, shortcuts or import timing is open, lane keys do not edit the song behind it.
-The new-song dialog picks the game from a segmented control, sketches the layout's lanes, and takes
-the song's audio dropped on it or chosen. Its form scrolls as charts are added, keeping Create and
-Cancel in reach on a short screen; on a narrow screen its fields and actions stay within the
-window. Until audio is chosen, the song panel shows "None yet"
-rather than a filename. An audio file's tags fill in a title and artist still at
-their defaults, in the dialog or on a new song; where the user has written their own, charter asks
-whether to import them. The song panel folds away with Ctrl+\\, and the tempo section sets the
-offset, where tick 0 sits in the audio, for songs that open with silence. Once the audio has loaded,
-its waveform draws in a strip between the timing column and the lanes, lined up with the notes.
-A minimap beside the notefield shows the whole chart, its notes by lane and its sections as
-green lines, from the start to the end of the audio or the last note, with a box over the stretch
-the notefield shows; a click or a drag moves the cursor to the snap line nearest that point, and
-the Minimap switch on the Display page hides it. With Frequencies on in the Display settings, the strip shows the audio's spectrum instead: 48
-bands from 30 Hz on its left to 16 kHz on its right, brighter the louder, so a kick and a hi-hat
-that sound together show apart. It is drawn from images of the spectrum, a band a column and 5 ms a
-row, which the GPU stretches over the strip and smooths between; zoomed out, each row holds the
-loudest of the frames it covers, so a short sound still shows. The
-toolbar's Grid choice, also on the Display page, draws lines between the beats down to an 8th,
-12th, 16th, 24th, 32nd or 48th note: sixteen places to a measure of 4/4 on the 16th grid, each
-beat's line brighter. Where the snap has lines the grid leaves out, the notefield draws the snap's
-lines instead, so the cursor always lands on a drawn line. The metronome keeps to the beats. In
-the notefield, the timing events at one tick form a single timing point, as osu! has them: one
-line, its values stacked beneath it (`150 BPM`, then `3/4`), and one handle. A tempo point drags
-along the timing column to the moment it is dropped on, keeping its beat, and the first one takes
-the whole grid along as the offset does; a point of meters or stops alone, and a marker along the
-ruler, drag to another snap line. Each is one step, with a guide where it will land, labelled with
-the time or the beat. The cursor's handle on the ruler drags to scrub, and seeks while playing.
-The song panel keeps its marker rows compact when markers are added, leaving room for every lane
-of an eight-lane chart at 800 pixels wide; a long marker name shows in full when hovered.
+**Draft.** A low-fidelity layout to iterate on, and a record of what is built. The
+[research topics](research/topics/index.md) it draws on are still open. The
+[user guide](guide/index.md) describes how to use the editor; this chapter covers why it is laid
+out as it is and how its parts work.
+
+`cargo run -p charter-app` is the editor. `cargo run -p charter-ui --example mock` is a static mock
+of the layout below, with a made-up song in each of StepMania, Tap Tap Revenge, osu!mania, Project
+Sekai and Arcaea. No ruleset plugin draws yet, so charts draw in the shared vocabulary's glyphs.
+
+## Built so far
+
+### Editing
+
+- Entry, selection, the clipboard, patterns and the game's note changes work as the guide's
+  [Charting](guide/charting.md) chapter describes. The right-click menu leaves the cursor where it
+  is, and what it pastes or places goes on the line clicked.
+- Each change is one undo step: a lane key press, a hold drawn from the note it grew out of, a move
+  or deletion of a selection, a chord recorded while playing, a song panel field.
+- Every typed value applies on Enter or when its field is left, and Escape restores it.
+- Saving, opening, settings and help keep their keys while a text field has the keyboard.
+- The [Layers](layers.md) chapter covers the song panel's Layers section and its keys.
+
+### Song panel
+
+- The Song section edits the facts in place. A plugin's text settings, such as Tap Tap Revenge's
+  `theme`, follow as fields of their own, the song's there and the open chart's under the chart
+  list. The ruleset shows as it is.
+- An audio file's tags fill in a title and artist still at their defaults, in the new-song dialog
+  or on a new song; where the user has written their own, charter asks before importing them.
+  Until audio is chosen the panel shows "None yet" rather than a file name.
+- The Timing section is laid out as osu!'s timing panel is. Point rows keep their values on one
+  line, and hovering shows a long game event in full. The tempo shown is the shortest decimal that
+  puts the next point on the same tick, which is the one typed.
+- Marker rows stay compact, leaving room for every lane of an eight-lane chart at 800 pixels wide;
+  hovering shows a long name in full.
+
+### Timing points
+
+The timing events at one tick form one timing point, as osu! has them: one line in the notefield,
+its values stacked beneath it (`150 BPM`, then `3/4`), and one handle. Every tempo point stays at
+its moment of the audio: a BPM set on one changes how many beats fit before the next point, and the
+next point moves along the grid with everything after it, as EOF's anchors and osu!'s red lines do.
+A drag shows a guide where the point will land, labelled with the time or the beat. F7 and F8 nudge
+the tempo at the cursor.
+
+### Sound
+
+- Playback runs from 10% to 400%. From 10% to 200% the audio keeps its pitch, stretched as it plays
+  by timestretch's wide-range keylock, a phase vocoder. One stretcher reaches down to 50%, so slower
+  speeds pass the audio through several in turn. Stretching moves the audio by a few milliseconds
+  that depend on the speed, so a click is played through when playback starts to measure by how
+  much, and the audio is fed that much sooner or later to stay on the cursor.
+- The metronome and note ticks are mixed in after stretching, each at its time scaled to the speed
+  but at its own speed and pitch. Mixing them in before playback means they cannot drift from the
+  music, at the cost of a volume change while playing restarting from where it was once its slider
+  is let go. With no clicks on, the music's volume changes live.
+- Tuned lanes pitch each lane a whole tone apart either side of the chart's middle, closer on charts
+  wider than seven lanes so every chart spans an octave at most, by playing the tick faster or
+  slower as a tuned drum sounds.
+- The nine metronome kits and the four hit sounds are synthesised and dedicated to the public
+  domain, bundled under `crates/charter-audio/assets/clicks` and `assets/hitsounds` with their CC0
+  licence and a note on how they were made.
+
+### Audio strip
+
+- The waveform draws from a peaks file, `cache/<audio>.peaks` in the song's folder, keeping any
+  relative audio subfolder: the finest min and max levels every view reads, so the notefield, the
+  timing window and any view to come draw from the same data at any zoom. The file names the audio
+  by a fingerprint of its bytes, so replaced audio gets new peaks, and a damaged or outdated file is
+  ignored. With the peaks kept, the waveform shows before the audio has decoded. Nothing is written
+  for audio outside the song's folder.
+- Frequencies shows 48 bands from 30 Hz on the left to 16 kHz on the right. It draws from images of
+  the spectrum, a band a column and 5 ms a row, which the GPU stretches over the strip and smooths
+  between; zoomed out, each row holds the loudest of the frames it covers, so a short sound still
+  shows.
+- The grid draws lines between beats down to the chosen note value, each beat's brighter. Where the
+  snap has lines the grid leaves out, the notefield draws the snap's instead, so the cursor always
+  lands on a drawn line.
+
+### Files
+
+- A song saved somewhere new becomes a folder holding its JSON file under the same name, a copy of
+  its audio, and anything worked out from the audio. Audio in a relative subfolder keeps it.
+  Different audio already at the destination, or a failed copy, refuses the save without changing
+  the open song or its JSON.
+- Saves write beside the song and move over it, without forcing the write to disk, since some
+  filesystems refuse that; the autosave covers a crash.
+- Errors shown in the window name each cause behind them, `: ` apart. A panic prints color-eyre's
+  report on a terminal, with a backtrace when `RUST_BACKTRACE=1` is set, writes a crash file with a
+  backtrace, and shows a dialog when the window's own thread panicked. A panic on a worker thread,
+  such as the timing finder's, writes the file alone.
+- Under Wayland nothing can be dropped on the window, since winit takes no drops there yet
+  ([winit#1881](https://github.com/rust-windowing/winit/issues/1881)), so the window offers only its
+  choose buttons and says why.
+
+### Look
+
+- The look follows pro audio and creative tools: a transport toolbar under the menus with a large
+  position readout and grouped tempo, snap, speed and zoom controls, collapsible sections in the
+  side panels, the notefield in a dark well, and one blue accent for selection and primary actions.
+- Inter is the text font and Phosphor the icon font, bundled under
+  `crates/charter-style/assets/fonts` with Inter's OFL licence. The system's Japanese, Chinese and
+  Korean fonts follow them whatever the locale, found with the `system-fonts` crate and read once,
+  so titles in those scripts draw.
+- Messages float over the canvas rather than moving it.
+- As the window narrows, the transport drops its secondary tempo, snap, speed, grid and zoom
+  controls, keeping playback, position, sound and settings; the menus, keys and settings still
+  offer the rest. The settings window puts its page choice above its controls, the shortcut sheet
+  stacks each key above its explanation, and the new-song and import forms scroll so their actions
+  stay in reach.
+- The settings window has a sidebar of pages, each setting with a line on what it does and on and
+  off choices as switches. Only settings changed from their defaults are kept, so one left alone
+  follows its default when a later version changes it, and one a later version cannot read falls
+  back to its default alone.
+- While settings, shortcuts or import timing is open, lane keys do not edit the song behind it.
 
 ## Main window
 
@@ -337,63 +286,102 @@ and the notes over a waveform that stays put.
   Shift-dragging does it by changing the BPM leading up to that line. The modifiers are Tempora's,
   and the effect is ArrowVortex's visual sync, which moves a row to a target time through the
   offset or a BPM. Fine and coarse nudges take Tempora's 2 ms and 10 ms.
-- The timing window (Timing > Timing window, Ctrl+T), in its own crate, `charter-timing`, follows
-  the Beatline specification for the parts in scope. Each row holds half a bar to four bars laid
-  out by bar position, a tenth of the bar before shown ahead of each downbeat, so a correct map
-  lines beats up down the rows; downbeats draw thick, beats solid, the lines between dashed, or
-  dotted for triplets, with beats numbered. The grid is 1/1 to 1/32 of a whole note, keys 1 to 0,
-  and restarts on every downbeat. Every BPM change is an anchor pinning a beat to a moment of the
-  audio, as in [sync anchors](research/topics/sync-anchors.md); edits rebuild the tempo from
-  the anchors, so the others keep their moments. The window measures the map against the onsets
-  the host finds in the audio: ticks along each row's foot, a strip under it coloured by how
-  early or late each onset near a line falls, a badge on bars more than 5 ms off, and an issue
-  list (bars off, segments shorter than a beat, tempo jumps over 3%, anchors more than 2 ms from
-  their onset, metre changes without an anchor) that N and Shift+N step through.
-  A click adds an anchor, its moment snapped to the strongest onset within 25 ms and its beat to
-  the grid, refused within half a grid step of another, and auditioned from a beat before. A drag
-  on an anchor moves its beat, Ctrl-drag its moment, Shift finer and unsnapped; a drag elsewhere
-  selects the anchors inside. An anchor never passes its neighbours: a drag stops short and the
-  neighbour pulses, a refused edit says why in the status line. Arrows nudge 1 ms (Shift 0.1 ms,
-  Ctrl 10 ms) and move a grid step, + and − set the tail tempo, Del removes, and a run of nudges
-  undoes as one step. The inspector shows the focused anchor's moment, bar position, tempo and
-  distance to its onset, each editable, and its segment's fit error and coverage; F fits the
-  focused anchor or the selection to the onsets by least squares, Shift+F to half BPMs, shown
-  before Enter applies it. D and Shift+D double and halve the tempo. The window takes the keyboard
-  after a click in it and gives it back after a click elsewhere; ? lists its keys in a scrolling
-  sheet, stacked when narrow so the rows and inspector stay in view.
-  The window opens on rows of audio time, each one to eight seconds and labelled by its start, so
-  the waveform never moves and an edit moves the grid lines and anchors over it, since every timing
-  point is a moment of the audio. V, or the toolbar's Layout, switches to rows of bars, which keep
-  the grid still and slide the audio under it, as Tempora and the Beatline specification do; both
-  draw the audio at the times the song's anchors give it. The toolbar's Start BPM sets the first
-  anchor's tempo from anywhere, and issues and refusals name the moment they are at.
-  To listen, L loops the bar under the cursor and Shift+L the selection, with the metronome; the
-  loop's ends follow the map, and a committed edit plays it again from its start so the fix is
-  heard at once. R switches to the alternate speed, 60% unless the Sounds page says otherwise,
-  and back. C turns the metronome on and off, and it stays muted while Shift+C is held; it can
-  follow the window's grid, with the clicks between beats at their own volume. Settings > Sounds
-  calibrates latency, as does Playback > Calibrate latency: a click plays 32 times at the song's
-  first tempo, folded into 60 to 180 BPM, in the metronome's sound, its measures accented. The
-  audio latency is set by ear, moving it until a flash lands on each click heard, and the cursor
-  then shows what is heard rather than what plays; the status line shows it. The input latency is
-  measured, the median of how late sixteen taps along come past the audio latency, and a lane key
-  pressed while playing places its note that much earlier than the cursor, holds ending likewise.
-  Settings kept by older versions, with the two latencies as one, keep it as the input latency. The
-  clicks are mixed into the music before it plays, so they cannot drift from it and need no
-  correction of their own, and muting or changing them while playing plays on from where it was.
-  Not yet built from the specification: scrub, pan split, count-in, the magnifier, locks, the metre dialog, the command palette, the
-  overview, beat-stack view, auto-seed, suggested anchors, tap tempo and band solo; selection
-  changes are not undo steps.
-  The waveform shows here whether or not the notefield's is on.
-- Timing > Reset timing… asks first, then puts 120 BPM in 4/4 from 0 ms in place of the open
-  chart's timing, as one step: every BPM change, meter, stop and game timing event goes, and the
-  notes keep their beats.
-- Timing > Find timing with Beat This!… and Find timing with Mapperatorinator… draft the open
-  chart's timing from its audio and put it in place as one step, as
-  [automatic timing](autotiming.md) describes; the first time each runs, it asks before
-  downloading its model, and the status bar shows its progress. Mapperatorinator needs a
-  graphics card; without one, it asks whether to run on the CPU, which is much slower.
-- Timing > Import timing… reads another program's timing, pasted or from a file, and shows what
+- The ruler numbers measures from the time-signature grid and labels markers. Measure 0 is the
+  one holding tick 0, and measures before it count down from -1. Sections and bookmarks draw as
+  lines across every column, since the core knows them without the ruleset.
+- The overview is the whole chart in the notefield's direction: density, sections, bookmarks,
+  warnings, the selection and a box around the visible range. Clicking or dragging seeks.
+  ArrowVortex's minimap does the same job.
+
+## The timing window
+
+Timing > Timing window, Ctrl+T, opens a window in its own crate, `charter-timing`, that follows the
+Beatline specification for the parts in scope. It hands its edits back as commands, so they go
+through the song model like any other.
+
+### Layout
+
+- It opens on rows of audio time, each one to eight seconds and labelled by its start, so the
+  waveform never moves and an edit moves the grid lines and anchors over it, since every timing
+  point is a moment of the audio. V, or the toolbar's Layout, switches to rows of bars, half a bar
+  to four bars each, a tenth of the bar before shown ahead of each downbeat. Those keep the grid
+  still and slide the audio under it, as Tempora and the Beatline specification do. Both draw the
+  audio at the times the song's anchors give it.
+- Downbeats draw thick, beats solid, the lines between dashed, or dotted for triplets, with beats
+  numbered. The grid is 1/1 to 1/32 of a whole note, keys 1 to 0, and restarts on every downbeat.
+- The waveform shows here whether or not the notefield's is on.
+
+### Anchors
+
+- Every BPM change is an anchor pinning a beat to a moment of the audio, as in
+  [sync anchors](research/topics/sync-anchors.md). Edits rebuild the tempo from the anchors, so
+  the others keep their moments.
+- A click adds an anchor, its moment snapped to the strongest onset within 25 ms and its beat to
+  the grid, refused within half a grid step of another, and auditioned from a beat before.
+- A drag on an anchor moves its beat, Ctrl-drag its moment, Shift finer and unsnapped; a drag
+  elsewhere selects the anchors inside. An anchor never passes its neighbours: a drag stops short
+  and the neighbour pulses.
+- Arrows nudge 1 ms (Shift 0.1 ms, Ctrl 10 ms) and move a grid step, + and - set the tail tempo,
+  Delete removes, and a run of nudges undoes as one step.
+- The toolbar's Start BPM sets the first anchor's tempo from anywhere.
+
+### Measuring
+
+- The window measures the map against the onsets the host finds in the audio: ticks along each
+  row's foot, a strip under it coloured by how early or late each onset near a line falls, and a
+  badge on bars more than 5 ms off.
+- The issue list holds bars off, segments shorter than a beat, tempo jumps over 3%, anchors more
+  than 2 ms from their onset, and metre changes without an anchor. N and Shift+N step through it.
+  Issues and refusals name the moment they are at, and a refused edit says why in the status line.
+- The inspector shows the focused anchor's moment, bar position, tempo and distance to its onset,
+  each editable, and its segment's fit error and coverage. F fits the focused anchor or the
+  selection to the onsets by least squares, Shift+F to half BPMs, shown before Enter applies it. D
+  and Shift+D double and halve the tempo.
+
+### Listening
+
+- L loops the bar under the cursor and Shift+L the selection, with the metronome. The loop's ends
+  follow the map, and a committed edit plays it again from its start so the fix is heard at once.
+- R switches to the alternate speed, 60% unless the Sounds page says otherwise, and back.
+- C turns the metronome on and off, and it stays muted while Shift+C is held. It can follow the
+  window's grid, with the clicks between beats at their own volume.
+
+### Keyboard
+
+The window takes the keyboard after a click in it and gives it back after a click elsewhere. ?
+lists its keys in a scrolling sheet, stacked when narrow so the rows and inspector stay in view.
+
+### Not built yet
+
+From the specification: scrub, pan split, count-in, the magnifier, locks, the metre dialog, the
+command palette, the overview, beat-stack view, auto-seed, suggested anchors, tap tempo and band
+solo. Selection changes are not undo steps.
+
+## Latency calibration
+
+Settings > Sounds calibrates latency, as does Playback > Calibrate latency. A click plays 32 times
+at the song's first tempo, folded into 60 to 180 BPM, in the metronome's sound, its measures
+accented.
+
+- The audio latency is set by ear, moving it until a flash lands on each click heard. The cursor
+  then shows what is heard rather than what plays, and the status line shows it.
+- The input latency is measured, the median of how late sixteen taps along come past the audio
+  latency. A lane key pressed while playing places its note that much earlier than the cursor,
+  holds ending likewise.
+- Settings kept by older versions, with the two latencies as one, keep it as the input latency.
+
+The clicks are mixed into the music before it plays, so they need no correction of their own.
+
+## Timing menu
+
+- Reset timing… asks first, then puts 120 BPM in 4/4 from 0 ms in place of the open chart's timing,
+  as one step: every BPM change, meter, stop and game timing event goes, and the notes keep their
+  beats.
+- Find timing with Beat This!… and Find timing with Mapperatorinator… draft the open chart's timing
+  from its audio and put it in place as one step, as [automatic timing](autotiming.md) describes.
+  The first time each runs it asks before downloading its model, and the status bar shows its
+  progress. Without a graphics card Mapperatorinator asks whether to run on the CPU.
+- Import timing… reads another program's timing, pasted or from a file, and shows what
   it holds before it replaces the open chart's tempo, meters and offset as one step. Each ruleset
   plugin may read a format through `RulesetPlugin::import_timing`; osu!mania reads osu!'s
   `[TimingPoints]`. A red line becomes a BPM change on the nearest tick, placed so rounding never
@@ -403,12 +391,6 @@ and the notes over a waveform that stays put.
   and are left out of any other game's, which the window says, as it does for volumes, hit sounds
   and kiai. On a small window, the import form scrolls so its Cancel and Replace actions can still
   be reached.
-- The ruler numbers measures from the time-signature grid and labels markers. Measure 0 is the
-  one holding tick 0, and measures before it count down from -1. Sections and bookmarks draw as
-  lines across every column, since the core knows them without the ruleset.
-- The overview is the whole chart in the notefield's direction: density, sections, bookmarks,
-  warnings, the selection and a box around the visible range. Clicking or dragging seeks.
-  ArrowVortex's minimap does the same job.
 
 ## Modes and dialogs
 
@@ -422,40 +404,16 @@ and the notes over a waveform that stays put.
   ([suggestion UI](research/topics/suggestion-ui.md)).
 - With no song open, the centre offers new, open and recent songs.
 - Closing the window, opening another song or the demo over unsaved changes first asks whether to
-  save them. Starting a new song does too; Cancel keeps its filled-in draft. The title stars a
-  song with unsaved changes.
-- Unsaved changes are autosaved to one recovery file in charter's own data folder, never beside the
-  song, half a minute after the first change since the last autosave; the settings window sets the
-  wait, from 5 seconds to 10 minutes, or turns autosave off, which stops new autosaves and leaves
-  one already kept for the next start. Saving the song, undoing back to it or throwing the changes
-  away removes the file. On the next start a recovery file left behind is offered for restoring: the
-  song comes back unsaved, for the file it belongs to. Saves write beside the song and move over it,
-  without forcing the write to disk, since some filesystems refuse that; the autosave is the cover
-  for a crash.
-- Charter's data folder, `~/.local/share/charter` on Linux and `%APPDATA%\charter\data` on
-  Windows, holds the recovery file, `recovery.json`, and the settings, in eframe's `app.ron`, only
-  those changed from their defaults; the Autosave page says where it is.
-- A crash writes `crash-<seconds since 1970>.txt` to the data folder, the panic's message, where it
-  happened and a backtrace, and says so in a dialog before the window closes. A panic on a worker
-  thread, such as the timing finder's, writes the file without the dialog. On a terminal the panic
-  is also printed as color-eyre's report, with the backtrace when `RUST_BACKTRACE=1` is set. Errors
-  shown in the window name each cause behind them, `: ` apart.
-- Snapshots are separate from the recovery file: every few minutes, 5 unless the Autosave page
-  says otherwise, a changed song is copied, dated in UTC as `Song 2026-09-29 05.40.12 UTC.json`, into
-  a snapshots folder, `snapshots/<song>` in the data folder or a folder chosen there, and into an
-  `autosaves` folder beside a saved song's file, each switched on its own and both off to start.
-  A song unchanged since its last copy is not copied again, and each folder keeps the newest 20
-  copies of a song unless the page says otherwise, removing only that song's dated copies.
-- File › Import song… opens a song in any format a plugin reads, such as a Tap Tap Revenge
-  `.ttr2_track` or an Editor on Fire MIDI file, as a new unsaved song whose audio is the file its
-  format names beside it; Export song… writes the open song in a format its plugin writes. When
-  several formats share the file's extension, as a Tap Tap Revenge track does for each game that
-  plays it, a dialog asks which game the file is for. A Tap Tap Revenge track is exported as the
-  game's folder, its chart named `taptrack.ttr2_track` in the folder chosen, with an `info.plist`,
-  the song's artwork copied in and its audio converted to AAC with ffmpeg when it is not AAC
-  already. Both say what the conversion left out.
-- File › Open recent lists the last ten songs opened or saved, the latest first, and clears them;
-  a song that no longer opens leaves the list, and Restore defaults keeps it. Settings… sits at the
+  save them. Starting a new song does too; Cancel keeps its filled-in draft.
+- The recovery file lives in charter's data folder, never beside the song, and is written half a
+  minute after the first change since the last autosave. Turning autosave off stops new autosaves
+  and leaves one already kept for the next start. Snapshots are separate from it, and remove only
+  their own song's dated copies. [Files and recovery](guide/files.md) describes both.
+- Import song… and Export song… go through the plugin's song formats, as
+  [Ruleset plugins](rulesets.md) describes. When several formats share the file's extension, a
+  dialog asks which game the file is for, and both say what the conversion left out.
+- File > Open recent lists the last ten songs opened or saved, the latest first, and clears them; a
+  song that no longer opens leaves the list, and Restore defaults keeps it. Settings… sits at the
   bottom of Edit, and the demo song in Help.
 
 ## Open for the next pass

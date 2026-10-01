@@ -1,23 +1,31 @@
 ---
 type: Concept
 title: Project overview
-description: Current shape of Charter, its crate boundaries, and the user-visible editor state.
+description: Current shape of Charter, its crate boundaries, and where each part of the editor lives.
 status: stable
 ---
 
 # Project overview
 
 Charter is a rhythm-game chart editor with a game-neutral core. The shared model lives in
-`charter-core`; game-specific note rules live in plugins for StepMania, TTR and osu!mania.
+`charter-core`; each game's notes and rules live in a ruleset plugin under `plugins/`, for
+StepMania, Tap Tap Revenge and osu!mania. A plugin also reads and writes its game's files, as Tap
+Tap Revenge does `.ttr2_track` and Editor on Fire MIDI.
 
 The editor state is split from drawing. `charter-editor` owns songs, cursor movement, selection,
-undo/redo, markers, layer edits and timing changes. `charter-ui` draws the egui window, panels and
-notefield, while `charter-app` supplies disk dialogs, settings storage and audio playback.
+undo and redo, markers, layer edits and timing changes. `charter-ui` draws the egui window, panels
+and notefield and asks its host for files and dialogs. `charter-app` is the host: it registers the
+plugins, does the file I/O, plays audio with kira, converts export audio with ffmpeg, and reports
+crashes.
 
-Audio decoding is handled by `charter-audio` through `symphonia-wrap`. Playback is in `charter-app`
-with kira, including rate changes that affect audio speed and pitch without changing the chart.
-Automatic timing is split between `charter-autotiming`, which turns beat/downbeat observations into
-a tempo map, and `charter-beatthis-burn`, which runs the Beat This! model on the CPU.
+Audio decoding is handled by `charter-audio` through `symphonia-wrap`. Playback rate changes the
+audio's speed and keeps or follows its pitch without changing the chart.
+
+Automatic timing has two trackers. `charter-beatthis-burn` runs the Beat This! model on the CPU,
+and `charter-autotiming` turns its beats and downbeats into a tempo map. `third-party/timingator`
+is a port of Mapperatorinator's super timing, which finds osu! timing points directly on the
+graphics card; `third-party/timingator-wrap` runs it without exposing burn's generics, so the
+rest of the workspace does not depend on burn.
 
 The timing window lives in `charter-timing`: rows and anchors map beats to the audio, and edits are
 returned as editor commands instead of bypassing the song model.

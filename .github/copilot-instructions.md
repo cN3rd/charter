@@ -26,6 +26,10 @@ lint, tests and the book, `just build-windows` cross-compiles for `x86_64-pc-win
 cargo-xwin, and `just dist` writes a Linux `.tar.gz` and a Windows `.zip` to `dist/`, each holding
 the stripped binary, `LICENSE-MIT` and `LICENSE-APACHE`, the bundled assets' licences and a list of the linked crates'.
 
+On Linux, `.cargo/config.toml` links with clang and mold and keeps debug info out of the binary
+(`split-debuginfo=unpacked`), and dependencies build with line tables only; install `clang` and
+`mold` from the package manager. A rebuild after touching `charter-app` takes about 2 seconds.
+
 ## Correctness
 
 Lints do the enforcing. The root `Cargo.toml` carries `[workspace.lints]` and first-party crates
@@ -96,7 +100,7 @@ expected `E1` for it. Do not silence that by adding frontmatter.
 | `crates/charter-style` | the shared look: colour tokens, Inter and Phosphor fonts, and the widgets drawn in them |
 | `crates/charter-timing` | the timing window in egui: the audio one measure a row, anchors pinning beats to the audio; hands its edits back as commands; `lib.rs` holds the state, `draw.rs`, `pointer.rs` and `keyboard.rs` its drawing and input |
 | `crates/charter-ui` | the editor window in egui: notefield, panels, keys, settings; hosts the timing window; asks its host for files and dialogs; the static mock as an example. `window/`, `panels/` and `notefield/` are split one file per concern, each `impl Window` block beside the state sub-struct it owns |
-| `crates/charter-app` | binary front end, thin: registers the built-in ruleset plugins, answers the window's file and dialog requests with `std::fs` and rfd, plays the song's audio through kira, keeps settings in eframe's storage; its file I/O goes through a `Disk` trait so it is tested in memory |
+| `crates/charter-app` | binary front end, thin: registers the built-in ruleset plugins, answers the window's file and dialog requests with `std::fs` and rfd, plays the song's audio through kira, converts exported audio with ffmpeg, keeps settings in eframe's storage, and reports error causes and crashes (`report.rs`, color-eyre); its file I/O goes through a `Disk` trait so it is tested in memory |
 | `plugins/stepmania`, `plugins/ttr`, `plugins/osu-mania` | ruleset plugins: typed game models over `charter-core`, each with a `Plugin` the editor checks songs and edits through; `ttr` reads and writes `.ttr2_track` (`track.rs`) and EOF MIDI (`midi.rs`) through one model (`exchange.rs`) |
 | `third-party/symphonia-wrap` | build-time facade over `symphonia`, read its README first |
 | `third-party/timingator-wrap` | build-time facade over `timingator`: a `Timer` on the graphics card or the CPU without burn's generics, so nothing past it depends on burn; read its README first |
@@ -143,5 +147,8 @@ after a crash, and a settings window keeps its choices between runs. `charter-ed
 state without drawing it, `charter-ui` draws it in egui and never touches a file, and `charter-app`
 registers the plugins, opens the window and does its file I/O. `charter-ui`'s `mock` example is the
 static mock of the book's UI draft. `charter-audio` decodes the song's audio and `charter-app` plays
-it through kira; Space plays from the cursor, and the playback rate changes the audio's speed and
-pitch, never the chart. Ask before inventing a crate boundary.
+it through kira; Space plays from the cursor, Q and W play a moment before and after it, and the
+playback rate changes the audio's speed and pitch, never the chart. Timing comes from the song
+panel, the timing window, osu! timing, or Beat This! and Mapperatorinator finding it in the audio.
+The book's user guide, `docs/src/guide/`, describes all of this for users; keep it in step with
+user-visible changes. Ask before inventing a crate boundary.
