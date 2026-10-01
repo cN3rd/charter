@@ -13,7 +13,8 @@ members = [
     "plugins/ttr",
     "plugins/osu-mania",
     "third-party/symphonia-wrap",
-    "third-party/timingator"
+    "third-party/timingator",
+    "third-party/timingator-wrap"
 ]
 resolver = "3"
 
@@ -40,6 +41,7 @@ serde_json = { version = "1.0", features = ["float_roundtrip"] }
 thiserror = "2"
 symphonia-wrap = { path = "third-party/symphonia-wrap" }
 timingator = { path = "third-party/timingator" }
+timingator-wrap = { path = "third-party/timingator-wrap" }
 rustfft = "6"
 # ponytail: CPU inference only; the flex backend runs everywhere charter does, and a GPU backend
 # is a feature away if the beat tracker proves too slow.
@@ -240,6 +242,9 @@ opt-level = 3
 opt-level = 3
 
 [profile.dev.package.timingator]
+opt-level = 3
+
+[profile.dev.package."timingator-wrap"]
 opt-level = 3
 
 # Mapperatorinator's timing model runs on the graphics card, but unoptimized, burn's fusion and

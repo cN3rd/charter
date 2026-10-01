@@ -120,22 +120,17 @@ impl Finder {
         }
         let (send, receive) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            use burn::backend::flex::{Flex, FlexDevice};
-            use burn::backend::wgpu::{Wgpu, WgpuDevice};
+            use timingator_wrap::Device;
 
             let tell = |share| drop(send.send(Progress::Finding(share)));
             let found = match tracker {
                 Tracker::BeatThis => timing_of(&file, &weights, ticks_per_beat, onsets),
                 Tracker::Mapperatorinator if on_cpu => {
-                    mapperatorinator::<Flex>(&file, &weights, ticks_per_beat, &FlexDevice, tell)
+                    mapperatorinator(&file, &weights, ticks_per_beat, Device::Cpu, tell)
                 }
-                Tracker::Mapperatorinator if gpu() => mapperatorinator::<Wgpu>(
-                    &file,
-                    &weights,
-                    ticks_per_beat,
-                    &WgpuDevice::DefaultDevice,
-                    tell,
-                ),
+                Tracker::Mapperatorinator if gpu() => {
+                    mapperatorinator(&file, &weights, ticks_per_beat, Device::Gpu, tell)
+                }
                 Tracker::Mapperatorinator => {
                     drop(send.send(Progress::NoGpu(file, ticks_per_beat)));
                     return;
@@ -237,33 +232,23 @@ fn timing_of(
         .ok_or_else(|| "the audio has too few beats to fit a tempo to".to_owned())
 }
 
-/// Whether burn finds a graphics card to run on, rather than none or a software renderer that
-/// would be slower than the CPU backend. Asked once, since asking sets the device up.
+/// Whether there is a graphics card to run Mapperatorinator's model on. Asked once, since asking
+/// sets the device up, and quietly, since asking panics when there is none.
 fn gpu() -> bool {
-    use burn::backend::wgpu::graphics::AutoGraphicsApi;
-    use burn::backend::wgpu::{RuntimeOptions, WgpuDevice, init_setup};
-
     static GPU: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *GPU.get_or_init(|| {
-        // ponytail: cubecl panics when wgpu has no adapter, and names the adapter's type only in
-        // wgpu's own enum; its Debug name saves depending on that wgpu for one comparison.
-        crate::report::quietly(|| {
-            init_setup::<AutoGraphicsApi>(&WgpuDevice::DefaultDevice, RuntimeOptions::default())
-        })
-        .is_ok_and(|setup| format!("{:?}", setup.adapter.get_info().device_type) != "Cpu")
-    })
+    *GPU.get_or_init(|| crate::report::quietly(timingator_wrap::graphics_card).unwrap_or(false))
 }
 
 /// The timing of the audio in `file` as Mapperatorinator's timing model, with the weights at
 /// `weights`, finds it on `device`, telling `progress` the share of the way it has got.
-fn mapperatorinator<B: burn::prelude::Backend>(
+fn mapperatorinator(
     file: &Path,
     weights: &Path,
     ticks_per_beat: TicksPerBeat,
-    device: &B::Device,
+    device: timingator_wrap::Device,
     mut progress: impl FnMut(f32),
 ) -> Result<Timing, String> {
-    use timingator::audio::SAMPLE_RATE;
+    use timingator_wrap::SAMPLE_RATE;
 
     let bytes =
         std::fs::read(file).map_err(|why| format!("{}: {}", file.display(), chain(&why)))?;
@@ -283,27 +268,15 @@ fn mapperatorinator<B: burn::prelude::Backend>(
     }
     let model =
         std::fs::read(weights).map_err(|why| format!("{}: {}", weights.display(), chain(&why)))?;
-    let unreadable = |why: &dyn std::fmt::Display| format!("{}: {why:#}", weights.display());
-    let tokenizer = timingator::gguf::Gguf::parse(&model)
-        .map_err(|why| unreadable(&why))?
-        .metadata
-        .get("timingator.tokenizer")
-        .and_then(|value| value.as_str().map(str::to_owned))
-        .ok_or_else(|| unreadable(&"no timingator.tokenizer"))?;
-    let tokenizer =
-        timingator::tokenizer::Tokenizer::from_json(&tokenizer).map_err(|why| unreadable(&why))?;
-    let model =
-        timingator::model::Model::<B>::load(&model, device).map_err(|why| unreadable(&why))?;
+    let timer = timingator_wrap::Timer::load(&model, device)
+        .map_err(|why| format!("{}: {why:#}", weights.display()))?;
     let count = |windows: usize| u64::try_from(windows).unwrap_or(u64::MAX);
-    let found = timingator::run(
-        &model,
-        &tokenizer,
-        &samples,
-        &timingator::Options::default(),
-        |done, all| progress(download_share(count(done), count(all))),
-    )
-    .map_err(|why| format!("{why:#}"))?;
-    let sections = sections(&found.timing_points)?;
+    let points = timer
+        .run(&samples, |done, all| {
+            progress(download_share(count(done), count(all)));
+        })
+        .map_err(|why| format!("{why:#}"))?;
+    let sections = sections(&points)?;
     charter_core::sectioned(&sections, ticks_per_beat)
         .map(|made| made.timing)
         .map_err(|why| match why {
@@ -315,7 +288,7 @@ fn mapperatorinator<B: burn::prelude::Backend>(
 }
 
 /// Mapperatorinator's osu! timing points as the sections of a tempo map.
-fn sections(points: &[timingator::timing::TimingPoint]) -> Result<Vec<Section>, String> {
+fn sections(points: &[timingator_wrap::TimingPoint]) -> Result<Vec<Section>, String> {
     points
         .iter()
         .map(|point| {
@@ -680,7 +653,7 @@ mod tests {
 
     #[test]
     fn the_models_timing_points_become_sections_and_a_bar_of_no_beats_is_refused() {
-        use timingator::timing::TimingPoint;
+        use timingator_wrap::TimingPoint;
         let point = |offset_us, ms_per_beat, meter| TimingPoint {
             offset_us,
             ms_per_beat,

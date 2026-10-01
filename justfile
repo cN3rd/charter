@@ -46,7 +46,7 @@ fmt-check:
 # ponytail: burn pulls in backtrace, which fails to compile under Kani's nightly (an ambiguous
 # `unreachable!`), so the crates linking burn are left out. Drop the exclusions once it builds.
 kani:
-    cargo kani --workspace --exclude charter-beatthis-burn --exclude charter-app --exclude timingator
+    cargo kani --workspace --exclude charter-beatthis-burn --exclude charter-app --exclude timingator --exclude timingator-wrap
 
 # Build the book into docs/book
 docs:

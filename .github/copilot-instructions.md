@@ -99,6 +99,7 @@ expected `E1` for it. Do not silence that by adding frontmatter.
 | `crates/charter-app` | binary front end, thin: registers the built-in ruleset plugins, answers the window's file and dialog requests with `std::fs` and rfd, plays the song's audio through kira, keeps settings in eframe's storage; its file I/O goes through a `Disk` trait so it is tested in memory |
 | `plugins/stepmania`, `plugins/ttr`, `plugins/osu-mania` | ruleset plugins: typed game models over `charter-core`, each with a `Plugin` the editor checks songs and edits through; `ttr` reads and writes `.ttr2_track` (`track.rs`) and EOF MIDI (`midi.rs`) through one model (`exchange.rs`) |
 | `third-party/symphonia-wrap` | build-time facade over `symphonia`, read its README first |
+| `third-party/timingator-wrap` | build-time facade over `timingator`: a `Timer` on the graphics card or the CPU without burn's generics, so nothing past it depends on burn; read its README first |
 | `third-party/timingator` | DSP: vendored port of Mapperatorinator's super timing, the alternative to Beat This! in Timing › Find timing; osu! timing points from audio by the V32 model in burn on wgpu; weights on Hugging Face, read its README first |
 
 All are workspace members listed in the root `Cargo.toml`. The ruleset plugin conventions are in

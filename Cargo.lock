@@ -1480,7 +1480,6 @@ dependencies = [
 name = "charter-app"
 version = "0.0.0"
 dependencies = [
- "burn",
  "charter-audio",
  "charter-autotiming",
  "charter-beatthis-burn",
@@ -1497,7 +1496,7 @@ dependencies = [
  "serde",
  "system-fonts",
  "timestretch",
- "timingator",
+ "timingator-wrap",
  "ureq 3.4.2",
 ]
 
@@ -7767,6 +7766,15 @@ dependencies = [
  "safetensors 0.7.0",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "timingator-wrap"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "burn",
+ "timingator",
 ]
 
 [[package]]
