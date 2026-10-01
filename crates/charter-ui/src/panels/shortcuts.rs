@@ -163,8 +163,8 @@ const KEYS: [(&str, &[(&str, &str)]); 7] = [
         "Playback",
         &[
             ("Space", "Play from the cursor, or pause"),
-            ("Q", "Play the half second before the cursor"),
-            ("W", "Play the half second after the cursor"),
+            ("Q", "Play a moment before the cursor"),
+            ("W", "Play a moment after the cursor"),
             ("Shift+Left, Shift+Right", "Play slower or faster by 10%"),
             (
                 "Ctrl+Shift+Left, Ctrl+Shift+Right",

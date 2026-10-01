@@ -165,6 +165,8 @@ pub struct Settings {
     pub metronome_grid: bool,
     /// The alternate playback speed, as a factor, that R switches to in the timing window.
     pub rate_b: f64,
+    /// How much audio Q and W play before and after the cursor, in milliseconds.
+    pub snippet_ms: u32,
     /// Whether audio played slower or faster than its speed keeps its pitch, from a tenth to
     /// twice its speed.
     pub keep_pitch: bool,
@@ -209,6 +211,7 @@ impl Default for Settings {
             grid: BEATS,
             metronome_grid: false,
             rate_b: 0.6,
+            snippet_ms: 200,
             keep_pitch: true,
             audio_latency_ms: LatencyMs(0.0),
             input_latency_ms: LatencyMs(0.0),
@@ -284,6 +287,8 @@ const SNAPSHOTS_KEPT: (u32, u32) = (1, 500);
 
 /// The shortest and longest autosave waits, in seconds.
 const AUTOSAVE_SECONDS: (u32, u32) = (5, 600);
+/// The fewest and most milliseconds Q and W play.
+const SNIPPET_MS: (u32, u32) = (50, 1000);
 
 /// The interface sizes on offer, as factors.
 /// Interface size factors offered in display settings.
@@ -368,6 +373,11 @@ impl Settings {
                     .clamp(AUTOSAVE_SECONDS.0, AUTOSAVE_SECONDS.1),
             )
         })
+    }
+
+    /// How much audio Q and W play, in seconds, kept to a range.
+    pub(crate) fn snippet_seconds(&self) -> f64 {
+        f64::from(self.snippet_ms.clamp(SNIPPET_MS.0, SNIPPET_MS.1)) / 1000.0
     }
 
     /// The interface size, kept to what the window can draw.
@@ -783,6 +793,7 @@ fn sounds(ui: &mut egui::Ui, settings: &mut Settings) -> Option<Asked> {
     metronome_sound(ui, settings, &mut asked);
     latency(ui, settings, &mut asked);
     playback_speed(ui, settings);
+    snippet_length(ui, settings);
     volume_rows(ui, settings);
     asked
 }
@@ -870,6 +881,17 @@ fn playback_speed(ui: &mut egui::Ui, settings: &mut Settings) {
         if ui.add(slider).labelled_by(caption).changed() {
             settings.rate_b = percent / 100.0;
         }
+    });
+}
+
+/// The sounds page's row for how much Q and W play.
+fn snippet_length(ui: &mut egui::Ui, settings: &mut Settings) {
+    let about = "How much Q and W play before and after the cursor.";
+    row(ui, "Snippet length", about, |ui, caption| {
+        let slider = egui::Slider::new(&mut settings.snippet_ms, SNIPPET_MS.0..=SNIPPET_MS.1)
+            .suffix(" ms")
+            .step_by(10.0);
+        ui.add(slider).labelled_by(caption);
     });
 }
 
@@ -1234,6 +1256,7 @@ mod tests {
             grid: NonZeroU16::new(24).unwrap(),
             metronome_grid: true,
             rate_b: 0.5,
+            snippet_ms: 120,
             keep_pitch: false,
             audio_latency_ms: LatencyMs(12.0),
             input_latency_ms: LatencyMs(20.0),
@@ -1571,6 +1594,20 @@ mod tests {
     }
 
     #[test]
+    fn the_snippet_length_is_kept_between_a_twentieth_and_a_second() {
+        let length = |snippet_ms| {
+            Settings {
+                snippet_ms,
+                ..Settings::default()
+            }
+            .snippet_seconds()
+        };
+        assert!((length(200) - 0.2).abs() < f64::EPSILON);
+        assert!((length(0) - 0.05).abs() < f64::EPSILON);
+        assert!((length(u32::MAX) - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
     fn zoom_speed_and_each_volume_slider_change_their_own_setting() {
         let mut harness = settings_window();
         harness.get_by_label("Default zoom").click();
@@ -1583,6 +1620,11 @@ mod tests {
         harness.get_by_label("Alternate speed").click();
         harness.run();
         assert!((harness.state().0.rate_b - 0.6).abs() > 0.01);
+        harness.get_by_label("Snippet length").scroll_to_me();
+        harness.run();
+        harness.get_by_label("Snippet length").click();
+        harness.run();
+        assert_ne!(harness.state().0.snippet_ms, 200);
         harness.state_mut().0.volumes.subdivision = Gain::from(0.0);
         harness.run();
         for label in [

@@ -107,9 +107,9 @@ and a damaged or outdated file is ignored; deleting the folder only costs the ti
 out again. With the peaks kept, the waveform shows as soon as a song opens, before its audio has
 decoded. Nothing is written for audio outside the project folder. Choosing the song's own file in its folder
 saves over it, and a folder that already holds a song under that name is left alone. Space plays the song's audio from the cursor and pauses it, the
-cursor follows the playback, and moving the cursor while playing seeks. Q plays the half second
-before the cursor and W the half second after it, then pause with the cursor where it was, to
-hear one moment again and again. A lane key pressed while
+cursor follows the playback, and moving the cursor while playing seeks. Q plays 200 ms before
+the cursor and W 200 ms after it, then pause with the cursor where it was, to hear one moment
+again and again; the Sounds page sets the length, from 50 ms to a second. A lane key pressed while
 playing places its note on the snap line nearest the audio and leaves the playback where it is;
 held past 200 ms, the tap grows into a hold with the playback, ending on the snap line nearest
 where the key comes up, all one step. Shift+Left and Shift+Right,

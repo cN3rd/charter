@@ -609,7 +609,7 @@ pub(crate) enum Action {
     Timing(charter_timing::Edit),
     /// Play from this many seconds into the audio with the metronome on, to hear an edit.
     Audition(f64),
-    /// Play the half second of audio before the cursor, or after it, leaving the cursor be.
+    /// Play the settings' snippet of audio before the cursor, or after it, leaving the cursor be.
     PlaySnippet(Step),
     /// Ask whether to reset the open chart's timing.
     AskResetTiming,

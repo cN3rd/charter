@@ -5,9 +5,6 @@ use super::{
     Ui, Window, clicks, grow, latency,
 };
 
-/// How much audio Q and W play before or after the cursor, in seconds.
-const SNIPPET: f64 = 0.5;
-
 impl Window {
     /// Marks the song's audio decoded and ready to play.
     pub fn audio_ready(&mut self, file: &Path, seconds: f64) {
@@ -138,7 +135,7 @@ impl Window {
         self.playback.looping = None;
         self.start(from, None, true);
     }
-    /// Plays the [`SNIPPET`] of audio before the cursor, or after it, then pauses, leaving the
+    /// Plays the settings' snippet of audio before the cursor, or after it, then pauses, leaving the
     /// cursor where it is so the same moment can be heard again.
     pub(super) fn play_snippet(&mut self, side: Step) {
         let Some(song) = &self.song else {
@@ -152,9 +149,10 @@ impl Window {
             return;
         }
         let at = song.timing().time_at(song.cursor()).seconds();
+        let length = self.settings.snippet_seconds();
         let (from, until) = match side {
-            Step::Earlier => (at - SNIPPET, at),
-            Step::Later => (at, at + SNIPPET),
+            Step::Earlier => (at - length, at),
+            Step::Later => (at, at + length),
         };
         self.playback.looping = None;
         self.start(from, None, false);
@@ -555,7 +553,7 @@ mod tests {
         assert!((rate - 0.9).abs() < 1e-9, "{rate}");
     }
     #[test]
-    fn q_plays_the_half_second_before_the_cursor_and_stops_there_leaving_it_in_place() {
+    fn q_plays_the_snippet_before_the_cursor_and_stops_there_leaving_it_in_place() {
         let mut harness = playable();
         harness.key_press(egui::Key::PageDown);
         harness.run();
@@ -565,9 +563,9 @@ mod tests {
         let Request::Play { from, looping, .. } = request(&mut harness) else {
             panic!("expected play");
         };
-        assert!((from - 1.5).abs() < 1e-9, "{from}");
+        assert!((from - 1.8).abs() < 1e-9, "{from}");
         assert_eq!(looping, None);
-        harness.state_mut().playhead(1.75);
+        harness.state_mut().playhead(1.9);
         harness.run();
         assert_eq!(harness.state_mut().take_requests(), []);
         assert!(cursor_shows(&harness, "1:0:0"));
@@ -578,11 +576,11 @@ mod tests {
         harness.key_press(egui::Key::Q);
         harness.run();
         assert!(
-            matches!(request(&mut harness), Request::Play { from: again, .. } if (again - 1.5).abs() < 1e-9)
+            matches!(request(&mut harness), Request::Play { from: again, .. } if (again - 1.8).abs() < 1e-9)
         );
     }
     #[test]
-    fn w_plays_the_half_second_after_the_cursor_and_stops_at_its_end() {
+    fn w_plays_the_snippet_after_the_cursor_and_stops_at_its_end() {
         let mut harness = playable();
         harness.key_press(egui::Key::PageDown);
         harness.run();
@@ -593,17 +591,33 @@ mod tests {
             panic!("expected play");
         };
         assert!((from - 2.0).abs() < 1e-9, "{from}");
-        harness.state_mut().playhead(2.3);
+        harness.state_mut().playhead(2.1);
         harness.run();
         assert_eq!(harness.state_mut().take_requests(), []);
         assert!(cursor_shows(&harness, "1:0:0"));
-        harness.state_mut().playhead(2.5);
+        harness.state_mut().playhead(2.2);
         harness.run();
         assert_eq!(request(&mut harness), Request::Pause);
         space(&mut harness);
         assert!(
             matches!(request(&mut harness), Request::Play { from: again, .. } if (again - 2.0).abs() < 1e-9)
         );
+    }
+    #[test]
+    fn the_snippet_plays_as_long_as_the_settings_say() {
+        let mut harness = playable_with(Settings {
+            snippet_ms: 400,
+            ..Settings::default()
+        });
+        harness.key_press(egui::Key::PageDown);
+        harness.run();
+        harness.state_mut().take_requests();
+        harness.key_press(egui::Key::Q);
+        harness.run();
+        let Request::Play { from, .. } = request(&mut harness) else {
+            panic!("expected play");
+        };
+        assert!((from - 1.6).abs() < 1e-9, "{from}");
     }
     #[test]
     fn space_during_a_snippet_pauses_it_and_then_plays_on_normally() {
