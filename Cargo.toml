@@ -33,50 +33,50 @@ charter-ui = { path = "crates/charter-ui" }
 charter-stepmania = { path = "plugins/stepmania" }
 charter-ttr = { path = "plugins/ttr" }
 charter-osu-mania = { path = "plugins/osu-mania" }
-serde = { version = "1.0.229", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
 # ponytail: exact float parsing costs about 1.5x on float-heavy input; the format promises
 # values survive a round trip, and the default parser drifts one value in ten.
-serde_json = { version = "1.0.151", features = ["float_roundtrip"] }
-thiserror = "2.0.20"
+serde_json = { version = "1.0", features = ["float_roundtrip"] }
+thiserror = "2"
 symphonia-wrap = { path = "third-party/symphonia-wrap" }
 timingator = { path = "third-party/timingator" }
-rustfft = "6.4.1"
+rustfft = "6"
 # ponytail: CPU inference only; the flex backend runs everywhere charter does, and a GPU backend
 # is a feature away if the beat tracker proves too slow.
-burn = { version = "0.21.0", default-features = false, features = ["std", "flex"] }
-burn-store = { version = "0.21.0", default-features = false, features = ["std", "pytorch", "safetensors"] }
+burn = { version = "0.21", default-features = false, features = ["std", "flex"] }
+burn-store = { version = "0.21", default-features = false, features = ["std", "pytorch", "safetensors"] }
 # ponytail: named only for its default features, SIMD and threads, which burn's own defaults would
 # otherwise be the only way to turn on.
-burn-flex = "0.21.0"
-rubato = "5.0.0"
+burn-flex = "0.21"
+rubato = "5"
 # Pure Rust, no unsafe; its wide-range keylock keeps pitch from a quarter to twice the speed.
-timestretch = "0.15.0"
+timestretch = "0.15"
 # ponytail: blocking, rustls; charter's one download, the beat tracker's weights, needs no runtime.
-ureq = "3.4.2"
-audioadapter-buffers = "5.1.0"
+ureq = "3"
+audioadapter-buffers = "5"
 # ponytail: reads and writes XML and binary property lists, keyed archives' containers; its serde
 # support is off, as nothing here maps plists onto types.
-plist = { version = "1.10.1", default-features = false }
+plist = { version = "1.10", default-features = false }
 # ponytail: Standard MIDI Files in and out; the rayon-backed parallel track parsing is off, as a
 # chart's MIDI is small.
-midly = { version = "0.5.3", default-features = false, features = ["std"] }
-egui = "0.36.2"
-eframe = "0.36.2"
-rfd = "0.17.2"
+midly = { version = "0.5", default-features = false, features = ["std"] }
+egui = "0.36"
+eframe = "0.36"
+rfd = "0.17"
 # ponytail: kira's own symphonia is off; charter-audio decodes through symphonia-wrap and hands
 # kira frames.
-kira = { version = "0.12.4", default-features = false, features = ["cpal"] }
-egui-phosphor = "0.14.0"
+kira = { version = "0.12", default-features = false, features = ["cpal"] }
+egui-phosphor = "0.14"
 # Already linked through eframe; charter adds JPEG, how most embedded covers are encoded.
-image = { version = "0.25.10", default-features = false, features = ["png", "jpeg"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 # ponytail: finds installed fonts by family for CJK song titles; egui-system-fonts wraps it but
 # writes into the egui context, which the window's own font setup would then replace.
-system-fonts = "0.1.2"
-egui_kittest = "0.36.2"
+system-fonts = "0.1"
+egui_kittest = "0.36"
 # ponytail: std only; the fork and timeout features pull in a temp-file runner the sans-io tests
 # do not need.
-proptest = { version = "1.11.0", default-features = false, features = ["std"] }
-symphonia = { version = "0.6.1", default-features = false, features = [
+proptest = { version = "1.11", default-features = false, features = ["std"] }
+symphonia = { version = "0.6", default-features = false, features = [
     "opt-simd",
     "all-meta",
     "aiff",
