@@ -16,6 +16,8 @@ members = [
     "third-party/timingator",
     "third-party/timingator-wrap"
 ]
+# Upstream code patched in below, built as a dependency with upstream's lints.
+exclude = ["third-party/cubecl-macros"]
 resolver = "3"
 
 [workspace.package]
@@ -374,3 +376,8 @@ opt-level = 3
 
 [profile.dev.package."rustfft"]
 opt-level = 3
+
+# cubecl's #[cube] macro emits code in a HashMap's order, which differs between compiler runs; the
+# copy sorts it, so a release build is the same byte for byte. See third-party/cubecl-macros.
+[patch.crates-io]
+cubecl-macros = { path = "third-party/cubecl-macros" }

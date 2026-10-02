@@ -33,6 +33,7 @@ jobs:
       - run: just fmt-check
       - run: just docs
       - run: just docs-check
+      - run: just pack-check
 
   rust:
     name: Rust ${{ matrix.task }}

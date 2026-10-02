@@ -4,8 +4,9 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 
 linux := "x86_64-unknown-linux-gnu"
 windows := "x86_64-pc-windows-msvc"
-# The C runtime built in, so Windows users need no Visual C++ redistributable.
-windows_flags := "RUSTFLAGS='-C target-feature=+crt-static'"
+# The C runtime built in, so Windows users need no Visual C++ redistributable; /Brepro leaves the
+# link time out of the executable, so a package rebuilds byte for byte.
+windows_flags := "target." + windows + ".rustflags=['-C', 'target-feature=+crt-static', '-C', 'link-arg=/Brepro']"
 # On Windows itself the MSVC toolchain builds for Windows; elsewhere cargo-xwin cross-compiles.
 windows_build := if os() == "windows" { "cargo build" } else { "cargo xwin build" }
 # Windows installs Python as `python`, without a `python3`.
@@ -61,8 +62,12 @@ docs-check:
     {{ python }} docs/okf-frontmatter.py selftest
     {{ python }} docs/okf-frontmatter.py check docs/src
 
+# Check the packer writes the same archive from the same files
+pack-check:
+    {{ python }} packaging/pack.py selftest
+
 # Everything a change should pass before it is committed
-ci: fmt-check clippy test docs docs-check
+ci: fmt-check clippy test docs docs-check pack-check
 
 # Run the editor, passing any arguments on (a song to open)
 run *args:
@@ -78,41 +83,73 @@ release:
 
 # Build the editor for 64-bit Windows, optimised: with MSVC on Windows, cargo-xwin elsewhere
 build-windows:
-    {{ windows_flags }} {{ windows_build }} -p charter-app --release --target {{ windows }}
+    {{ windows_build }} -p charter-app --release --target {{ windows }} --config "{{ windows_flags }}"
 
 # Run the Windows build under Wine
 run-windows *args: build-windows
     wine target/{{ windows }}/release/charter-app.exe {{ args }}
 
-# Build what `dist-linux` packages: release, without symbols
+# Build what `dist-linux` packages: release, without symbols, reproducibly
 _dist-build-linux:
-    cargo build -p charter-app --profile dist
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(just _reproducible {{ linux }})"
+    cargo build --locked -p charter-app --profile dist --config "$remap"
 
-# Build what `dist-windows` packages
+# Build what `dist-windows` packages, reproducibly
 _dist-build-windows:
-    {{ windows_flags }} {{ windows_build }} -p charter-app --profile dist --target {{ windows }}
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(just _reproducible {{ windows }})"
+    {{ windows_build }} --locked -p charter-app --profile dist --target {{ windows }} \
+        --config "{{ windows_flags }}" --config "$remap"
+
+# Shell settings that make a package's build depend on its source alone: the folders it is built
+# in remapped out of the binary, for Rust and C alike, the commit named for the About window, and
+# the commit's time for the archives' files. docs/src/packaging.md says how to check a package.
+_reproducible target:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # rustc sees Windows paths where Git's bash shows /c/...
+    native() { if command -v cygpath >/dev/null; then cygpath -w "$1"; else printf '%s' "$1"; fi; }
+    here="$(native "$PWD")"
+    cargo_home="$(native "${CARGO_HOME:-$HOME/.cargo}")"
+    # Literal TOML strings, so a Windows path's backslashes stay as they are.
+    echo "remap=\"target.{{ target }}.rustflags=['--remap-path-prefix=$here=.', '--remap-path-prefix=$cargo_home=/cargo']\""
+    target_var="$(echo '{{ target }}' | tr - _)"
+    echo "export CFLAGS_$target_var='-ffile-prefix-map=$here=. -ffile-prefix-map=$cargo_home=/cargo'"
+    echo "export CHARTER_COMMIT=$(git rev-parse --short=12 HEAD)"
+    echo "export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)"
 
 # Package the Linux build as dist/charter-<version>-linux-x86_64.tar.gz
 dist-linux: _dist-build-linux (_stage "linux" "charter-app" "charter") (_licenses "linux")
     #!/usr/bin/env bash
     set -euo pipefail
+    eval "$(just _reproducible {{ linux }})"
     name="$(just _name linux-x86_64)"
-    tar -C dist -czf "dist/$name.tar.gz" "$name"
+    just _build-info {{ linux }} > "dist/$name/BUILD.txt"
+    {{ python }} packaging/pack.py "dist/$name" "dist/$name.tar.gz"
     echo "dist/$name.tar.gz"
 
 # Package the Windows build as dist/charter-<version>-windows-x86_64.zip
 dist-windows: _dist-build-windows (_stage "windows" "charter-app.exe" "charter.exe") (_licenses "windows")
     #!/usr/bin/env bash
     set -euo pipefail
+    eval "$(just _reproducible {{ windows }})"
     name="$(just _name windows-x86_64)"
-    rm -f "dist/$name.zip"
-    # Windows has no `zip`, but 7-Zip.
-    if command -v zip >/dev/null; then
-        (cd dist && zip -qr "$name.zip" "$name")
-    else
-        (cd dist && 7z a -tzip -bso0 "$name.zip" "$name")
-    fi
+    just _build-info {{ windows }} > "dist/$name/BUILD.txt"
+    {{ python }} packaging/pack.py "dist/$name" "dist/$name.zip"
     echo "dist/$name.zip"
+
+# What a package was built from, for rebuilding it: the commit and the toolchain
+_build-info target:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "commit $(git rev-parse HEAD)"
+    echo "target {{ target }}"
+    rustc -V
+    cargo -V
+    echo "rebuild with: git checkout <commit>, rustup toolchain install <rustc version>, just dist"
 
 # Package both; docs/src/packaging.md says what ships and why no assets folder is needed
 dist: dist-linux dist-windows
@@ -184,7 +221,7 @@ _licenses os:
     print("# Third-party crates in this build\n")
     print("Each crate is used under the licence named; its text is in the crate on crates.io.\n")
     print("| Crate | Version | Licence |\n|---|---|---|")
-    for pkg in sorted((packages[i] for i in seen - ours), key=lambda p: p["name"]):
+    for pkg in sorted((packages[i] for i in seen - ours), key=lambda p: (p["name"], p["version"])):
         pkg["license"] = pkg["license"] or "see the crate"
         print("| %(name)s | %(version)s | %(license)s |" % pkg)
     ' > "$folder/licenses/THIRD-PARTY.md"

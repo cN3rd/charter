@@ -26,6 +26,7 @@ listing the commits since the one before.
 | `licenses/metronome-sounds-*` | the click sounds' licence, CC0 text and provenance |
 | `licenses/hit-sounds-*` | the note-tick hit sounds' licence, CC0 text and provenance |
 | `licenses/THIRD-PARTY.md` | every crate linked into the binary, with its version and licence |
+| `BUILD.txt` | the commit and the `rustc` and `cargo` versions it was built with |
 
 There is no assets folder, and none is missing. The resources the editor ships with are compiled
 into the binary with `include_bytes!`, so it runs from anywhere with only its own file:
@@ -43,6 +44,35 @@ DLLs alone.
 
 A new resource that must ship goes in the same way: `include_bytes!` in the crate that uses it,
 and its licence copied into `licenses/` by the `_licenses` recipe in the `justfile`.
+
+## Reproducible packages
+
+Building the same commit with the same toolchain gives the same package byte for byte, wherever the
+checkout is and whenever it is built. Anyone can check a release by rebuilding it:
+
+```bash
+git checkout <commit from BUILD.txt>
+rustup toolchain install <version from BUILD.txt> && rustup override set <version>
+just dist-linux    # or dist-windows
+sha256sum dist/*.tar.gz
+```
+
+What keeps the build from depending on the machine:
+
+- `--remap-path-prefix` replaces the checkout's folder with `.` and cargo's with `/cargo` in what
+  rustc writes into the binary, such as panic locations, and `-ffile-prefix-map` does the same for
+  the C that `ring` and `zstd-sys` compile. The toolchain's own paths are remapped by rustc already.
+- `--locked` builds the crates `Cargo.lock` names and refuses to resolve others.
+- The `dist` profile's `codegen-units = 1` and fat LTO leave the code's order to the compiler alone,
+  and `strip` removes the debug information.
+- On Windows `/Brepro` keeps the link time out of the executable.
+- `packaging/pack.py` writes the archive itself, entries sorted, every file stamped with the
+  commit's time, owners and permissions fixed, where `tar` and `zip` would record the machine's.
+- Nothing reads the clock or the machine at build time. The commit the About window names comes in
+  as `CHARTER_COMMIT`, set by the `justfile` from git.
+
+The recipes set these in `_reproducible`. A plain `cargo build --release` has none of them, and its
+binary names the folder it was built in.
 
 ## What is not in a package
 
