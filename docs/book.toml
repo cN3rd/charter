@@ -3,6 +3,12 @@ title = "Charter Docs"
 authors = ["cN3rd"]
 language = "en"
 
+# Published by CI to GitHub Pages; the 404 page's links need the path it is served under.
+[output.html]
+site-url = "/charter/"
+git-repository-url = "https://github.com/cN3rd/charter"
+edit-url-template = "https://github.com/cN3rd/charter/edit/main/docs/src/{path}"
+
 # ponytail: 10 lines beats a cargo-install dependency. Swap for mdbook-frontmatter-strip
 # if the book ever needs the metadata rendered rather than hidden.
 [preprocessor.okf-frontmatter]

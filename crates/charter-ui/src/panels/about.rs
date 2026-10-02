@@ -4,6 +4,8 @@ use super::{egui, heading};
 
 /// Where charter's source, releases and issues are.
 const REPOSITORY: &str = "https://github.com/cN3rd/charter";
+/// Where CI publishes the book, user guide first.
+const BOOK: &str = "https://cn3rd.github.io/charter/";
 
 /// The build's version, and the commit it was built from when packaging named one.
 fn version_line(version: &str, commit: Option<&str>) -> String {
@@ -37,6 +39,7 @@ pub(crate) fn about(ctx: &egui::Context, open: &mut bool) {
             ui.label("A chart editor for rhythm games: StepMania, Tap Tap Revenge and osu!mania.");
             ui.label("Licensed under MIT or Apache-2.0, at your choice.");
             ui.horizontal_wrapped(|ui| {
+                ui.hyperlink_to("User guide", BOOK);
                 ui.hyperlink_to("Source code", REPOSITORY);
                 ui.hyperlink_to("Releases", format!("{REPOSITORY}/releases"));
                 ui.hyperlink_to("Report a problem", format!("{REPOSITORY}/issues"));

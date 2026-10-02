@@ -69,7 +69,8 @@ did not finish in 15 minutes.
 ## Documentation
 
 Project documentation lives in an mdbook under `docs/`, built with `mdbook build docs` and
-previewed with `mdbook serve docs`. Anything explaining design, formats or workflows goes in the
+previewed with `mdbook serve docs`. CI publishes every push to `main` to GitHub Pages, at
+<https://cn3rd.github.io/charter/>. Anything explaining design, formats or workflows goes in the
 book. READMEs stay short and stay next to the thing they describe, pointing into the book rather
 than duplicating it.
 
