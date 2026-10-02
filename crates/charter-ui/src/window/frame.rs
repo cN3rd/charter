@@ -455,7 +455,8 @@ impl Window {
         if dismissed {
             self.failure = None;
         }
-        panels::shortcuts(ui.ctx(), &mut self.help_open, &mut self.help_filter);
+        panels::shortcuts(ui.ctx(), &mut self.help.shortcuts, &mut self.help_filter);
+        panels::about(ui.ctx(), &mut self.help.about);
         let before = self.song.as_ref().map(Song::cursor);
         for action in actions {
             self.apply(action);

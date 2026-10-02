@@ -20,6 +20,8 @@ use crate::notefield::Zoom;
 use crate::style::{self, fields, heading, icon, table};
 use crate::window::Rate;
 
+/// The About window.
+mod about;
 /// Modal questions, toasts and read-only notices.
 mod dialogs;
 /// Empty-song and missing-audio centre panels.
@@ -39,6 +41,7 @@ mod song;
 /// Transport controls, status bar and snap labels.
 mod transport;
 
+pub(crate) use about::about;
 pub(crate) use dialogs::{
     Answer, ask_to_download_weights, ask_to_reset_timing, ask_to_restore, ask_to_run_on_cpu,
     ask_to_save, choose_format, offer_tags, read_only, toast,

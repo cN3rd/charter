@@ -650,6 +650,8 @@ pub(crate) enum Action {
     NudgeBpm(f64),
     /// Shows or hides the keyboard shortcuts.
     Help,
+    /// Shows or hides the About window.
+    About,
     /// Shows or hides the song panel.
     ToggleSongPanel,
     /// Turns the metronome on or off.
@@ -709,8 +711,8 @@ pub struct Window {
     song_drafts: panels::SongDrafts,
     /// A section name being typed, while its field has the keyboard.
     section_draft: Option<String>,
-    /// Whether the keyboard shortcuts are showing.
-    help_open: bool,
+    /// Which help windows are showing.
+    help: HelpWindows,
     /// Fonts for what the bundled ones cannot draw, such as CJK titles, named.
     fallback_fonts: Vec<(String, Arc<egui::FontData>)>,
     /// Whether files dropped on the window never arrive, as under Wayland, so the window offers
@@ -805,6 +807,15 @@ struct Playback {
     played_pitch: bool,
     /// The settings the audio playing was mixed with, so a change to them plays it again.
     played_sounds: Option<Sounds>,
+}
+
+/// The Help menu's windows, each showing or not.
+#[derive(Debug, Default)]
+struct HelpWindows {
+    /// Whether the keyboard shortcuts are showing.
+    shortcuts: bool,
+    /// Whether the About window is showing.
+    about: bool,
 }
 
 /// Lane-key typing state.

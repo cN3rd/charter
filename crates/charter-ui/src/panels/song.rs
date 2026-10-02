@@ -1280,6 +1280,7 @@ mod tests {
             ("View", "Song panel", Action::ToggleSongPanel),
             ("Playback", "50% speed", Action::SetRate(0.5)),
             ("Help", "Keyboard shortcuts", Action::Help),
+            ("Help", "About charter", Action::About),
         ] {
             let song = Song::open(
                 &charter_editor::demo::song().to_json().unwrap(),

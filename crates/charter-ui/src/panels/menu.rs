@@ -266,6 +266,10 @@ pub(crate) fn menu_bar(
             if ui.button("Open the demo song").clicked() {
                 actions.push(Action::OpenDemo);
             }
+            ui.separator();
+            if ui.button("About charter").clicked() {
+                actions.push(Action::About);
+            }
         });
     });
 }
