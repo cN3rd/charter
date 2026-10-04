@@ -267,7 +267,7 @@ impl Song {
             let mut objects = edited
                 .objects
                 .iter()
-                .map(|object| shifted_at(object, &|tick| shift.apply(tick)))
+                .map(|object| shifted_at(object, |tick| shift.apply(tick)))
                 .collect::<Result<Vec<_>, _>>()?;
             objects.sort_by_key(|object| object.tick);
             if objects != edited.objects {

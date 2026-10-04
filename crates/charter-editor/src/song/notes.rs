@@ -187,7 +187,7 @@ impl Song {
             return Ok(());
         }
         let width = self.lane_count();
-        self.replace_selection(&|object| {
+        self.replace_selection(|object| {
             let moved = object
                 .shifted_by(ticks, lanes)
                 .ok_or(Refusal::OffTheChart)?;
@@ -210,7 +210,7 @@ impl Song {
             return Ok(());
         };
         let step = i64::from(u32::from(step));
-        self.replace_selection(&|object| {
+        self.replace_selection(|object| {
             let tick = i64::from(object.tick);
             let nearest = tick
                 .saturating_add(step.div_euclid(2))
@@ -241,7 +241,7 @@ impl Song {
             }
             Position::Plane { .. } => Some(position),
         };
-        self.replace_selection(&|object| {
+        self.replace_selection(|object| {
             object
                 .map_ticks_positions(Some, flip)
                 .ok_or(Refusal::OffTheChart)
@@ -261,7 +261,7 @@ impl Song {
             .chart()
             .and_then(|chart| chart.lanes)
             .ok_or(Refusal::NoChart)?;
-        self.replace_selection(&|object| {
+        self.replace_selection(|object| {
             let mut changed = plugin
                 .change_note(change, object, lanes)
                 .unwrap_or_else(|| object.clone());
@@ -292,7 +292,7 @@ impl Song {
         };
         std::iter::once(first)
             .chain(selected)
-            .filter_map(|object| shifted_at(object, &back).ok())
+            .filter_map(|object| shifted_at(object, back).ok())
             .collect()
     }
 
@@ -332,7 +332,7 @@ impl Song {
         };
         let placed: Vec<Object> = clip
             .iter()
-            .filter_map(|object| shifted_at(object, &on).ok())
+            .filter_map(|object| shifted_at(object, on).ok())
             .collect();
         self.add(placed, preserve_layers)
     }
@@ -413,7 +413,7 @@ impl Song {
     /// A changed note the same as one changed before it merges into it.
     fn replace_selection(
         &mut self,
-        change: &dyn Fn(&Object) -> Result<Object, Refusal>,
+        change: impl Fn(&Object) -> Result<Object, Refusal>,
     ) -> Result<(), Refusal> {
         let Some(chart) = self.chart() else {
             return Ok(());
@@ -550,14 +550,14 @@ pub(super) fn moved(tick: Tick, by: i64) -> Result<Tick, Refusal> {
 /// `shift`. A hold whose end would no longer come after its start is refused.
 pub(super) fn shifted_at(
     object: &Object,
-    shift: &dyn Fn(Tick) -> Result<Tick, Refusal>,
+    shift: impl Fn(Tick) -> Result<Tick, Refusal>,
 ) -> Result<Object, Refusal> {
     let mut moved = object.clone();
     moved.tick = shift(object.tick)?;
-    moved.shape = shifted_shape(&object.shape, (object.tick, moved.tick), shift)?;
+    moved.shape = shifted_shape(&object.shape, (object.tick, moved.tick), &shift)?;
     for (child, was) in moved.children.iter_mut().zip(&object.children) {
         child.tick = shift(was.tick)?;
-        child.shape = shifted_shape(&was.shape, (was.tick, child.tick), shift)?;
+        child.shape = shifted_shape(&was.shape, (was.tick, child.tick), &shift)?;
     }
     Ok(moved)
 }
@@ -567,7 +567,7 @@ pub(super) fn shifted_at(
 pub(super) fn shifted_shape(
     shape: &Shape,
     (from, to): (Tick, Tick),
-    shift: &dyn Fn(Tick) -> Result<Tick, Refusal>,
+    shift: impl Fn(Tick) -> Result<Tick, Refusal>,
 ) -> Result<Shape, Refusal> {
     Ok(match shape {
         Shape::Instant => Shape::Instant,
