@@ -4,6 +4,10 @@ use std::str::FromStr;
 use crate::error::InvalidValue;
 
 /// Defines a validated string type with parsing, display and serde support.
+///
+/// The text sits in an [`EcoString`](ecow::EcoString), which holds up to 15 bytes inline. Every
+/// identifier here is parse-once and never edited, and a note's layer name is cloned with the
+/// note, so the common short name costs no allocation at all.
 macro_rules! string_newtype {
     ($(#[$meta:meta])* $name:ident, $expected:literal, |$v:ident| $accepts:expr) => {
         $(#[$meta])*
@@ -11,7 +15,7 @@ macro_rules! string_newtype {
             Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, ::serde::Serialize, ::serde::Deserialize,
         )]
         #[serde(try_from = "String")]
-        pub struct $name(String);
+        pub struct $name(::ecow::EcoString);
 
         impl TryFrom<String> for $name {
             type Error = $crate::error::InvalidValue;
@@ -25,8 +29,8 @@ macro_rules! string_newtype {
             /// # Errors
             ///
             /// Returns [`InvalidValue`](crate::InvalidValue) if `value` breaks this type's grammar.
-            pub fn new(value: impl Into<String>) -> Result<Self, $crate::error::InvalidValue> {
-                let $v: String = value.into();
+            pub fn new(value: impl Into<::ecow::EcoString>) -> Result<Self, $crate::error::InvalidValue> {
+                let $v: ::ecow::EcoString = value.into();
                 if $accepts {
                     Ok(Self($v))
                 } else {
@@ -124,9 +128,7 @@ impl FromStr for Key {
 
     fn from_str(text: &str) -> Result<Self, InvalidValue> {
         split(text)
-            .map(|(namespace, name)| {
-                Self::new(Namespace(namespace.to_owned()), Name(name.to_owned()))
-            })
+            .map(|(namespace, name)| Self::new(Namespace(namespace.into()), Name(name.into())))
             .ok_or_else(|| InvalidValue::new("<namespace>.<name>", format_args!("{text:?}")))
     }
 }
