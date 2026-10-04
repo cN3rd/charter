@@ -135,7 +135,7 @@ impl Disk for Real {
 /// # Errors
 ///
 /// Whatever kept the bytes from being written or moved; the file at `path` is as it was.
-pub(crate) fn write_whole(disk: &dyn Disk, path: &Path, bytes: &[u8]) -> io::Result<()> {
+pub(crate) fn write_whole(disk: &impl Disk, path: &Path, bytes: &[u8]) -> io::Result<()> {
     let beside = partial_path(path);
     // ponytail: no fsync, since some filesystems refuse it. The autosave covers a crash; sync
     // here if saves on power loss turn out to matter.
@@ -161,7 +161,7 @@ pub(crate) fn partial_path(path: &Path) -> PathBuf {
 /// # Errors
 ///
 /// Whatever kept the folder, partial file or final rename from being written.
-pub(crate) fn write_cache(disk: &dyn Disk, path: &Path, bytes: &[u8]) -> io::Result<()> {
+pub(crate) fn write_cache(disk: &impl Disk, path: &Path, bytes: &[u8]) -> io::Result<()> {
     if let Some(folder) = path.parent() {
         disk.make_folder(folder)?;
     }
@@ -174,7 +174,7 @@ pub(crate) fn write_cache(disk: &dyn Disk, path: &Path, bytes: &[u8]) -> io::Res
 /// # Errors
 ///
 /// The source cannot be read or copied, the destination differs, or the copy cannot be moved.
-pub(crate) fn copy_whole(disk: &dyn Disk, from: &Path, to: &Path) -> io::Result<()> {
+pub(crate) fn copy_whole(disk: &impl Disk, from: &Path, to: &Path) -> io::Result<()> {
     if disk.exists(to) {
         // ponytail: read both files to compare; stream if large existing audio costs real memory.
         if disk.read(from)? == disk.read(to)? {
@@ -193,7 +193,7 @@ pub(crate) fn copy_whole(disk: &dyn Disk, from: &Path, to: &Path) -> io::Result<
 /// # Errors
 ///
 /// The source cannot be read or copied, or the copy cannot be moved; the file at `to` is as it was.
-pub(crate) fn copy_over(disk: &dyn Disk, from: &Path, to: &Path) -> io::Result<()> {
+pub(crate) fn copy_over(disk: &impl Disk, from: &Path, to: &Path) -> io::Result<()> {
     if let Some(folder) = to.parent() {
         disk.make_folder(folder)?;
     }
@@ -213,7 +213,7 @@ pub(crate) fn copy_over(disk: &dyn Disk, from: &Path, to: &Path) -> io::Result<(
 /// # Errors
 ///
 /// The audio cannot be encoded, or the result cannot be moved; the file at `to` is as it was.
-pub(crate) fn encode_over(disk: &dyn Disk, from: &Path, to: &Path) -> io::Result<()> {
+pub(crate) fn encode_over(disk: &impl Disk, from: &Path, to: &Path) -> io::Result<()> {
     if let Some(folder) = to.parent() {
         disk.make_folder(folder)?;
     }

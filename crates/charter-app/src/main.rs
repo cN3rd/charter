@@ -129,7 +129,7 @@ fn main() -> eframe::Result {
                 recovery: eframe::storage_dir(APP).map(|folder| folder.join("recovery.json")),
                 player: player::Player::default(),
                 finder: finder::Finder::new(eframe::storage_dir(APP)),
-                disk: Box::new(disk::Real),
+                disk: disk::Real,
             };
             if let Some(path) = std::env::args_os().nth(1) {
                 host.read(Path::new(&path));
@@ -232,6 +232,7 @@ fn picture(bytes: Vec<u8>) -> Option<Picture> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::disk::Disk;
     use crate::disk::memory::Memory;
 
     /// A song in `sm`, which needs no plugin to open read-only, naming `a.ogg`.
@@ -240,17 +241,17 @@ mod tests {
         "timing": { "offset_seconds": 0.0, "events": [ { "tick": 0, "kind": { "bpm": 120.0 } } ] },
         "charts": [ { "name": "Easy", "lanes": 4 } ] }"#;
 
-    fn host(disk: Memory) -> Host {
+    fn host(disk: Memory) -> Host<Memory> {
         Host {
             window: Window::new(&[]),
             recovery: Some(PathBuf::from("/data/recovery.json")),
             player: Player::default(),
             finder: Finder::default(),
-            disk: Box::new(disk),
+            disk,
         }
     }
 
-    fn files(host: &Host, path: &str) -> bool {
+    fn files(host: &Host<Memory>, path: &str) -> bool {
         host.disk.exists(Path::new(path))
     }
 

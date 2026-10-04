@@ -608,14 +608,14 @@ fn cache_file(project: Option<&Path>, audio: &Path, kind: &str) -> Option<PathBu
 
 /// The peaks kept at `cache` for the audio whose fingerprint is `source`, if they are there,
 /// whole and of it.
-fn kept_peaks(disk: &dyn crate::disk::Disk, cache: &Path, source: u64) -> Option<Peaks> {
+fn kept_peaks(disk: &impl crate::disk::Disk, cache: &Path, source: u64) -> Option<Peaks> {
     let bytes = disk.read(cache).ok()?;
     Peaks::from_bytes(&bytes, source)
 }
 
 /// Keeps `peaks` at `cache` for next time. A cache that cannot be written is not worth saying so:
 /// the peaks are only worked out again.
-fn keep_peaks(disk: &dyn crate::disk::Disk, cache: &Path, source: u64, peaks: &Peaks) {
+fn keep_peaks(disk: &impl crate::disk::Disk, cache: &Path, source: u64, peaks: &Peaks) {
     drop(crate::disk::write_cache(
         disk,
         cache,
@@ -625,14 +625,14 @@ fn keep_peaks(disk: &dyn crate::disk::Disk, cache: &Path, source: u64, peaks: &P
 
 /// The onsets kept at `cache` for the audio whose fingerprint is `source`, if they are there,
 /// whole and of it.
-fn kept_onsets(disk: &dyn crate::disk::Disk, cache: &Path, source: u64) -> Option<Arc<[Onset]>> {
+fn kept_onsets(disk: &impl crate::disk::Disk, cache: &Path, source: u64) -> Option<Arc<[Onset]>> {
     let bytes = disk.read(cache).ok()?;
     charter_audio::onsets_from_bytes(&bytes, source)
 }
 
 /// Keeps `onsets` at `cache` for next time; a cache that cannot be written only costs finding
 /// them again.
-fn keep_onsets(disk: &dyn crate::disk::Disk, cache: &Path, source: u64, onsets: &[Onset]) {
+fn keep_onsets(disk: &impl crate::disk::Disk, cache: &Path, source: u64, onsets: &[Onset]) {
     drop(crate::disk::write_cache(
         disk,
         cache,
