@@ -1143,7 +1143,7 @@ mod tests {
         let mut harness = editable_four_taps();
         harness
             .state_mut()
-            .refuse(Path::new("other.json"), &"it is not a song");
+            .refuse(Path::new("other.json"), "it is not a song");
         harness.run();
         let (from, to) = (spot(&harness, 3, 240, 0.0), spot(&harness, 3, 720, -3.0));
         drag(&mut harness, from, to, egui::Modifiers::COMMAND);

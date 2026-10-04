@@ -424,7 +424,7 @@ impl Window {
         }
     }
     /// Shows why opening `path` failed and removes it from recent songs.
-    pub fn refuse(&mut self, path: &Path, why: &dyn std::fmt::Display) {
+    pub fn refuse(&mut self, path: &Path, why: impl std::fmt::Display) {
         self.failure = Some(format!("{} did not open: {why}", path.display()));
         // A song that no longer opens leaves the recent list.
         self.settings.recent.retain(|recent| recent != path);
@@ -1470,7 +1470,7 @@ mod tests {
         );
         harness
             .state_mut()
-            .refuse(Path::new("/songs/a.json"), &"it is not there");
+            .refuse(Path::new("/songs/a.json"), "it is not there");
         assert_eq!(recent(&harness).len(), 2);
         harness.state_mut().apply(Action::ClearRecent);
         assert_eq!(recent(&harness), Vec::<PathBuf>::new());
