@@ -76,37 +76,46 @@ string_newtype!(
 
 /// An extension key or an `other` timing name: a namespace and a name, written
 /// `<namespace>.<name>` and split at the first dot.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, ::serde::Deserialize)]
+///
+/// The pair sits behind one pointer so that a key costs a word wherever it is held. Every note,
+/// path point and marker carries a [`Kind`], [`Ease`] or [`MarkerKind`] whose `Other` holds one,
+/// and a shared word such as `tap` would otherwise pay for the widest plugin key.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, ::serde::Deserialize)]
 #[serde(try_from = "String")]
-pub struct Key {
+pub struct Key(Box<Parts>);
+
+/// The two halves of a [`Key`], ordered namespace first so keys sort by owner.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct Parts {
     /// Plugin owning the key.
     namespace: Namespace,
     /// Non-empty part following the first dot; may itself contain dots.
     name: Name,
 }
+
 impl Key {
     /// Joins an owning namespace and non-empty name into an extension key.
     #[must_use]
-    pub const fn new(namespace: Namespace, name: Name) -> Self {
-        Self { namespace, name }
+    pub fn new(namespace: Namespace, name: Name) -> Self {
+        Self(Box::new(Parts { namespace, name }))
     }
 
     /// The owning plugin's namespace.
     #[must_use]
-    pub const fn namespace(&self) -> &Namespace {
-        &self.namespace
+    pub fn namespace(&self) -> &Namespace {
+        &self.0.namespace
     }
 
     /// Whether `namespace` owns this extension key.
     #[must_use]
     pub fn is_owned_by(&self, namespace: &str) -> bool {
-        self.namespace.as_str() == namespace
+        self.0.namespace.as_str() == namespace
     }
 
     /// Part of the key after the first dot.
     #[must_use]
-    pub const fn name(&self) -> &Name {
-        &self.name
+    pub fn name(&self) -> &Name {
+        &self.0.name
     }
 }
 
@@ -115,9 +124,8 @@ impl FromStr for Key {
 
     fn from_str(text: &str) -> Result<Self, InvalidValue> {
         split(text)
-            .map(|(namespace, name)| Self {
-                namespace: Namespace(namespace.to_owned()),
-                name: Name(name.to_owned()),
+            .map(|(namespace, name)| {
+                Self::new(Namespace(namespace.to_owned()), Name(name.to_owned()))
             })
             .ok_or_else(|| InvalidValue::new("<namespace>.<name>", format_args!("{text:?}")))
     }
@@ -133,7 +141,17 @@ impl TryFrom<String> for Key {
 
 impl fmt::Display for Key {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}.{}", self.namespace.as_str(), self.name.as_str())
+        write!(f, "{}.{}", self.0.namespace.as_str(), self.0.name.as_str())
+    }
+}
+
+/// Written as the two halves, so that holding them behind a pointer stays invisible.
+impl fmt::Debug for Key {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Key")
+            .field("namespace", &self.0.namespace)
+            .field("name", &self.0.name)
+            .finish()
     }
 }
 
@@ -160,7 +178,7 @@ macro_rules! vocabulary {
         impl $name {
             /// The owning plugin's namespace, or `None` for a shared word.
             #[must_use]
-            pub const fn namespace(&self) -> Option<&Namespace> {
+            pub fn namespace(&self) -> Option<&Namespace> {
                 match self {
                     Self::Other(key) => Some(key.namespace()),
                     $(Self::$variant)|+ => None,
