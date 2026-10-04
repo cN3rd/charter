@@ -71,7 +71,7 @@ fn crash_message(written: Option<&Path>) -> String {
     clippy::print_stderr,
     reason = "a panic's report goes to the terminal as the default hook's would"
 )]
-fn to_terminal(report: &dyn Display) {
+fn to_terminal(report: impl Display) {
     eprintln!("{report}");
 }
 
@@ -80,7 +80,7 @@ fn to_terminal(report: &dyn Display) {
 pub(crate) fn install(folder: Option<PathBuf>) {
     let terminal = color_eyre::config::HookBuilder::default().into_hooks().0;
     std::panic::set_hook(Box::new(move |info| {
-        to_terminal(&terminal.panic_report(info));
+        to_terminal(terminal.panic_report(info));
         if QUIET.get() {
             return;
         }
