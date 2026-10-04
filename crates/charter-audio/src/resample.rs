@@ -18,21 +18,24 @@ pub fn resample(samples: &[f32], from: u32, to: u32) -> Result<Vec<f32>, Resampl
     if from == to || samples.is_empty() {
         return Ok(samples.to_vec());
     }
-    let why = |error: &dyn std::fmt::Display| ResampleError(error.to_string());
-    let input =
-        InterleavedOwned::new_from(samples.to_vec(), 1, samples.len()).map_err(|e| why(&e))?;
+    let input = InterleavedOwned::new_from(samples.to_vec(), 1, samples.len()).map_err(why)?;
     let mut resampler = Fft::<f32>::new(
-        usize::try_from(from).map_err(|e| why(&e))?,
-        usize::try_from(to).map_err(|e| why(&e))?,
+        usize::try_from(from).map_err(why)?,
+        usize::try_from(to).map_err(why)?,
         1024,
         1,
         FixedSync::Input,
     )
-    .map_err(|e| why(&e))?;
+    .map_err(why)?;
     let output = resampler
         .process_all(&input, samples.len(), None)
-        .map_err(|e| why(&e))?;
+        .map_err(why)?;
     Ok(output.take_data())
+}
+
+/// `error` as the reason audio would not resample.
+fn why(error: impl std::fmt::Display) -> ResampleError {
+    ResampleError(error.to_string())
 }
 
 #[cfg(test)]
