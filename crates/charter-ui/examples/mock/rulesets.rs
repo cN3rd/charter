@@ -830,12 +830,12 @@ fn arcaea(painter: &Painter, lanes: &Lanes) {
         painter.rect_filled(Rect::from_x_y_ranges(margin, lanes.rows), 0.0, SKY);
     }
     presses(painter, lanes, &FLOOR, &[WHITE; 4]);
-    sky(painter, lanes, &|x, _| floor.min + x * floor.span());
+    sky(painter, lanes, |x, _| floor.min + x * floor.span());
     if let Some(side) = lanes.side {
         let heights = side.shrink(12.0);
         painter.rect_filled(Rect::from_x_y_ranges(heights, lanes.rows), 0.0, SKY);
         painter.vline(heights.min, lanes.rows, Stroke::new(2.0, GREY));
-        sky(painter, lanes, &|_, height| {
+        sky(painter, lanes, |_, height| {
             heights.min + height * heights.span()
         });
     }
@@ -843,9 +843,9 @@ fn arcaea(painter: &Painter, lanes: &Lanes) {
 
 /// The trace, its arctaps and the arcs in one view, where `across` puts an x and height on
 /// screen.
-fn sky(painter: &Painter, lanes: &Lanes, across: &dyn Fn(f32, f32) -> f32) {
+fn sky(painter: &Painter, lanes: &Lanes, across: impl Fn(f32, f32) -> f32) {
     painter.add(Shape::line(
-        points(lanes, TRACE, across),
+        points(lanes, TRACE, &across),
         Stroke::new(2.0, GREY),
     ));
     let (start, end, ..) = TRACE;
@@ -858,11 +858,11 @@ fn sky(painter: &Painter, lanes: &Lanes, across: &dyn Fn(f32, f32) -> f32) {
     }
     if let Some(&(selected, _)) = ARCS.first() {
         let halo = Stroke::new(10.0, Color32::WHITE);
-        painter.add(Shape::line(points(lanes, selected, across), halo));
+        painter.add(Shape::line(points(lanes, selected, &across), halo));
     }
     for (curve, colour) in ARCS {
         painter.add(Shape::line(
-            points(lanes, curve, across),
+            points(lanes, curve, &across),
             Stroke::new(6.0, colour),
         ));
     }
@@ -878,7 +878,7 @@ fn along((_, _, from, to, ease): Curve, t: f32) -> (f32, f32) {
 }
 
 /// A curve as points on screen in one view, close enough together to join with straight lines.
-fn points(lanes: &Lanes, curve: Curve, across: &dyn Fn(f32, f32) -> f32) -> Vec<Pos2> {
+fn points(lanes: &Lanes, curve: Curve, across: impl Fn(f32, f32) -> f32) -> Vec<Pos2> {
     let (start, end, ..) = curve;
     (0..=PIECES)
         .map(|piece| {

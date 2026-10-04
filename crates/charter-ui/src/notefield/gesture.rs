@@ -156,31 +156,39 @@ pub(super) fn handle_at(song: &Song, field: &Field, pos: Pos2) -> Option<Gesture
         return None;
     }
     let timing = song.timing();
-    let nearest = |ticks: &mut dyn Iterator<Item = (usize, Tick)>| {
-        ticks
-            .map(|(index, tick)| ((index, tick), (view.y(timing.time_at(tick)) - pos.y).abs()))
-            .filter(|(_, off)| *off <= GRAB)
-            .min_by(|a, b| a.1.total_cmp(&b.1))
-            .map(|(position, _)| position)
-    };
     if columns.timing.contains(pos.x) {
-        let mut points = timing
+        let points = timing
             .events
             .chunk_by(|a, b| a.tick == b.tick)
             .filter_map(|point| point.first().map(|event| event.tick))
             .chain(timing.anchors.iter().map(|anchor| anchor.tick))
             .enumerate();
-        return nearest(&mut points).map(|(_, from)| Gesture::MoveTiming { from });
+        return nearest(points, timing, view, pos.y).map(|(_, from)| Gesture::MoveTiming { from });
     }
     if columns.ruler.contains(pos.x) {
         let markers = &song.document().document().markers;
-        let mut ticks = markers
+        let ticks = markers
             .iter()
             .enumerate()
             .map(|(index, marker)| (index, marker.tick));
-        return nearest(&mut ticks).map(|(index, _)| Gesture::MoveMarker { index });
+        return nearest(ticks, timing, view, pos.y).map(|(index, _)| Gesture::MoveMarker { index });
     }
     None
+}
+
+/// Whichever of `ticks` draws nearest `y` on screen, with its index, when one is within grabbing
+/// distance of it.
+fn nearest(
+    ticks: impl Iterator<Item = (usize, Tick)>,
+    timing: Valid<'_, Timing>,
+    view: View,
+    y: f32,
+) -> Option<(usize, Tick)> {
+    ticks
+        .map(|(index, tick)| ((index, tick), (view.y(timing.time_at(tick)) - y).abs()))
+        .filter(|(_, off)| *off <= GRAB)
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(position, _)| position)
 }
 
 /// Where a pan the middle button grabbed at `y` with the cursor at `seconds` puts the cursor with
@@ -319,7 +327,7 @@ pub(super) fn pointer(
             (latest, keep_time),
             field,
             timing,
-            &line,
+            line,
         ));
     }
     actions
@@ -338,7 +346,7 @@ pub(super) fn started(
     if let Some(handle) = handle_at(song, field, origin) {
         Some(handle)
     } else if let Some((unselected, moving)) =
-        grab(song, field, origin, visible, modifiers, &snapped)
+        grab(song, field, origin, visible, modifiers, snapped)
     {
         if let Some(note) = unselected {
             actions.push(Action::Select(Some(note), selecting(modifiers)));
@@ -377,7 +385,7 @@ pub(super) fn grab(
     origin: Pos2,
     visible: (Tick, Tick),
     modifiers: egui::Modifiers,
-    line: &dyn Fn(Pos2) -> Option<Tick>,
+    line: impl Fn(Pos2) -> Option<Tick>,
 ) -> Option<(Option<NoteAt>, Gesture)> {
     // Shift keeps the notes' ticks as they move.
     let plain = modifiers.is_none() || modifiers.shift_only();
@@ -407,7 +415,7 @@ pub(super) fn let_go(
     (latest, keep_time): (Option<Pos2>, bool),
     field: &Field,
     timing: Valid<'_, Timing>,
-    line: &dyn Fn(Pos2) -> Option<Tick>,
+    line: impl Fn(Pos2) -> Option<Tick>,
 ) -> Option<Action> {
     let (pos, gesture) = (latest?, gesture?);
     match gesture {

@@ -539,7 +539,7 @@ pub(crate) fn show(
     } else if gesture.is_none()
         && response.hovered()
         && hovered
-            .is_some_and(|at| grab(song, &field, at, (first, last), modifiers, &line).is_some())
+            .is_some_and(|at| grab(song, &field, at, (first, last), modifiers, line).is_some())
     {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
     }

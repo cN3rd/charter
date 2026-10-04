@@ -1322,7 +1322,7 @@ mod tests {
             ),
             &field,
             song.timing(),
-            &line,
+            line,
         );
         assert!(matches!(dropped, Some(Action::SelectBetween { .. })));
     }
@@ -1425,7 +1425,7 @@ mod tests {
             (Some(pos), false),
             &field,
             song.timing(),
-            &line,
+            line,
         );
         assert!(matches!(
             anchor,
@@ -1439,7 +1439,7 @@ mod tests {
             (Some(pos), false),
             &field,
             song.timing(),
-            &line,
+            line,
         );
         assert!(
             matches!(
@@ -1455,7 +1455,7 @@ mod tests {
                 (Some(pos), false),
                 &field,
                 song.timing(),
-                &line
+                line
             ),
             Some(Action::MoveMarker { index: 1, to }) if to == Tick::new(960)
         ));

@@ -102,7 +102,6 @@ fn song_rows(
     let document = song.document().document();
     let metadata = &document.metadata;
     let editable = song.read_only().is_none();
-    let changed = |change: &dyn Fn(&mut Metadata)| changed(metadata, change);
     let mut refused = None;
     let mut text_row = |row_ui: &mut Ui,
                         label: &str,
@@ -111,7 +110,7 @@ fn song_rows(
                         set: fn(&mut Metadata, &str)| {
         let caption = row_ui.weak(label);
         if editable {
-            let read = |typed: &str| Ok(changed(&|new| set(new, typed)));
+            let read = |typed: &str| Ok(changed(metadata, |new| set(new, typed)));
             let offered = entry_sized(row_ui, (caption.id, WIDE), current, draft, read, actions);
             refused = refused.take().or(offered);
         } else {
@@ -168,11 +167,11 @@ fn song_rows(
     if editable {
         let read = |typed: &str| {
             if typed.is_empty() {
-                return Ok(changed(&|new| new.artwork = None));
+                return Ok(changed(metadata, |new| new.artwork = None));
             }
             let path = ResourcePath::new(typed)
                 .map_err(|_invalid_path| format!("{typed} is not a file beside the song"))?;
-            Ok(changed(&|new| new.artwork = Some(path.clone())))
+            Ok(changed(metadata, |new| new.artwork = Some(path)))
         };
         ui.horizontal(|ui| {
             let offered = entry_sized(
@@ -284,7 +283,7 @@ fn setting_rows(
 }
 
 /// `metadata` changed by `change`, as the action that gives the song it.
-fn changed(metadata: &Metadata, change: &dyn Fn(&mut Metadata)) -> Action {
+fn changed(metadata: &Metadata, change: impl FnOnce(&mut Metadata)) -> Action {
     let mut new = metadata.clone();
     change(&mut new);
     Action::SetMetadata(Box::new(new))
@@ -298,7 +297,6 @@ fn preview_rows(
     drafts: &mut SongDrafts,
     actions: &mut Vec<Action>,
 ) -> Option<String> {
-    let changed = |change: &dyn Fn(&mut Metadata)| changed(metadata, change);
     let mut refused = None;
     let caption = ui
         .weak("Preview")
@@ -309,12 +307,12 @@ fn preview_rows(
     if editable {
         let read = |typed: &str| {
             if typed.is_empty() {
-                return Ok(changed(&|new| new.preview = None));
+                return Ok(changed(metadata, |new| new.preview = None));
             }
             let new_start = crate::timing_panel::moment(typed)
                 .and_then(|at| charter_core::AudioTime::try_from((at * 1e6).round() / 1e6).ok())
                 .ok_or_else(|| format!("{typed} is not a time in the audio, such as 00:45.000"))?;
-            Ok(changed(&|new| {
+            Ok(changed(metadata, |new| {
                 let length_seconds = new.preview.and_then(|preview| preview.length_seconds);
                 new.preview = Some(charter_core::Preview {
                     start_seconds: new_start,
@@ -348,7 +346,7 @@ fn preview_rows(
             ui.horizontal(|ui| {
                 let read = |typed: &str| {
                     if typed.is_empty() {
-                        return Ok(changed(&|new| {
+                        return Ok(changed(metadata, |new| {
                             new.preview = Some(charter_core::Preview {
                                 length_seconds: None,
                                 ..preview
@@ -360,7 +358,7 @@ fn preview_rows(
                         .ok()
                         .and_then(|seconds| charter_core::Seconds::try_from(seconds).ok())
                         .ok_or_else(|| format!("{typed} is not a length in seconds"))?;
-                    Ok(changed(&|new| {
+                    Ok(changed(metadata, |new| {
                         new.preview = Some(charter_core::Preview {
                             length_seconds: Some(new_length),
                             ..preview
