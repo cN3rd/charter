@@ -48,4 +48,5 @@ turns it off. Removing a note leaves the cursor.
 
 The mouse places with Ctrl held, since a plain click selects: a click toggles a tap on the nearest
 snap line, Ctrl+Shift a mine, and a drag draws a hold, osu!'s gesture without its tool modes.
-Conversions have no entry yet.
+The notefield's right-click menu offers the selected notes the plugin's conversions. Tap Tap
+Revenge offers Arrow, Slice, Big tap and Tap; StepMania and osu!mania offer no conversions yet.

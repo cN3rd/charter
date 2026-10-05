@@ -10,6 +10,11 @@ status: draft
 
 F1 shows this list in the editor, with a filter.
 
+Settings, shortcut help and Import timing are modeless windows. Opening them does not disable
+chart editing: lane keys can still change the song behind them when no text field has the
+keyboard. A focused text field takes typed input; the timing window takes its own keys after a
+click inside it.
+
 ## Note entry
 
 | Keys | Action |
@@ -38,7 +43,7 @@ F1 shows this list in the editor, with a filter.
 | G | Snap the selection to the nearest snap lines |
 | Shift+Click, Shift+Drag | Add to the selection |
 | Alt+Click, Alt+Drag | Take from the selection |
-| Ctrl+A, Escape | Select every note, or none |
+| Ctrl+A, Escape | Select every note on shown, unlocked layers, or none |
 | Delete, Backspace | Delete the selection |
 | Ctrl+Z | Undo |
 | Ctrl+Shift+Z, Ctrl+Y | Redo |
@@ -60,7 +65,7 @@ F1 shows this list in the editor, with a filter.
 |---|---|
 | Up, Down, Wheel | Move the cursor by the snap |
 | Page Up, Page Down, Shift+Wheel | Move the cursor by a measure |
-| Middle-drag | Pan the chart |
+| Middle-drag | Pan by moving the cursor; while playing, seek the audio |
 | Home, End | Jump to the start, or to where the last note ends |
 | Alt+Up, Alt+Down | Jump to the previous or next section |
 | Left, Right | Coarser or finer snap |

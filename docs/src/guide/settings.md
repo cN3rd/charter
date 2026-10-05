@@ -8,9 +8,12 @@ status: draft
 
 # Settings
 
-Edit > Settings…, or Ctrl+Comma, opens the settings window. Each setting takes effect at once and
-is kept between runs. Restore defaults, beside the close button, puts every setting back except the
-latency calibration and the recent songs.
+Edit > Settings…, or Ctrl+Comma, opens the settings window. Changes take effect at once. Whatever
+you pick is remembered between runs, and Restore defaults, beside the close button, puts
+everything back except the latency calibration and the list of recent songs.
+
+The window is modeless. Opening it does not disable chart editing; lane keys can still change
+notes behind it when no text field has the keyboard.
 
 ## Editing
 

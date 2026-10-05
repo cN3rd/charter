@@ -45,6 +45,10 @@ ArrowVortex parity without community validation, since the source does not show 
 
 A click selects the note under the pointer, and a drag selects the notes whose heads a box covers;
 Shift adds to the selection and Alt takes from it, ArrowVortex's modifiers. Ctrl+A selects the
-chart and Escape selects nothing. Delete removes the selection as one step. A note is selected by
-the tick it starts on and its first lane, which no other note of the chart shares, so a selection
-survives edits to other notes. Only deleting acts on it so far.
+notes on shown, unlocked layers and Escape selects nothing. The selection supports deletion,
+cut/copy/paste, duplication, movement in ticks and lanes, mirroring, quantization, resizing and
+the plugin's note conversions, with each edit checked and undoable.
+
+Selection is addressed by starting tick and first lane, not by a unique object ID. Ruleset-defined
+gestures may coincide with taps at that address, so the key is not universally unique and does
+not distinguish those coincident objects. See [well-formedness](../../format.md#well-formedness).

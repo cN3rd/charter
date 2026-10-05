@@ -21,8 +21,8 @@ The cursor is the bright line across the notefield. Notes go on it, and playback
 | anywhere | a click or drag on the minimap, or a drag of the cursor's handle on the ruler |
 
 Left and Right make the snap coarser or finer: 4th, 8th, 12th, 16th, 24th, 32nd, 48th, 64th, 96th
-or 192nd notes, shown on the toolbar. Ctrl with the wheel, Ctrl+Plus and Ctrl+Minus zoom, and dragging with the middle button
-pans the chart without moving the cursor.
+or 192nd notes, shown on the toolbar. Ctrl with the wheel, Ctrl+Plus and Ctrl+Minus zoom.
+Dragging with the middle button pans by moving the cursor; while playing, it also seeks the audio.
 
 ## Placing notes
 
@@ -48,8 +48,9 @@ and the note in the way flashes.
 
 ## Selecting and editing
 
-- A click selects a note, and a drag across empty space selects every note it boxes. Shift adds to
-  the selection and Alt takes from it. Ctrl+A selects every note, Escape none.
+- A click selects a note, and a drag across empty space selects the notes it boxes from shown,
+  unlocked layers. Shift adds to the selection and Alt takes from it. Ctrl+A selects every
+  editable note, Escape none.
 - Dragging a note moves it, or the selection it is in, by whole snaps and across lanes, with an
   outline where the notes will land. Shift keeps the notes' time and moves them across lanes only.
 - Delete or Backspace removes the selection.
@@ -66,7 +67,9 @@ A right click opens a menu of these edits without moving the cursor. It also hol
 - **Insert pattern here**, 1-1-1-1, 1-2-3-1-2-3 or 1-2-1-2 from the lane clicked, its notes a beat
   down to a 64th apart.
 
-Pastes and patterns go on the line clicked and skip places a note already takes.
+Pastes and patterns go on the line clicked, on the active layer. They skip occupied starting
+positions on that layer; a collision with a note on another layer refuses the whole operation,
+even if that layer is hidden. A hidden, ghosted or locked active layer also refuses placement.
 
 Ctrl+Z undoes and Ctrl+Shift+Z or Ctrl+Y redoes, one edit at a time. Each returns to the chart and
 the place it was made, so the change is in view.
@@ -92,7 +95,7 @@ back.
   Settings the game keeps as text, such as Tap Tap Revenge's theme, follow.
 - **Charts**: the song's charts. Switching chart keeps the cursor where it is, to compare two
   difficulties at one spot. The open chart's own settings, such as a StepMania meter, follow.
-- **Layers**: see above.
+- Layers, described above.
 - **Timing**: the offset, the tempo and every timing point; see [Timing](timing.md).
 - **Markers**: the song's sections and bookmarks. A click jumps there. A name typed and entered
   names the section at the cursor, or starts one; Ctrl+B adds or removes a bookmark at the cursor.

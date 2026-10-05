@@ -50,19 +50,22 @@ Moonscraper `Assets/Database/DefaultControls.json`, Editor on Fire `bin/keys.txt
 | Shortcut list | F1: ArrowVortex, StepMania, EOF | |
 
 No tool binds Ctrl+Comma to settings; charter takes it from desktop convention, **inferred**.
-Ctrl+Up and Down mean something different in every tool that binds them, so charter leaves them
-free.
+Ctrl+Up and Down mean something different in every tool that binds them; charter uses them to
+move the selection by the snap.
 
 ## Draft position
 
 charter binds the consensus where one exists and ArrowVortex's choice where the VSRG editors split,
 since its charts are lane-based like ArrowVortex's. Bound today: lane keys and Shift for mines, Up
 and Down, Page Up and Down, Left and Right for the snap, Home and End, Alt+Up and Alt+Down between
-sections, Ctrl+B for a bookmark, F7 and F8 for the tempo at the cursor, Ctrl+Z, Ctrl+Shift+Z and
-Ctrl+Y, Ctrl+A, Escape, Delete and Backspace, Ctrl+N, O, S and Shift+S, Ctrl+Comma and F1, and for
-playback Space, Shift+Left and Right with Ctrl+Shift for finer steps, and F3 and F4 for the
-metronome and note ticks. Cut, copy and paste wait for a clipboard. Bindings are fixed for now; the
-open questions below still stand.
+sections, Ctrl+B for a bookmark, and F7 and F8 for the tempo at the cursor. Also Ctrl+Z,
+Ctrl+Shift+Z and Ctrl+Y, Ctrl+A, Escape, Delete and Backspace, Ctrl+N, O, S and Shift+S, Ctrl+Comma
+and F1, and for playback Space, Shift+Left and Right with Ctrl+Shift for finer steps, and F3 and F4
+for the metronome and note ticks. Cut, copy and paste use the system clipboard; duplication,
+selection movement, mirroring, quantization and resizing have keys too. The
+[user guide's shortcut reference](../../guide/shortcuts.md) lists the current bindings, including
+layers and the timing window. Bindings are fixed for now; rebinding and conflict checks remain
+open.
 
 ## Open decision
 

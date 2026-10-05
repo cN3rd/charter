@@ -38,7 +38,7 @@ of the repository. [Packaging](../packaging.md) covers release builds.
 - The **song panel** on the left holds the song's details, its charts and their settings, its
   layers, its timing points and its markers. Ctrl+\\ folds it away.
 - The **notefield** fills the rest. From left to right it has the ruler with measure numbers, the
-  timing column, the lanes, the waveform and the minimap. The bright line across it is the cursor,
+  timing column, the waveform, the lanes and the minimap. The bright line across it is the cursor,
   where notes go and playback starts.
 - The **status bar** at the bottom says whether the audio is ready, counts the selection and names
   the active layer. Messages float over the notefield, each with a Dismiss button.
