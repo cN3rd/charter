@@ -25,9 +25,10 @@ regardless of which front end is chosen.
 `kira` 0.12, with its own decoding off. `charter-audio` decodes through `symphonia-wrap` into stereo
 frames, sans-io and tested, and `charter-app` hands kira those frames and plays them. The window
 never sees the device: it asks for play, pause, seek and rate, and the host reports the playhead
-each frame. The playback rate is kira's, so the pitch follows the speed, as tape does; keeping the
-pitch needs a time-stretch, still [open](time-stretch.md). Scrubbing is not built, so the spike
-below still decides whether kira's seeking holds up.
+each frame. The host uses the [time stretcher](time-stretch.md) to keep pitch from 10% to 200%
+while Keep pitch is on. Outside
+that range, or with the setting off, pitch follows speed. Dragging the cursor or panning while
+playing issues seeks; the rapid-scrubbing accuracy and clock benchmark below remains unrun.
 
 ## Open decision
 
@@ -44,8 +45,9 @@ Grade: **observed** for the API differences, **asserted** for whether they matte
 Earlier research called `kira` a "strong pick" and was "leaning kira over rodio", based on API
 reading.
 
-The spike that would settle it — verify `kira` seeking and clocks under rapid scrubbing, falling
-back to `rodio` plus custom seeking if too heavy — was never run.
+The spike that would settle it was never run: verify `kira` seeking and clocks under rapid
+scrubbing, falling back to `rodio` plus custom seeking if too heavy.
 
-`symphonia`'s selection is the one part of this already acted on in the repository; see
-[dependency dylib](dependency-dylib.md) and [codec support](codec-support.md).
+The current implementation uses symphonia for decoding, kira for playback and timestretch for
+pitch preservation. See [dependency dylib](dependency-dylib.md), [codec support](codec-support.md)
+and [time stretch](time-stretch.md).

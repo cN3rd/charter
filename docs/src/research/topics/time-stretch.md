@@ -27,7 +27,6 @@ Whether those preserve pitch is not established by the sources.
 | `soundtouch` / `soundtouch-sys` | bindings MIT-ish, core LGPL-2.1 | LGPL makes linking it as a shared library the cleaner route |
 | `rubato` | MIT | Resampling only, changes pitch with rate |
 | Render offline | n/a | Latency at the point of use instead of CPU during playback |
-
 | `timestretch` `0.15.0` | MIT | Pure Rust, `forbid(unsafe_code)`, on `rustfft`; keylock from 0.25x to 2x |
 
 The first survey found no pure-Rust option; `timestretch` came later.
@@ -40,8 +39,9 @@ of playback. On a 4-minute song in a release build it ran 4.5x real time at 2x s
 a quarter speed; a seek rebuilds it in about a millisecond and its first chunk follows within 10 ms.
 A 440 Hz tone at half speed stays at 440 Hz. It plays 0.6 to 2.3 dB quieter than the source.
 The batch `stretch` of the same crate took 29 s for the whole song, too long to wait for on
-play. Speeds outside 0.25x to 2x, and playback with the setting off, change pitch with speed
-through kira's own rate.
+play. Charter keeps pitch from 0.1x to 2x: an individual real-time keylock stage reaches down
+to 0.5x, so slower speeds chain stages. A calibration click measures the chain's lead so the
+audio stays aligned with the cursor. Above 2x, or with Keep pitch off, pitch follows speed.
 
 ## Was open
 
@@ -52,8 +52,7 @@ Which route, or whether to ship rate-only playback first and treat pitch preserv
 Earlier research called `signalsmith-stretch` the "best route" and preferred it over SoundTouch.
 Licensing is **observed**; algorithm quality is **asserted**.
 
-The spike was never run: verify the `cc` build across Windows, macOS and Linux. That matters more
-than usual here, because it is the only FFI dependency in the proposed stack and a broken build on
-one platform blocks a release.
+The earlier `signalsmith-stretch` proposal left its cross-platform `cc` build spike unrun.
+That uncertainty belongs to the FFI candidate; the chosen timestretch implementation is pure Rust.
 
 Related constraint: [toolchain and packaging](../constraints/toolchain-and-packaging.md).
