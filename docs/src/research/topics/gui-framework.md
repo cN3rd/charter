@@ -48,6 +48,7 @@ Related: [waveform rendering](waveform-rendering.md),
 ## Draft position
 
 egui, through eframe 0.36 and its default `wgpu` renderer, draws `crates/charter-ui`: a
-notefield over real documents that places and removes notes, and a static mock of the
-[UI draft](../../ui.md). Each draws about a thousand shapes where the spike asks for tens of
-thousands, and neither animates, so the spike is still unrun.
+notefield over real documents, with editing, waveform and spectrum views, and a static mock of
+the [UI draft](../../ui.md). The editor animates during playback; the mock remains static.
+The planned dense-chart, low-end-hardware benchmark remains unrun, so its throughput and
+[performance budgets](performance-targets.md) are still unverified by that benchmark.

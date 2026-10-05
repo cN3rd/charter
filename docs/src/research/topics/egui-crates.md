@@ -25,7 +25,8 @@ sources:
 # egui crates
 
 Crates published around egui 0.36 that meet a need of the [UI draft](../../ui.md) or of another
-topic, as crates.io listed them on 2026-09-25. None has been tried in `charter-ui`.
+topic, as crates.io listed them on 2026-09-25. The candidate tables record that survey; the
+Draft position section distinguishes dependencies already in use from proposed additions.
 
 ## Observed
 
@@ -136,23 +137,26 @@ provides either. egui-keybind captures one shortcut in a widget and is still on 
 
 Release dates, egui requirements and downloads are **measured**, read from crates.io's API on
 2026-09-25. The built-ins are **observed** in egui 0.36.2's source and changelog. Crate features
-are what each README states, untried here, so **asserted**. Their fit to charter's needs is
-**inferred**.
+are what each README states; candidates not adopted remain **asserted**. Their fit to charter's
+needs is **inferred**.
 
 Related: [GUI framework](gui-framework.md), [performance targets](performance-targets.md).
 
 ## Draft position
 
-- Tooling now: eframe's `inspection` feature with egui_mcp, so an agent can check the running
-  editor, and `profiling` with a Tracy or puffin backend for the unrun
+- Proposed tooling: enable eframe's `inspection` feature before using egui_mcp to drive the running
+  editor. The current app enables `persistence`, not `inspection`, so `EGUI_INSPECTION=1` alone
+  does not start the service. A Tracy or puffin backend is also proposed for the unrun
   [GUI framework](gui-framework.md) spike.
 - In use: rfd for the open and save dialogs, which `charter-app` shows when `charter-ui` asks,
-  and eframe's `persistence` feature, which keeps the settings between runs.
-- A crate when the feature lands: egui-phosphor for icons, which retires the mock's drawn
-  play button; a CJK fallback through egui-system-fonts or fontdb before the first non-Latin title;
-  egui_json_tree for `ext`; egui_plot for detection; egui_tiles with a second view.
+  eframe's `persistence` feature for settings, egui-phosphor for icons, and `system-fonts`
+  for CJK fallback fonts. Charter installs those fonts into egui itself rather than using
+  egui-system-fonts or fontdb.
+- Candidates for future features: egui_json_tree for `ext`, egui_plot for detection candidates,
+  and egui_tiles with a second view.
 - Charter's own: the undo history, since its edits can be refused; the notefield and its columns,
-  the waveform, spectrogram and overview; and the keymap's scopes and conflict checks over
-  `KeyboardShortcut`, with keybinds as the fallback if key sequences or a text config file are
-  wanted. The command palette goes on `Modal` with nucleo-matcher unless egui-palette releases for
-  0.36 first.
+  the waveform, spectrogram and overview; and fixed shortcut dispatch with keyboard ownership
+  for text fields, questions and the timing window.
+- Planned: rebindable shortcut scopes and conflict checks over `KeyboardShortcut`, with keybinds
+  as a candidate if key sequences or a text config file are wanted. A command palette could
+  use `Modal` with nucleo-matcher or a compatible egui-palette release.
