@@ -10,14 +10,21 @@ status: draft
 
 ## Observed
 
-**ArrowVortex** analyses a selected region or the first 600 seconds, lists BPM candidates with
-normalized fitness, and **requires the user to apply one**. Nothing changes until they do. Its
-source comments report the correct BPM within the top three for 300 cases — note that "top three"
+ArrowVortex analyses a selected region or the first 600 seconds, lists BPM candidates with
+normalized fitness, and requires the user to apply one. Nothing changes until they do. Its
+source comments report the correct BPM within the top three for 300 cases. That "top three"
 is an admission that the top result is not always right, which is precisely why the list exists.
 
-**Quaver** also ships automatic BPM and offset detection.
+Quaver also ships automatic BPM and offset detection.
 
-**Tempora** sits at the other extreme: its osu export silently rewrites timing with no report.
+Tempora sits at the other extreme: its osu export silently rewrites timing with no report.
+
+## Current behavior
+
+Charter uses the second option below: requesting Beat This! or Mapperatorinator applies the
+result to the current timing as one undo step. There is no candidate-selection or apply-preview
+dialog. The model download requires consent; the timing result is checked afterward in the
+timing window, or removed with undo. See [automatic timing](../../guide/timing.md#finding-timing-automatically).
 
 ## Open decision
 

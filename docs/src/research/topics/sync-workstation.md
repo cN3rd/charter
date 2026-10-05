@@ -33,13 +33,14 @@ a visual-sync command that shifts a row to a target time.
 
 Tempora's existence and scope demonstrate that the workflow is substantial enough to justify a
 product. Earlier research concluded from this that manual sync "can be treated as a first-class
-workstation" rather than a dialog — grade **inferred**, with no comparative usability data.
+workstation" rather than a dialog, grade **inferred**, with no comparative usability data.
 
 Note the direction of the evidence: a tool existing proves the work exists, not that it needs a
 separate view inside an editor that also charts.
 
 ## Current choice
 
-charter takes the third option: a timing window beside the notefield, one measure a row, with the
-anchor behaviour of [sync anchors](sync-anchors.md) worked over ordinary `bpm` events. See the
-[user interface](../../ui.md) chapter.
+charter takes the third option: a timing window beside the notefield, opening on rows of audio
+time and switching to rows of bars with V. It edits the [anchors](sync-anchors.md) stored in the
+chart's timing; segment tempos follow from those anchors, with an explicit tail tempo.
+See the [user interface](../../ui.md) chapter.

@@ -29,12 +29,14 @@ with `.ssc` gimmicks is untested.
 
 Grade: **decided** for charter format v1.
 
-## Unresolved
+## Constraints and editing
 
 - Stops and delays inside a segment keep their StepMania timing semantics and shorten the time
   available to that segment's beats.
 - Anchors may not fall on warped ticks.
-- Editing a derived tempo moves the next anchor's seconds; editing the tail changes `tempo`.
+- Setting a segment's BPM keeps anchor seconds fixed and moves downstream anchor ticks to fit
+  the new tempo. By default its notes keep their audio times too; the editor can instead keep
+  them on their beats within the edited segment. Setting the tail changes `tempo`.
 
 ## Draft position
 
