@@ -23,30 +23,33 @@ This is **not** a plugin mechanism and has nothing to do with loading code at ru
 is a Rust `dylib`, not a `cdylib`; call sites keep ordinary imports, and the artifact is
 toolchain-locked and unshippable. For runtime extension, see [plugins](plugins.md).
 
-**It is also the one decision already acted on in this repository, and the research it came from
-recommended waiting.**
+The facade is used by `charter-audio`. The measurements below come from an earlier synthetic-stack
+experiment, not a benchmark of the current editor.
 
 ## Current repository state
 
 - `third-party/symphonia-wrap` exists as a `dylib` + `rlib` crate containing `pub use symphonia::*;`
 - The dev profile sets `opt-level = 3` for every `symphonia-*` package and for the wrapper
-- No feature gate exists
-- No crate depends on the wrapper, so it is currently inert
+- `charter-audio` depends on the wrapper and decodes through it
+- No `dylink` feature gate exists; declaring both artifacts does not require a dynamically
+  linked release. The Linux release links the `rlib` and needs neither the wrapper's `.so` nor a
+  shared Rust standard library
 
 ## What the research recommended
 
-"Adopt it, but not yet — when the first real editor build exists and a rebuild first feels slow."
+"Adopt it, but not yet: when the first real editor build exists and a rebuild first feels slow."
 Specifically: an **off-by-default `dylink` feature**, **one wrapper for all heavy dependencies**,
 and **static release and CI builds**.
 
-Two gaps between that and the current state:
+The single-wrapper constraint still applies; the static-release requirement is already met:
 
 - **The wrapper is named for symphonia.** Only one dependency dylib can exist, because Rust's
-  diamond-dependency limitation makes multiple wrappers unsatisfiable — a two-wrapper experiment
-  produced 22 errors. If the GUI or audio stack later wants the same treatment, it must join this
+  diamond-dependency limitation makes multiple wrappers unsatisfiable (a two-wrapper experiment
+  produced 22 errors). If the GUI or audio stack later wants the same treatment, it must join this
   crate rather than get its own. The name will then be wrong.
-- **There is no `dylink` feature**, so there is nothing to disable for release and CI builds, which
-  the research says must be static.
+- **A `dylink` feature is optional.** It could select development linkage explicitly, but its
+  absence does not prevent a static release. Check the resulting binary's dependencies rather
+  than infer its linkage from the wrapper's `crate-type` declaration.
 
 ## Measurements
 
@@ -67,20 +70,19 @@ recorded reference. It does nothing for `cargo check`, rust-analyzer or cold bui
 
 ## Open decision
 
-- Whether to keep the wrapper now or remove it until a real build feels slow
+- Whether measured link savings on the current editor and each platform justify the wrapper
 - Whether to rename it for its actual role, since it can only ever be the single shared wrapper
-- Whether to add the `dylink` feature and wire release and CI to static
+- Whether an explicit development-linkage feature would be useful; release builds are already static
 - Whether the dev-profile `opt-level = 3` block stands on its own merits, independent of the dylib
-  question — it addresses decode speed in debug builds, which is a separate concern
+  question, since it addresses decode speed in debug builds, a separate concern
 
 ## Evidence
 
 Grade: **measured**, but narrowly: one platform, one linker pair, one renderer, no real editor
 crate. The author characterised it as "worth ~300 ms" and a second-order optimization.
 
-Windows MSVC and macOS linker behaviour were never measured. `cargo test` and the eventual
-workspace layout were untested. Cranelift was never measured because the nightly component was not
-installed.
+The experiment did not measure Windows MSVC, macOS linker behaviour, `cargo test` or the later
+workspace layout. Cranelift was not measured because the nightly component was not installed.
 
 Full caveat list: [toolchain and packaging](../constraints/toolchain-and-packaging.md).
 
