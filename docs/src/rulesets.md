@@ -55,13 +55,14 @@ away; every change goes through the plugin's check like any edit. Tap Tap Reveng
 names the theme of that level alone. A new song, and each level it starts with, plays in
 `TTRDJ`, the game's own theme; a song read without a theme keeps none.
 
-A plugin offers changes for the selected notes with `note_changes`, each an id, a name and what
-it does, and makes each with `change_note`, which turns one note of a chart so many lanes wide
-into another, or leaves it alone. The editor lists them in the notefield's right-click menu and
-applies one to the whole selection as one step, checking the result as it checks any edit; notes
-a change makes the same merge into one. Tap Tap Revenge offers four: Arrow, a shake that is left
-on the first lane, right on the last and down between; Slice, left on the left half of the lanes
-and right on the right; Big tap, a mega tap across every lane; and Tap, back to a tap on the
+A plugin offers changes for the selected notes with `note_changes`, each a name, what it does and
+the function that makes it, which turns one note of a chart so many lanes wide into another, or
+leaves it alone. There is no id to match: the plugin hands over the behaviour itself, so a change
+the plugin does not offer cannot be asked for. The editor lists them in the notefield's right-click
+menu and applies one to the whole selection as one step, checking the result as it checks any edit;
+notes a change makes the same merge into one. Tap Tap Revenge offers four: Arrow, a shake that is
+left on the first lane, right on the last and down between; Slice, left on the left half of the
+lanes and right on the right; Big tap, a mega tap across every lane; and Tap, back to a tap on the
 note's first lane.
 
 A plugin can also read another program's timing: `timing_format` names the format, and

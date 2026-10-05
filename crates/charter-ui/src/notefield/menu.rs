@@ -142,10 +142,10 @@ pub(super) fn menu_items(
     if !changes.is_empty() {
         ui.add_enabled_ui(chosen, |ui| {
             ui.menu_button("Change to", |ui| {
-                for change in changes {
+                for (nth, change) in changes.into_iter().enumerate() {
                     let button = ui.button(&change.name).on_hover_text(&change.about);
                     if button.clicked() {
-                        actions.push(Action::ChangeNotes(change.id));
+                        actions.push(Action::ChangeNotes(charter_core::ChangeIndex::new(nth)));
                     }
                 }
             });

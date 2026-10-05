@@ -255,16 +255,19 @@ impl Song {
     /// # Errors
     ///
     /// Refuses on a read-only song, and as [`Song::move_selection`] does.
-    pub fn change_selection(&mut self, change: &str) -> Result<(), Refusal> {
+    pub fn change_selection(&mut self, change: charter_core::ChangeIndex) -> Result<(), Refusal> {
         let plugin = self.plugin().ok_or(Refusal::ReadOnly)?;
+        let change = plugin
+            .note_changes()
+            .get(change.get())
+            .ok_or(Refusal::NoChart)?
+            .apply;
         let lanes = self
             .chart()
             .and_then(|chart| chart.lanes)
             .ok_or(Refusal::NoChart)?;
         self.replace_selection(|object| {
-            let mut changed = plugin
-                .change_note(change, object, lanes)
-                .unwrap_or_else(|| object.clone());
+            let mut changed = change(object, lanes).unwrap_or_else(|| object.clone());
             changed.layer.clone_from(&object.layer);
             Ok(changed)
         })
@@ -788,15 +791,27 @@ mod tests {
             Ok(())
         }
 
-        fn change_note(&self, id: &str, object: &Object, lanes: LaneCount) -> Option<Object> {
-            (id == "across").then(|| Object {
-                position: Position::Lane {
-                    index: LaneIndex::new(0),
-                    width: lanes,
-                },
-                ..object.clone()
-            })
+        fn note_changes(&self) -> Vec<charter_core::NoteChange> {
+            vec![charter_core::NoteChange {
+                name: "Across".to_owned(),
+                about: "Widen to every lane".to_owned(),
+                apply: across,
+            }]
         }
+    }
+
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "the signature is fixed by NoteChange::apply"
+    )]
+    fn across(object: &Object, lanes: LaneCount) -> Option<Object> {
+        Some(Object {
+            position: Position::Lane {
+                index: LaneIndex::new(0),
+                width: lanes,
+            },
+            ..object.clone()
+        })
     }
 
     fn select_everything(song: &mut Song) {
@@ -950,11 +965,12 @@ mod tests {
             &[&Across],
         );
         select_everything(&mut song);
-        song.change_selection("across").unwrap();
+        song.change_selection(charter_core::ChangeIndex::new(0))
+            .unwrap();
         let across = json!({ "tick": 0, "position": { "lane": { "index": 0, "width": 4 } },
                              "kind": "tap", "shape": "instant", "layer": "Layer 0" });
         assert_eq!(objects(&song), [across]);
-        song.change_selection("unknown").unwrap();
+        // A change the plugin does not offer is now unrepresentable: there is no id to get wrong.
         assert_eq!(objects(&song).len(), 1);
     }
 

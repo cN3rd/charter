@@ -448,7 +448,7 @@ impl Window {
                 self.failure = song.quantize_selection().err().as_ref().map(refused);
             }
             Action::ChangeNotes(change) => {
-                self.failure = song.change_selection(change).err().as_ref().map(refused);
+                self.failure = song.change_selection(*change).err().as_ref().map(refused);
             }
             Action::Pattern {
                 steps,

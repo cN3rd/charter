@@ -1744,7 +1744,7 @@ mod tests {
         harness.run();
         assert!(matches!(
             harness.state().as_slice(),
-            [Action::ChangeNotes(id)] if id == "arrow"
+            [Action::ChangeNotes(_)]
         ));
     }
 

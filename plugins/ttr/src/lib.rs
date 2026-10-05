@@ -562,16 +562,6 @@ const fn lanes(n: u16) -> LaneCount {
     }
 }
 
-/// The note changes the editor offers, by their ids.
-/// Editor change id for a shake in a direction.
-const CHANGE_ARROW: &str = "arrow";
-/// Editor change id for a directional slice.
-const CHANGE_SLICE: &str = "slice";
-/// Editor change id for a tap spanning every lane.
-const CHANGE_BIG_TAP: &str = "big_tap";
-/// Editor change id for a single-lane tap.
-const CHANGE_TAP: &str = "tap";
-
 /// Ruleset key for a directional shake.
 const SHAKE: &str = "shake";
 /// Ruleset key for a directional slice.
@@ -811,56 +801,26 @@ impl RulesetPlugin for Plugin {
     }
 
     fn note_changes(&self) -> Vec<NoteChange> {
-        let change = |id: &str, name: &str, about: &str| NoteChange {
-            id: id.to_owned(),
-            name: name.to_owned(),
-            about: about.to_owned(),
-        };
+        let change =
+            |name: &str, about: &str, apply: fn(&Object, LaneCount) -> Option<Object>| NoteChange {
+                name: name.to_owned(),
+                about: about.to_owned(),
+                apply,
+            };
         vec![
             change(
-                CHANGE_ARROW,
                 "Arrow",
                 "A shake: left on the first lane, right on the last, down between",
+                to_arrow,
             ),
             change(
-                CHANGE_SLICE,
                 "Slice",
                 "A slice: left on the left half of the lanes, right on the right",
+                to_slice,
             ),
-            change(CHANGE_BIG_TAP, "Big tap", "A mega tap across every lane"),
-            change(CHANGE_TAP, "Tap", "A tap on the note's first lane"),
+            change("Big tap", "A mega tap across every lane", to_mega_tap),
+            change("Tap", "A tap on the note's first lane", to_tap),
         ]
-    }
-
-    fn change_note(&self, id: &str, object: &Object, lanes: LaneCount) -> Option<Object> {
-        let lanes = Lanes::of(lanes)?;
-        read_note(object, lanes)?;
-        let Position::Lane { index, .. } = object.position else {
-            return None;
-        };
-        let (lane, width) = (u16::from(index), u16::from(lanes.width()));
-        let left = lane.saturating_mul(2) < width;
-        let kind = match id {
-            CHANGE_ARROW if lane == 0 => NoteKind::Shake(Shake::Left),
-            CHANGE_ARROW if lane.saturating_add(1) == width => NoteKind::Shake(Shake::Right),
-            CHANGE_ARROW => NoteKind::Shake(Shake::Down),
-            CHANGE_SLICE => NoteKind::Slice(if left { Side::Left } else { Side::Right }),
-            CHANGE_BIG_TAP => NoteKind::MegaTap,
-            CHANGE_TAP => NoteKind::Tap { lane: index },
-            _ => return None,
-        };
-        let note = Note {
-            tick: object.tick,
-            kind,
-        };
-        // What else the note carries, such as another plugin's data, stays with it.
-        let changed = note.to_object(lanes).ok()?;
-        Some(Object {
-            layer: object.layer.clone(),
-            sample: object.sample.clone(),
-            ext: object.ext.clone(),
-            ..changed
-        })
     }
 
     fn text_settings(&self) -> Vec<TextSetting> {
@@ -1269,6 +1229,64 @@ fn reject_own_keys(ext: &Extensions, at: Location) -> Result<(), Error> {
         }),
         None => Ok(()),
     }
+}
+
+/// `object` remade as the note `pick` names, keeping whatever else it carries. None when the
+/// object is not a note of this game, or not on a lane.
+fn changed_to(
+    object: &Object,
+    lanes: LaneCount,
+    pick: fn(u16, u16, LaneIndex) -> NoteKind,
+) -> Option<Object> {
+    let lanes = Lanes::of(lanes)?;
+    read_note(object, lanes)?;
+    let Position::Lane { index, .. } = object.position else {
+        return None;
+    };
+    let (lane, width) = (u16::from(index), u16::from(lanes.width()));
+    let note = Note {
+        tick: object.tick,
+        kind: pick(lane, width, index),
+    };
+    // What else the note carries, such as another plugin's data, stays with it.
+    let changed = note.to_object(lanes).ok()?;
+    Some(Object {
+        layer: object.layer.clone(),
+        sample: object.sample.clone(),
+        ext: object.ext.clone(),
+        ..changed
+    })
+}
+
+/// A shake: left on the first lane, right on the last, down between.
+fn to_arrow(object: &Object, lanes: LaneCount) -> Option<Object> {
+    changed_to(object, lanes, |lane, width, _| {
+        if lane == 0 {
+            NoteKind::Shake(Shake::Left)
+        } else if lane.saturating_add(1) == width {
+            NoteKind::Shake(Shake::Right)
+        } else {
+            NoteKind::Shake(Shake::Down)
+        }
+    })
+}
+
+/// A slice, taking the side the note's lane falls on.
+fn to_slice(object: &Object, lanes: LaneCount) -> Option<Object> {
+    changed_to(object, lanes, |lane, width, _| {
+        let left = lane.saturating_mul(2) < width;
+        NoteKind::Slice(if left { Side::Left } else { Side::Right })
+    })
+}
+
+/// A mega tap across every lane.
+fn to_mega_tap(object: &Object, lanes: LaneCount) -> Option<Object> {
+    changed_to(object, lanes, |_, _, _| NoteKind::MegaTap)
+}
+
+/// A tap on the note's first lane.
+fn to_tap(object: &Object, lanes: LaneCount) -> Option<Object> {
+    changed_to(object, lanes, |_, _, index| NoteKind::Tap { lane: index })
 }
 
 #[cfg(test)]
@@ -1959,19 +1977,19 @@ mod tests {
             };
             note.to_object(lanes).unwrap()
         };
-        let changed = |id: &str, lane: u16| {
-            let object = Plugin.change_note(id, &tap(lane), lanes.width()).unwrap();
+        let changed = |to: fn(&Object, LaneCount) -> Option<Object>, lane: u16| {
+            let object = to(&tap(lane), lanes.width()).unwrap();
             read_note(&object, lanes).unwrap()
         };
-        let arrows: Vec<_> = (0..5).map(|lane| changed("arrow", lane)).collect();
+        let arrows: Vec<_> = (0..5).map(|lane| changed(to_arrow, lane)).collect();
         let (l, r, d) = (Shake::Left, Shake::Right, Shake::Down);
         assert_eq!(arrows, [l, d, d, d, r].map(NoteKind::Shake));
-        let slices: Vec<_> = (0..5).map(|lane| changed("slice", lane)).collect();
+        let slices: Vec<_> = (0..5).map(|lane| changed(to_slice, lane)).collect();
         let (sl, sr) = (Side::Left, Side::Right);
         assert_eq!(slices, [sl, sl, sl, sr, sr].map(NoteKind::Slice));
-        assert_eq!(changed("big_tap", 3), NoteKind::MegaTap);
-        let arrow = Plugin.change_note("arrow", &tap(4), lanes.width()).unwrap();
-        let back = Plugin.change_note("tap", &arrow, lanes.width()).unwrap();
+        assert_eq!(changed(to_mega_tap, 3), NoteKind::MegaTap);
+        let arrow = to_arrow(&tap(4), lanes.width()).unwrap();
+        let back = to_tap(&arrow, lanes.width()).unwrap();
         assert_eq!(
             read_note(&back, lanes),
             Some(NoteKind::Tap {
@@ -1979,19 +1997,12 @@ mod tests {
             })
         );
         assert_eq!(Plugin.note_changes().len(), 4);
-        assert!(
-            Plugin
-                .change_note("nonsense", &tap(0), lanes.width())
-                .is_none()
-        );
         let mut carrying = tap(1);
         carrying.layer = Some(charter_core::LayerName::new("Kick").unwrap());
         carrying
             .ext
             .insert("swing.accent".parse().unwrap(), serde_json::json!(true));
-        let carrying_change = Plugin
-            .change_note("arrow", &carrying, lanes.width())
-            .unwrap();
+        let carrying_change = to_arrow(&carrying, lanes.width()).unwrap();
         assert_eq!(carrying_change.ext, carrying.ext);
         assert_eq!(carrying_change.layer, carrying.layer);
     }

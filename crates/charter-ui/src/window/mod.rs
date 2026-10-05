@@ -516,7 +516,7 @@ pub(crate) enum Action {
     /// Moves the selected notes to the snap's nearest lines.
     Quantize,
     /// Makes the selected notes what the song's game makes them by the change named.
-    ChangeNotes(String),
+    ChangeNotes(charter_core::ChangeIndex),
     /// Places taps from the cursor on, one `per_beat`th of a beat apart, on the lanes `steps`
     /// counts from `lane`, wrapping past the last.
     Pattern {

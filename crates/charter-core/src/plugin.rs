@@ -94,16 +94,39 @@ pub struct TextSetting {
     pub scope: SettingScope,
 }
 
+/// Which of a plugin's [note changes](RulesetPlugin::note_changes) is meant, by its position in
+/// that list. Nothing else indexes by this, so it cannot be confused with a chart or lane.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ChangeIndex(usize);
+
+impl ChangeIndex {
+    /// The change at `at` in the plugin's list.
+    #[must_use]
+    pub const fn new(at: usize) -> Self {
+        Self(at)
+    }
+
+    /// Its position in that list.
+    #[must_use]
+    pub const fn get(self) -> usize {
+        self.0
+    }
+}
+
 /// A change a plugin offers for the selected notes, such as turning taps into another of its
 /// game's kinds of note.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// Not comparable: it carries the behaviour as a function, and function pointers have no
+/// meaningful equality.
+#[derive(Clone, Debug)]
 pub struct NoteChange {
-    /// What the plugin knows the change by, passed back to [`RulesetPlugin::change_note`].
-    pub id: String,
     /// What the editor calls it, such as `Arrow`.
     pub name: String,
     /// What it does, for a tooltip.
     pub about: String,
+    /// `object` as this change makes it, or none when the change does not apply to it. The
+    /// editor checks the result as it does any edit.
+    pub apply: fn(&Object, LaneCount) -> Option<Object>,
 }
 
 /// Timing read from another program's format, ready to take the place of a song's.
@@ -222,13 +245,6 @@ pub trait RulesetPlugin: Debug {
     /// makes.
     fn note_changes(&self) -> Vec<NoteChange> {
         Vec::new()
-    }
-
-    /// `object`, a note of a chart `lanes` wide, as the change `id` makes it, or none when the
-    /// change does not apply to it. The editor checks the result as it does any edit.
-    fn change_note(&self, id: &str, object: &Object, lanes: LaneCount) -> Option<Object> {
-        let _: (&str, &Object, LaneCount) = (id, object, lanes);
-        None
     }
 
     /// A song with no notes made from `song`, which this plugin accepts.
@@ -383,10 +399,9 @@ mod tests {
         assert_eq!(plugin.layout_kind(), "Lanes");
         assert!(plugin.text_settings().is_empty());
         assert!(plugin.note_changes().is_empty());
-        let object: Object = serde_json::from_str(
+        let _object: Object = serde_json::from_str(
             r#"{"tick":0,"position":{"lane":{"index":0}},"kind":"tap","shape":"instant"}"#,
         )
         .unwrap();
-        assert_eq!(plugin.change_note("unknown", &object, LaneCount::ONE), None);
     }
 }
