@@ -1,7 +1,8 @@
 # Topics
 
 One design question per file. Each records what existing tools do, what earlier research
-concluded, and what that conclusion actually rests on. **None of these are settled.**
+concluded, and what that conclusion actually rests on. Choices remain provisional; current
+implementation is distinguished from open alternatives in each topic.
 
 ## Data model
 

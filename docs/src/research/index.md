@@ -5,7 +5,8 @@ building one. Each file is a single idea.
 
 Observations are separated from conclusions throughout. Where earlier research reached a verdict,
 that verdict is recorded under **Open decision** as one option among others, alongside the
-evidence it rests on. Nothing in this section is settled.
+evidence it rests on. Choices remain provisional; **Current choice**, **Draft position** and
+**Current behavior** sections distinguish implemented behavior from alternatives and future work.
 
 Evidence grades used across these files:
 
