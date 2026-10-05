@@ -44,7 +44,9 @@ of the repository. [Packaging](../packaging.md) covers release builds.
   the active layer. Messages float over the notefield, each with a Dismiss button.
 
 F1 lists every key, with a filter; [Keyboard shortcuts](shortcuts.md) has the same list.
-The guide is published at <https://cn3rd.github.io/charter/>.
+Publication at <https://cn3rd.github.io/charter/> is currently disabled. The source is in
+`docs/src/guide/`; with `just`, mdbook and Python installed, `just docs-serve` previews the book
+from a checkout. The book uses `python` on Windows and `python3` elsewhere.
 Help > About charter shows the version and the commit it was built from, worth including in a bug
 report, with the licence and credits.
 

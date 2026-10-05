@@ -57,6 +57,10 @@ docs:
 docs-serve:
     mdbook serve docs
 
+# Use the platform's Python for mdbook's renderer probe and JSON input
+_okf-frontmatter *args:
+    @{{ python }} docs/okf-frontmatter.py {{ args }}
+
 # Check the book is an OKF bundle (SUMMARY.md's one E1 is expected) and its preprocessor works
 docs-check:
     {{ python }} docs/okf-frontmatter.py selftest
