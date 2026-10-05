@@ -34,4 +34,7 @@ Grade: **inferred**.
 
 ## Draft position
 
-Provisionally resolved for the format: no editor state in chart data. See [notes](../../format.md#objects).
+Transient selection, highlighting, cursor and history stay outside the chart data. Persisted
+layer visibility and locks are an intentional exception: they reopen with the song and their
+changes participate in undo and unsaved-state tracking. See [notes](../../format.md#objects)
+and [layers](../../layers.md#undo).

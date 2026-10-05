@@ -35,10 +35,10 @@ without the whole system becoming loose.
 | [Markers](#markers) | Core: song-wide sections and bookmarks on ticks | Medium |
 | Multi-player | Modelled as extra lanes; exporters fold them back | Medium |
 | Grouping | Value-keyed, so objects need no identity | Medium |
-| [Internal model richness](research/topics/internal-model-richness.md) | Five interpreted timing kinds, rest carried | Medium |
+| [Internal model richness](research/topics/internal-model-richness.md) | Anchors and four interpreted timing event kinds, rest carried | Medium |
 | [Gimmick coverage](research/topics/gimmick-coverage.md) | Everything representable, little interpreted | Medium |
 | [Round-trip fidelity](research/topics/round-trip-fidelity.md) | Plugin data preserved by value | High |
-| [Domain model purity](research/topics/domain-model-purity.md) | No editor state in chart data | High |
+| [Domain model purity](research/topics/domain-model-purity.md) | Transient editor state separate; layer visibility and locks saved | High |
 | [Meter changes](research/topics/meter-changes.md) | Meter is timing data, policy left to the editor | Medium |
 | Schema evolution | Closed core schema, open plugin data | Medium |
 | Serialization | JSON | **Low, most likely to change** |
@@ -118,7 +118,7 @@ whose meaning depends on where the file came from, which is unrecoverable once t
 
 A bare namespace is not enough, because a plugin that changed the meaning or shape of its own data
 between `1.2` and `2.0` needs to know which one it is reading before deserializing. Recording the
-version lets the plugin migrate, warn or refuse, and lets it do so **per namespace** rather than
+version lets the plugin migrate or refuse, and lets it do so **per namespace** rather than
 failing the whole file.
 
 The core never compares versions. The string is opaque to it and belongs to the owning plugin,
@@ -209,11 +209,13 @@ An "Nth note" spans `4/N` beats, so resolution `T` represents it exactly when `4
 | 192 | yes | yes | yes | 12 / 189 |
 | 480 | yes | **no** | yes | 22 / 189 |
 | **960** | **yes** | **yes** | **yes** | **22 / 189** |
+| 2880 | yes | yes | yes | 30 / 189 |
 | 3840 | yes | yes | yes | 22 / 189 |
 
-960 is the smallest value representing both source formats exactly while reaching the practical
-ceiling on snap coverage; 3840 buys nothing. Conversions are exact integer scaling: StepMania row
-× 20, and `.chart` tick × 5 at its usual resolution of 192.
+960 is the smallest multiple of 192 that also represents quintuplets exactly, while covering
+StepMania's 48 rows. Conversions are exact integer scaling: StepMania row × 20, and `.chart` tick
+× 5 at its usual resolution of 192. Other resolutions cover more custom snaps: 2880 holds 30 of
+the 189 values from 4 to 192; 3840 holds the same 22 as 960.
 
 It stays configurable because **no finite resolution covers every snap**: 960 handles quintuplets
 (a 20th note is 192 ticks) but not septuplets.
@@ -586,9 +588,9 @@ Kind and shape are independent. A roll and a hold share a shape and differ in ki
 
 ### Children
 
-An object may contain children. A `Child` has every field of an `Object` except `children`, so
-containment is one level deep by type. Children have no independent existence: deleting the parent
-deletes them.
+An object may contain children. A `Child` has every field of an `Object` except `children` and
+`layer`, so containment is one level deep by type and children inherit their parent's layer.
+Children have no independent existence: deleting the parent deletes them.
 
 Arcaea's `.aff` does the same, nesting arctaps inside the arc they sit on rather than giving them
 IDs that point at it. Containment cannot dangle and needs no identity.
@@ -667,9 +669,13 @@ is neither `.` nor `..`, and contains no `\`, `:` or NUL. That rules out absolut
 letters, UNC prefixes and traversal by grammar alone, and gives each path one spelling on every
 platform.
 
-Opening a resource must not follow a link out of the chart's directory. That check happens each
-time a resource is opened, since links are filesystem state that can change after the document is
-parsed.
+Opening a resource must not follow a link out of the chart's directory. The host must check this
+each time a resource is opened, since links are filesystem state that can change after the
+document is parsed.
+
+**Implementation gap:** the current host does not enforce this filesystem containment. The path
+grammar rejects textual traversal, but a symlink can still lead outside the song folder.
+Validation of a chart file does not make its resource opens sandboxed.
 
 ### Limits
 
@@ -829,10 +835,12 @@ its saver writes `#KEYSOUNDS`, so opening and saving a keysounded file silently 
 **Editor on Fire** does the opposite, retaining unknown MIDI tracks in a raw list and writing them
 back. EOF's approach costs a map.
 
-It also makes loss reporting mechanical, which gives a testable property:
+For import/export adapters, the intended loss-reporting contract is testable:
 
-> A same-format round trip produces an empty loss report.
+> A same-format round trip should preserve the format's data by value and produce an empty loss report.
 
+Core JSON read/write preserves extensions by value. Game adapters do not yet satisfy the full
+reporting requirement: TTR export, for example, drops layers without listing that loss.
 See [export loss reporting](research/topics/export-loss-reporting.md).
 
 Extensions do not make `.osu` able to hold a warp;

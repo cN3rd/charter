@@ -33,4 +33,6 @@ Grade: **asserted**.
 
 ## Draft position
 
-Provisionally addressed: five timing kinds are interpreted, everything else is carried by value. A kind is core only if it changes the tick-to-time mapping or the measure grid. See [timing](../../format.md#timing).
+Timing stores anchors and a tail tempo, with four interpreted event kinds: stop, delay, warp
+and time signature. `Other` events are opaque plugin data carried by value. An event kind is core
+only if it changes the tick-to-time mapping or the measure grid. See [timing](../../format.md#timing).

@@ -41,4 +41,7 @@ rulesets. See [target audience](target-audience.md).
 
 ## Draft position
 
-Provisionally addressed: `Kind` is a namespaced identifier, not an enum, because the core never branches on it. Closed vocabularies are re-typed at the plugin boundary. See [identifiers](../../format.md#identifiers).
+`Kind` is an enum of the shared kinds, `Tap`, `Hold`, `Roll`, `Mine`, `Lift` and `Fake`, plus
+`Other(Key)` for a plugin's namespaced kind. The core distinguishes shared from plugin-owned
+kinds when checking lane uniqueness; the owning plugin supplies the game's semantics and
+re-types its vocabulary at its boundary. See [identifiers](../../format.md#identifiers).

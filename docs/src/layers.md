@@ -30,8 +30,10 @@ that as the base and adds what charting difficulties needs from it.
   a shown, unlocked blue *Layer 0*, holding every note. This is not an edit or undo step.
 - **The chart is all its layers together.** The format's rules, the ruleset plugin's checks,
   saving and export see one chart, the layers merged. So layers never let a chart hold what it
-  could not hold without them: two notes cannot cover one lane on one tick even on different
-  layers, and placing onto a note of another layer is refused, naming the layer, hidden or not.
+  could not hold without them: two notes of shared core kinds cannot cover one lane on one tick,
+  even on different layers. Ruleset-defined kinds keep their game's overlap rules, such as a Tap
+  Tap Revenge gesture sharing a tap's lane and tick. The editor refuses placement onto a note of
+  another layer, naming that layer whether hidden or shown.
 - **A layer has a name and a colour.** Names are unique within the chart. Colours come from a
   fixed palette of eight, red, orange, yellow, green, teal, blue, purple and pink, the next unused
   one given to each new layer, and chosen by clicking the swatch. New names use the smallest
@@ -81,8 +83,8 @@ down*, *Copy to chart ›* and delete.
 - Notes keep the ruleset's own look, since colour often carries the game's meaning, such as
   StepMania's beat colours. A layer's colour shows as a thin bar down each note's leading edge.
   *View › Colour notes by layer* tints the whole note instead, as Quaver's *View layers* does.
-- A lower layer's notes are drawn first. Since two notes never share a lane and tick, the order
-  mostly just keeps the list tidy.
+- A lower layer's notes are drawn first. Shared core kinds cannot occupy the same lane and tick;
+  the order also applies where a ruleset permits its own kinds to overlap.
 - The status bar shows the active layer's swatch and name. A click there lists the chart's layers
   to switch to.
 - The minimap draws every layer, hidden ones included, since it shows the chart the game plays.
@@ -99,7 +101,8 @@ down*, *Copy to chart ›* and delete.
 - **Paste** puts notes on the active layer. **Duplicate** (Ctrl+D) keeps each note's layer, since
   it stays in the same chart.
 - **Copy to chart ›** copies a layer, its name, colour, visibility, lock state and notes into
-  another difficulty, which is how a harder chart's melody becomes the start of an easier one.
+  another difficulty when that layer's name is new there. If the target already has a layer of
+  that name, the notes go onto it and its existing colour, visibility and lock state stay.
   Notes that would land on a note already there are left out, and the status bar counts them.
 - **Merge down** moves a layer's notes into the one below and removes it. **Delete** on a layer
   with notes asks whether to delete them or merge them down.
@@ -146,9 +149,10 @@ named, and a note names its layer.
 - Validation adds two cross-field rules: a note's named layer must be in its chart, and layer
   names must be unique. A layer name must also be non-empty.
 - `view` and `locked` are left out when shown and unlocked.
-- Plugins see a note's layer and may ignore it. No game has layers, so every exporter merges them
-  and lists the layers as lost, as [export loss reporting](research/topics/export-loss-reporting.md)
-  plans.
+- Plugins see a note's layer and may ignore it. The built-in games' exported charts merge the
+  layers. [Export loss reporting](research/topics/export-loss-reporting.md) requires reporting
+  what is lost; **the current TTR exporter drops layer data without that warning**. Keep the charter
+  JSON to preserve the names, colours, visibility and locks.
 
 ## Keys
 
@@ -161,17 +165,15 @@ named, and a note names its layer.
 | Ctrl+E | Merge the active layer down |
 | Ctrl+Shift+H | Show or hide the active layer |
 
-None of these is taken today.
-
 ## Open questions
 
 1. **Per chart or per song?** This draft gives each chart its own layers. Layers shared by every
    difficulty, *Kick* on Easy and Expert alike, would make parts easier to compare across
    difficulties, but a layer would then mean different notes on each.
-2. **Stacking on one spot.** This draft keeps the chart valid, so two layers never hold notes on
-   one lane and tick. Allowing it, with only shown layers going into the chart, would let
+2. **Alternative versions on one spot.** Layers obey the same overlap rules as the merged chart.
+   Allowing otherwise conflicting notes, with only shown layers going into the chart, would let
    alternative versions of a passage sit on top of each other, at the cost of a chart that can be
-   invalid while layers are hidden.
+   invalid while layers are hidden. Ruleset-permitted gesture overlaps already remain legal.
 3. **Is the view saved?** This draft keeps visibility and lock in the song file, each change an
    undo step. They could live in charter's settings per song instead, keeping the file free of how
    one person looks at it, and out of undo.
