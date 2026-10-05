@@ -55,7 +55,16 @@ song is copied with the date and time in its name, such as `Anthem 2026-09-29 05
 
 Both are off to start, and each switches on by itself. A song unchanged since its last copy is not
 copied again, and each folder keeps the newest 20 copies of a song unless the page says otherwise.
-To go back to one, open it as a song and save it where you want it.
+
+A snapshot keeps the chart JSON only, not copies of its audio, artwork or samples. Their paths
+remain relative to the JSON file, so opening a snapshot directly in `snapshots` or `autosaves`
+looks for those resources in the wrong folder.
+
+To restore a saved song, copy the snapshot into the original song's folder under a different
+name, such as `Anthem-restored.json`, and open that copy. The audio, artwork and samples then
+resolve beside the original song. Keep the current JSON until you are ready to replace it.
+For a song that was never saved, choose its audio and artwork again and put any sample files at
+the paths the snapshot names; it does not keep the original chosen paths or unsaved artwork bytes.
 
 ## Crashes
 

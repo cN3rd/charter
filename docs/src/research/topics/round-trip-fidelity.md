@@ -43,4 +43,8 @@ among `.ssc`, `.sm`, `.osu`, `.qua`, `.chart`, `.mid` and `.mc` are not establis
 
 ## Draft position
 
-Provisionally addressed: extension data passes through by value, which makes an empty-loss-report test possible. See [extensions](../../format.md#extensions).
+Core JSON read/write preserves extension data by value. The editor saves that document, while
+typed ruleset views and game exports can drop data they do not represent. Same-format fidelity
+and complete loss reports remain adapter requirements; TTR export still drops layer data without
+reporting it. See [extensions](../../format.md#extensions) and
+[current loss reporting](export-loss-reporting.md#current-behavior).

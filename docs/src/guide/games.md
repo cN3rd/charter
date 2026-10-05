@@ -47,8 +47,9 @@ Keys 60, 62 and 64 are taps in the three lanes, and holds when held over 0.15 se
 five lanes take the keys from 60 up, left to right. In MIDI, Easy is keys 60 to 71, Medium 72 to
 83, Hard 84 to 95 and Extreme 96 to 107, on the track named `PART GUITAR`.
 
-**File > Export song…** writes the open song back. A track is written as the folder the game keeps
-it in, in the folder chosen:
+**File > Export song…** writes the open song in the chosen game format. For a track, first create
+an empty folder such as `Anthem.track`, enter it in the save dialog and choose
+`taptrack.ttr2_track`. Charter writes these files directly into the chosen file's parent folder:
 
 - `taptrack.ttr2_track`, the levels;
 - `info.plist`, the title, artist, genre, levels, their lanes and themes, and the song's length;
@@ -57,12 +58,19 @@ it in, in the folder chosen:
   exports, and a message says the audio was not written;
 - `artwork.png` and `artwork@2x.png`, when the artwork is a PNG.
 
-Imported back, an exported folder gives the same song. A MIDI export leaves out the artist, genre,
-artwork and themes, and levels of four or five lanes, since a MIDI file has no place for them.
+The selected filename is ignored for a track: choosing `Anthem.ttr2_track` still writes
+`taptrack.ttr2_track` beside it, without creating an `Anthem.track` folder. Existing files under
+the fixed export names can be replaced. Use an empty export folder rather than the working song's
+folder.
 
-Both directions end with a list of what did not convert: notes the chosen game plays another way,
-charts that are not one of the four levels, markers, the preview, and anything else the format has
-no place for.
+Importing an exported track folder restores the supported game notes, timing, metadata and
+themes, subject to conversion losses. A MIDI export leaves out the artist, genre, artwork and
+themes, and levels of four or five lanes, which this adapter does not represent in its MIDI layout.
+
+Both directions report known conversion losses, such as notes the chosen game plays another way,
+charts that are not one of the four levels, markers and the preview. **Current gap:** export merges
+all layers and drops their names, colours, visibility and locks without reporting that loss.
+Keep the charter JSON as the editable original; a game export is not a complete backup.
 
 ## osu!mania
 

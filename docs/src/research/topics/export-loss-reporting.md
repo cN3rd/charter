@@ -19,6 +19,14 @@ ArrowVortex drops keysounds on SM load with a source-level warning only.
 
 Neither surfaces any of this to the user at the moment it happens.
 
+## Current behavior
+
+The TTR adapters return structured `left_out` entries for known conversion losses, and the
+window shows them after conversion. Export does not present a loss-confirmation dialog before
+writing. Reporting every loss remains a requirement: layers are currently merged and their
+metadata dropped without a warning, so an empty report alone does not prove preservation.
+See [the export guide](../../guide/games.md#tap-tap-revenge).
+
 ## Open decision
 
 - Warnings at export time

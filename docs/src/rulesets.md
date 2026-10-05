@@ -79,9 +79,10 @@ such as osu!mania's scroll speeds, only for songs of its game. osu!mania reads o
 
 A plugin can read and write whole songs in other programs' formats: `song_formats` lists them,
 each a name and its extensions, and `import_song` and `export_song` convert bytes to a song of its
-game and back, each with a list of what the conversion left out. The bytes are untrusted, and a
-same-format round trip leaves nothing out. A format may name `companions`, files it keeps beside
-the song's, which the host reads and the import is handed by name. An export may name its main
+game and back, each with a list of known conversion losses. The bytes are untrusted. Same-format
+fidelity and complete loss reports are requirements, not guarantees of every current adapter.
+A format may name `companions`, files it keeps beside the song's, which the host reads and the
+import is handed by name. An export may name its main
 file, make files beside it and have the song's audio and artwork copied in under names of its
 own, as a format that keeps a song as a folder does; the editor passes it how long the audio
 lasts, when the audio has loaded. Formats may share an
@@ -101,26 +102,34 @@ so each format is offered once for each game:
 | Editor on Fire MIDI | Left and right shakes | Down shake |
 | Tap Tap Reloaded MIDI | None | Mega tap, on the level's key 4 |
 
-A track is exported as the folder the game keeps it in: `taptrack.ttr2_track` in the folder the
-user chose a place in, an `info.plist` beside it with the title, artist, genre, levels, their
-columns and themes and how long the audio lasts, the audio as `audio.m4a`, AAC in an M4A file as
-the game's own tracks have it, and PNG artwork as `artwork.png` and `artwork@2x.png`. Audio already
-in AAC is copied; any other is converted with ffmpeg, which must then be installed and on the
-`PATH`, and the export says so when it is not.
-Imported back with that `info.plist`, the song is what was exported. A track's import takes the
-title, artist, genre and themes from its `info.plist` too, as the game shows them.
+A track export writes `taptrack.ttr2_track` directly in the selected file's parent folder, ignoring
+its selected filename, and an `info.plist` beside it with the title, artist, genre, levels, their
+columns and themes and how long the audio lasts. The audio goes in as `audio.m4a`, AAC in an M4A file as the
+game's own tracks have it, with PNG artwork as `artwork.png` and `artwork@2x.png`. Audio already in
+AAC is copied; any other is converted with ffmpeg, which must then be installed and on the `PATH`,
+and the export says so when it is not. The host does not create a named `.track` folder and can
+replace files under the fixed export names, so the user must choose a file inside a separate,
+empty track folder. Imported back with that `info.plist`, the supported game data returns,
+subject to conversion losses. A track's import takes the title, artist, genre and themes from
+its `info.plist` too, as the game shows them.
 
 A level becomes a chart of its difficulty with the columns `info.plist` gives it, three without
-one: three lanes take keys 60, 62 and 64 as taps, or holds when held over 0.15 seconds, and 61, 63
-and 65 as the table says, and four or five take keys from 60 up, left to right. Notes landing on a
+one. Three lanes take keys 60, 62 and 64 as taps, or holds when held over 0.15 seconds, and 61, 63
+and 65 as the table says; four or five take keys from 60 up, left to right. Notes landing on a
 lane and tick a note of the same kind already takes are dropped, as are levels other than the four
 and keys a level has no place for, and tempo changes after the last note. Export writes a kind the
-chosen game plays as another, such as a slice in a Tap Tap Revenge track, as that one, and leaves
+chosen game plays as another, such as a slice in a Tap Tap Revenge track, as that one. It leaves
 out, saying so, charts of no level, shakes and the like in four or five lanes, markers, the
-preview and artwork that is not PNG, and in MIDI the artist, genre,
-artwork and themes and levels of four or five lanes, as a MIDI file has no place for them. `plist` reads and writes the property list and `midly` the MIDI
-file; the plugin walks the archive's fixed shape itself, since the keyed-archive crates decode by
-unbounded recursion and none writes custom classes. A MIDI file has one tempo map, the first
+preview and artwork that is not PNG. In MIDI it also leaves out the artist, genre, artwork and
+themes and levels of four or five lanes, which this adapter's MIDI layout does not represent.
+
+Layers are merged, and their names, colours, visibility and locks are dropped without a loss
+entry. This reporting gap is described in [the layers design](layers.md#in-the-file); a game
+export is not a complete backup of the charter document.
+
+`plist` reads and writes the property list and `midly` the MIDI file; the plugin walks the
+archive's fixed shape itself, since the keyed-archive crates decode by unbounded recursion and
+none writes custom classes. A MIDI file has one tempo map, the first
 level's, and starts at the audio's start, so export leads in with a tempo that puts the song's
 first beat on a whole MIDI beat; imported back, the song's grid starts at the audio's start.
 
