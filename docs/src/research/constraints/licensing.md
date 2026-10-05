@@ -4,6 +4,10 @@ title: Licensing
 description: Copyleft licences that bound which audio and analysis code can be linked or copied.
 tags: [constraints, licensing, legal]
 status: draft
+sources:
+  - id: cc-by-nc-nd
+    resource: https://creativecommons.org/licenses/by-nc-nd/4.0/deed.en
+    title: Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 deed
 ---
 
 # Licensing
@@ -18,12 +22,13 @@ review.
 | `essentia` | AGPL or commercial | Excluded from a shipped path |
 | `soundtouch` core | LGPL-2.1 | Dynamic linking described as the cleaner route |
 | `symphonia` | MPL-2.0 | Weak copyleft applied per file; described as compatible with linking into a proprietary or permissive application |
-| Tempora source | CC BY-NC-ND 4.0 | Cannot be copied or derived from at all |
+| Tempora source | CC BY-NC-ND 4.0 | Allows attributed, noncommercial verbatim sharing; distributing adaptations is prohibited |
 | Etterna | MIT per repository metadata | Licensing of every dependency it pulls was not established |
 
 charter itself is dual-licensed under MIT or Apache-2.0, at the user's choice, as is usual for Rust
 crates: `LICENSE-MIT` and `LICENSE-APACHE` at the repository root, `MIT OR Apache-2.0`, which every
-crate inherits through `license.workspace = true`. What it bundles keeps its own terms: Inter under the OFL
+first-party crate inherits through `license.workspace = true`. What it bundles keeps its own
+terms: Inter under the OFL
 (`crates/charter-style/assets/fonts`) and the metronome sounds under CC0
 (`crates/charter-audio/assets/clicks`). A dependency whose licence would bind the app beyond these
 terms, as the copyleft entries above would, stays out of the shipped path.
@@ -33,5 +38,7 @@ Two consequences worth stating plainly:
 - **ArrowVortex's detection quality cannot be matched by linking the same library on the same
   terms.** ArrowVortex depends on aubio; a permissively licensed product cannot. See
   [beat detection](../topics/beat-detection.md).
-- **Tempora can be studied but not borrowed from.** Its observed behaviour is fair to learn from;
-  its code is not available under any reuse-compatible terms.
+- **Tempora's behaviour can inform independently written code.** Its
+  [licence](https://creativecommons.org/licenses/by-nc-nd/4.0/deed.en) permits attributed,
+  noncommercial verbatim redistribution, but does not permit distributing adaptations.
+  Adapted source cannot be redistributed as charter's own MIT/Apache-licensed code.

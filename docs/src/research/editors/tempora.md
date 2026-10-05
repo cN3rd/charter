@@ -12,6 +12,9 @@ sources:
   - id: tempora-release
     resource: https://github.com/teamkongehund/Tempora/releases/tag/v1.5.0-beta
     title: Tempora v1.5.0-beta
+  - id: cc-by-nc-nd
+    resource: https://creativecommons.org/licenses/by-nc-nd/4.0/deed.en
+    title: Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 deed
 ---
 
 # Tempora
@@ -25,8 +28,10 @@ Beat Saber export, autosave and custom osu export settings.
 
 Unknown: who wrote it, whether `v1.5.0-beta` became stable, and whether it is still maintained.
 
-**Its source is CC BY-NC-ND 4.0 and cannot be copied or derived from.** Observations of its
-behaviour remain usable. See [licensing](../constraints/licensing.md).
+Its source is [CC BY-NC-ND 4.0](https://creativecommons.org/licenses/by-nc-nd/4.0/deed.en):
+attributed, noncommercial verbatim sharing is allowed, but distributing adaptations is not.
+Adapted source cannot be redistributed as charter's own MIT/Apache-licensed code. Observations
+of its behaviour remain usable. See [licensing](../constraints/licensing.md).
 
 ## Timing model
 
