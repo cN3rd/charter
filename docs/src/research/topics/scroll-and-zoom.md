@@ -10,12 +10,12 @@ status: draft
 
 ## Observed
 
-- **ArrowVortex** offers both snap scrolling and continuous scrolling, reverse scroll, and two view
+- ArrowVortex offers both snap scrolling and continuous scrolling, reverse scroll, and two view
   modes: C-mod (time-based) and X-mod (row-based). It also has a minimap with Notes and Density
   modes, and jumps to beat, measure, stream start and end, selection start and end, and chart start
   and end.
-- **osu!lazer** provides zoom and drag seeking on a waveform timeline.
-- **Moonscraper** queries only the tick range between camera bounds, by binary search over sorted
+- osu!lazer provides zoom and drag seeking on a waveform timeline.
+- Moonscraper queries only the tick range between camera bounds, by binary search over sorted
   lists.
 
 C-mod versus X-mod is the substantive one: it decides whether vertical distance means time or

@@ -13,5 +13,5 @@ Parsed and written by Editor on Fire alongside `.chart` and `.sm`.
 The notable precedent: EOF retains **unknown MIDI tracks in a raw linked list and writes them back
 on export**. Data the editor does not understand survives a round trip untouched.
 
-Whether that approach generalizes to the other target formats is unestablished — see
+Whether that approach generalizes to the other target formats is unestablished; see
 [round-trip fidelity](../topics/round-trip-fidelity.md).

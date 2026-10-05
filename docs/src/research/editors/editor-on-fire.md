@@ -27,7 +27,7 @@ vocal pitch range: MIDI 36-84.
 ## Formats
 
 Parses and writes `.chart`, `.mid` and `.sm`. **Unknown MIDI tracks can be retained in a raw linked
-list and written back on export** — a concrete precedent for lossless passthrough of data the
+list and written back on export**: a concrete precedent for lossless passthrough of data the
 editor does not understand.
 
 ## Timing and playback

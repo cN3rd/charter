@@ -24,7 +24,7 @@ status: draft
 - Data plus view, with view restoration suppressible
 
 Separately: what constitutes one step. A recording pass producing hundreds of notes is the hard
-case — see [live recording](live-recording.md).
+case; see [live recording](live-recording.md).
 
 ## Evidence
 

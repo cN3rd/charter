@@ -34,7 +34,7 @@ metronome's sound. The audio latency ranges over +/-500 ms, wider than Quaver's.
 
 ## Evidence
 
-The range is **observed** in one tool. Everything else is **unresolved** — earlier research
+The range is **observed** in one tool. Everything else is **unresolved**: earlier research
 explicitly listed the sign convention and exact range as open.
 
 This blocks [live recording](live-recording.md): uncalibrated capture is systematically offset, and

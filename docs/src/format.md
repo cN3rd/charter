@@ -17,7 +17,7 @@ status: draft
 must compute with it. Everything else is opaque to the core and belongs to a plugin.
 
 The corollary matters as much as the rule: **the format types only what the core computes with,
-and the plugin boundary is where everything else gets its type safety.** The core stores an
+and the plugin boundary is where everything else gets its type safety**. The core stores an
 extension value as opaque data; the plugin that owns it deserializes it into its own types and is
 free to be as strict as it likes. Pushing the strictness outward is what lets the core stay small
 without the whole system becoming loose.
@@ -198,8 +198,8 @@ chart, under a new `format_version`.
 ## Time base
 
 Musical position is an `i32` **tick** (`Tick`). Resolution is `ticks_per_beat`, a `NonZeroU16`
-(`TicksPerBeat`) defaulting to **960**. A beat is a quarter note whatever the meter, as in
-StepMania, `.chart` and MIDI, so `bpm` counts quarter notes too.
+(`TicksPerBeat`) defaulting to **960**. A beat is a quarter note whatever the meter. StepMania,
+`.chart` and MIDI all treat it that way, so `bpm` counts quarter notes too.
 
 An "Nth note" spans `4/N` beats, so resolution `T` represents it exactly when `4T mod N == 0`:
 
@@ -268,10 +268,10 @@ is the tempo typed, and keeps the exact rate for resolving time, so every anchor
 `seconds`.
 
 Objects, events and markers sit on ticks and take their times from the tempo map, so changing the
-tempo moves them in the audio. Keeping them where they sound is the editor's job: when a BPM is set,
-charter stretches the timed ticks up to the next anchor by the change of tempo and moves everything
-after it by the ticks that anchor moved, or, when asked to keep notes on their beats, only the
-second.
+tempo moves them in the audio. Keeping them where they sound is the editor's job. When a BPM is
+set, charter stretches the timed ticks up to the next anchor by the change of tempo, then moves
+everything after it by the ticks that anchor moved. Asked to keep notes on their beats, it does
+only the second.
 
 The editor still shows an "offset": it is the resolved time of tick 0. Changing it shifts every
 anchor's `seconds` by the same amount.
@@ -467,12 +467,14 @@ omitted when writing.
 An object may name its layer with `layer`. A note without `layer` is on the first layer.
 Files without layers remain valid for other tools. When charter opens one, it gives each such
 chart a shown, unlocked blue *Layer 0* and names that layer on every note. Opening is not an
-edit; saving writes the new layer and note names. A named layer not listed in the chart is an `UnknownLayer` violation at
-that object; a repeated layer name is a `DuplicateLayer` violation at the second layer.
-Children belong to their parent's layer and do not name their own.
+edit; saving writes the new layer and note names.
 
-Layers change only the editor's view and editing permissions: the format and ruleset validate all
-notes together, regardless of layer, and exporters merge the layers into the game's one chart.
+A named layer not listed in the chart raises `UnknownLayer` at that object. Repeating a layer
+name raises `DuplicateLayer` at the second layer. Children belong to their parent's layer and do
+not name their own.
+
+Layers change only the editor's view and editing permissions. The format and ruleset validate all
+notes together, whatever their layer. Exporters merge the layers into the game's one chart.
 See [the layers design](layers.md) for the editor behaviour.
 
 ---
@@ -618,8 +620,8 @@ implementations disagreeing.
 - No two top-level objects of shared kinds on one tick cover a common lane. Two taps in one lane at
   one instant is universally invalid, and it is cheap to check. The rule stops there: two `Plane`
   points may legitimately coincide, and where children and objects of a ruleset's own kinds may sit
-  is the ruleset's judgement, as a Tap Tap Revenge shake is a gesture drawn in the column of its
-  direction, which a tap in that column may share an instant with.
+  is the ruleset's judgement. A Tap Tap Revenge shake, for one, is a gesture drawn in the column of
+  its direction, which a tap in that column may share an instant with.
 - At most one timing event per `tick` and kind; `other` events are keyed by `tick` and name. Import
   adapters resolve duplicates rather than passing them on.
 - At most one marker per `tick` and kind, since two sections starting on one tick name one part
@@ -949,9 +951,9 @@ The first anchor's `seconds` of `-0.014` means tick 0 falls 14 milliseconds **be
 
 The file shows the things easiest to get wrong: both playfield geometries in one chart; a second
 difficulty overriding the song timing, anchor included, with a warp the first does not have; a
-keysound referencing the file-level bank; a non-ruleset `swing` plugin contributing a timing event;
-and an `osu.` key surviving an import, declared because its data is present and for no other
-reason.
+keysound referencing the file-level bank; and a non-ruleset `swing` plugin contributing a timing
+event. An `osu.` key also survives an import, declared because its data is present and for no
+other reason.
 
 ---
 

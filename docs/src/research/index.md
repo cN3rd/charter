@@ -16,7 +16,7 @@ Evidence grades used across these files:
 | inferred | Reasoned from an observation |
 | asserted | No supporting evidence was found |
 
-- [Editors](editors/index.md) — what existing tools do
-- [Formats](formats/index.md) — what the file formats can express
-- [Topics](topics/index.md) — design questions, each with its open decision
-- [Constraints](constraints/index.md) — limits that hold regardless of choices
+- [Editors](editors/index.md): what existing tools do
+- [Formats](formats/index.md): what the file formats can express
+- [Topics](topics/index.md): design questions, each with its open decision
+- [Constraints](constraints/index.md): limits that hold regardless of choices

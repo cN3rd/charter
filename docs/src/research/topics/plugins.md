@@ -13,8 +13,8 @@ sources:
 # Plugins
 
 Charter's crate taxonomy already assumes an extension surface: built-in plugins provide per-game
-support and optional features, and are meant to be written against the same interface a
-third-party plugin would use. That constraint only pays off if the surface is real, so how
+support and optional features, and are meant to be written against the same interface an
+external plugin would use. That constraint only pays off if the surface is real, so how
 plugins load is an architectural decision, not a packaging detail.
 
 **Evidence warning.** The prior research corpus processed here does not contain the plugin

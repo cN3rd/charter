@@ -27,7 +27,7 @@ These are structural differences, not implementation gaps. No amount of effort m
 - ArrowVortex's SM loader ignores keysounds while its saver writes `#KEYSOUNDS`, so a same-format
   round trip through it loses data silently.
 - Tempora's osu export removes no-op points, adds downbeat points, resets unsupported signatures
-  and adjusts BPMs — all without a report to the user.
+  and adjusts BPMs, all without a report to the user.
 
 Both are concrete instances of the failure mode discussed in
 [round-trip fidelity](../topics/round-trip-fidelity.md) and

@@ -8,8 +8,8 @@ status: draft
 
 # Packaging
 
-`just dist` builds the editor with the `dist` profile, release with symbols stripped, and writes two
-packages to `dist/`: `charter-<version>-linux-x86_64.tar.gz` and
+`just dist` builds the editor with the `dist` profile, a release build with its symbols stripped.
+It writes two packages to `dist/`: `charter-<version>-linux-x86_64.tar.gz` and
 `charter-<version>-windows-x86_64.zip`. `just dist-linux` and `just dist-windows` build one each;
 the Windows build cross-compiles with cargo-xwin, or builds with MSVC when run on Windows as CI
 does, and links the C runtime in, so it needs no Visual C++ redistributable. CI tests every push
@@ -60,7 +60,7 @@ sha256sum dist/*.tar.gz
 What keeps the build from depending on the machine:
 
 - `--remap-path-prefix` replaces the checkout's folder with `.` and cargo's with `/cargo` in what
-  rustc writes into the binary, such as panic locations, and `-ffile-prefix-map` does the same for
+  rustc writes into the binary, panic locations included. `-ffile-prefix-map` does the same for
   the C that `ring` and `zstd-sys` compile. The toolchain's own paths are remapped by rustc already.
 - `--locked` builds the crates `Cargo.lock` names and refuses to resolve others.
 - The `dist` profile's `codegen-units = 1` and fat LTO leave the code's order to the compiler alone,
@@ -80,7 +80,7 @@ A song's audio, artwork and chart files are the user's, beside the song, and nev
 
 ffmpeg is not packaged either. Exporting a Tap Tap Revenge track converts audio that is not AAC
 with the `ffmpeg` found on the `PATH`, since no encoder for AAC or MP3 in Rust is mature and the
-ones in C are LGPL or worse; without ffmpeg everything else still exports, and the export says
+ones in C are LGPL or worse. Without ffmpeg everything else still exports, and the export says
 the audio was not written.
 
 The Beat This! weights, `final0.ckpt` at 81 MB, and Mapperatorinator's, 416 MB, are left out on

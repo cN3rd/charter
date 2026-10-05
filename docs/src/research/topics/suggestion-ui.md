@@ -33,7 +33,7 @@ machine-generated afterwards.
 
 ArrowVortex's behaviour is **observed**, and its top-three accuracy figure is the best evidence in
 the whole research set that suggestions need human confirmation. Earlier research concluded
-"do not silently apply suggestions" — grade **inferred**, but from unusually direct evidence.
+"do not silently apply suggestions", grade **inferred**, but from unusually direct evidence.
 
 Related: [beat detection](beat-detection.md) produces the suggestions;
 [export loss reporting](export-loss-reporting.md) is the same consent question on the way out.

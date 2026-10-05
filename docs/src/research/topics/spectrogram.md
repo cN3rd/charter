@@ -47,6 +47,6 @@ when sync is hardest. That argues for core; its rendering cost argues the other 
 
 ## Evidence
 
-Presence in two tools is **observed**. Whether it belongs in a first release is **unresolved** —
+Presence in two tools is **observed**. Whether it belongs in a first release is **unresolved**:
 earlier research called it a differentiator, grade **asserted**, and separately listed spectrogram
 throughput among the untested spikes.

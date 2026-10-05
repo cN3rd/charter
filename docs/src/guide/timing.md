@@ -49,9 +49,9 @@ lines between dashed. A correct grid lines up with the hits down every row. V sw
 bars, which keep the grid still and slide the audio under it instead.
 
 Each BPM change is an **anchor** pinning a beat to a moment of the audio. The window finds the
-onsets in the audio, the starts of hits, and measures the grid against them: ticks along each row,
-a strip coloured by how early or late each onset falls, a badge on bars more than 5 ms off, and a
-list of issues that N and Shift+N step through.
+onsets in the audio, the starts of hits, and measures the grid against them. It shows ticks along
+each row, a strip coloured by how early or late each onset falls, a badge on bars more than 5 ms
+off, and a list of issues that N and Shift+N step through.
 
 - A click adds an anchor, snapped to the strongest onset within 25 ms and to the grid. The grid
   runs from 1/1 to 1/32 of a whole note, chosen with the keys 1 to 0.

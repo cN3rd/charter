@@ -11,8 +11,8 @@ status: draft
 ## Observed
 
 **Tempora is an entire shipped application for this one job.** It renders one measure per waveform
-row with adjustable row count, row offset and overlap, draws waveform and spectrogram per timing
-segment, and offers click-to-anchor, drag for music position, Ctrl-drag for audio offset,
+row with adjustable row count, row offset and overlap, and draws waveform and spectrogram per
+timing segment. It offers click-to-anchor, drag for music position, Ctrl-drag for audio offset,
 Shift-drag for BPM, right-click local playback, and a metronome following the grid division.
 
 That layout is fundamentally different from a charting view: measures stacked as rows rather than a

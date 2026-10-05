@@ -30,7 +30,7 @@ mpa, flac, pcm, vorbis, aiff, caf, isomp4, ogg, wav, all-meta and opt-simd. **AA
 
 ## Evidence
 
-Patent status is **asserted** — recorded from research, never legally reviewed. The spike to obtain
+Patent status is **asserted**: recorded from research, never legally reviewed. The spike to obtain
 an actual legal decision on codec defaults and patent posture was identified and never run.
 
 Note also that MP3 carries a technical cost independent of patents: encoder and decoder start delay

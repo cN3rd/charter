@@ -30,7 +30,7 @@ The second is the only one that is mechanically testable.
 ## Evidence
 
 The silent transformations are **observed** in shipped tools. The reporting requirement is
-**inferred** — earlier research proposed that adapters report explicit transformations rather than
+**inferred**: earlier research proposed that adapters report explicit transformations rather than
 silently mutate, based on Tempora's export behaviour.
 
 Related: [round-trip fidelity](round-trip-fidelity.md) is the policy;

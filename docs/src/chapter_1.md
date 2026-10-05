@@ -13,10 +13,10 @@ StepMania, Tap Tap Revenge and osu!mania. A plugin also reads and writes its gam
 Tap Revenge does `.ttr2_track` and Editor on Fire MIDI.
 
 The editor state is split from drawing. `charter-editor` owns songs, cursor movement, selection,
-undo and redo, markers, layer edits and timing changes. `charter-ui` draws the egui window, panels
-and notefield and asks its host for files and dialogs. `charter-app` is the host: it registers the
-plugins, does the file I/O, plays audio with kira, converts export audio with ffmpeg, and reports
-crashes.
+undo and redo, markers, layer edits and timing changes. The egui window, panels and notefield are
+drawn by `charter-ui`, which asks its host for files and dialogs. The host is `charter-app`: it
+registers the plugins, does the file I/O, plays audio with kira, converts export audio with ffmpeg,
+and reports crashes.
 
 Audio decoding is handled by `charter-audio` through `symphonia-wrap`. Playback rate changes the
 audio's speed and keeps or follows its pitch without changing the chart.

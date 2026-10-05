@@ -25,5 +25,5 @@ This is the most timing-expressive format in the surveyed set. Anything targetin
 represent non-bijective timing: warps skip time, stops and delays pause it. A timestamp cannot be
 mapped back to a row by simple inversion.
 
-Which of these a chart editor must actually support is open — see
+Which of these a chart editor must actually support is open; see
 [gimmick coverage](../topics/gimmick-coverage.md).

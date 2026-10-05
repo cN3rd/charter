@@ -30,7 +30,7 @@ Ogg Vorbis, MP3, WAV. Ogg conversion now shells out to an external `oggenc2.exe`
 Styles: dance single, double, couple, routine, solo; pump single, halfdouble, double, couple.
 
 The SM loader warns that keysounds are unsupported and ignored, while the saver can still write
-`#KEYSOUNDS` — a same-format round trip through ArrowVortex is therefore lossy.
+`#KEYSOUNDS`. A same-format round trip through ArrowVortex is therefore lossy.
 
 ## Note model
 
@@ -67,8 +67,8 @@ No turn, shuffle, rotate or generic transpose action appears in the cited menu s
 
 ## Sync and tempo
 
-Adjust Sync: music offset from -100 to 100 s at 0.001 s resolution, initial BPM, tweak buttons,
-and four controls moving the first beat by half or one beat. Adjust Tempo: BPM changes, halve and
+`Adjust Sync`: music offset from -100 to 100 s at 0.001 s resolution, initial BPM, tweak buttons,
+and four controls moving the first beat by half or one beat. `Adjust Tempo`: BPM changes, halve and
 double BPM, stops, and region-to-stop conversion. SM5 controls cover delays, warps, time
 signatures, tick counts, combo multipliers, speeds, scrolls, labels and attacks.
 

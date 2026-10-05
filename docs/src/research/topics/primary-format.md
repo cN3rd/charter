@@ -11,18 +11,18 @@ status: draft
 ## Observed
 
 Every surveyed editor is built around one format and converts to the rest. ArrowVortex is
-`.sm`/`.ssc`-native. Quaver is `.qua`-first. Moonscraper is `.chart`-first. None of them treats
-several formats as equally native.
+`.sm`/`.ssc`-native, Quaver is `.qua`-first, and Moonscraper is `.chart`-first. None of them
+treats several formats as equally native.
 
 OpenChart states multi-game support as a goal, but the surveyed evidence does not establish a
 shipped feature set behind it.
 
 ## Open decision
 
-- `.ssc` — most expressive, so least lossy as an internal pivot
-- `.sm` — simpler, wider legacy reach
-- `.osu` — largest active community, but millisecond-based and structurally narrower
-- `.qua` — richest scroll-velocity model
+- `.ssc`: most expressive, so least lossy as an internal pivot
+- `.sm`: simpler, wider legacy reach
+- `.osu`: largest active community, but millisecond-based and structurally narrower
+- `.qua`: richest scroll-velocity model
 - An internal format with exporters to all of the above
 
 The choice largely determines how much of the editor is conversion code, and whether conversion

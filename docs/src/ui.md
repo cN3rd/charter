@@ -307,8 +307,9 @@ through the song model like any other.
   to four bars each, a tenth of the bar before shown ahead of each downbeat. Those keep the grid
   still and slide the audio under it, as Tempora and the Beatline specification do. Both draw the
   audio at the times the song's anchors give it.
-- Downbeats draw thick, beats solid, the lines between dashed, or dotted for triplets, with beats
-  numbered. The grid is 1/1 to 1/32 of a whole note, keys 1 to 0, and restarts on every downbeat.
+- Downbeats draw thick and beats solid, with the beats numbered. Lines between them are dashed,
+  or dotted on triplets. The grid runs from 1/1 to 1/32 of a whole note on keys 1 to 0, and
+  restarts on every downbeat.
 - The waveform shows here whether or not the notefield's is on.
 
 ### Anchors
@@ -321,8 +322,8 @@ through the song model like any other.
 - A drag on an anchor moves its beat, Ctrl-drag its moment, Shift finer and unsnapped; a drag
   elsewhere selects the anchors inside. An anchor never passes its neighbours: a drag stops short
   and the neighbour pulses.
-- Arrows nudge 1 ms (Shift 0.1 ms, Ctrl 10 ms) and move a grid step, + and - set the tail tempo,
-  Delete removes, and a run of nudges undoes as one step.
+- Arrows nudge 1 ms (Shift 0.1 ms, Ctrl 10 ms) and move a grid step. + and - set the tail tempo,
+  and Delete removes. A run of nudges undoes as one step.
 - The toolbar's Start BPM sets the first anchor's tempo from anywhere.
 
 ### Measuring
@@ -334,9 +335,9 @@ through the song model like any other.
   than 2 ms from their onset, and metre changes without an anchor. N and Shift+N step through it.
   Issues and refusals name the moment they are at, and a refused edit says why in the status line.
 - The inspector shows the focused anchor's moment, bar position, tempo and distance to its onset,
-  each editable, and its segment's fit error and coverage. F fits the focused anchor or the
-  selection to the onsets by least squares, Shift+F to half BPMs, shown before Enter applies it. D
-  and Shift+D double and halve the tempo.
+  each editable. Its segment's fit error and coverage show beside them. F fits the focused anchor or
+  the selection to the onsets by least squares, Shift+F to half BPMs, shown before Enter applies it.
+  D and Shift+D double and halve the tempo.
 
 ### Listening
 

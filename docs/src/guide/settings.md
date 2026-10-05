@@ -57,5 +57,5 @@ latency calibration and the recent songs.
 
 The page also names charter's data folder. [Files and recovery](files.md) explains each of these.
 
-Only settings changed from their defaults are kept, in the data folder's `app.ron`. A setting left
-alone follows its default when a later version changes it.
+Only what you changed is written, to `app.ron` in that folder. Anything left alone keeps following
+its default, so a later version that revises that default will quietly pick the new value up.

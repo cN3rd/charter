@@ -37,7 +37,7 @@ Grade: **asserted**. Earlier research is explicit that these came from an intern
 and that whether they produce the intended subjective feel requires user testing that was never
 done.
 
-No rendering benchmark was run either. The relevant spike — waveform and spectrogram at 60 fps with
-tens of thousands of line segments — was identified and left unrun, so it is not established that
-these targets are achievable on the candidate stack, let alone sufficient. See
+No rendering benchmark was run either. The relevant spike, waveform and spectrogram at 60 fps with
+tens of thousands of line segments, was identified and left unrun. It is therefore not established
+that these targets are achievable on the candidate stack, let alone sufficient. See
 [waveform rendering](waveform-rendering.md) and [GUI framework](gui-framework.md).
