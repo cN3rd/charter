@@ -13,7 +13,7 @@ members = [
     "plugins/ttr",
     "plugins/osu-mania",
     "third-party/symphonia-wrap",
-    "third-party/timingator",
+    "crates/charter-mapperatorinator-burn",
     "third-party/timingator-wrap"
 ]
 resolver = "3"
@@ -43,7 +43,7 @@ ecow = { version = "0.2", features = ["serde"] }
 serde_json = { version = "1.0", features = ["float_roundtrip"] }
 thiserror = "2"
 symphonia-wrap = { path = "third-party/symphonia-wrap" }
-timingator = { path = "third-party/timingator" }
+timingator = { path = "crates/charter-mapperatorinator-burn" }
 timingator-wrap = { path = "third-party/timingator-wrap" }
 rustfft = "6"
 # ponytail: CPU inference only; the flex backend runs everywhere charter does, and a GPU backend
