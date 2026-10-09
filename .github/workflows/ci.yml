@@ -52,6 +52,11 @@ jobs:
     env:
       RUSTFLAGS: -D warnings
     steps:
+      # ponytail: since burn 0.22 the debug test build fills the runner's disk, so the runner's
+      # unused Android, .NET and Haskell SDKs go first; turn debug info off here if that stops
+      # being enough.
+      - if: matrix.task == 'test'
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
@@ -87,7 +92,9 @@ jobs:
     name: Package ${{ matrix.os }}
     if: github.event_name != 'pull_request'
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
+    # On Windows a cold cache rebuilds burn's kernels for half an hour before fat LTO, itself
+    # longer than that.
+    timeout-minutes: 120
     strategy:
       matrix:
         include:
