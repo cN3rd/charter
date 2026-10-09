@@ -59,10 +59,9 @@ which is why the refinement learns the lag before it looks for each beat's onset
 ## Mapperatorinator's super timing
 
 Timing › Find timing with Mapperatorinator… is the alternative to Beat This!: a Rust port of
-[Mapperatorinator](https://github.com/OliBomby/Mapperatorinator)'s super timing generator,
-vendored in `third-party/timingator` and run through `third-party/timingator-wrap`, which keeps
-burn out of the rest of charter. Its
-V32 model hears 16.4 seconds of audio at a time and writes beat, measure and timing point events;
+[Mapperatorinator](https://github.com/OliBomby/Mapperatorinator)'s super timing generator in
+`charter-mapperatorinator-burn`, which keeps burn out of the rest of charter. Its V32 model
+hears 16.4 seconds of audio at a time and writes beat, measure and timing point events;
 twenty passes at shifted offsets are fused into one beat grid and then osu! timing points. Its
 weights, pruned to what timing reads and stored as float16, are one 416 MB GGUF file at
 [cnf3rd/timingator-v32-f16-gguf](https://huggingface.co/cnf3rd/timingator-v32-f16-gguf). The

@@ -47,7 +47,7 @@ fmt-check:
 # ponytail: burn pulls in backtrace, which fails to compile under Kani's nightly (an ambiguous
 # `unreachable!`), so the crates linking burn are left out. Drop the exclusions once it builds.
 kani:
-    cargo kani --workspace --exclude charter-beatthis-burn --exclude charter-app --exclude timingator --exclude timingator-wrap
+    cargo kani --workspace --exclude charter-beatthis-burn --exclude charter-app --exclude charter-mapperatorinator-burn
 
 # Build the book into docs/book
 docs:
@@ -205,8 +205,8 @@ _licenses os:
     cp "$hits/LICENSE-AUDIO" "$folder/licenses/hit-sounds-LICENSE.txt"
     cp "$hits/CC0-1.0.txt" "$folder/licenses/hit-sounds-CC0-1.0.txt"
     cp "$hits/PROVENANCE.md" "$folder/licenses/hit-sounds-PROVENANCE.md"
-    cp crates/charter-mapperatorinator-burn/LICENSE "$folder/licenses/timingator-LICENSE.txt"
-    cp crates/charter-mapperatorinator-burn/NOTICE "$folder/licenses/timingator-NOTICE.txt"
+    cp crates/charter-mapperatorinator-burn/LICENSE "$folder/licenses/mapperatorinator-LICENSE.txt"
+    cp crates/charter-mapperatorinator-burn/NOTICE "$folder/licenses/mapperatorinator-NOTICE.txt"
     cargo metadata --format-version 1 --filter-platform "$target" | {{ python }} -c '
     import json, sys
     meta = json.load(sys.stdin)

@@ -25,6 +25,7 @@ listing the commits since the one before.
 | `licenses/Inter-OFL.txt` | the Inter font's licence |
 | `licenses/metronome-sounds-*` | the click sounds' licence, CC0 text and provenance |
 | `licenses/hit-sounds-*` | the note-tick hit sounds' licence, CC0 text and provenance |
+| `licenses/mapperatorinator-*` | Mapperatorinator's MIT licence and what the port takes from where |
 | `licenses/THIRD-PARTY.md` | every crate linked into the binary, with its version and licence |
 | `BUILD.txt` | the commit and the `rustc` and `cargo` versions it was built with |
 

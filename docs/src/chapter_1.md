@@ -22,10 +22,10 @@ Audio decoding is handled by `charter-audio` through `symphonia-wrap`. Playback 
 audio's speed and keeps or follows its pitch without changing the chart.
 
 Automatic timing has two trackers. `charter-beatthis-burn` runs the Beat This! model on the CPU,
-and `charter-autotiming` turns its beats and downbeats into a tempo map. `third-party/timingator`
-is a port of Mapperatorinator's super timing, which finds osu! timing points directly on the
-graphics card; `third-party/timingator-wrap` runs it behind an API of its own, so the
-rest of the workspace does not depend on burn.
+and `charter-autotiming` turns its beats and downbeats into a tempo map.
+`charter-mapperatorinator-burn` is a port of Mapperatorinator's super timing, which finds osu!
+timing points directly on the graphics card, behind an API of its own, so the rest of the
+workspace does not depend on burn.
 
 The timing window lives in `charter-timing`: rows and anchors map beats to the audio, and edits are
 returned as editor commands instead of bypassing the song model.

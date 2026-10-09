@@ -1,14 +1,15 @@
 [package]
-name = "timingator"
-version = "0.1.0"
+name = "charter-mapperatorinator-burn"
+version = "0.0.0"
 edition = "2024"
 license = "MIT"
 rust-version.workspace = true
-description = "Song timing from audio: Mapperatorinator's super timing generator in Rust and burn"
 
 [dependencies]
 anyhow = "1"
-burn.workspace = true
+# ponytail: wgpu for Mapperatorinator's timing model, which took over 15 minutes a song on the CPU
+# and takes one or two on a graphics card; fusion and autotune as upstream runs it.
+burn = { workspace = true, features = ["wgpu", "fusion", "autotune"] }
 half = "2.7"
 rustfft.workspace = true
 safetensors = "0.7.0"

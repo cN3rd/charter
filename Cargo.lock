@@ -1671,6 +1671,7 @@ dependencies = [
  "charter-autotiming",
  "charter-beatthis-burn",
  "charter-core",
+ "charter-mapperatorinator-burn",
  "charter-osu-mania",
  "charter-stepmania",
  "charter-ttr",
@@ -1683,7 +1684,6 @@ dependencies = [
  "serde",
  "system-fonts",
  "timestretch",
- "timingator-wrap",
  "ureq 3.4.2",
 ]
 
@@ -1739,6 +1739,19 @@ dependencies = [
  "proptest",
  "serde_json",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "charter-mapperatorinator-burn"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "burn",
+ "half",
+ "rustfft",
+ "safetensors 0.7.0",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -8202,28 +8215,6 @@ dependencies = [
  "rustfft",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "timingator"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "burn",
- "half",
- "rustfft",
- "safetensors 0.7.0",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "timingator-wrap"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "burn",
- "timingator",
 ]
 
 [[package]]

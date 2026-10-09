@@ -120,7 +120,7 @@ impl Finder {
         }
         let (send, receive) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            use timingator_wrap::Device;
+            use charter_mapperatorinator_burn::Device;
 
             let tell = |share| drop(send.send(Progress::Finding(share)));
             let found = match tracker {
@@ -236,7 +236,7 @@ fn timing_of(
 /// sets the device up.
 fn gpu() -> bool {
     static GPU: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *GPU.get_or_init(timingator_wrap::graphics_card)
+    *GPU.get_or_init(charter_mapperatorinator_burn::graphics_card)
 }
 
 /// The timing of the audio in `file` as Mapperatorinator's timing model, with the weights at
@@ -245,10 +245,10 @@ fn mapperatorinator(
     file: &Path,
     weights: &Path,
     ticks_per_beat: TicksPerBeat,
-    device: timingator_wrap::Device,
+    device: charter_mapperatorinator_burn::Device,
     mut progress: impl FnMut(f32),
 ) -> Result<Timing, String> {
-    use timingator_wrap::SAMPLE_RATE;
+    use charter_mapperatorinator_burn::SAMPLE_RATE;
 
     let bytes =
         std::fs::read(file).map_err(|why| format!("{}: {}", file.display(), chain(&why)))?;
@@ -257,7 +257,7 @@ fn mapperatorinator(
     let rate = u32::try_from(SAMPLE_RATE).map_err(|why| chain(&why).to_string())?;
     let mut samples = charter_audio::resample(&track.to_mono(), track.rate().get(), rate)
         .map_err(|why| chain(&why).to_string())?;
-    // As timingator's `audio::normalize`: divided by the peak.
+    // Divided by the peak, as Mapperatorinator's model hears it.
     let peak = samples
         .iter()
         .fold(0.0_f32, |peak, sample| peak.max(sample.abs()));
@@ -268,7 +268,7 @@ fn mapperatorinator(
     }
     let model =
         std::fs::read(weights).map_err(|why| format!("{}: {}", weights.display(), chain(&why)))?;
-    let timer = timingator_wrap::Timer::load(&model, device)
+    let timer = charter_mapperatorinator_burn::Timer::load(&model, device)
         .map_err(|why| format!("{}: {why:#}", weights.display()))?;
     let count = |windows: usize| u64::try_from(windows).unwrap_or(u64::MAX);
     let points = timer
@@ -288,7 +288,7 @@ fn mapperatorinator(
 }
 
 /// Mapperatorinator's osu! timing points as the sections of a tempo map.
-fn sections(points: &[timingator_wrap::TimingPoint]) -> Result<Vec<Section>, String> {
+fn sections(points: &[charter_mapperatorinator_burn::TimingPoint]) -> Result<Vec<Section>, String> {
     points
         .iter()
         .map(|point| {
@@ -653,7 +653,7 @@ mod tests {
 
     #[test]
     fn the_models_timing_points_become_sections_and_a_bar_of_no_beats_is_refused() {
-        use timingator_wrap::TimingPoint;
+        use charter_mapperatorinator_burn::TimingPoint;
         let point = |offset_us, ms_per_beat, meter| TimingPoint {
             offset_us,
             ms_per_beat,

@@ -21,7 +21,7 @@ submodule, Windows target, cargo-xwin).
 | `just pack-check` | `packaging/pack.py selftest`; archives are byte-reproducible |
 | **`just ci`** | `fmt-check clippy test docs docs-check pack-check`, the pre-commit gate |
 | `just run [song]` | the editor (`cargo run -p charter-app`) |
-| `just kani` | Kani proofs; excludes the four crates linking burn, which Kani cannot build |
+| `just kani` | Kani proofs; excludes the three crates linking burn, which Kani cannot build |
 | `just dist` / `dist-linux` / `dist-windows` | reproducible packages into `dist/` |
 
 `cargo run -p charter-ui --example mock` draws the static mock of the book's UI draft.
@@ -80,14 +80,13 @@ floats, and one proof mixing division, multiplication and rounding never finishe
 | `crates/charter-audio` | DSP: decode via `symphonia-wrap`, waveform peaks, onsets, spectrum, resampling, tags, metronome clicks. No device |
 | `crates/charter-autotiming` | DSP: tempo map from beats and onsets, as constant-tempo sections; back end of automatic timing, fed by any tracker |
 | `crates/charter-beatthis-burn` | DSP: beats and downbeats via the Beat This! network in burn on CPU (`final0.ckpt`); parity fixtures from `fixtures/make.py` |
+| `crates/charter-mapperatorinator-burn` | DSP: osu! timing points via a port of Mapperatorinator's super timing, the V32 model in burn on wgpu, or flex on CPU; nothing past it depends on burn. Weights on Hugging Face, read its README |
 | `crates/charter-style` | shared look: colour tokens, Inter and Phosphor fonts, widgets |
 | `crates/charter-timing` | the timing window in egui: audio a measure per row, anchors pinning beats to audio; returns edits as commands. State in `lib.rs`, I/O in `draw/pointer/keyboard.rs` |
 | `crates/charter-ui` | the editor window in egui: notefield, panels, keys, settings, minimap, recovery; hosts the timing window; asks its host for files and dialogs. `window/`, `panels/`, `notefield/` are one file per concern, each `impl Window` block beside the state it owns |
 | `crates/charter-app` | thin binary: registers plugins, serves file/dialog requests (`std::fs`, rfd), plays audio (kira), time-stretch, settings in eframe storage, crash reports (`report.rs`, color-eyre). File I/O behind a `Disk` trait, so it is tested in memory |
 | `plugins/{stepmania,ttr,osu-mania}` | ruleset plugins: typed game models over `charter-core` with a `Plugin` the editor validates through. `ttr` reads/writes `.ttr2_track` and EOF MIDI through one `exchange.rs` model; `osu-mania` imports osu! `[TimingPoints]`, pasted or from a `.osu` |
 | `third-party/symphonia-wrap` | build-time facade over `symphonia`, `dylib` + `rlib`. **Read its README before touching audio deps, features or dev profiles** |
-| `third-party/timingator` | vendored port of Mapperatorinator's super timing: osu! timing points via the V32 model in burn on wgpu. Weights on Hugging Face, read its README |
-| `third-party/timingator-wrap` | facade over `timingator`, so nothing past it depends on burn. Read its README |
 | `packaging/pack.py` | writes `.tar.gz`/`.zip` deterministically; `just pack-check` self-tests it |
 
 Keep dependency direction one-way: **data → DSP → UI**, with plugins written against the same

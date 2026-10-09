@@ -1,10 +1,10 @@
-# timingator
+# charter-mapperatorinator-burn
 
-The library of timingator, a Rust port of the super timing generator of
-[Mapperatorinator](https://github.com/OliBomby/Mapperatorinator): osu! timing points from a song's
-audio, by the V32 model in burn. Vendored from the author's own `timingator/rust`; the `timingator`
-CLI, the `timingator-prune` tool and its `prune` module, and the Python parity scripts stay
-upstream. Licence and provenance are in `LICENSE` and `NOTICE`.
+Song timing from audio by [Mapperatorinator](https://github.com/OliBomby/Mapperatorinator)'s
+super timing generator, ported to Rust: the V32 model in burn, on the graphics card through wgpu
+or on the CPU through flex, its events fused into osu! timing points. `Timer` loads the model from
+its GGUF file and times mono samples at `SAMPLE_RATE`; `graphics_card` asks whether wgpu has a
+card to run it on. [Automatic timing](../../docs/src/autotiming.md) in the book describes it.
 
 ## Model
 
@@ -16,14 +16,13 @@ https://huggingface.co/cnf3rd/timingator-v32-f16-gguf/resolve/main/timingator-v3
 ```
 
 415,618,240 bytes, sha256 `8554fca86c384d633442205a20f48b1072a1c842d82e2346bfc80e0811fd2792`.
-`charter-app`'s finder downloads it, through `timingator-wrap`, into charter's data folder and runs it on the graphics card
-through burn's wgpu backend, or on the CPU through flex when there is none and the user agrees. `model::Model::load` takes its bytes, `tokenizer::Tokenizer::from_json` its
-`timingator.tokenizer` metadata string (read with `gguf::Gguf::parse`), and `run` takes 16 kHz
-mono samples normalized by `audio::normalize`.
+`charter-app`'s finder downloads it into charter's data folder.
 
 ## Rules
 
-- Not a first-party crate: it does not opt into the workspace lints, and keeps upstream's code
-  as is so it can be re-synced. Change it upstream and copy it back.
+- Nothing past this crate names a burn type or depends on burn; add what callers need here.
+- Kani skips it, as it links burn.
 - `audio::decode` shells out to ffmpeg; charter decodes through `charter-audio` instead and
-  hands `run` samples.
+  hands `Timer::run` samples.
+- `LICENSE` is Mapperatorinator's MIT licence and `NOTICE` says what the port takes from where;
+  `just dist` packages both.

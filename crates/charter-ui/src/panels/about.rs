@@ -53,8 +53,8 @@ pub(crate) fn about(ctx: &egui::Context, open: &mut bool) {
                  domain (CC0).",
                 "Beat This!, by Francesco Foscarin, Jan Schlüter and Gerhard Widmer, reimplemented \
                  in Rust; its weights download from its authors.",
-                "Mapperatorinator, by OliBomby, under the MIT licence, ported to Rust as \
-                 timingator; its weights download from Hugging Face.",
+                "Mapperatorinator, by OliBomby, under the MIT licence, ported to Rust; its \
+                 weights download from Hugging Face.",
                 "The Rust crates charter is built from are listed with their licences in \
                  licenses/THIRD-PARTY.md beside the program.",
             ] {

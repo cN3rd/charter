@@ -13,6 +13,7 @@ charter-audio.workspace = true
 charter-autotiming.workspace = true
 charter-beatthis-burn.workspace = true
 charter-core.workspace = true
+charter-mapperatorinator-burn.workspace = true
 charter-osu-mania.workspace = true
 charter-stepmania.workspace = true
 charter-ttr.workspace = true
@@ -22,7 +23,6 @@ eframe = { workspace = true, features = ["persistence"] }
 image.workspace = true
 kira.workspace = true
 rfd.workspace = true
-timingator-wrap.workspace = true
 serde.workspace = true
 system-fonts.workspace = true
 timestretch.workspace = true
