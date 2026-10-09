@@ -10335,7 +10335,3 @@ dependencies = [
  "syn 3.0.6",
  "winnow",
 ]
-
-[[patch.unused]]
-name = "cubecl-macros"
-version = "0.10.0"
