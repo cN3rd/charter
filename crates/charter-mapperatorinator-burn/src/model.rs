@@ -220,6 +220,11 @@ fn merge(x: Tensor<4>) -> Tensor<3> {
 fn causal(is_causal: bool) -> AttentionModuleOptions {
     AttentionModuleOptions {
         is_causal,
+        // ponytail: the default scale, `1/√HEAD_DIM`, given explicitly, which makes burn-cubecl
+        // run its plain matmul-and-softmax attention: since burn 0.22 its tuner leaves that out
+        // for the encoder's 1024 positions, and on wgpu the flash kernel it runs instead takes
+        // three times as long (40.5 against 12.8 ms a layer). Drop it once a flash kernel wins.
+        scale: Some(1.0 / f64::from(dim_float(HEAD_DIM)).sqrt()),
         ..AttentionModuleOptions::default()
     }
 }

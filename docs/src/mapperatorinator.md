@@ -98,6 +98,8 @@ Q4_1, Q4_0, IQ4_NL and MXFP4).
   divides it by its peak, where upstream decodes with pydub and ffmpeg. The samples differ slightly,
   and super timing can turn that into different timing points.
 - The model computes in float32 throughout.
+- Attention always runs as burn's plain matmuls and softmax. For the encoder burn 0.22 would pick a
+  flash kernel instead, which on wgpu takes three times as long.
 
 ## Matching upstream
 
