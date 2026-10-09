@@ -6,7 +6,7 @@
 //! (`TimingPointsChange.add_change` for uninherited points, the only kind this makes). Offsets
 //! are whole microseconds, as the `timedelta`s upstream keeps them in.
 
-use crate::super_timing::Beat;
+use crate::super_timing::BeatKind;
 use crate::tokenizer::{Event, TIME_SHIFT, round_half_even};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -25,28 +25,9 @@ impl TimingPoint {
         }
     }
 
-    pub fn bpm(&self) -> f64 {
-        60_000.0 / self.ms_per_beat
-    }
-
     /// Milliseconds, as `round(tp.offset.total_seconds() * 1000)`.
     fn offset_ms(&self) -> i64 {
         round_half_even(self.offset_us as f64 / 1e6 * 1000.0) as i64
-    }
-
-    /// Its line in a .osu file's `[TimingPoints]`, as slider's `TimingPoint.pack` writes it.
-    pub fn to_osu(&self) -> String {
-        let beat = if self.ms_per_beat.trunc() == self.ms_per_beat {
-            format!("{}", self.ms_per_beat as i64)
-        } else {
-            format!("{}", self.ms_per_beat)
-        };
-        format!(
-            "{},{},{},2,-1,100,1,0",
-            self.offset_us.div_euclid(1000),
-            beat,
-            self.meter
-        )
     }
 }
 
@@ -102,9 +83,9 @@ struct Marker {
     beats_from_last_marker: f64,
 }
 
-pub struct TimingBuilder {
+pub(crate) struct TimingBuilder {
     /// Milliseconds a beat may be off the grid before the grid changes.
-    pub leniency: f64,
+    pub(crate) leniency: f64,
 }
 
 impl TimingBuilder {
@@ -164,21 +145,25 @@ impl TimingBuilder {
     }
 
     /// The timing points of `events`, time shift then type, earliest first.
-    pub fn generate_timing(&self, events: &[Event]) -> Vec<TimingPoint> {
+    pub(crate) fn generate_timing(&self, events: &[Event]) -> Vec<TimingPoint> {
         let mut markers: Vec<Marker> = Vec::new();
         for i in 1..events.len() {
             let kind = match events[i].kind.as_str() {
-                "beat" => Beat::Beat,
-                "measure" => Beat::Measure,
-                "timing_point" => Beat::TimingPoint,
+                "beat" => BeatKind::Beat,
+                "measure" => BeatKind::Measure,
+                "timing_point" => BeatKind::TimingPoint,
                 _ => continue,
             };
             if events[i - 1].kind == TIME_SHIFT {
                 markers.push(Marker {
                     time: i64::from(events[i - 1].value),
-                    is_measure: kind == Beat::Measure,
-                    is_redline: kind == Beat::TimingPoint,
-                    beats_from_last_marker: if kind == Beat::TimingPoint { 0.0 } else { 1.0 },
+                    is_measure: kind == BeatKind::Measure,
+                    is_redline: kind == BeatKind::TimingPoint,
+                    beats_from_last_marker: if kind == BeatKind::TimingPoint {
+                        0.0
+                    } else {
+                        1.0
+                    },
                 });
             }
         }
@@ -360,6 +345,21 @@ impl TimingBuilder {
 mod tests {
     use super::*;
 
+    /// `tp`'s line in a .osu file's `[TimingPoints]`, as slider's `TimingPoint.pack` writes it.
+    fn osu(tp: &TimingPoint) -> String {
+        let beat = if tp.ms_per_beat.trunc() == tp.ms_per_beat {
+            format!("{}", tp.ms_per_beat as i64)
+        } else {
+            format!("{}", tp.ms_per_beat)
+        };
+        format!(
+            "{},{},{},2,-1,100,1,0",
+            tp.offset_us.div_euclid(1000),
+            beat,
+            tp.meter
+        )
+    }
+
     fn grid(beats: &[(i32, &str)]) -> Vec<Event> {
         beats
             .iter()
@@ -379,7 +379,7 @@ mod tests {
             .collect();
         let timing = TimingBuilder { leniency: 20.0 }.generate_timing(&grid(&beats));
         assert_eq!(timing, vec![TimingPoint::new(59_000, 300.0, 4)]);
-        assert_eq!(timing[0].to_osu(), "59,300,4,2,-1,100,1,0");
+        assert_eq!(osu(&timing[0]), "59,300,4,2,-1,100,1,0");
     }
 
     #[test]
@@ -411,7 +411,7 @@ mod tests {
     #[test]
     fn fractional_beat_lengths_print_as_python_does() {
         assert_eq!(
-            TimingPoint::new(1_500, 60_000.0 / 180.0, 4).to_osu(),
+            osu(&TimingPoint::new(1_500, 60_000.0 / 180.0, 4)),
             "1,333.3333333333333,4,2,-1,100,1,0"
         );
     }

@@ -10,20 +10,19 @@
 //! [`Timer`] runs it on the graphics card or the CPU behind an API that names no burn type, so
 //! nothing past this crate depends on burn.
 
-pub mod audio;
-pub mod generate;
-pub mod gguf;
-pub mod mel;
-pub mod model;
-pub mod signal;
-pub mod super_timing;
-pub mod timing;
-pub mod tokenizer;
+mod audio;
+mod generate;
+mod gguf;
+mod mel;
+mod model;
+mod signal;
+mod super_timing;
+mod timing;
+mod tokenizer;
 
 use anyhow::{Context, Result};
 use burn::tensor::DeviceKind;
 use burn::tensor::wgpu::wgpu::DeviceType;
-use serde::Serialize;
 
 pub use crate::audio::SAMPLE_RATE;
 use crate::audio::WINDOW_MS;
@@ -36,7 +35,7 @@ use crate::tokenizer::{Event, Tokenizer};
 
 /// How super timing runs.
 #[derive(Clone, Debug)]
-pub struct Options {
+pub(crate) struct Options {
     /// Passes over the song; upstream's `timer_iterations`.
     pub iterations: usize,
     /// How clearly one beat length must lead near a peak to set its tempo; higher values give
@@ -70,28 +69,6 @@ impl Default for Options {
     }
 }
 
-/// A window of one pass: where it starts and the tokens decoded for it, `None` when decoding
-/// stopped without closing the timing context.
-#[derive(Clone, Debug, Serialize)]
-pub struct WindowTokens {
-    pub frame_time: i64,
-    pub tokens: Option<Vec<u32>>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct Pass {
-    pub offset: i64,
-    pub windows: Vec<WindowTokens>,
-}
-
-/// Everything a run found, from each window's tokens to the timing points.
-pub struct Timing {
-    pub passes: Vec<Pass>,
-    /// The fused beat grid, as time shift and type events.
-    pub grid: Vec<Event>,
-    pub timing_points: Vec<TimingPoint>,
-}
-
 /// SplitMix64, to draw pass offsets from a seed without a dependency.
 struct Rng(u64);
 
@@ -112,7 +89,7 @@ impl Rng {
 
 /// The pass offsets for `options`: its own, or `iterations` drawn uniformly from
 /// `-(window // 2)..window // 2` milliseconds, as upstream's `np.random.randint`.
-pub fn offsets(options: &Options) -> Vec<i64> {
+pub(crate) fn offsets(options: &Options) -> Vec<i64> {
     options.offsets.clone().unwrap_or_else(|| {
         let half = (WINDOW_MS / 2.0).floor() as i64;
         let mut rng = Rng(options.seed);
@@ -124,13 +101,13 @@ pub fn offsets(options: &Options) -> Vec<i64> {
 
 /// Times the song `samples`, normalized mono at 16 kHz, calling `progress` with the windows
 /// decoded so far and in all.
-pub fn run(
+pub(crate) fn run(
     model: &Model,
     tokenizer: &Tokenizer,
     samples: &[f32],
     options: &Options,
     mut progress: impl FnMut(usize, usize),
-) -> Result<Timing> {
+) -> Result<Vec<TimingPoint>> {
     let offsets = offsets(options);
     let per_ms = (SAMPLE_RATE / 1000) as i64;
     let segments: Vec<audio::Segments> = offsets
@@ -167,39 +144,22 @@ pub fn run(
         progress(tokens.len(), jobs.len());
     }
 
-    let mut passes: Vec<Pass> = offsets
-        .iter()
-        .map(|&offset| Pass {
-            offset,
-            windows: Vec::new(),
-        })
-        .collect();
     let mut pass_events: Vec<(i64, Vec<Event>)> =
         offsets.iter().map(|&o| (o, Vec::new())).collect();
     for (&(p, w), t) in jobs.iter().zip(tokens) {
-        let frame_time = segments[p].frame_times[w];
         if let Some(t) = &t {
             pass_events[p]
                 .1
-                .extend(generate::events(tokenizer, t, frame_time));
+                .extend(generate::events(tokenizer, t, segments[p].frame_times[w]));
         }
-        passes[p].windows.push(WindowTokens {
-            frame_time,
-            tokens: t,
-        });
     }
 
     let num_ms = samples.len() * 1000 / SAMPLE_RATE;
     let grid = fuse(num_ms, &pass_events, options.bpm_threshold)?;
-    let timing_points = TimingBuilder {
+    Ok(TimingBuilder {
         leniency: options.leniency,
     }
-    .generate_timing(&grid);
-    Ok(Timing {
-        passes,
-        grid,
-        timing_points,
-    })
+    .generate_timing(&grid))
 }
 
 /// Where the model runs.
@@ -265,9 +225,13 @@ impl Timer {
         samples: &[f32],
         progress: impl FnMut(usize, usize),
     ) -> Result<Vec<TimingPoint>> {
-        let options = Options::default();
-        let found = run(&self.model, &self.tokenizer, samples, &options, progress)?;
-        Ok(found.timing_points)
+        run(
+            &self.model,
+            &self.tokenizer,
+            samples,
+            &Options::default(),
+            progress,
+        )
     }
 }
 

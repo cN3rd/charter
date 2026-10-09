@@ -9,14 +9,14 @@ use rustfft::num_complex::Complex;
 
 use crate::audio::{FRAMES, HOP};
 
-pub const N_FFT: usize = 1024;
-pub const BINS: usize = N_FFT / 2 + 1;
+pub(crate) const N_FFT: usize = 1024;
+pub(crate) const BINS: usize = N_FFT / 2 + 1;
 /// Frames of a window: one per hop plus the one centring adds.
-pub const MEL_FRAMES: usize = FRAMES + 1;
+pub(crate) const MEL_FRAMES: usize = FRAMES + 1;
 
 /// The power spectrogram of each window in `windows`, `[MEL_FRAMES, BINS]` row-major one after
 /// another, computed on all cores.
-pub fn power_spectrograms(windows: &[&[f32]], hann: &[f32]) -> Vec<f32> {
+pub(crate) fn power_spectrograms(windows: &[&[f32]], hann: &[f32]) -> Vec<f32> {
     let mut out = vec![0.0_f32; windows.len() * MEL_FRAMES * BINS];
     let threads = std::thread::available_parallelism()
         .map_or(1, |n| n.get())

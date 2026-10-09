@@ -6,7 +6,7 @@
 /// `gaussian_filter1d(x, sigma)` with scipy's defaults: a kernel truncated at four sigma and the
 /// input reflected about its edges, `d c b a | a b c d | d c b a`. The sums run in scipy's order,
 /// so the result matches it bit for bit: peaks on a flat top are decided by the last bits.
-pub fn gaussian_filter1d(x: &[f64], sigma: f64) -> Vec<f64> {
+pub(crate) fn gaussian_filter1d(x: &[f64], sigma: f64) -> Vec<f64> {
     let radius = (4.0 * sigma + 0.5) as isize;
     let sigma2 = sigma * sigma;
     let mut weights: Vec<f64> = (-radius..=radius)
@@ -69,7 +69,7 @@ fn numpy_sum(a: &[f64]) -> f64 {
 
 /// The peaks `find_peaks(x, distance, prominence=(min_prominence, None), width=(min_width, None),
 /// rel_height, wlen)` keeps, with their prominences.
-pub fn find_peaks(
+pub(crate) fn find_peaks(
     x: &[f64],
     distance: f64,
     min_prominence: f64,

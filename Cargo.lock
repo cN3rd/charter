@@ -1749,7 +1749,6 @@ dependencies = [
  "burn",
  "half",
  "rustfft",
- "safetensors 0.7.0",
  "serde",
  "serde_json",
 ]
@@ -7258,17 +7257,6 @@ version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d93279b86b3de76f820a8854dd06cbc33cfa57a417b19c47f6a25280112fb1df"
 dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "safetensors"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "675656c1eabb620b921efea4f9199f97fc86e36dd6ffd1fbbe48d0f59a4987f5"
-dependencies = [
- "hashbrown 0.16.1",
  "serde",
  "serde_json",
 ]

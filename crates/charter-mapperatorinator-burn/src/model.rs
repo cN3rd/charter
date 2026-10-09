@@ -9,39 +9,34 @@
 //! self-attention and none in cross-attention, RMS norms, exact GELU. Weights load by the
 //! checkpoint's own names.
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Result, bail};
 use burn::prelude::*;
 use burn::tensor::TensorData;
 use burn::tensor::activation::gelu;
 use burn::tensor::module::{attention, conv1d};
 use burn::tensor::ops::{AttentionModuleOptions, ConvOptions};
-use half::{bf16, f16};
-use safetensors::{Dtype, SafeTensors};
 
 use crate::gguf::Gguf;
 
 use crate::mel::{BINS, MEL_FRAMES};
 
-pub const D_MODEL: usize = 768;
-pub const HEADS: usize = 12;
-pub const HEAD_DIM: usize = D_MODEL / HEADS;
-pub const LAYERS: usize = 12;
-pub const N_MELS: usize = 128;
+pub(crate) const D_MODEL: usize = 768;
+pub(crate) const HEADS: usize = 12;
+pub(crate) const HEAD_DIM: usize = D_MODEL / HEADS;
+pub(crate) const LAYERS: usize = 12;
+pub(crate) const N_MELS: usize = 128;
 /// Encoder positions of a window, after the stride-2 convolution.
-pub const ENC_LEN: usize = MEL_FRAMES / 2;
-pub const ROPE_THETA: f32 = 10000.0;
+pub(crate) const ENC_LEN: usize = MEL_FRAMES / 2;
+pub(crate) const ROPE_THETA: f32 = 10000.0;
 /// `nn.RMSNorm(eps=None)` in float32 uses the type's machine epsilon.
 const RMS_EPS: f32 = f32::EPSILON;
 
-/// Where the weights come from: a safetensors checkpoint or a GGUF file.
-enum Store<'a> {
-    Safetensors(SafeTensors<'a>),
-    Gguf(Gguf<'a>),
-}
+/// Where the weights come from: the model's GGUF file.
+struct Store<'a>(Gguf<'a>);
 
 impl Store<'_> {
     fn get<const D: usize>(&self, name: &str, device: &Device) -> Result<Tensor<D>> {
-        let (values, shape) = self.read(name)?;
+        let (values, shape) = self.0.read(name)?;
         if shape.len() != D {
             bail!("{name} has shape {shape:?}, not {D} dimensions");
         }
@@ -49,89 +44,8 @@ impl Store<'_> {
     }
 
     fn vec(&self, name: &str) -> Result<Vec<f32>> {
-        Ok(self.read(name)?.0)
+        Ok(self.0.read(name)?.0)
     }
-
-    /// The tensor `name` as float32 values and its shape. Half-precision safetensors and
-    /// quantized GGUF weights are decoded.
-    fn read(&self, name: &str) -> Result<(Vec<f32>, Vec<usize>)> {
-        let tensors = match self {
-            Self::Gguf(g) => return g.read(name),
-            Self::Safetensors(t) => t,
-        };
-        let view = tensors
-            .tensor(name)
-            .with_context(|| format!("the checkpoint has no {name}"))?;
-        let data = view.data();
-        let values = match view.dtype() {
-            Dtype::F32 => data
-                .as_chunks::<4>()
-                .0
-                .iter()
-                .map(|&b| f32::from_le_bytes(b))
-                .collect(),
-            Dtype::F16 => data
-                .as_chunks::<2>()
-                .0
-                .iter()
-                .map(|&b| f16::from_le_bytes(b).to_f32())
-                .collect(),
-            Dtype::BF16 => data
-                .as_chunks::<2>()
-                .0
-                .iter()
-                .map(|&b| bf16::from_le_bytes(b).to_f32())
-                .collect(),
-            other => bail!("{name} is {other:?}, not a float type"),
-        };
-        Ok((values, view.shape().to_vec()))
-    }
-}
-
-/// Every tensor [`Model::load`] reads, by the checkpoint's names.
-pub fn used_tensors() -> Vec<String> {
-    let enc = "transformer.model.encoder";
-    let dec = "transformer.model.decoder";
-    let mut names: Vec<String> = [
-        "spectrogram.transform.mel_scale.fb",
-        "spectrogram.transform.spectrogram.window",
-        "decoder_embedder.weight",
-        "transformer.proj_out.weight",
-    ]
-    .map(String::from)
-    .to_vec();
-    for side in [enc, dec] {
-        names.push(format!("{side}.layer_norm.weight"));
-    }
-    for conv in ["conv1", "conv2"] {
-        for p in ["weight", "bias"] {
-            names.push(format!("{enc}.{conv}.{p}"));
-        }
-    }
-    let linear = |n: &mut Vec<String>, prefix: String, bias: bool| {
-        n.push(format!("{prefix}.weight"));
-        if bias {
-            n.push(format!("{prefix}.bias"));
-        }
-    };
-    for i in 0..LAYERS {
-        for side in [enc, dec] {
-            let l = format!("{side}.layers.{i}");
-            for norm in ["self_attn_layer_norm", "final_layer_norm"] {
-                names.push(format!("{l}.{norm}.weight"));
-            }
-            for lin in ["self_attn.Wqkv", "self_attn.Wo", "fc1", "fc2"] {
-                linear(&mut names, format!("{l}.{lin}"), true);
-            }
-        }
-        let l = format!("{dec}.layers.{i}");
-        names.push(format!("{l}.cross_attn_layer_norm.weight"));
-        for lin in ["cross_attn.Wq", "cross_attn.Wkv", "cross_attn.Wo"] {
-            linear(&mut names, format!("{l}.{lin}"), true);
-        }
-    }
-    names.sort();
-    names
 }
 
 /// `y = x Wᵀ + b`, the weight kept transposed as `[in, out]`.
@@ -189,7 +103,7 @@ impl RmsNorm {
 
 /// Cosines and sines of the rotary embedding, `[positions, HEAD_DIM]`, as
 /// `VarWhisperRotaryEmbedding` computes them in float32.
-pub struct Rope {
+pub(crate) struct Rope {
     cos: Tensor<2>,
     sin: Tensor<2>,
 }
@@ -306,10 +220,10 @@ struct DecoderLayer {
     fc2: Linear,
 }
 
-pub struct Model {
+pub(crate) struct Model {
     device: Device,
     mel_fb: Tensor<2>,
-    pub hann: Vec<f32>,
+    pub(crate) hann: Vec<f32>,
     conv1_w: Tensor<3>,
     conv1_b: Tensor<1>,
     conv2_w: Tensor<3>,
@@ -322,32 +236,24 @@ pub struct Model {
     proj_out: Linear,
     enc_rope: Rope,
     dec_rope: Rope,
-    pub vocab_size: usize,
-    pub max_target_positions: usize,
+    pub(crate) vocab_size: usize,
+    pub(crate) max_target_positions: usize,
 }
 
 /// The decoder's state for a batch of windows: each layer's cross-attention keys and values
 /// over the encoder output, and its self-attention keys and values so far.
-pub struct Cache {
+pub(crate) struct Cache {
     cross: Vec<(Tensor<4>, Tensor<4>)>,
     keys: Vec<Tensor<4>>,
     values: Vec<Tensor<4>>,
-    pub len: usize,
+    pub(crate) len: usize,
     capacity: usize,
 }
 
 impl Model {
-    /// The model in `bytes`: a V32 checkpoint's `model.safetensors`, pruned or not, or a GGUF
-    /// file of its weights, which may be quantized.
-    pub fn load(bytes: &[u8], device: &Device) -> Result<Self> {
-        let store = if bytes.starts_with(b"GGUF") {
-            Store::Gguf(Gguf::parse(bytes)?)
-        } else {
-            Store::Safetensors(
-                SafeTensors::deserialize(bytes)
-                    .map_err(|e| anyhow!("model.safetensors does not parse: {e}"))?,
-            )
-        };
+    /// The model in `bytes`, a GGUF file of its weights, which may be quantized.
+    pub(crate) fn load(bytes: &[u8], device: &Device) -> Result<Self> {
+        let store = Store(Gguf::parse(bytes)?);
         let enc = "transformer.model.encoder";
         let dec = "transformer.model.decoder";
         let encoder_layers = (0..LAYERS)
@@ -431,12 +337,12 @@ impl Model {
         })
     }
 
-    pub fn device(&self) -> &Device {
+    pub(crate) fn device(&self) -> &Device {
         &self.device
     }
 
     /// Encoder output `[batch, ENC_LEN, D_MODEL]` for power spectrograms `[batch, MEL_FRAMES, BINS]`.
-    pub fn encode(&self, power: Tensor<3>) -> Tensor<3> {
+    pub(crate) fn encode(&self, power: Tensor<3>) -> Tensor<3> {
         let [batch, frames, bins] = power.dims();
         let mel = power
             .reshape([batch * frames, bins])
@@ -486,7 +392,7 @@ impl Model {
     /// Runs the prompts `tokens` (`batch` rows of equal length, row-major) through the decoder
     /// over `encoded`, returning the logits `[batch, vocab]` at each row's last token and the cache
     /// to continue from.
-    pub fn prefill(
+    pub(crate) fn prefill(
         &self,
         encoded: Tensor<3>,
         tokens: &[u32],
@@ -560,7 +466,7 @@ impl Model {
     }
 
     /// Feeds one more token per row, `tokens` of `batch`, returning the next logits.
-    pub fn step(&self, cache: &mut Cache, tokens: &[u32]) -> Tensor<2> {
+    pub(crate) fn step(&self, cache: &mut Cache, tokens: &[u32]) -> Tensor<2> {
         let batch = tokens.len();
         let pos = cache.len;
         if pos == cache.capacity {

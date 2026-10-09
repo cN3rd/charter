@@ -17,17 +17,17 @@ use crate::model::Model;
 use crate::tokenizer::{EOS, Event, PAD, SOS, TIME_SHIFT, Tokenizer};
 
 /// Milliseconds a time shift token steps by.
-pub const MS_PER_STEP: i64 = 10;
+pub(crate) const MS_PER_STEP: i64 = 10;
 
 /// What the prompt tells the model about the beatmap the timing is for. Unknown values go in as
 /// the tokenizer's unknown tokens, as upstream's CLI leaves them.
 #[derive(Clone, Debug)]
-pub struct Conditions {
-    pub gamemode: i32,
-    pub hitsounded: bool,
-    pub circle_size: f64,
-    pub slider_multiplier: f64,
-    pub keycount: i32,
+pub(crate) struct Conditions {
+    pub(crate) gamemode: i32,
+    pub(crate) hitsounded: bool,
+    pub(crate) circle_size: f64,
+    pub(crate) slider_multiplier: f64,
+    pub(crate) keycount: i32,
 }
 
 impl Default for Conditions {
@@ -44,15 +44,15 @@ impl Default for Conditions {
 }
 
 /// One window to decode.
-pub struct Window<'a> {
-    pub samples: &'a [f32],
-    pub frame_time: i64,
-    pub song_length: f64,
+pub(crate) struct Window<'a> {
+    pub(crate) samples: &'a [f32],
+    pub(crate) frame_time: i64,
+    pub(crate) song_length: f64,
 }
 
 /// The prompt of a window: conditioning tokens, the last scroll speed and the song position,
 /// then the sequence start and the timing context's start.
-pub fn prompt(
+pub(crate) fn prompt(
     t: &Tokenizer,
     c: &Conditions,
     frame_time: i64,
@@ -107,7 +107,7 @@ fn pick(logits: &[f32], vocab: usize, last_shift: &[Option<u32>], shifts: (u32, 
 
 /// The tokens each window's decoding wrote after its prompt, through the timing context's end
 /// token, or `None` when it stopped without one.
-pub fn decode(
+pub(crate) fn decode(
     model: &Model,
     t: &Tokenizer,
     c: &Conditions,
@@ -187,7 +187,7 @@ pub fn decode(
 
 /// The events of a window's timing tokens, time shifts made absolute: a step's time plus half a
 /// step, as upstream de-biases the truncation of times to steps.
-pub fn events(t: &Tokenizer, tokens: &[u32], frame_time: i64) -> Vec<Event> {
+pub(crate) fn events(t: &Tokenizer, tokens: &[u32], frame_time: i64) -> Vec<Event> {
     let mut events = Vec::new();
     for &token in tokens {
         if token == EOS {

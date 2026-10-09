@@ -11,7 +11,7 @@ use half::{bf16, f16};
 use std::collections::HashMap;
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum Value {
+pub(crate) enum Value {
     Int(i64),
     Float(f64),
     Bool(bool),
@@ -20,14 +20,14 @@ pub enum Value {
 }
 
 impl Value {
-    pub fn as_str(&self) -> Option<&str> {
+    pub(crate) fn as_str(&self) -> Option<&str> {
         match self {
             Self::Str(s) => Some(s),
             _ => None,
         }
     }
 
-    pub fn as_int(&self) -> Option<i64> {
+    pub(crate) fn as_int(&self) -> Option<i64> {
         match self {
             Self::Int(i) => Some(*i),
             _ => None,
@@ -36,16 +36,16 @@ impl Value {
 }
 
 #[derive(Clone, Debug)]
-pub struct TensorInfo {
+pub(crate) struct TensorInfo {
     /// Dimensions fastest first, as ggml's `ne`.
-    pub dims: Vec<usize>,
-    pub kind: u32,
+    pub(crate) dims: Vec<usize>,
+    pub(crate) kind: u32,
     offset: usize,
 }
 
-pub struct Gguf<'a> {
-    pub metadata: HashMap<String, Value>,
-    pub tensors: HashMap<String, TensorInfo>,
+pub(crate) struct Gguf<'a> {
+    pub(crate) metadata: HashMap<String, Value>,
+    pub(crate) tensors: HashMap<String, TensorInfo>,
     data: &'a [u8],
 }
 
@@ -114,7 +114,7 @@ impl<'a> Reader<'a> {
 }
 
 impl<'a> Gguf<'a> {
-    pub fn parse(bytes: &'a [u8]) -> Result<Self> {
+    pub(crate) fn parse(bytes: &'a [u8]) -> Result<Self> {
         let mut r = Reader { bytes, at: 0 };
         ensure!(r.take(4)? == b"GGUF", "not a GGUF file");
         let version = r.u32()?;
@@ -152,7 +152,7 @@ impl<'a> Gguf<'a> {
     }
 
     /// The tensor `name` decoded to float32, and its shape slowest first, as PyTorch has it.
-    pub fn read(&self, name: &str) -> Result<(Vec<f32>, Vec<usize>)> {
+    pub(crate) fn read(&self, name: &str) -> Result<(Vec<f32>, Vec<usize>)> {
         let info = self
             .tensors
             .get(name)
@@ -243,7 +243,7 @@ fn scale_min(s: &[u8], j: usize) -> (u8, u8) {
     }
 }
 
-pub fn decode(kind: u32, bytes: &[u8], count: usize) -> Result<Vec<f32>> {
+pub(crate) fn decode(kind: u32, bytes: &[u8], count: usize) -> Result<Vec<f32>> {
     let (weights, size) = block(kind)?;
     ensure!(
         bytes.len() == count / weights * size,

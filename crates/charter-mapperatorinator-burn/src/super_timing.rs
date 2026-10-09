@@ -15,13 +15,13 @@ use crate::signal::{find_peaks, gaussian_filter1d};
 use crate::tokenizer::{BEAT, Event, MEASURE, TIME_SHIFT, TIMING_POINT, TYPE_EVENTS};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Beat {
+pub(crate) enum BeatKind {
     Beat,
     Measure,
     TimingPoint,
 }
 
-impl Beat {
+impl BeatKind {
     fn of(kind: &str) -> Option<Self> {
         match kind {
             BEAT => Some(Self::Beat),
@@ -31,7 +31,7 @@ impl Beat {
         }
     }
 
-    pub fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         match self {
             Self::Beat => BEAT,
             Self::Measure => MEASURE,
@@ -95,7 +95,11 @@ struct Peak {
 
 /// The beat grid of a song `num_ms` milliseconds long from its passes, each the offset its audio
 /// was shifted by and the events the model wrote for it, as time shift and type events.
-pub fn fuse(num_ms: usize, passes: &[(i64, Vec<Event>)], bpm_threshold: f64) -> Result<Vec<Event>> {
+pub(crate) fn fuse(
+    num_ms: usize,
+    passes: &[(i64, Vec<Event>)],
+    bpm_threshold: f64,
+) -> Result<Vec<Event>> {
     let iterations = passes.len() as f64;
     let n = num_ms as i64;
     let mut beats_hist = vec![0.0; num_ms];
@@ -106,36 +110,39 @@ pub fn fuse(num_ms: usize, passes: &[(i64, Vec<Event>)], bpm_threshold: f64) -> 
 
     for (offset, events) in passes {
         let mut last_beat_time: Option<i64> = None;
-        let mut last_group_type: Option<Beat> = None;
+        let mut last_group_type: Option<BeatKind> = None;
         let mut measure_counter: Option<i64> = None;
         for (kind, group_time) in groups(events) {
             let time = group_time - offset;
             if time < 0 || time >= n {
                 continue;
             }
-            let Some(kind) = Beat::of(kind) else { continue };
+            let Some(kind) = BeatKind::of(kind) else {
+                continue;
+            };
             match kind {
-                Beat::Beat => {
+                BeatKind::Beat => {
                     beats_hist[time as usize] += 1.0;
                     if let Some(c) = measure_counter.as_mut() {
                         *c += 1;
                     }
                 }
-                Beat::Measure => {
+                BeatKind::Measure => {
                     measures_hist[time as usize] += 1.0;
                     if let Some(c) = measure_counter {
                         measure_counts.push(c);
                     }
                     measure_counter = Some(1);
                 }
-                Beat::TimingPoint => {
+                BeatKind::TimingPoint => {
                     timing_points_hist[time as usize] += 1.0;
                     measure_counter = Some(1);
                 }
             }
             if let Some(last) = last_beat_time
                 && last != time
-                && !(kind == Beat::TimingPoint && last_group_type != Some(Beat::TimingPoint))
+                && !(kind == BeatKind::TimingPoint
+                    && last_group_type != Some(BeatKind::TimingPoint))
             {
                 let tpb = (time - last).div_euclid(10);
                 if 20 < tpb && tpb < 100 {
@@ -318,7 +325,7 @@ pub fn fuse(num_ms: usize, passes: &[(i64, Vec<Event>)], bpm_threshold: f64) -> 
     beat_times.sort_unstable();
 
     let win = 10;
-    let mut beat_types: Vec<Beat> = beat_times
+    let mut beat_types: Vec<BeatKind> = beat_times
         .iter()
         .map(|&t| {
             let beat = py_sum(&beats_hist, t - win, t + win);
@@ -326,9 +333,9 @@ pub fn fuse(num_ms: usize, passes: &[(i64, Vec<Event>)], bpm_threshold: f64) -> 
             let timing_point = py_sum(&timing_points_hist, t - win, t + win);
             if timing_point > beat && timing_point > measure && beat + measure + timing_point > 1.0
             {
-                Beat::TimingPoint
+                BeatKind::TimingPoint
             } else {
-                Beat::Beat
+                BeatKind::Beat
             }
         })
         .collect();
@@ -347,13 +354,13 @@ pub fn fuse(num_ms: usize, passes: &[(i64, Vec<Event>)], bpm_threshold: f64) -> 
         }
         if cooldown < 0 {
             cooldown += 1;
-            if cooldown == 0 && beat_type != Beat::TimingPoint {
-                beat_types[i] = Beat::Measure;
+            if cooldown == 0 && beat_type != BeatKind::TimingPoint {
+                beat_types[i] = BeatKind::Measure;
                 cooldown = signature - 1;
             }
             continue;
         }
-        if beat_type == Beat::TimingPoint {
+        if beat_type == BeatKind::TimingPoint {
             continue;
         }
         let mut offset_scores = Vec::new();
@@ -366,7 +373,7 @@ pub fn fuse(num_ms: usize, passes: &[(i64, Vec<Event>)], bpm_threshold: f64) -> 
                 }
                 // Upstream's check indexes beat_types absolutely, from its ends.
                 if (1..j.abs())
-                    .any(|m| py_index(&beat_types, m * j.signum()) == Some(Beat::TimingPoint))
+                    .any(|m| py_index(&beat_types, m * j.signum()) == Some(BeatKind::TimingPoint))
                 {
                     continue;
                 }
@@ -387,10 +394,10 @@ pub fn fuse(num_ms: usize, passes: &[(i64, Vec<Event>)], bpm_threshold: f64) -> 
             .fold(f64::NEG_INFINITY, f64::max);
         let argmax = offset_scores.iter().position(|&s| s == best).unwrap_or(0) as i64;
         if argmax == 0 {
-            beat_types[i] = Beat::Measure;
+            beat_types[i] = BeatKind::Measure;
             cooldown = signature - 1;
         } else {
-            beat_types[i] = Beat::Beat;
+            beat_types[i] = BeatKind::Beat;
             cooldown = -argmax;
         }
     }
