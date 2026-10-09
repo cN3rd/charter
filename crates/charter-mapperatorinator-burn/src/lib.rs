@@ -24,12 +24,22 @@ use anyhow::{Context, Result};
 use burn::tensor::DeviceKind;
 use burn::tensor::wgpu::wgpu::DeviceType;
 
+#[expect(
+    clippy::pub_use,
+    clippy::useless_attribute,
+    reason = "the facade hands on the port's sample rate and timing points as they are"
+)]
 pub use crate::audio::SAMPLE_RATE;
-use crate::audio::WINDOW_MS;
+use crate::audio::{WINDOW_MS, truncated_ms};
 use crate::generate::{Conditions, Window};
 use crate::model::Model;
 use crate::super_timing::fuse;
 use crate::timing::TimingBuilder;
+#[expect(
+    clippy::pub_use,
+    clippy::useless_attribute,
+    reason = "the facade hands on the port's sample rate and timing points as they are"
+)]
 pub use crate::timing::TimingPoint;
 use crate::tokenizer::{Event, Tokenizer};
 
@@ -51,6 +61,7 @@ pub(crate) struct Options {
     pub seed: u64,
     /// The pass offsets in milliseconds, instead of drawing them from `seed`.
     pub offsets: Option<Vec<i64>>,
+    /// What the prompt tells the model about the beatmap.
     pub conditions: Conditions,
 }
 
@@ -69,11 +80,12 @@ impl Default for Options {
     }
 }
 
-/// SplitMix64, to draw pass offsets from a seed without a dependency.
+/// `SplitMix64`, to draw pass offsets from a seed without a dependency.
 struct Rng(u64);
 
 impl Rng {
-    fn next(&mut self) -> u64 {
+    /// The next 64 random bits.
+    const fn next(&mut self) -> u64 {
         self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
         let mut z = self.0;
         z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
@@ -82,8 +94,9 @@ impl Rng {
     }
 
     /// Uniform in `low..high`.
-    fn range(&mut self, low: i64, high: i64) -> i64 {
-        low + (self.next() % (high - low) as u64) as i64
+    const fn range(&mut self, low: i64, high: i64) -> i64 {
+        let span = high.saturating_sub(low).cast_unsigned();
+        low.saturating_add(self.next().rem_euclid(span).cast_signed())
     }
 }
 
@@ -91,16 +104,20 @@ impl Rng {
 /// `-(window // 2)..window // 2` milliseconds, as upstream's `np.random.randint`.
 pub(crate) fn offsets(options: &Options) -> Vec<i64> {
     options.offsets.clone().unwrap_or_else(|| {
-        let half = (WINDOW_MS / 2.0).floor() as i64;
+        let half = truncated_ms((WINDOW_MS / 2.0).floor());
         let mut rng = Rng(options.seed);
-        (0..options.iterations)
-            .map(|_| rng.range(-half, half))
+        std::iter::repeat_with(|| rng.range(half.saturating_neg(), half))
+            .take(options.iterations)
             .collect()
     })
 }
 
 /// Times the song `samples`, normalized mono at 16 kHz, calling `progress` with the windows
 /// decoded so far and in all.
+#[expect(
+    clippy::indexing_slicing,
+    reason = "pass and window indices enumerate the segments; begin_remove is at most the length"
+)]
 pub(crate) fn run(
     model: &Model,
     tokenizer: &Tokenizer,
@@ -109,12 +126,15 @@ pub(crate) fn run(
     mut progress: impl FnMut(usize, usize),
 ) -> Result<Vec<TimingPoint>> {
     let offsets = offsets(options);
-    let per_ms = (SAMPLE_RATE / 1000) as i64;
+    let per_ms = i64::try_from(SAMPLE_RATE.div_euclid(1000))?;
     let segments: Vec<audio::Segments> = offsets
         .iter()
         .map(|&offset| {
-            let begin_pad = (offset * per_ms).max(0) as usize;
-            let begin_remove = ((-offset * per_ms).max(0) as usize).min(samples.len());
+            // A negative pad or removal is none.
+            let begin_pad = usize::try_from(offset.saturating_mul(per_ms)).unwrap_or(0);
+            let begin_remove = usize::try_from(offset.saturating_neg().saturating_mul(per_ms))
+                .unwrap_or(0)
+                .min(samples.len());
             audio::segment(&samples[begin_remove..], begin_pad)
         })
         .collect();
@@ -154,7 +174,7 @@ pub(crate) fn run(
         }
     }
 
-    let num_ms = samples.len() * 1000 / SAMPLE_RATE;
+    let num_ms = samples.len().saturating_mul(1000).div_euclid(SAMPLE_RATE);
     let grid = fuse(num_ms, &pass_events, options.bpm_threshold)?;
     Ok(TimingBuilder {
         leniency: options.leniency,

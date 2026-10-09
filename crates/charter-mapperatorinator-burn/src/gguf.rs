@@ -10,83 +10,120 @@ use anyhow::{Context, Result, anyhow, bail, ensure};
 use half::{bf16, f16};
 use std::collections::HashMap;
 
+/// A metadata value of a GGUF file, its integers widened to `i64` and its floats to `f64`.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Value {
+    /// Any of GGUF's integer types.
     Int(i64),
+    /// Either of GGUF's float types.
     Float(f64),
+    /// A boolean.
     Bool(bool),
+    /// A UTF-8 string.
     Str(String),
-    Array(Vec<Value>),
+    /// An array of values of one type.
+    Array(Vec<Self>),
 }
 
 impl Value {
+    /// The string this is, if it is one.
     pub(crate) fn as_str(&self) -> Option<&str> {
         match self {
             Self::Str(s) => Some(s),
-            _ => None,
+            Self::Int(_) | Self::Float(_) | Self::Bool(_) | Self::Array(_) => None,
         }
     }
 
-    pub(crate) fn as_int(&self) -> Option<i64> {
+    /// The integer this is, if it is one.
+    pub(crate) const fn as_int(&self) -> Option<i64> {
         match self {
             Self::Int(i) => Some(*i),
-            _ => None,
+            Self::Float(_) | Self::Bool(_) | Self::Str(_) | Self::Array(_) => None,
         }
     }
 }
 
+/// A tensor's entry in a GGUF file's header.
 #[derive(Clone, Debug)]
 pub(crate) struct TensorInfo {
     /// Dimensions fastest first, as ggml's `ne`.
     pub(crate) dims: Vec<usize>,
+    /// The ggml type of the tensor's data.
     pub(crate) kind: u32,
+    /// Where the tensor's data starts in the data section.
     offset: usize,
 }
 
+/// A GGUF file's metadata and tensor entries, over the data the entries point into.
 pub(crate) struct Gguf<'a> {
+    /// The file's key-value metadata.
     pub(crate) metadata: HashMap<String, Value>,
+    /// Each tensor's entry, by name.
     pub(crate) tensors: HashMap<String, TensorInfo>,
+    /// The aligned data section after the header.
     data: &'a [u8],
 }
 
+/// A cursor over a GGUF file's bytes.
 struct Reader<'a> {
+    /// The whole file.
     bytes: &'a [u8],
+    /// Where the next read starts.
     at: usize,
 }
 
+#[expect(
+    clippy::little_endian_bytes,
+    reason = "GGUF stores its numbers little-endian by specification"
+)]
 impl<'a> Reader<'a> {
+    /// The next `n` bytes.
     fn take(&mut self, n: usize) -> Result<&'a [u8]> {
         let end = self
             .at
             .checked_add(n)
             .filter(|&e| e <= self.bytes.len())
             .ok_or_else(|| anyhow!("the GGUF file ends early"))?;
-        let s = &self.bytes[self.at..end];
+        let s = self.bytes.get(self.at..end).unwrap_or_default();
         self.at = end;
         Ok(s)
     }
 
+    /// The next `N` bytes, as an array.
     fn array<const N: usize>(&mut self) -> Result<[u8; N]> {
         Ok(self.take(N)?.try_into().unwrap_or([0; N]))
     }
 
+    /// The next `u32`.
     fn u32(&mut self) -> Result<u32> {
         Ok(u32::from_le_bytes(self.array()?))
     }
 
+    /// The next `u64`.
     fn u64(&mut self) -> Result<u64> {
         Ok(u64::from_le_bytes(self.array()?))
     }
 
+    /// The next `u64`, a length or a count, as a `usize`.
+    #[expect(
+        clippy::map_err_ignore,
+        reason = "the conversion's error says no more than the message does"
+    )]
     fn len(&mut self) -> Result<usize> {
         usize::try_from(self.u64()?).map_err(|_| anyhow!("a GGUF length does not fit in memory"))
     }
 
+    /// The next string: a length, then that many bytes of UTF-8.
     fn string(&mut self) -> Result<String> {
         let n = self.len()?;
         String::from_utf8(self.take(n)?.to_vec()).context("a GGUF string is not UTF-8")
     }
 
+    /// The next value, of GGUF value type `kind`.
+    #[expect(
+        clippy::map_err_ignore,
+        reason = "the conversion's error says no more than the message does"
+    )]
     fn value(&mut self, kind: u32) -> Result<Value> {
         Ok(match kind {
             0 => Value::Int(i64::from(self.array::<1>()?[0])),
@@ -101,7 +138,11 @@ impl<'a> Reader<'a> {
             9 => {
                 let item = self.u32()?;
                 let n = self.len()?;
-                Value::Array((0..n).map(|_| self.value(item)).collect::<Result<_>>()?)
+                Value::Array(
+                    std::iter::repeat_with(|| self.value(item))
+                        .take(n)
+                        .collect::<Result<_>>()?,
+                )
             }
             10 => Value::Int(
                 i64::try_from(self.u64()?).map_err(|_| anyhow!("a GGUF integer is too large"))?,
@@ -114,6 +155,7 @@ impl<'a> Reader<'a> {
 }
 
 impl<'a> Gguf<'a> {
+    /// The header of the GGUF file `bytes`, over its data.
     pub(crate) fn parse(bytes: &'a [u8]) -> Result<Self> {
         let mut r = Reader { bytes, at: 0 };
         ensure!(r.take(4)? == b"GGUF", "not a GGUF file");
@@ -132,26 +174,32 @@ impl<'a> Gguf<'a> {
         let mut tensors = HashMap::new();
         for _ in 0..tensor_count {
             let name = r.string()?;
-            let n = r.u32()? as usize;
-            let dims = (0..n).map(|_| r.len()).collect::<Result<Vec<_>>>()?;
+            let n = usize::try_from(r.u32()?)?;
+            let dims = std::iter::repeat_with(|| r.len())
+                .take(n)
+                .collect::<Result<Vec<_>>>()?;
             let kind = r.u32()?;
             let offset = r.len()?;
             tensors.insert(name, TensorInfo { dims, kind, offset });
         }
-        let alignment = metadata
-            .get("general.alignment")
-            .and_then(Value::as_int)
-            .unwrap_or(32) as usize;
-        let start = r.at.div_ceil(alignment) * alignment;
+        // A negative alignment puts the data past the end of any file, as the check below finds.
+        let alignment = usize::try_from(
+            metadata
+                .get("general.alignment")
+                .and_then(Value::as_int)
+                .unwrap_or(32),
+        )
+        .unwrap_or(usize::MAX);
+        let start = r.at.div_ceil(alignment).saturating_mul(alignment);
         ensure!(start <= bytes.len(), "the GGUF file ends before its data");
         Ok(Self {
             metadata,
             tensors,
-            data: &bytes[start..],
+            data: bytes.get(start..).unwrap_or_default(),
         })
     }
 
-    /// The tensor `name` decoded to float32, and its shape slowest first, as PyTorch has it.
+    /// The tensor `name` decoded to float32, and its shape slowest first, as torch has it.
     pub(crate) fn read(&self, name: &str) -> Result<(Vec<f32>, Vec<usize>)> {
         let info = self
             .tensors
@@ -161,13 +209,13 @@ impl<'a> Gguf<'a> {
         let size = byte_size(info.kind, count)?;
         let bytes = self
             .data
-            .get(info.offset..info.offset + size)
+            .get(info.offset..info.offset.saturating_add(size))
             .with_context(|| format!("{name} runs past the end of the file"))?;
         let values = decode(info.kind, bytes, count)?;
         let shape = match self.metadata.get(&format!("timingator.shape.{name}")) {
             Some(Value::Array(dims)) => dims
                 .iter()
-                .map(|d| d.as_int().map(|d| d as usize))
+                .map(|d| usize::try_from(d.as_int()?).ok())
                 .collect::<Option<Vec<_>>>()
                 .context("a shape is not integers")?,
             _ => info.dims.iter().rev().copied().collect(),
@@ -183,35 +231,42 @@ impl<'a> Gguf<'a> {
 /// Weights per block and bytes per block of each ggml type this reads.
 fn block(kind: u32) -> Result<(usize, usize)> {
     Ok(match kind {
-        0 => (1, 4),      // F32
-        1 | 30 => (1, 2), // F16, BF16
-        2 => (32, 18),    // Q4_0
-        3 => (32, 20),    // Q4_1
-        8 => (32, 34),    // Q8_0
-        12 => (256, 144), // Q4_K
-        13 => (256, 176), // Q5_K
-        14 => (256, 210), // Q6_K
-        20 => (32, 18),   // IQ4_NL
-        39 => (32, 17),   // MXFP4
+        0 => (1, 4),        // F32
+        1 | 30 => (1, 2),   // F16, BF16
+        2 | 20 => (32, 18), // Q4_0, IQ4_NL
+        3 => (32, 20),      // Q4_1
+        8 => (32, 34),      // Q8_0
+        12 => (256, 144),   // Q4_K
+        13 => (256, 176),   // Q5_K
+        14 => (256, 210),   // Q6_K
+        39 => (32, 17),     // MXFP4
         other => bail!("ggml type {other} is not supported"),
     })
 }
 
+/// The bytes `count` weights of ggml type `kind` take.
 fn byte_size(kind: u32, count: usize) -> Result<usize> {
     let (weights, bytes) = block(kind)?;
     ensure!(
         count.is_multiple_of(weights),
         "{count} values do not fill blocks of {weights}"
     );
-    Ok(count / weights * bytes)
+    Ok(count.div_euclid(weights).saturating_mul(bytes))
 }
 
+/// The 16 weights an `IQ4_NL` nibble picks between.
 const IQ4NL: [i8; 16] = [
     -127, -104, -83, -65, -49, -35, -22, -10, 1, 13, 25, 38, 53, 69, 89, 113,
 ];
 /// E2M1 values doubled; the E8M0 scale is halved to match, as ggml does.
 const MXFP4: [i8; 16] = [0, 1, 2, 3, 4, 6, 8, 12, 0, -1, -2, -3, -4, -6, -8, -12];
 
+/// The float16 at the start of `b`, as float32.
+#[expect(
+    clippy::indexing_slicing,
+    clippy::missing_asserts_for_indexing,
+    reason = "every block holds its two-byte float16 scales where the decoders read them"
+)]
 fn half(b: &[u8]) -> f32 {
     f16::from_le_bytes([b[0], b[1]]).to_f32()
 }
@@ -222,17 +277,27 @@ fn e8m0_half(e: u8) -> f32 {
     f32::from_bits(if e < 2 {
         0x0020_0000 << e
     } else {
-        (e - 1) << 23
+        e.saturating_sub(1) << 23
     })
 }
 
 /// Element `i` of 32 in a block of nibbles: low halves hold 0..16, high halves 16..32.
-fn nibble(qs: &[u8], i: usize) -> u8 {
+#[expect(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    reason = "i is below 32 and a block's nibbles fill 16 bytes"
+)]
+const fn nibble(qs: &[u8], i: usize) -> u8 {
     if i < 16 { qs[i] & 0xF } else { qs[i - 16] >> 4 }
 }
 
 /// Sub-block `j`'s 6-bit scale and min in a K-quant's 12 scale bytes (`get_scale_min_k4`).
-fn scale_min(s: &[u8], j: usize) -> (u8, u8) {
+#[expect(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    reason = "j is one of 8 sub-blocks, which keeps every index within the 12 scale bytes"
+)]
+const fn scale_min(s: &[u8], j: usize) -> (u8, u8) {
     if j < 4 {
         (s[j] & 63, s[j + 4] & 63)
     } else {
@@ -243,10 +308,15 @@ fn scale_min(s: &[u8], j: usize) -> (u8, u8) {
     }
 }
 
+/// `count` values of ggml type `kind` decoded from `bytes` to float32.
+#[expect(
+    clippy::little_endian_bytes,
+    reason = "ggml stores float32 tensors little-endian"
+)]
 pub(crate) fn decode(kind: u32, bytes: &[u8], count: usize) -> Result<Vec<f32>> {
     let (weights, size) = block(kind)?;
     ensure!(
-        bytes.len() == count / weights * size,
+        bytes.len() == count.div_euclid(weights).saturating_mul(size),
         "{} bytes do not hold {count} values of ggml type {kind}",
         bytes.len()
     );
@@ -275,42 +345,54 @@ pub(crate) fn decode(kind: u32, bytes: &[u8], count: usize) -> Result<Vec<f32>> 
         ),
         _ => {
             for b in bytes.chunks_exact(size) {
-                decode_block(kind, b, &mut out);
+                decode_block(kind, b, &mut out)?;
             }
         }
     }
     Ok(out)
 }
 
-fn decode_block(kind: u32, b: &[u8], out: &mut Vec<f32>) {
+/// The weights of `bytes`, one block of ggml type `kind`, appended to `out` as ggml's
+/// `dequantize_row_*` computes them.
+#[expect(
+    clippy::indexing_slicing,
+    clippy::missing_asserts_for_indexing,
+    reason = "each block is the type's whole size, which every index and range stays within"
+)]
+#[expect(
+    clippy::arithmetic_side_effects,
+    clippy::integer_division,
+    reason = "index arithmetic over a block's weights, as ggml's dequantize_row_* loops do it"
+)]
+fn decode_block(kind: u32, bytes: &[u8], out: &mut Vec<f32>) -> Result<()> {
     match kind {
         2 => {
-            let d = half(b);
-            out.extend((0..32).map(|i| d * f32::from(nibble(&b[2..], i) as i8 - 8)));
+            let d = half(bytes);
+            out.extend((0..32).map(|i| d * f32::from(nibble(&bytes[2..], i).cast_signed() - 8)));
         }
         3 => {
-            let (d, m) = (half(b), half(&b[2..]));
-            out.extend((0..32).map(|i| d * f32::from(nibble(&b[4..], i)) + m));
+            let (d, m) = (half(bytes), half(&bytes[2..]));
+            out.extend((0..32).map(|i| d * f32::from(nibble(&bytes[4..], i)) + m));
         }
         8 => {
-            let d = half(b);
-            out.extend(b[2..34].iter().map(|&q| d * f32::from(q as i8)));
+            let d = half(bytes);
+            out.extend(bytes[2..34].iter().map(|&q| d * f32::from(q.cast_signed())));
         }
         20 => {
-            let d = half(b);
-            out.extend((0..32).map(|i| d * f32::from(IQ4NL[usize::from(nibble(&b[2..], i))])));
+            let d = half(bytes);
+            out.extend((0..32).map(|i| d * f32::from(IQ4NL[usize::from(nibble(&bytes[2..], i))])));
         }
         39 => {
-            let d = e8m0_half(b[0]);
-            out.extend((0..32).map(|i| d * f32::from(MXFP4[usize::from(nibble(&b[1..], i))])));
+            let d = e8m0_half(bytes[0]);
+            out.extend((0..32).map(|i| d * f32::from(MXFP4[usize::from(nibble(&bytes[1..], i))])));
         }
         12 | 13 => {
-            let (d, dmin) = (half(b), half(&b[2..]));
-            let scales = &b[4..16];
+            let (d, dmin) = (half(bytes), half(&bytes[2..]));
+            let scales = &bytes[4..16];
             let (qh, qs) = if kind == 13 {
-                (&b[16..48], &b[48..176])
+                (&bytes[16..48], &bytes[48..176])
             } else {
-                (&[][..], &b[16..144])
+                (&[][..], &bytes[16..144])
             };
             for j in 0..8 {
                 let (sc, m) = scale_min(scales, j);
@@ -326,18 +408,19 @@ fn decode_block(kind: u32, b: &[u8], out: &mut Vec<f32>) {
             }
         }
         14 => {
-            let (ql, qh, sc) = (&b[..128], &b[128..192], &b[192..208]);
-            let d = half(&b[208..]);
+            let (ql, qh, sc) = (&bytes[..128], &bytes[128..192], &bytes[192..208]);
+            let d = half(&bytes[208..]);
             for p in 0..256 {
                 let (h, r) = (p / 128, p % 128);
                 let low = (ql[64 * h + r % 64] >> (4 * (r / 64))) & 0xF;
                 let high = (qh[32 * h + r % 32] >> (2 * (r / 32))) & 3;
-                let q = (low | (high << 4)) as i8 - 32;
-                out.push(d * f32::from(sc[p / 16] as i8) * f32::from(q));
+                let q = (low | (high << 4)).cast_signed() - 32;
+                out.push(d * f32::from(sc[p / 16].cast_signed()) * f32::from(q));
             }
         }
-        _ => unreachable!("block() admits only the types handled here"),
+        other => bail!("ggml type {other} is not supported"),
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -352,9 +435,9 @@ mod tests {
     }
 
     fn hex(s: &str) -> Vec<u8> {
-        (0..s.len())
-            .step_by(2)
-            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+        s.as_bytes()
+            .chunks(2)
+            .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
             .collect()
     }
 
@@ -378,27 +461,31 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::little_endian_bytes,
+        reason = "a GGUF file is little-endian by specification"
+    )]
     fn a_minimal_file_parses() {
         let mut f = b"GGUF".to_vec();
-        f.extend(3u32.to_le_bytes());
-        f.extend(1u64.to_le_bytes());
-        f.extend(1u64.to_le_bytes());
-        let text = |f: &mut Vec<u8>, s: &str| {
-            f.extend((s.len() as u64).to_le_bytes());
-            f.extend(s.as_bytes());
+        f.extend(3_u32.to_le_bytes());
+        f.extend(1_u64.to_le_bytes());
+        f.extend(1_u64.to_le_bytes());
+        let text = |file: &mut Vec<u8>, s: &str| {
+            file.extend(u64::try_from(s.len()).unwrap().to_le_bytes());
+            file.extend(s.as_bytes());
         };
         text(&mut f, "general.name");
-        f.extend(8u32.to_le_bytes());
+        f.extend(8_u32.to_le_bytes());
         text(&mut f, "x");
         text(&mut f, "w");
-        f.extend(2u32.to_le_bytes());
-        f.extend(2u64.to_le_bytes());
-        f.extend(1u64.to_le_bytes());
-        f.extend(0u32.to_le_bytes());
-        f.extend(0u64.to_le_bytes());
+        f.extend(2_u32.to_le_bytes());
+        f.extend(2_u64.to_le_bytes());
+        f.extend(1_u64.to_le_bytes());
+        f.extend(0_u32.to_le_bytes());
+        f.extend(0_u64.to_le_bytes());
         f.resize(f.len().div_ceil(32) * 32, 0);
-        f.extend(1.5f32.to_le_bytes());
-        f.extend((-2.0f32).to_le_bytes());
+        f.extend(1.5_f32.to_le_bytes());
+        f.extend((-2.0_f32).to_le_bytes());
         let g = Gguf::parse(&f).unwrap();
         assert_eq!(g.metadata["general.name"], Value::Str("x".into()));
         assert_eq!(g.read("w").unwrap(), (vec![1.5, -2.0], vec![1, 2]));

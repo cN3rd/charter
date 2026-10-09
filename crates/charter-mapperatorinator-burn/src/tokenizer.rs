@@ -12,11 +12,14 @@ use std::collections::HashMap;
 /// a value.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Event {
+    /// The event's type.
     pub(crate) kind: String,
+    /// The event's value, within its type's range.
     pub(crate) value: i32,
 }
 
 impl Event {
+    /// An event of type `kind` with `value`.
     pub(crate) fn new(kind: &str, value: i32) -> Self {
         Self {
             kind: kind.to_owned(),
@@ -25,9 +28,23 @@ impl Event {
     }
 }
 
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    reason = "a song's event times in milliseconds fit the tokenizer's i32 event values"
+)]
+/// A time in milliseconds as an event's value.
+pub(crate) const fn event_time(ms: i64) -> i32 {
+    ms as i32
+}
+
+/// The type of time shift events, which say when the events after them happen.
 pub(crate) const TIME_SHIFT: &str = "t";
+/// The type of beat events.
 pub(crate) const BEAT: &str = "beat";
+/// The type of measure events, the beats that start a bar.
 pub(crate) const MEASURE: &str = "measure";
+/// The type of timing point events, the beats that start a tempo or meter.
 pub(crate) const TIMING_POINT: &str = "timing_point";
 
 /// Event types that end a group, as `TYPE_EVENTS` in upstream's `data_utils.py`.
@@ -55,52 +72,92 @@ pub(crate) const TYPE_EVENTS: [&str; 21] = [
     "scroll_speed_change",
 ];
 
+/// An event type's values in `tokenizer.json`.
 #[derive(Deserialize)]
 struct RangeJson {
+    /// The event type.
     #[serde(rename = "type")]
     kind: String,
+    /// The type's lowest value.
     min_value: i32,
+    /// The type's highest value.
     max_value: i32,
 }
 
+/// The parts of `tokenizer.json` timing reads.
 #[derive(Deserialize)]
 struct TokenizerJson {
+    /// The token of the first event range's lowest value; control tokens come before it.
     offset: u32,
+    /// The token that starts each context.
     context_sos: HashMap<String, u32>,
+    /// The token that ends each context.
     context_eos: HashMap<String, u32>,
+    /// The event types the model writes, in token order.
     event_ranges: Vec<RangeJson>,
+    /// The event types only prompts carry, in token order after `event_ranges`.
     input_event_ranges: Vec<RangeJson>,
+    /// Difficulty classes; the value past the last means unknown.
     num_diff_classes: i32,
+    /// Mapper classes; the value past the last means unknown.
     num_mapper_classes: i32,
+    /// Descriptor classes; the value past the last means unknown.
     num_descriptor_classes: i32,
+    /// Circle size classes.
     num_cs_classes: i32,
 }
 
+/// An event type's values and their tokens, which count up from `start`.
 #[derive(Clone, Debug)]
 struct Range {
+    /// The event type.
     kind: String,
+    /// The type's lowest value.
     min: i32,
+    /// The type's highest value.
     max: i32,
+    /// The token of the lowest value.
     start: u32,
 }
 
+impl Range {
+    /// How far the highest value is above the lowest, and so the last token above the first.
+    const fn span(&self) -> u32 {
+        self.max.abs_diff(self.min)
+    }
+}
+
+/// A checkpoint's vocabulary: its event types' tokens, its context tokens, and the class counts
+/// its unknown conditioning tokens come after.
 #[derive(Clone, Debug)]
 pub(crate) struct Tokenizer {
+    /// Every event type's range, in token order.
     ranges: Vec<Range>,
+    /// Each event type's index in `ranges`.
     by_kind: HashMap<String, usize>,
+    /// The token that starts each context.
     context_sos: HashMap<String, u32>,
+    /// The token that ends each context.
     context_eos: HashMap<String, u32>,
+    /// Difficulty classes; the value past the last means unknown.
     num_diff_classes: i32,
+    /// Mapper classes; the value past the last means unknown.
     num_mapper_classes: i32,
+    /// Descriptor classes; the value past the last means unknown.
     num_descriptor_classes: i32,
+    /// Circle size classes.
     num_cs_classes: i32,
 }
 
+/// The padding token, fed to rows that have finished decoding.
 pub(crate) const PAD: u32 = 0;
+/// The token that starts a sequence.
 pub(crate) const SOS: u32 = 1;
+/// The token that ends a sequence.
 pub(crate) const EOS: u32 = 2;
 
 impl Tokenizer {
+    /// The tokenizer described by `text`, a checkpoint's `tokenizer.json`.
     pub(crate) fn from_json(text: &str) -> Result<Self> {
         let json: TokenizerJson = serde_json::from_str(text)
             .context("tokenizer.json is not a Mapperatorinator tokenizer")?;
@@ -120,7 +177,9 @@ impl Tokenizer {
                 max: r.max_value,
                 start,
             });
-            start += (r.max_value - r.min_value + 1) as u32;
+            start = start
+                .saturating_add(r.max_value.abs_diff(r.min_value))
+                .saturating_add(1);
         }
         let by_kind = ranges
             .iter()
@@ -139,11 +198,17 @@ impl Tokenizer {
         })
     }
 
-    pub(crate) fn encode(&self, kind: &str, value: i32) -> Result<u32> {
-        let r = &self.ranges[*self
-            .by_kind
+    /// The range of event type `kind`.
+    fn kind_range(&self, kind: &str) -> Result<&Range> {
+        self.by_kind
             .get(kind)
-            .ok_or_else(|| anyhow!("unknown event type: {kind}"))?];
+            .and_then(|&index| self.ranges.get(index))
+            .ok_or_else(|| anyhow!("unknown event type: {kind}"))
+    }
+
+    /// The token of the event of type `kind` with `value`.
+    pub(crate) fn encode(&self, kind: &str, value: i32) -> Result<u32> {
+        let r = self.kind_range(kind)?;
         if !(r.min..=r.max).contains(&value) {
             bail!(
                 "event value {value} is not within range [{}, {}] for event type {kind}",
@@ -151,29 +216,27 @@ impl Tokenizer {
                 r.max
             );
         }
-        Ok(r.start + (value - r.min) as u32)
+        Ok(r.start.saturating_add(value.abs_diff(r.min)))
     }
 
     /// The event of `token`, or `None` for control tokens outside every range.
     pub(crate) fn decode(&self, token: u32) -> Option<Event> {
         self.ranges
             .iter()
-            .find(|r| token >= r.start && token <= r.start + (r.max - r.min) as u32)
+            .find(|r| token >= r.start && token <= r.start.saturating_add(r.span()))
             .map(|r| Event {
                 kind: r.kind.clone(),
-                value: r.min + (token - r.start) as i32,
+                value: r.min.saturating_add_unsigned(token.saturating_sub(r.start)),
             })
     }
 
     /// The first token of `kind`'s range and one past its last.
     pub(crate) fn range(&self, kind: &str) -> Result<(u32, u32)> {
-        let r = &self.ranges[*self
-            .by_kind
-            .get(kind)
-            .ok_or_else(|| anyhow!("unknown event type: {kind}"))?];
-        Ok((r.start, r.start + (r.max - r.min + 1) as u32))
+        let r = self.kind_range(kind)?;
+        Ok((r.start, r.start.saturating_add(r.span()).saturating_add(1)))
     }
 
+    /// The token that starts `context`.
     pub(crate) fn context_sos(&self, context: &str) -> Result<u32> {
         self.context_sos
             .get(context)
@@ -181,6 +244,7 @@ impl Tokenizer {
             .ok_or_else(|| anyhow!("no start token for context {context}"))
     }
 
+    /// The token that ends `context`.
     pub(crate) fn context_eos(&self, context: &str) -> Result<u32> {
         self.context_eos
             .get(context)
@@ -193,49 +257,58 @@ impl Tokenizer {
         token == SOS || self.context_sos.values().any(|&t| t == token)
     }
 
+    /// The token of an unknown difficulty.
     pub(crate) fn diff_unk(&self) -> Result<u32> {
         self.encode("difficulty", self.num_diff_classes)
     }
 
+    /// The token of an unknown mapper.
     pub(crate) fn mapper_unk(&self) -> Result<u32> {
         self.encode("mapper", self.num_mapper_classes)
     }
 
+    /// The token of an unknown year.
     pub(crate) fn year_unk(&self) -> Result<u32> {
         self.encode("year", 2077)
     }
 
+    /// The token of an unknown descriptor.
     pub(crate) fn descriptor_unk(&self) -> Result<u32> {
         self.encode("descriptor", self.num_descriptor_classes)
     }
 
+    /// The token of an unknown hold note ratio.
     pub(crate) fn hold_note_ratio_unk(&self) -> Result<u32> {
         self.encode("hold_note_ratio", 12)
     }
 
+    /// The token of an unknown scroll speed ratio.
     pub(crate) fn scroll_speed_ratio_unk(&self) -> Result<u32> {
         self.encode("scroll_speed_ratio", 12)
     }
 
+    /// The token of circle size `cs`.
     pub(crate) fn encode_cs(&self, cs: f64) -> Result<u32> {
-        let value = ((cs * f64::from(self.num_cs_classes - 1) / 10.0) as i32)
-            .clamp(0, self.num_cs_classes - 1);
+        let last = self.num_cs_classes.saturating_sub(1);
+        let value = truncated(cs * f64::from(last) / 10.0).clamp(0, last);
         self.encode("cs", value)
     }
 
     /// `song_length` in milliseconds, in ten-second steps up to ten minutes.
     pub(crate) fn encode_song_length(&self, song_length: f64) -> Result<u32> {
-        let value = (song_length / 10000.0).floor().clamp(0.0, 60.0) as i32;
+        let value = truncated((song_length / 10000.0).floor().clamp(0.0, 60.0));
         self.encode("song_length", value)
     }
 
+    /// The token of the base slider velocity `global_sv`.
     pub(crate) fn encode_global_sv(&self, global_sv: f64) -> Result<u32> {
         self.encode(
             "global_sv",
-            round_half_even(global_sv.clamp(0.4, 3.6) * 100.0) as i32,
+            truncated(round_half_even(global_sv.clamp(0.4, 3.6) * 100.0)),
         )
     }
 
+    /// The token of `song_position` as a share of `song_length`.
     pub(crate) fn encode_song_position(&self, song_position: f64, song_length: f64) -> Result<u32> {
         self.encode(
             "song_position",
@@ -249,13 +322,27 @@ fn ratio_to_value(ratio: f64, resolution: i32) -> i32 {
     if ratio <= 0.0 {
         -1
     } else if ratio >= 1.0 {
-        resolution + 1
+        resolution.saturating_add(1)
     } else {
-        (round_half_even(ratio * f64::from(resolution)) as i32).clamp(0, resolution)
+        truncated(round_half_even(ratio * f64::from(resolution))).clamp(0, resolution)
     }
 }
 
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    reason = "conditioning values are small, and truncating toward zero is the rounding wanted"
+)]
+/// `value` truncated toward zero to a token's value.
+const fn truncated(value: f64) -> i32 {
+    value as i32
+}
+
 /// Python's `round`, which rounds halves to even.
+#[expect(
+    clippy::float_cmp,
+    reason = "Python rounds to even only an exact half, which a binary float holds exactly"
+)]
 pub(crate) fn round_half_even(x: f64) -> f64 {
     let r = x.round();
     if (x - x.trunc()).abs() == 0.5 {
@@ -287,7 +374,7 @@ mod tests {
         assert_eq!(t.encode("song_position", -1).unwrap(), 1648);
         assert_eq!(t.decode(1646), Some(Event::new("t", 1637)));
         assert_eq!(t.decode(2), None);
-        assert!(t.encode("t", 1638).is_err());
+        t.encode("t", 1638).unwrap_err();
     }
 
     #[test]

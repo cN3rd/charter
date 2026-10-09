@@ -14,7 +14,7 @@ use burn::tensor::TensorData;
 
 use crate::mel::{self, BINS, MEL_FRAMES};
 use crate::model::Model;
-use crate::tokenizer::{EOS, Event, PAD, SOS, TIME_SHIFT, Tokenizer};
+use crate::tokenizer::{EOS, Event, PAD, SOS, TIME_SHIFT, Tokenizer, event_time};
 
 /// Milliseconds a time shift token steps by.
 pub(crate) const MS_PER_STEP: i64 = 10;
@@ -23,10 +23,15 @@ pub(crate) const MS_PER_STEP: i64 = 10;
 /// the tokenizer's unknown tokens, as upstream's CLI leaves them.
 #[derive(Clone, Debug)]
 pub(crate) struct Conditions {
+    /// The osu! game mode: 0 standard, 1 taiko, 2 catch, 3 mania.
     pub(crate) gamemode: i32,
+    /// Whether the beatmap is hitsounded.
     pub(crate) hitsounded: bool,
+    /// The beatmap's circle size.
     pub(crate) circle_size: f64,
+    /// The beatmap's base slider velocity.
     pub(crate) slider_multiplier: f64,
+    /// Keys of a mania beatmap.
     pub(crate) keycount: i32,
 }
 
@@ -45,8 +50,11 @@ impl Default for Conditions {
 
 /// One window to decode.
 pub(crate) struct Window<'a> {
+    /// The window's samples.
     pub(crate) samples: &'a [f32],
+    /// Where the window starts, in milliseconds.
     pub(crate) frame_time: i64,
+    /// The song's length in milliseconds.
     pub(crate) song_length: f64,
 }
 
@@ -79,7 +87,7 @@ pub(crate) fn prompt(
     }
     p.push(t.descriptor_unk()?);
     p.push(t.encode("scroll_speed", 100)?);
-    p.push(t.encode_song_position(frame_time as f64, song_length)?);
+    p.push(t.encode_song_position(ms_float(frame_time), song_length)?);
     p.push(SOS);
     p.push(t.context_sos("timing")?);
     Ok(p)
@@ -92,10 +100,9 @@ fn pick(logits: &[f32], vocab: usize, last_shift: &[Option<u32>], shifts: (u32, 
         .chunks_exact(vocab)
         .zip(last_shift)
         .map(|(row, last)| {
-            let forbidden = last.map_or(0..0, |v| shifts.0..shifts.0 + v);
+            let forbidden = last.map_or(0..0, |v| shifts.0..shifts.0.saturating_add(v));
             let mut best: Option<(u32, f32)> = None;
-            for (i, &x) in row.iter().enumerate() {
-                let i = i as u32;
+            for (i, &x) in (0_u32..).zip(row) {
                 if !forbidden.contains(&i) && best.is_none_or(|(_, b)| x > b) {
                     best = Some((i, x));
                 }
@@ -107,6 +114,14 @@ fn pick(logits: &[f32], vocab: usize, last_shift: &[Option<u32>], shifts: (u32, 
 
 /// The tokens each window's decoding wrote after its prompt, through the timing context's end
 /// token, or `None` when it stopped without one.
+#[expect(
+    clippy::indexing_slicing,
+    reason = "a batch has one prompt per window, and each row is below the batch size"
+)]
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "a prompt is a few dozen tokens, and a time shift is at or past its range's start"
+)]
 pub(crate) fn decode(
     model: &Model,
     t: &Tokenizer,
@@ -197,12 +212,29 @@ pub(crate) fn events(t: &Tokenizer, tokens: &[u32], frame_time: i64) -> Vec<Even
             continue;
         };
         if event.kind == TIME_SHIFT {
-            let half_step = if event.value >= 0 { MS_PER_STEP / 2 } else { 0 };
-            event.value = (frame_time + i64::from(event.value) * MS_PER_STEP + half_step) as i32;
+            let half_step = if event.value >= 0 {
+                MS_PER_STEP.div_euclid(2)
+            } else {
+                0
+            };
+            let time = frame_time
+                .saturating_add(i64::from(event.value).saturating_mul(MS_PER_STEP))
+                .saturating_add(half_step);
+            event.value = event_time(time);
         }
         events.push(event);
     }
     events
+}
+
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_precision_loss,
+    reason = "window start times in milliseconds are far below 2^52, where f64 is exact"
+)]
+/// A time in milliseconds as a float.
+const fn ms_float(ms: i64) -> f64 {
+    ms as f64
 }
 
 #[cfg(test)]

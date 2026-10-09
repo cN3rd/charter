@@ -12,16 +12,21 @@
 use anyhow::{Result, bail};
 
 use crate::signal::{find_peaks, gaussian_filter1d};
-use crate::tokenizer::{BEAT, Event, MEASURE, TIME_SHIFT, TIMING_POINT, TYPE_EVENTS};
+use crate::tokenizer::{BEAT, Event, MEASURE, TIME_SHIFT, TIMING_POINT, TYPE_EVENTS, event_time};
 
+/// What a beat of the grid is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum BeatKind {
+    /// A beat inside a bar.
     Beat,
+    /// A beat that starts a bar.
     Measure,
+    /// A beat that starts a tempo or a meter.
     TimingPoint,
 }
 
 impl BeatKind {
+    /// The kind of beat an event of type `kind` is, if it is one.
     fn of(kind: &str) -> Option<Self> {
         match kind {
             BEAT => Some(Self::Beat),
@@ -31,7 +36,8 @@ impl BeatKind {
         }
     }
 
-    pub(crate) fn name(self) -> &'static str {
+    /// The event type of this kind of beat.
+    pub(crate) const fn name(self) -> &'static str {
         match self {
             Self::Beat => BEAT,
             Self::Measure => MEASURE,
@@ -58,50 +64,85 @@ fn groups(events: &[Event]) -> Vec<(&str, i64)> {
 
 /// `sum(a[start:stop])` with Python's slice rules.
 fn py_sum(a: &[f64], start: i64, stop: i64) -> f64 {
-    let n = a.len() as i64;
-    let clamp = |i: i64| if i < 0 { (i + n).max(0) } else { i.min(n) };
+    let n = signed(a.len());
+    let clamp = |i: i64| {
+        if i < 0 {
+            i.saturating_add(n).max(0)
+        } else {
+            i.min(n)
+        }
+    };
     let (s, e) = (clamp(start), clamp(stop));
     if s >= e {
         0.0
     } else {
-        a[s as usize..e as usize].iter().sum()
+        a.get(unsigned(s)..unsigned(e))
+            .map_or(0.0, |slice| slice.iter().sum())
     }
 }
 
 /// `a[i]` with Python's negative indices.
 fn py_index<T: Copy>(a: &[T], i: i64) -> Option<T> {
-    let n = a.len() as i64;
-    let i = if i < 0 { i + n } else { i };
-    (0..n).contains(&i).then(|| a[i as usize])
+    let n = signed(a.len());
+    let i = if i < 0 { i.saturating_add(n) } else { i };
+    usize::try_from(i).ok().and_then(|i| a.get(i)).copied()
 }
 
+/// `np.median` of `values`, which it sorts.
+#[expect(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    reason = "callers pass at least one value, so the middle ones are in bounds"
+)]
+#[expect(
+    clippy::manual_midpoint,
+    reason = "numpy's median averages the middle pair as (a + b) / 2"
+)]
 fn median(values: &mut [f64]) -> f64 {
     values.sort_by(f64::total_cmp);
     let n = values.len();
     if n % 2 == 1 {
-        values[n / 2]
+        values[n.div_euclid(2)]
     } else {
-        (values[n / 2 - 1] + values[n / 2]) / 2.0
+        (values[n.div_euclid(2) - 1] + values[n.div_euclid(2)]) / 2.0
     }
 }
 
+/// A peak of the smoothed histograms, and the tempo around it.
 #[derive(Clone, Copy)]
 struct Peak {
+    /// Where the peak is, in milliseconds.
     time: usize,
+    /// How far the peak stands above its surroundings.
     prominence: f64,
+    /// The tempo at the peak, in beats a minute.
     bpm: f64,
+    /// Whether the tempo comes from the beats near the peak rather than a neighbour.
     defined: bool,
 }
 
 /// The beat grid of a song `num_ms` milliseconds long from its passes, each the offset its audio
 /// was shifted by and the events the model wrote for it, as time shift and type events.
+#[expect(
+    clippy::too_many_lines,
+    clippy::cognitive_complexity,
+    reason = "a whole port of upstream's SuperTimingGenerator.generate, kept as one to compare"
+)]
+#[expect(
+    clippy::indexing_slicing,
+    reason = "times index the histograms only within the song, and other indices their own lists"
+)]
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "a song's milliseconds, beat lengths and bar sizes are far from i64's limits"
+)]
 pub(crate) fn fuse(
     num_ms: usize,
     passes: &[(i64, Vec<Event>)],
     bpm_threshold: f64,
 ) -> Result<Vec<Event>> {
-    let iterations = passes.len() as f64;
-    let n = num_ms as i64;
+    let iterations = count_float(passes.len());
+    let n = signed(num_ms);
     let mut beats_hist = vec![0.0; num_ms];
     let mut measures_hist = vec![0.0; num_ms];
     let mut timing_points_hist = vec![0.0; num_ms];
@@ -122,20 +163,20 @@ pub(crate) fn fuse(
             };
             match kind {
                 BeatKind::Beat => {
-                    beats_hist[time as usize] += 1.0;
+                    beats_hist[unsigned(time)] += 1.0;
                     if let Some(c) = measure_counter.as_mut() {
                         *c += 1;
                     }
                 }
                 BeatKind::Measure => {
-                    measures_hist[time as usize] += 1.0;
+                    measures_hist[unsigned(time)] += 1.0;
                     if let Some(c) = measure_counter {
                         measure_counts.push(c);
                     }
                     measure_counter = Some(1);
                 }
                 BeatKind::TimingPoint => {
-                    timing_points_hist[time as usize] += 1.0;
+                    timing_points_hist[unsigned(time)] += 1.0;
                     measure_counter = Some(1);
                 }
             }
@@ -183,19 +224,19 @@ pub(crate) fn fuse(
     let mut peak_bpms: Vec<f64> = peakind
         .iter()
         .map(|&peak| {
-            let peak = peak as i64;
+            let peak = signed(peak);
             // np.histogram(bins=range(20, 100)): bins of one, the last also holding 99.
             let mut hist = [0_u32; 79];
             for &(time, tpb) in &tpbs {
                 if peak - w < time && time < peak + w && (20..=99).contains(&tpb) {
-                    hist[((tpb - 20) as usize).min(78)] += 1;
+                    hist[unsigned(tpb - 20).min(78)] += 1;
                 }
             }
             let max = *hist.iter().max().unwrap_or(&0);
             let sum: u32 = hist.iter().sum();
             if f64::from(max) > bpm_threshold * f64::from(sum) {
                 let argmax = hist.iter().position(|&h| h == max).unwrap_or(0);
-                60_000.0 / ((20 + argmax) as f64 * 10.0)
+                60_000.0 / (count_float(20 + argmax) * 10.0)
             } else {
                 f64::NAN
             }
@@ -204,8 +245,13 @@ pub(crate) fn fuse(
     let defined: Vec<bool> = peak_bpms.iter().map(|b| !b.is_nan()).collect();
 
     // Fold every tempo into [median / 1.5, median * 1.5] by whole multiples.
-    let median_bpm =
-        60_000.0 / (median(&mut tpbs.iter().map(|&(_, t)| t as f64).collect::<Vec<_>>()) * 10.0);
+    let median_bpm = 60_000.0
+        / (median(
+            &mut tpbs
+                .iter()
+                .map(|&(_, t)| whole_float(t))
+                .collect::<Vec<_>>(),
+        ) * 10.0);
     for bpm in &mut peak_bpms {
         *bpm /= (*bpm / (median_bpm * 1.5)).ceil();
         *bpm *= ((median_bpm / 1.5) / *bpm).ceil();
@@ -215,19 +261,19 @@ pub(crate) fn fuse(
         if !peak_bpms[i].is_nan() {
             continue;
         }
-        let mut left = i as i64 - 1;
-        while left >= 0 && peak_bpms[left as usize].is_nan() {
+        let mut left = signed(i) - 1;
+        while left >= 0 && peak_bpms[unsigned(left)].is_nan() {
             left -= 1;
         }
         let mut right = i + 1;
         while right < peak_bpms.len() && peak_bpms[right].is_nan() {
             right += 1;
         }
-        let i64i = i as i64;
+        let i64i = signed(i);
         peak_bpms[i] =
-            if left >= 0 && (right >= peak_bpms.len() || i64i - left <= (right - i) as i64) {
-                peak_bpms[left as usize]
-            } else if right < peak_bpms.len() && (left < 0 || i64i - left > (right - i) as i64) {
+            if left >= 0 && (right >= peak_bpms.len() || i64i - left <= signed(right - i)) {
+                peak_bpms[unsigned(left)]
+            } else if right < peak_bpms.len() && (left < 0 || i64i - left > signed(right - i)) {
                 peak_bpms[right]
             } else {
                 median_bpm
@@ -247,18 +293,26 @@ pub(crate) fn fuse(
     to_process.sort_by(|a, b| b.prominence.total_cmp(&a.prominence));
     let mut processed: Vec<(f64, f64)> = Vec::new();
 
+    #[expect(
+        clippy::shadow_unrelated,
+        reason = "the closure takes the list upstream's remove_range captures, under its name"
+    )]
     let remove_range = |to_process: &mut Vec<Peak>, t1: f64, t2: f64| {
         let (t1, t2) = if t1 > t2 { (t2, t1) } else { (t1, t2) };
-        to_process.retain(|p| !(t1 <= p.time as f64 && p.time as f64 <= t2));
+        to_process.retain(|p| !(t1 <= count_float(p.time) && count_float(p.time) <= t2));
     };
-    let num_ms_f = num_ms as f64;
+    let num_ms_f = count_float(num_ms);
+    #[expect(
+        clippy::shadow_unrelated,
+        reason = "the closure takes the lists upstream's walk captures, under their names"
+    )]
     let walk = |start: f64,
                 mut period: f64,
                 direction: f64,
                 to_process: &mut Vec<Peak>,
                 processed: &mut Vec<(f64, f64)>,
                 beat_times: &mut Vec<i64>| {
-        let loss = |p: &Peak, time: f64| (p.time as f64 - time).abs() / p.prominence;
+        let loss = |p: &Peak, time: f64| (count_float(p.time) - time).abs() / p.prominence;
         let mut time = start;
         loop {
             let previous = time;
@@ -270,7 +324,7 @@ pub(crate) fn fuse(
             // Only peaks ahead, so a strong peak cannot be snapped to over and over.
             let nearest = peaks
                 .iter()
-                .filter(|p| direction * (p.time as f64 - previous) > 0.0)
+                .filter(|p| direction * (count_float(p.time) - previous) > 0.0)
                 .fold(None::<&Peak>, |best, p| match best {
                     Some(b) if loss(b, time) <= loss(p, time) => Some(b),
                     _ => Some(p),
@@ -278,7 +332,7 @@ pub(crate) fn fuse(
             if let Some(nearest) = nearest {
                 let l = loss(nearest, time);
                 if l < 60.0 {
-                    time = nearest.time as f64;
+                    time = count_float(nearest.time);
                     period = 60_000.0 / nearest.bpm;
                 } else if l < 300.0 && nearest.defined {
                     // A beat nearby, likely of another tempo.
@@ -289,7 +343,7 @@ pub(crate) fn fuse(
             if processed.iter().any(|&(t1, t2)| t1 <= time && time <= t2) {
                 break;
             }
-            beat_times.push(time.trunc() as i64);
+            beat_times.push(truncated(time.trunc()));
         }
         // Keep seams from making beats too near each other (over 300 BPM).
         let m = 200.0;
@@ -304,9 +358,9 @@ pub(crate) fn fuse(
     while !to_process.is_empty() {
         let peak = to_process.remove(0);
         let period = 60_000.0 / peak.bpm;
-        beat_times.push(peak.time as i64);
+        beat_times.push(signed(peak.time));
         walk(
-            peak.time as f64,
+            count_float(peak.time),
             period,
             1.0,
             &mut to_process,
@@ -314,7 +368,7 @@ pub(crate) fn fuse(
             &mut beat_times,
         );
         walk(
-            peak.time as f64,
+            count_float(peak.time),
             period,
             -1.0,
             &mut to_process,
@@ -341,10 +395,17 @@ pub(crate) fn fuse(
         .collect();
 
     // Label measures by the song's usual meter, choosing each bar's phase by the evidence.
-    let signature =
-        median(&mut measure_counts.iter().map(|&c| c as f64).collect::<Vec<_>>()).trunc() as i64;
+    let signature = truncated(
+        median(
+            &mut measure_counts
+                .iter()
+                .map(|&c| whole_float(c))
+                .collect::<Vec<_>>(),
+        )
+        .trunc(),
+    );
     let snapshot = beat_types.clone();
-    let count = beat_times.len() as i64;
+    let count = signed(beat_times.len());
     let mut cooldown = 0_i64;
     for i in 0..beat_times.len() {
         let beat_type = snapshot[i];
@@ -367,7 +428,7 @@ pub(crate) fn fuse(
         for k in 0..signature {
             let (mut score, mut scored) = (0.0, 0);
             for j in -3_i64..4 {
-                let index = i as i64 + j * signature + k;
+                let index = signed(i) + j * signature + k;
                 if index < 0 || index >= count {
                     continue;
                 }
@@ -377,7 +438,7 @@ pub(crate) fn fuse(
                 {
                     continue;
                 }
-                let other = beat_times[index as usize];
+                let other = beat_times[unsigned(index)];
                 score += py_sum(&measures_hist, other - win, other + win)
                     + py_sum(&timing_points_hist, other - win, other + win);
                 scored += 1;
@@ -392,7 +453,11 @@ pub(crate) fn fuse(
             .iter()
             .copied()
             .fold(f64::NEG_INFINITY, f64::max);
-        let argmax = offset_scores.iter().position(|&s| s == best).unwrap_or(0) as i64;
+        #[expect(
+            clippy::float_cmp,
+            reason = "the first score equal to the best is numpy's argmax"
+        )]
+        let argmax = signed(offset_scores.iter().position(|&s| s == best).unwrap_or(0));
         if argmax == 0 {
             beat_types[i] = BeatKind::Measure;
             cooldown = signature - 1;
@@ -405,8 +470,64 @@ pub(crate) fn fuse(
     Ok(beat_times
         .iter()
         .zip(&beat_types)
-        .flat_map(|(&t, b)| [Event::new(TIME_SHIFT, t as i32), Event::new(b.name(), 0)])
+        .flat_map(|(&t, b)| {
+            [
+                Event::new(TIME_SHIFT, event_time(t)),
+                Event::new(b.name(), 0),
+            ]
+        })
         .collect())
+}
+
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_possible_wrap,
+    reason = "a song's milliseconds, peaks and beats number far below i64::MAX"
+)]
+/// A count or a position as a signed one.
+const fn signed(value: usize) -> i64 {
+    value as i64
+}
+
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "every time and index is checked or clamped to be non-negative before it is cast"
+)]
+/// A non-negative time or index as an index.
+const fn unsigned(value: i64) -> usize {
+    value as usize
+}
+
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_precision_loss,
+    reason = "a song's milliseconds, its passes and the bins are far below 2^52, where f64 is exact"
+)]
+/// A count or a position as a float.
+const fn count_float(count: usize) -> f64 {
+    count as f64
+}
+
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_precision_loss,
+    reason = "beat lengths and bar sizes are small whole numbers"
+)]
+/// A whole number as a float.
+const fn whole_float(value: i64) -> f64 {
+    value as f64
+}
+
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    reason = "beat times and bar sizes are far inside i64, and int() truncates toward zero too"
+)]
+/// `value` truncated toward zero, as Python's `int` does.
+const fn truncated(value: f64) -> i64 {
+    value as i64
 }
 
 #[cfg(test)]
@@ -420,7 +541,7 @@ mod tests {
                 .iter()
                 .flat_map(|&(t, k)| {
                     [
-                        Event::new(TIME_SHIFT, (t + offset) as i32),
+                        Event::new(TIME_SHIFT, event_time(t.saturating_add(offset))),
                         Event::new(k, 0),
                     ]
                 })
@@ -446,8 +567,10 @@ mod tests {
         let passes: Vec<_> = [-300, 0, 250].iter().map(|&o| pass(o, &beats)).collect();
         let events = fuse(22000, &passes, 0.1).unwrap();
         let grid: Vec<(i32, &str)> = events
-            .chunks(2)
-            .map(|p| (p[0].value, p[1].kind.as_str()))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|[shift, beat]| (shift.value, beat.kind.as_str()))
             .collect();
         let on: Vec<_> = grid
             .iter()
@@ -455,13 +578,13 @@ mod tests {
             .collect();
         assert_eq!(on.len(), 40, "{grid:?}");
         for (i, (t, k)) in on.iter().enumerate() {
-            assert_eq!(*t, 1000 + 500 * i as i32);
+            assert_eq!(*t, 1000 + 500 * i32::try_from(i).unwrap());
             assert_eq!(*k, if i % 4 == 0 { MEASURE } else { BEAT }, "beat {i}");
         }
     }
 
     #[test]
     fn no_beats_is_an_error_not_a_panic() {
-        assert!(fuse(1000, &[(0, Vec::new())], 0.1).is_err());
+        fuse(1000, &[(0, Vec::new())], 0.1).unwrap_err();
     }
 }

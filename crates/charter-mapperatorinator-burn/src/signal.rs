@@ -6,19 +6,26 @@
 /// `gaussian_filter1d(x, sigma)` with scipy's defaults: a kernel truncated at four sigma and the
 /// input reflected about its edges, `d c b a | a b c d | d c b a`. The sums run in scipy's order,
 /// so the result matches it bit for bit: peaks on a flat top are decided by the last bits.
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "kernel offsets and sample positions are small, stepped as NI_Correlate1D steps them"
+)]
+#[expect(
+    clippy::indexing_slicing,
+    reason = "reflection keeps positions inside the input, and taps inside the kernel"
+)]
 pub(crate) fn gaussian_filter1d(x: &[f64], sigma: f64) -> Vec<f64> {
-    let radius = (4.0 * sigma + 0.5) as isize;
+    let radius = truncated(4.0 * sigma + 0.5);
     let sigma2 = sigma * sigma;
     let mut weights: Vec<f64> = (-radius..=radius)
-        .map(|i| (-0.5 / sigma2 * (i * i) as f64).exp())
+        .map(|i| (-0.5 / sigma2 * offset_float(i * i)).exp())
         .collect();
     let total = numpy_sum(&weights);
     for w in &mut weights {
         *w /= total;
     }
-    let n = x.len() as isize;
-    let at = |i: isize| -> f64 {
-        let mut i = i;
+    let n = signed(x.len());
+    let at = |mut i: isize| -> f64 {
         // Reflection can take more than one bounce when the input is shorter than the kernel.
         loop {
             if i < 0 {
@@ -26,17 +33,17 @@ pub(crate) fn gaussian_filter1d(x: &[f64], sigma: f64) -> Vec<f64> {
             } else if i >= n {
                 i = 2 * n - i - 1;
             } else {
-                return x[i as usize];
+                return x[unsigned(i)];
             }
         }
     };
     // NI_Correlate1D's symmetric path: the centre tap, then pairs from the outermost inwards.
-    let centre = radius as usize;
+    let centre = unsigned(radius);
     (0..n)
         .map(|i| {
-            let mut acc = x[i as usize] * weights[centre];
+            let mut acc = x[unsigned(i)] * weights[centre];
             for j in (1..=radius).rev() {
-                acc += (at(i - j) + at(i + j)) * weights[centre - j as usize];
+                acc += (at(i - j) + at(i + j)) * weights[centre - unsigned(j)];
             }
             acc
         })
@@ -49,19 +56,18 @@ fn numpy_sum(a: &[f64]) -> f64 {
         a.len() <= 128,
         "numpy sums longer arrays by recursive halving"
     );
-    if a.len() < 8 {
+    let Some((first, rest)) = a.split_first_chunk::<8>() else {
         return a.iter().fold(-0.0, |s, v| s + v);
-    }
-    let mut r = [0.0; 8];
-    r.copy_from_slice(&a[..8]);
-    let whole = a.len() - a.len() % 8;
-    for chunk in a[8..whole].as_chunks::<8>().0 {
+    };
+    let mut r = *first;
+    let (chunks, tail) = rest.as_chunks::<8>();
+    for chunk in chunks {
         for (acc, v) in r.iter_mut().zip(chunk) {
             *acc += v;
         }
     }
     let mut sum = ((r[0] + r[1]) + (r[2] + r[3])) + ((r[4] + r[5]) + (r[6] + r[7]));
-    for v in &a[whole..] {
+    for v in tail {
         sum += v;
     }
     sum
@@ -69,6 +75,7 @@ fn numpy_sum(a: &[f64]) -> f64 {
 
 /// The peaks `find_peaks(x, distance, prominence=(min_prominence, None), width=(min_width, None),
 /// rel_height, wlen)` keeps, with their prominences.
+#[expect(clippy::indexing_slicing, reason = "local maxima are positions in x")]
 pub(crate) fn find_peaks(
     x: &[f64],
     distance: f64,
@@ -79,21 +86,25 @@ pub(crate) fn find_peaks(
 ) -> (Vec<usize>, Vec<f64>) {
     let mut peaks = local_maxima(x);
 
-    let keep = select_by_distance(
+    let by_distance = select_by_distance(
         &peaks,
         &peaks.iter().map(|&p| x[p]).collect::<Vec<_>>(),
         distance,
     );
-    peaks = filter(&peaks, &keep);
+    peaks = filter(&peaks, &by_distance);
 
-    let wlen = if wlen > 1.0 { wlen.ceil() as isize } else { -1 };
+    let wlen = if wlen > 1.0 {
+        truncated(wlen.ceil())
+    } else {
+        -1
+    };
     let (prominences, left_bases, right_bases) = prominences(x, &peaks, wlen);
-    let keep: Vec<bool> = prominences.iter().map(|&p| min_prominence <= p).collect();
+    let by_prominence: Vec<bool> = prominences.iter().map(|&p| min_prominence <= p).collect();
     let (peaks, prominences, left_bases, right_bases) = (
-        filter(&peaks, &keep),
-        filter(&prominences, &keep),
-        filter(&left_bases, &keep),
-        filter(&right_bases, &keep),
+        filter(&peaks, &by_prominence),
+        filter(&prominences, &by_prominence),
+        filter(&left_bases, &by_prominence),
+        filter(&right_bases, &by_prominence),
     );
 
     let widths = widths(
@@ -104,10 +115,11 @@ pub(crate) fn find_peaks(
         &left_bases,
         &right_bases,
     );
-    let keep: Vec<bool> = widths.iter().map(|&w| min_width <= w).collect();
-    (filter(&peaks, &keep), filter(&prominences, &keep))
+    let by_width: Vec<bool> = widths.iter().map(|&w| min_width <= w).collect();
+    (filter(&peaks, &by_width), filter(&prominences, &by_width))
 }
 
+/// The `values` whose `keep` is true.
 fn filter<T: Copy>(values: &[T], keep: &[bool]) -> Vec<T> {
     values
         .iter()
@@ -119,6 +131,15 @@ fn filter<T: Copy>(values: &[T], keep: &[bool]) -> Vec<T> {
 
 /// `_local_maxima_1d`: every sample higher than its neighbours, a flat top counting once at its
 /// middle, rounded down.
+#[expect(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    reason = "positions stay within 0..len, as in scipy's _local_maxima_1d"
+)]
+#[expect(
+    clippy::float_cmp,
+    reason = "a flat top is samples exactly equal, as scipy compares them"
+)]
 fn local_maxima(x: &[f64]) -> Vec<usize> {
     let mut peaks = Vec::new();
     if x.len() < 3 {
@@ -133,7 +154,7 @@ fn local_maxima(x: &[f64]) -> Vec<usize> {
                 ahead += 1;
             }
             if x[ahead] < x[i] {
-                peaks.push((i + ahead - 1) / 2);
+                peaks.push((i + ahead - 1).div_euclid(2));
                 i = ahead;
             }
         }
@@ -144,8 +165,13 @@ fn local_maxima(x: &[f64]) -> Vec<usize> {
 
 /// `_select_by_peak_distance`: from the highest peak down, drop the peaks closer than
 /// `distance` to one kept. Ties in height go to the later peak, as a stable sort gives them.
+#[expect(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    reason = "j and k stay within the peaks, which ascend, as in scipy's _select_by_peak_distance"
+)]
 fn select_by_distance(peaks: &[usize], priority: &[f64], distance: f64) -> Vec<bool> {
-    let distance = distance.ceil() as usize;
+    let distance = whole(distance.ceil());
     let mut keep = vec![true; peaks.len()];
     let mut order: Vec<usize> = (0..peaks.len()).collect();
     order.sort_by(|&a, &b| priority[a].total_cmp(&priority[b]));
@@ -158,7 +184,7 @@ fn select_by_distance(peaks: &[usize], priority: &[f64], distance: f64) -> Vec<b
             keep[k - 1] = false;
             k -= 1;
         }
-        let mut k = j + 1;
+        k = j + 1;
         while k < peaks.len() && peaks[k] - peaks[j] < distance {
             keep[k] = false;
             k += 1;
@@ -169,29 +195,34 @@ fn select_by_distance(peaks: &[usize], priority: &[f64], distance: f64) -> Vec<b
 
 /// `_peak_prominences`: each peak's height above the higher of the lowest points on either side
 /// before the signal rises above it, searched within `wlen` samples around it.
+#[expect(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    reason = "the searches stop at the window's ends inside the signal, as in _peak_prominences"
+)]
 fn prominences(x: &[f64], peaks: &[usize], wlen: isize) -> (Vec<f64>, Vec<usize>, Vec<usize>) {
     let (mut prom, mut lefts, mut rights) = (Vec::new(), Vec::new(), Vec::new());
     for &peak in peaks {
-        let (mut i_min, mut i_max) = (0_isize, x.len() as isize - 1);
+        let (mut i_min, mut i_max) = (0_isize, signed(x.len()) - 1);
         if wlen >= 2 {
-            i_min = i_min.max(peak as isize - wlen / 2);
-            i_max = i_max.min(peak as isize + wlen / 2);
+            i_min = i_min.max(signed(peak) - wlen.div_euclid(2));
+            i_max = i_max.min(signed(peak) + wlen.div_euclid(2));
         }
-        let mut i = peak as isize;
+        let mut i = signed(peak);
         let (mut left, mut left_min) = (peak, x[peak]);
-        while i_min <= i && x[i as usize] <= x[peak] {
-            if x[i as usize] < left_min {
-                left_min = x[i as usize];
-                left = i as usize;
+        while i_min <= i && x[unsigned(i)] <= x[peak] {
+            if x[unsigned(i)] < left_min {
+                left_min = x[unsigned(i)];
+                left = unsigned(i);
             }
             i -= 1;
         }
-        let mut i = peak as isize;
+        i = signed(peak);
         let (mut right, mut right_min) = (peak, x[peak]);
-        while i <= i_max && x[i as usize] <= x[peak] {
-            if x[i as usize] < right_min {
-                right_min = x[i as usize];
-                right = i as usize;
+        while i <= i_max && x[unsigned(i)] <= x[peak] {
+            if x[unsigned(i)] < right_min {
+                right_min = x[unsigned(i)];
+                right = unsigned(i);
             }
             i += 1;
         }
@@ -204,6 +235,11 @@ fn prominences(x: &[f64], peaks: &[usize], wlen: isize) -> (Vec<f64>, Vec<usize>
 
 /// `_peak_widths`: each peak's width at `rel_height` of its prominence below it, interpolated
 /// between samples, within its bases.
+#[expect(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    reason = "the searches stay between each peak's bases, as in scipy's _peak_widths"
+)]
 fn widths(
     x: &[f64],
     peaks: &[usize],
@@ -222,21 +258,82 @@ fn widths(
             while i_min < i && height < x[i] {
                 i -= 1;
             }
-            let mut left_ip = i as f64;
+            let mut left_ip = index_float(i);
             if x[i] < height {
                 left_ip += (height - x[i]) / (x[i + 1] - x[i]);
             }
-            let mut i = peak;
+            i = peak;
             while i < i_max && height < x[i] {
                 i += 1;
             }
-            let mut right_ip = i as f64;
+            let mut right_ip = index_float(i);
             if x[i] < height {
                 right_ip -= (height - x[i]) / (x[i - 1] - x[i]);
             }
             right_ip - left_ip
         })
         .collect()
+}
+
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_possible_wrap,
+    reason = "signal lengths and positions are far below isize::MAX"
+)]
+/// A signal position as a signed one, for searches that may step off its start.
+const fn signed(position: usize) -> isize {
+    position as isize
+}
+
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_sign_loss,
+    reason = "positions are checked or reflected into the signal before they index it"
+)]
+/// A signed signal position, inside the signal, as an index.
+const fn unsigned(position: isize) -> usize {
+    position as usize
+}
+
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    reason = "kernel radii and peak windows are small, and scipy truncates them toward zero too"
+)]
+/// `value` truncated toward zero, as scipy's `int` and `np.intp` do.
+const fn truncated(value: f64) -> isize {
+    value as isize
+}
+
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a peak distance is a small whole number of samples once ceiled"
+)]
+/// A whole, non-negative `value` as a count.
+const fn whole(value: f64) -> usize {
+    value as usize
+}
+
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_precision_loss,
+    reason = "squared kernel offsets are far below 2^52, where f64 is exact"
+)]
+/// A kernel offset as a float.
+const fn offset_float(offset: isize) -> f64 {
+    offset as f64
+}
+
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_precision_loss,
+    reason = "signal positions are far below 2^52, where f64 is exact"
+)]
+/// A signal position as a float.
+const fn index_float(index: usize) -> f64 {
+    index as f64
 }
 
 #[cfg(test)]
@@ -248,14 +345,14 @@ mod tests {
     fn the_filter_matches_scipy() {
         let got = gaussian_filter1d(&[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0], 1.0);
         let want = [
-            0.004565692244646007,
-            0.05399112742070441,
-            0.24197144565660073,
-            0.39894346935609776,
-            0.24197144565660073,
-            0.05399112742070441,
-            0.0044318616200312655,
-            0.00013383062461474175,
+            0.004_565_692_244_646_007,
+            0.053_991_127_420_704_41,
+            0.241_971_445_656_600_73,
+            0.398_943_469_356_097_76,
+            0.241_971_445_656_600_73,
+            0.053_991_127_420_704_41,
+            0.004_431_861_620_031_265_5,
+            0.000_133_830_624_614_741_75,
         ];
         for (g, w) in got.iter().zip(want) {
             assert_eq!(*g, w, "{got:?}");
