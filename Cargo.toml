@@ -37,7 +37,7 @@ charter-osu-mania = { path = "plugins/osu-mania" }
 serde = { version = "1.0", features = ["derive"] }
 # ponytail: identifiers are parse-once and cloned per note; EcoString inlines up to 15 bytes, so
 # a layer name costs no allocation. Swap back to String if names outgrow that and spill.
-ecow = { version = "0.2", features = ["serde"] }
+ecow = { version = "0.3", features = ["serde"] }
 # ponytail: exact float parsing costs about 1.5x on float-heavy input; the format promises
 # values survive a round trip, and the default parser drifts one value in ten.
 serde_json = { version = "1.0", features = ["float_roundtrip"] }
