@@ -233,10 +233,10 @@ fn timing_of(
 }
 
 /// Whether there is a graphics card to run Mapperatorinator's model on. Asked once, since asking
-/// sets the device up, and quietly, since asking panics when there is none.
+/// sets the device up.
 fn gpu() -> bool {
     static GPU: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *GPU.get_or_init(|| crate::report::quietly(timingator_wrap::graphics_card).unwrap_or(false))
+    *GPU.get_or_init(timingator_wrap::graphics_card)
 }
 
 /// The timing of the audio in `file` as Mapperatorinator's timing model, with the weights at

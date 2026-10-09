@@ -1,16 +1,10 @@
 //! Reporting what went wrong: an error with the causes behind it, for the window to show, and a
 //! panic as color-eyre's report on the terminal, a crash file in the data folder and a dialog.
 
-use std::cell::Cell;
 use std::error::Error;
 use std::fmt::{self, Display};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-
-thread_local! {
-    /// Whether a panic on this thread is expected and caught, so not a crash.
-    static QUIET: Cell<bool> = const { Cell::new(false) };
-}
 
 /// `error` followed by each cause behind it, `: ` apart. A cause whose message the one before
 /// it already includes is left out, since many errors repeat their source in their own.
@@ -36,16 +30,6 @@ impl Display for Chain<'_> {
         }
         Ok(())
     }
-}
-
-/// `run`, catching a panic it is known to raise without reporting it as a crash.
-pub(crate) fn quietly<T>(
-    run: impl FnOnce() -> T + std::panic::UnwindSafe,
-) -> std::thread::Result<T> {
-    QUIET.set(true);
-    let ran = std::panic::catch_unwind(run);
-    QUIET.set(false);
-    ran
 }
 
 /// The crash file for a panic `since_epoch` after the Unix epoch, in the data folder `folder`.
@@ -75,15 +59,12 @@ fn to_terminal(report: impl Display) {
     eprintln!("{report}");
 }
 
-/// Reports panics from here on: color-eyre's report on standard error, and for a panic not
-/// caught by [`quietly`], a crash file in `folder` and, on the main thread, a dialog.
+/// Reports panics from here on: color-eyre's report on standard error, a crash file in `folder`
+/// and, on the main thread, a dialog.
 pub(crate) fn install(folder: Option<PathBuf>) {
     let terminal = color_eyre::config::HookBuilder::default().into_hooks().0;
     std::panic::set_hook(Box::new(move |info| {
         to_terminal(terminal.panic_report(info));
-        if QUIET.get() {
-            return;
-        }
         let since_epoch = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default();
@@ -175,12 +156,5 @@ mod tests {
         let message = crash_message(Some(&file));
         assert!(message.contains(&file.display().to_string()));
         assert!(!crash_message(None).contains("report"));
-    }
-
-    #[test]
-    fn a_panic_caught_quietly_is_caught_and_leaves_reporting_on_after() {
-        assert!(quietly(|| panic!("no adapter")).is_err());
-        assert!(!QUIET.get());
-        assert_eq!(quietly(|| 4).ok(), Some(4));
     }
 }
