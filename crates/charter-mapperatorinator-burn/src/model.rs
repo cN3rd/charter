@@ -13,8 +13,8 @@ use anyhow::{Result, bail};
 use burn::prelude::*;
 use burn::tensor::TensorData;
 use burn::tensor::activation::gelu;
-use burn::tensor::module::{attention, conv1d};
-use burn::tensor::ops::{AttentionModuleOptions, ConvOptions};
+use burn::tensor::module::attention;
+use burn::tensor::ops::AttentionModuleOptions;
 
 use crate::gguf::Gguf;
 
@@ -53,6 +53,96 @@ impl Store<'_> {
     /// The values of the tensor `name`, flat.
     fn vec(&self, name: &str) -> Result<Vec<f32>> {
         Ok(self.0.read(name)?.0)
+    }
+}
+
+/// A convolution over time, three steps wide and padded by one step at each end, as
+/// `nn.Conv1d(kernel_size=3, padding=1)`: every output step is one row of a single matmul over
+/// its three input steps' channels.
+// ponytail: im2col rather than burn's conv1d, whose direct kernel, the only one wgpu offers,
+// takes twice as long as burn 0.21's did on the encoder's second convolution (about 160 against
+// 82 ms a batch of four windows); the matmul copies its three steps' channels first.
+struct Conv3 {
+    /// The weight as `[3 · in, out]`: every input channel at the first step, then at the second
+    /// and the third.
+    weight: Tensor<2>,
+    /// The bias.
+    bias: Tensor<1>,
+    /// Input steps from one output step to the next.
+    stride: usize,
+}
+
+impl Conv3 {
+    /// The convolution `name` from `store`, its outputs `stride` input steps apart.
+    fn load(store: &Store, name: &str, stride: usize, device: &Device) -> Result<Self> {
+        let (values, shape) = store.0.read(&format!("{name}.weight"))?;
+        let [out, input, 3] = shape[..] else {
+            bail!("{name}.weight has shape {shape:?}, not [out, in, 3]");
+        };
+        if out == 0 || input == 0 {
+            bail!("{name}.weight has shape {shape:?}, which has no channels");
+        }
+        Ok(Self {
+            weight: Self::steps_first(&values, out, input, device),
+            bias: store.get(&format!("{name}.bias"), device)?,
+            stride,
+        })
+    }
+
+    /// `values`, a weight `[out, input, 3]` with both sizes above zero, as `[3 · input, out]`.
+    fn steps_first(values: &[f32], out: usize, input: usize, device: &Device) -> Tensor<2> {
+        let per_output = input.saturating_mul(3);
+        let rows: Vec<f32> = (0..3)
+            .flat_map(|step| {
+                (0..input).flat_map(move |channel| {
+                    values
+                        .iter()
+                        .skip(channel.saturating_mul(3).saturating_add(step))
+                        .step_by(per_output)
+                        .take(out)
+                        .copied()
+                })
+            })
+            .collect();
+        Tensor::from_data(TensorData::new(rows, [per_output, out]), device)
+    }
+
+    /// `x` of `[batch, len, in]`, `len` above zero, convolved to
+    /// `[batch, (len - 1) / stride + 1, out]`.
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "tensor addition adds the bias, and the sizes are a window's steps and channels"
+    )]
+    fn forward(&self, x: Tensor<3>) -> Tensor<3> {
+        let [batch, len, channels] = x.dims();
+        let stride = self.stride;
+        let out_len = (len - 1).div_euclid(stride) + 1;
+        let device = x.device();
+        // A step of zeros before, and enough after that every step's strided span fits.
+        let padded = Tensor::cat(
+            vec![
+                Tensor::zeros([batch, 1, channels], &device),
+                x,
+                Tensor::zeros([batch, stride, channels], &device),
+            ],
+            1,
+        );
+        let steps = (0..3)
+            .map(|step| {
+                padded
+                    .clone()
+                    .narrow(1, step, out_len * stride)
+                    .reshape([batch, out_len, stride, channels])
+                    .narrow(2, 0, 1)
+                    .reshape([batch, out_len, channels])
+            })
+            .collect();
+        let out = self.weight.dims()[1];
+        let y = Tensor::cat(steps, 2)
+            .reshape([batch * out_len, 3 * channels])
+            .matmul(self.weight.clone())
+            + self.bias.clone().unsqueeze_dim(0);
+        y.reshape([batch, out_len, out])
     }
 }
 
@@ -303,14 +393,10 @@ pub(crate) struct Model {
     mel_fb: Tensor<2>,
     /// The Hann window each FFT is taken through.
     pub(crate) hann: Vec<f32>,
-    /// The first convolution's weight.
-    conv1_w: Tensor<3>,
-    /// The first convolution's bias.
-    conv1_b: Tensor<1>,
-    /// The second, stride-2 convolution's weight.
-    conv2_w: Tensor<3>,
-    /// The second convolution's bias.
-    conv2_b: Tensor<1>,
+    /// The first convolution, from mel bands to `D_MODEL` channels.
+    conv1: Conv3,
+    /// The second convolution, which halves the steps.
+    conv2: Conv3,
     /// The encoder's layers.
     encoder_layers: Vec<EncoderLayer>,
     /// The norm after the encoder's layers.
@@ -417,10 +503,8 @@ impl Model {
         Ok(Self {
             mel_fb,
             hann: store.vec("spectrogram.transform.spectrogram.window")?,
-            conv1_w: store.get(&format!("{enc}.conv1.weight"), device)?,
-            conv1_b: store.get(&format!("{enc}.conv1.bias"), device)?,
-            conv2_w: store.get(&format!("{enc}.conv2.weight"), device)?,
-            conv2_b: store.get(&format!("{enc}.conv2.bias"), device)?,
+            conv1: Conv3::load(&store, &format!("{enc}.conv1"), 1, device)?,
+            conv2: Conv3::load(&store, &format!("{enc}.conv2"), 2, device)?,
             encoder_layers,
             encoder_norm: RmsNorm::load(&store, &format!("{enc}.layer_norm"), device)?,
             decoder_embedder: store.get("decoder_embedder.weight", device)?,
@@ -452,20 +536,8 @@ impl Model {
             .matmul(self.mel_fb.clone())
             .log1p()
             .reshape([batch, frames, N_MELS]);
-        let conv = mel.swap_dims(1, 2);
-        let conv = gelu(conv1d(
-            conv,
-            self.conv1_w.clone(),
-            Some(self.conv1_b.clone()),
-            ConvOptions::new([1], [1], [1], 1),
-        ));
-        let conv = gelu(conv1d(
-            conv,
-            self.conv2_w.clone(),
-            Some(self.conv2_b.clone()),
-            ConvOptions::new([2], [1], [1], 1),
-        ));
-        let mut h = conv.swap_dims(1, 2);
+        let conv = gelu(self.conv1.forward(mel));
+        let mut h = gelu(self.conv2.forward(conv));
         for layer in &self.encoder_layers {
             let [q, k, v] = layer.self_attn.qkv(
                 layer.self_attn_layer_norm.forward(h.clone()),
@@ -639,5 +711,56 @@ impl Model {
         }
         cache.len += 1;
         self.logits(h)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use burn::tensor::module::conv1d;
+    use burn::tensor::ops::ConvOptions;
+
+    use super::*;
+
+    /// `count` values from `-0.7` up in uneven steps, repeating.
+    fn values(count: u16, period: u16) -> Vec<f32> {
+        (0..count)
+            .map(|i| f32::from(i.wrapping_mul(37).checked_rem(period).unwrap()) / 7.0 - 0.7)
+            .collect()
+    }
+
+    #[test]
+    fn a_width_three_convolution_matches_burns_at_either_stride() {
+        let device = Device::flex();
+        let (batch, len, input, out) = (2, 9, 3, 4);
+        let x = Tensor::<3>::from_data(
+            TensorData::new(values(54, 11), [batch, len, input]),
+            &device,
+        );
+        let weight = values(36, 13);
+        let bias = Tensor::<1>::from_data(TensorData::new(values(4, 5), [out]), &device);
+        for stride in [1, 2] {
+            let conv = Conv3 {
+                weight: Conv3::steps_first(&weight, out, input, &device),
+                bias: bias.clone(),
+                stride,
+            };
+            let got = conv.forward(x.clone()).into_data();
+            let want = conv1d(
+                x.clone().swap_dims(1, 2),
+                Tensor::from_data(TensorData::new(weight.clone(), [out, input, 3]), &device),
+                Some(bias.clone()),
+                ConvOptions::new([stride], [1], [1], 1),
+            )
+            .swap_dims(1, 2)
+            .into_data();
+            assert_eq!(got.shape(), want.shape());
+            let (got, want) = (
+                got.try_into_vec::<f32>().unwrap(),
+                want.try_into_vec::<f32>().unwrap(),
+            );
+            for (g, w) in got.iter().zip(&want) {
+                assert!((g - w).abs() < 1e-5, "stride {stride}: {g} against {w}");
+            }
+        }
     }
 }

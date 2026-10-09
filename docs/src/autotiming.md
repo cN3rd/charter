@@ -69,8 +69,8 @@ port](mapperatorinator.md) describes the port and how it differs from upstream.
 The model writes the timing points itself, so charter fits nothing to them: each becomes a
 [section](format.md#anchors), as an imported osu! red line does. It runs on the graphics card
 through burn's wgpu backend, since on the CPU a two-minute song took over fifteen minutes; on a
-laptop RTX 3070 Ti it takes about 80 seconds, plus about 20 the first time while its kernels are
-tuned. The status bar shows how many of its windows are decoded. When wgpu finds no graphics card,
+laptop RTX 3070 Ti a 3.5-minute song takes about a minute, and 40 seconds more the first time
+while its kernels are tuned. The status bar shows how many of its windows are decoded. When wgpu finds no graphics card,
 or only a software renderer, charter says so and asks whether to run it on the CPU through burn's
 flex backend instead. Super timing turns small differences in its input into different results: the same song
 decoded by symphonia and resampled by rubato, as charter does, or by ffmpeg, as upstream's command

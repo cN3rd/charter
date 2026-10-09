@@ -100,6 +100,9 @@ Q4_1, Q4_0, IQ4_NL and MXFP4).
 - The model computes in float32 throughout.
 - Attention always runs as burn's plain matmuls and softmax. For the encoder burn 0.22 would pick a
   flash kernel instead, which on wgpu takes three times as long.
+- The encoder's two convolutions run as one matmul each, over every output step's three input
+  steps side by side. burn's direct convolution, the only one it has on wgpu, was the slowest part
+  of the encoder.
 
 ## Matching upstream
 
