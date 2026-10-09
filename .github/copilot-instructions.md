@@ -1,155 +1,118 @@
 # charter
 
-A charting/editor app for rhythm games, serving several games rather than one. Comparable tools:
-ArrowVortex, Moonscraper, Editor on Fire, the StepMania editor, the osu! editor. Nothing
-game-specific belongs in the shared core.
+A multi-game rhythm-game charting editor (cf. ArrowVortex, Moonscraper, Editor on Fire, the
+StepMania and osu! editors). **Nothing game-specific belongs outside `plugins/`**. A game quirk
+needing a special case in a core crate means the plugin surface is wrong; fix the surface.
 
-Rust Cargo workspace, edition 2024, `resolver = "3"` (MSRV 1.95; developed on 1.96).
+Rust Cargo workspace, edition 2024, `resolver = "3"`, MSRV 1.95 (developed on 1.99).
 
 ## Commands
 
-```bash
-cargo check --workspace --all-targets   # fast feedback loop
-cargo test --workspace
-cargo test -p charter-core format_chapter  # single test: -p <crate> <substring of test path>
-cargo test -p charter-core -- --nocapture --exact json::tests::the_format_chapter_example_survives_a_round_trip
-cargo clippy --workspace --all-targets -- -D warnings
-cargo fmt --all
-cargo run -p charter-app                 # the editor; add `-- path/to/song.json` to open a song
-cargo run -p charter-ui --example mock   # the static mock of the UI draft
-just kani                                # Kani proofs of every crate but the two linking burn, which Kani cannot build; `cargo kani -p <crate>` for one; `cargo install --locked kani-verifier && cargo kani setup` once
-git submodule update --init              # required once, see .github/skills/README.md
-```
+`just` is the entry point and lists every recipe. Run `just setup` once after cloning (skills
+submodule, Windows target, cargo-xwin).
 
-The `justfile` wraps these and adds packaging: `just` lists every recipe, `just ci` runs format,
-lint, tests and the book, `just build-windows` cross-compiles for `x86_64-pc-windows-msvc` with
-cargo-xwin, and `just dist` writes a Linux `.tar.gz` and a Windows `.zip` to `dist/`, each holding
-the stripped binary, `LICENSE-MIT` and `LICENSE-APACHE`, the bundled assets' licences and a list of the linked crates'.
+| Recipe | Runs |
+|---|---|
+| `just check` | `cargo check --workspace --all-targets`, the fast loop |
+| `just test [args]` | `--workspace`, or the args (`just test -p charter-core format_chapter`) |
+| `just clippy` | `cargo clippy --workspace --all-targets -- -D warnings` |
+| `just fmt` / `fmt-check` | `cargo fmt --all [--check]` |
+| `just docs` / `docs-serve` / `docs-check` | build / preview / validate the mdbook |
+| `just pack-check` | `packaging/pack.py selftest`; archives are byte-reproducible |
+| **`just ci`** | `fmt-check clippy test docs docs-check pack-check`, the pre-commit gate |
+| `just run [song]` | the editor (`cargo run -p charter-app`) |
+| `just kani` | Kani proofs; excludes the four crates linking burn, which Kani cannot build |
+| `just dist` / `dist-linux` / `dist-windows` | reproducible packages into `dist/` |
 
-On Linux, `.cargo/config.toml` links with clang and mold and keeps debug info out of the binary
-(`split-debuginfo=unpacked`), and dependencies build with line tables only; install `clang` and
-`mold` from the package manager. A rebuild after touching `charter-app` takes about 2 seconds.
+`cargo run -p charter-ui --example mock` draws the static mock of the book's UI draft.
+Kani needs `cargo install --locked kani-verifier && cargo kani setup` once.
+
+Linux builds link with clang and mold and keep debug info out of the binary
+(`.cargo/config.toml`); install both from your package manager. Rebuild after touching
+`charter-app` is ~2s. Hot third-party crates are force-optimised in dev via
+`[profile.dev.package.*]`.
 
 ## Correctness
 
-Lints do the enforcing. The root `Cargo.toml` carries `[workspace.lints]` and first-party crates
-opt in with `[lints] workspace = true`. `unsafe_code` is forbidden there, so a genuine need for
-`unsafe` goes into a `third-party/` wrapper crate with a written reason. Narrow an individual
-lint with `#[allow(...)]` at the call site instead of weakening the workspace table. The root
-`clippy.toml` lets test code unwrap and index.
+Lints enforce, not review. Root `Cargo.toml` holds `[workspace.lints]` (clippy `pedantic`,
+`restriction`, `nursery` all on; each allowed exception carries a written reason); first-party
+crates opt in with `[lints] workspace = true`.
 
-Every source file with logic tests itself in a `#[cfg(test)] mod tests` at its end; there are no
-`tests/` directories. Unit tests can reach private items, so a rule is tested where it lives.
+- `unsafe_code = "forbid"`. A genuine need goes in a `third-party/` wrapper crate with a reason.
+- Narrow a lint at the call site with **`#[expect(.., reason = "..")]`**, never `#[allow]`, and
+  never by weakening the workspace table. (277 `expect`s, 0 `allow`s.)
+- Root `clippy.toml` lets test code unwrap, index, panic and `dbg!`.
+- `overflow-checks = true` in release. `dist` profile adds fat LTO and strips symbols.
 
-Tests are sans-io: they build inputs in memory and feed bytes or values to the code under test,
-never touching files, the network or the clock. The format tests embed the format chapter's
-example with `include_str!`, which happens at compile time. Property tests use proptest with
-`crate::proptest_config()`, a fixed seed and no regression files, so they repeat exactly and
-stay sans-io.
+### Tests
 
-Kani proofs sit in a `#[cfg(kani)] mod proofs` beside the tests. Keep each one small: CBMC
-bit-blasts floating-point arithmetic, and a proof mixing division, multiplication and rounding
-did not finish in 15 minutes.
+Every file with logic tests itself in a trailing `#[cfg(test)] mod tests`. **No `tests/`
+directories**: unit tests reach private items, so a rule is tested where it lives.
 
-- Newtype anything carrying a unit: ticks, beats, measures, seconds, samples, pixels, scroll
-  offsets. Silently swapping two of them is a common bug class in charting tools. Make
-  conversions explicit and mix-ups a compile error. The format's units live in
-  `crates/charter-core/src/unit.rs`, each showing a rejected mix-up as a `compile_fail` doctest
-  beside a passing twin one line apart, because stable rustdoc does not check which error a
-  `compile_fail` block hits.
-- Chart files are untrusted input. Format crates parse bytes into already-valid domain types;
-  nothing downstream handles a `Chart` that might be malformed, and no parser panics on hostile
-  input.
-- Make illegal states unrepresentable (enums over bool pairs, `NonZero*` for counts that cannot
-  be zero) before adding runtime checks.
-- Release builds keep `overflow-checks = true`.
-- Undo/redo and multi-select edits are where borrow-checker pressure will show up. Redesign the
-  ownership there before reaching for `Rc<RefCell<_>>`.
+Tests are sans-io: inputs built in memory, never files, network or clock. Format tests
+`include_str!` the book's format chapter example. Property tests use proptest with the crate's
+`proptest_config()` (fixed seed, no regression files).
 
-## Documentation
+Kani proofs sit in `#[cfg(kani)] mod proofs` beside the tests. Keep each small. CBMC bit-blasts
+floats, and one proof mixing division, multiplication and rounding never finished.
 
-Project documentation lives in an mdbook under `docs/`, built with `mdbook build docs` and
-previewed with `mdbook serve docs`. CI publishes every push to `main` to GitHub Pages, at
-<https://cn3rd.github.io/charter/>. Anything explaining design, formats or workflows goes in the
-book. READMEs stay short and stay next to the thing they describe, pointing into the book rather
-than duplicating it.
+### Domain rules
 
-`docs/src/` is simultaneously an [OKF](https://github.com/GoogleCloudPlatform/open-knowledge-format)
-bundle, so the same files serve human readers and agents. Every chapter carries OKF frontmatter
-with at least a `type`; `docs/okf-frontmatter.py` is an mdbook preprocessor that removes it before
-rendering, since mdbook would otherwise show it as a stray rule and heading. Check conformance
-with:
-
-```bash
-.github/skills/okf-open-knowledge-format/scripts/validate.sh docs/src
-python3 docs/okf-frontmatter.py selftest
-```
-
-`docs/src/SUMMARY.md` is the one file that must not have frontmatter: mdbook parses it as a
-sidebar separator and part title, which corrupts the navigation. The validator reports one
-expected `E1` for it. Do not silence that by adding frontmatter.
+- **Newtype anything with a unit**: ticks, beats, measures, seconds, samples, pixels, scroll
+  offsets. Swapping two silently is the classic charting-tool bug. See
+  `crates/charter-core/src/unit.rs`, where each rejected mix-up is a `compile_fail` doctest beside
+  a passing twin one line apart (stable rustdoc doesn't check *which* error fires).
+- **Chart files are untrusted.** Format crates parse bytes into already-valid domain types; no
+  downstream code handles a possibly-malformed `Chart`, and no parser panics on hostile input.
+- Make illegal states unrepresentable (enums over bool pairs, `NonZero*`) before adding runtime
+  checks.
+- Undo/redo and multi-select are where borrow-checker pressure shows. Redesign ownership before
+  reaching for `Rc<RefCell<_>>`.
+- Mark deliberate simplifications with a `ponytail:` comment naming the ceiling and the upgrade
+  path. The convention runs through `Cargo.toml`, `clippy.toml`, the `justfile`, CI and the source.
 
 ## Layout
 
 | Path | Role |
 |---|---|
-| `crates/charter-audio` | DSP: a song's audio decoded through `symphonia-wrap` into stereo frames; no device |
-| `crates/charter-autotiming` | DSP: a tempo map from a song's beats and onsets, as sections of constant tempo; the back end of automatic timing, fed by any tracker |
-| `crates/charter-beatthis-burn` | DSP: beats and downbeats from audio by the Beat This! network in burn on the CPU, loading the released `final0.ckpt`; parity fixtures from `fixtures/make.py` |
-| `crates/charter-core` | the chart format: data model, JSON I/O, validation, tick to time; `RulesetPlugin`, the surface a ruleset plugin implements |
-| `crates/charter-editor` | editing a song without drawing it: open chart, cursor, snaps, note edits the ruleset plugin checks, selection, undo, unsaved changes, the demo song; `Song` lives in `song/`, one file per concern (layers, notes, selection, tempo, markers, history, cursor, settings) |
-| `crates/charter-style` | the shared look: colour tokens, Inter and Phosphor fonts, and the widgets drawn in them |
-| `crates/charter-timing` | the timing window in egui: the audio one measure a row, anchors pinning beats to the audio; hands its edits back as commands; `lib.rs` holds the state, `draw.rs`, `pointer.rs` and `keyboard.rs` its drawing and input |
-| `crates/charter-ui` | the editor window in egui: notefield, panels, keys, settings; hosts the timing window; asks its host for files and dialogs; the static mock as an example. `window/`, `panels/` and `notefield/` are split one file per concern, each `impl Window` block beside the state sub-struct it owns |
-| `crates/charter-app` | binary front end, thin: registers the built-in ruleset plugins, answers the window's file and dialog requests with `std::fs` and rfd, plays the song's audio through kira, converts exported audio with ffmpeg, keeps settings in eframe's storage, and reports error causes and crashes (`report.rs`, color-eyre); its file I/O goes through a `Disk` trait so it is tested in memory |
-| `plugins/stepmania`, `plugins/ttr`, `plugins/osu-mania` | ruleset plugins: typed game models over `charter-core`, each with a `Plugin` the editor checks songs and edits through; `ttr` reads and writes `.ttr2_track` (`track.rs`) and EOF MIDI (`midi.rs`) through one model (`exchange.rs`) |
-| `third-party/symphonia-wrap` | build-time facade over `symphonia`, read its README first |
-| `third-party/timingator-wrap` | build-time facade over `timingator`: a `Timer` on the graphics card or the CPU without burn's generics, so nothing past it depends on burn; read its README first |
-| `third-party/timingator` | DSP: vendored port of Mapperatorinator's super timing, the alternative to Beat This! in Timing › Find timing; osu! timing points from audio by the V32 model in burn on wgpu; weights on Hugging Face, read its README first |
+| `crates/charter-core` | the chart format: data model, JSON I/O, validation, tick↔time, identifiers, grid, sections; `RulesetPlugin`, the surface plugins implement |
+| `crates/charter-editor` | editing a song without drawing it: cursor, snaps, plugin-checked note edits, selection, undo, unsaved changes, demo song. `song/` is one file per concern |
+| `crates/charter-audio` | DSP: decode via `symphonia-wrap`, waveform peaks, onsets, spectrum, resampling, tags, metronome clicks. No device |
+| `crates/charter-autotiming` | DSP: tempo map from beats and onsets, as constant-tempo sections; back end of automatic timing, fed by any tracker |
+| `crates/charter-beatthis-burn` | DSP: beats and downbeats via the Beat This! network in burn on CPU (`final0.ckpt`); parity fixtures from `fixtures/make.py` |
+| `crates/charter-style` | shared look: colour tokens, Inter and Phosphor fonts, widgets |
+| `crates/charter-timing` | the timing window in egui: audio a measure per row, anchors pinning beats to audio; returns edits as commands. State in `lib.rs`, I/O in `draw/pointer/keyboard.rs` |
+| `crates/charter-ui` | the editor window in egui: notefield, panels, keys, settings, minimap, recovery; hosts the timing window; asks its host for files and dialogs. `window/`, `panels/`, `notefield/` are one file per concern, each `impl Window` block beside the state it owns |
+| `crates/charter-app` | thin binary: registers plugins, serves file/dialog requests (`std::fs`, rfd), plays audio (kira), time-stretch, settings in eframe storage, crash reports (`report.rs`, color-eyre). File I/O behind a `Disk` trait, so it is tested in memory |
+| `plugins/{stepmania,ttr,osu-mania}` | ruleset plugins: typed game models over `charter-core` with a `Plugin` the editor validates through. `ttr` reads/writes `.ttr2_track` and EOF MIDI through one `exchange.rs` model; `osu-mania` imports osu! `[TimingPoints]`, pasted or from a `.osu` |
+| `third-party/symphonia-wrap` | build-time facade over `symphonia`, `dylib` + `rlib`. **Read its README before touching audio deps, features or dev profiles** |
+| `third-party/timingator` | vendored port of Mapperatorinator's super timing: osu! timing points via the V32 model in burn on wgpu. Weights on Hugging Face, read its README |
+| `third-party/timingator-wrap` | facade over `timingator`, hiding burn's generics so nothing past it depends on burn. Read its README |
+| `third-party/cubecl-macros` | **excluded** from the workspace, patched in via `[patch.crates-io]`: upstream emits code in HashMap order, this copy sorts it so release builds are byte-identical |
+| `packaging/pack.py` | writes `.tar.gz`/`.zip` deterministically; `just pack-check` self-tests it |
 
-All are workspace members listed in the root `Cargo.toml`. The ruleset plugin conventions are in
-the book's ruleset chapter, `docs/src/rulesets.md`.
+Keep dependency direction one-way: **data → DSP → UI**, with plugins written against the same
+public surface a third-party plugin would use. Ask before inventing a crate boundary.
 
-The workspace grows into small crates with one job each. Put a new crate in the kind it belongs
-to and keep the dependency direction one-way:
+## Documentation
 
-- data: chart/note/timing types and file formats. No UI, no audio, no I/O beyond parsing.
-- DSP: audio analysis and processing (waveforms, onset detection, pitch, time-stretch).
-- UI: widgets and views. Depends on data and DSP; they never depend on it.
-- built-in plugins: per-game support and optional features, written against the same extension
-  surface a third-party plugin would use. A game quirk that needs a special case inside a data or
-  UI crate means the extension surface is wrong; fix the surface.
+mdbook under `docs/`, published to <https://cn3rd.github.io/charter/>. Design, formats and
+workflows go in the book; READMEs stay short and point into it. Keep `docs/src/guide/` in step
+with user-visible changes, and `docs/src/packaging.md` with packaging changes.
 
-## The symphonia build strategy
+`docs/src/` is simultaneously an [OKF](https://github.com/GoogleCloudPlatform/open-knowledge-format)
+bundle: every chapter carries frontmatter with at least a `type`, and `docs/okf-frontmatter.py` is
+an mdbook preprocessor stripping it before render. `just docs-check` validates the bundle and
+self-tests the preprocessor.
 
-The `[profile.dev.package.*]` block in the root `Cargo.toml` and the `dylib` crate type on
-`symphonia-wrap` both exist for build speed. Read `third-party/symphonia-wrap/README.md` before
-changing audio dependencies, features or dev-profile settings.
+`docs/src/SUMMARY.md` must **not** have frontmatter, since mdbook parses it as a sidebar separator
+and the navigation breaks. The validator reports one expected `E1` for it; do not silence it.
 
 ## Tooling
 
-Rust rules live in the `.github/skills/rust-skills` submodule, invoked with `/rust-skills`.
-Production code is written test-first with `/test-driven-development`, and changes are split into
-atomic commits with `/commit`. `.github/skills/README.md` lists every skill and its local rules.
-`.github/lsp.json` registers `rust-analyzer` for agent code intelligence.
+`.github/skills/README.md` lists every skill and its local rules: `/rust-skills` (a submodule,
+fetched by `just setup`), `/test-driven-development` before writing production code, `/commit` to
+split work into atomic commits. `.github/lsp.json` registers rust-analyzer for code intelligence.
 
-## Current state
-
-`charter-core` implements the format chapter, and the three ruleset plugins model their games on top
-of it and start empty songs; Tap Tap Revenge also imports and exports the game's `.ttr2_track` and
-Editor on Fire MIDI through File › Import song… and Export song…. The editor starts songs from a dialog,
-draws charts generically, moves the cursor by snap and by measure, and edits a song whose ruleset
-plugin accepts it: lane keys and Ctrl with the mouse place taps, holds and mines, the mouse selects
-and Delete removes the selection, every edit is checked by the format and the plugin, the tempo and
-the section at the cursor can be changed, the marker list jumps the cursor, and undo and redo return
-to where each edit was made. A song without its plugin is read-only. Songs open and save through
-native dialogs, unsaved changes are asked about before they are lost and autosaved for restoring
-after a crash, and a settings window keeps its choices between runs. `charter-editor` holds that
-state without drawing it, `charter-ui` draws it in egui and never touches a file, and `charter-app`
-registers the plugins, opens the window and does its file I/O. `charter-ui`'s `mock` example is the
-static mock of the book's UI draft. `charter-audio` decodes the song's audio and `charter-app` plays
-it through kira; Space plays from the cursor, Q and W play a moment before and after it, and the
-playback rate changes the audio's speed and pitch, never the chart. Timing comes from the song
-panel, the timing window, osu! timing, or Beat This! and Mapperatorinator finding it in the audio.
-The book's user guide, `docs/src/guide/`, describes all of this for users; keep it in step with
-user-visible changes. Ask before inventing a crate boundary.
+CI (`.github/workflows/ci.yml`) runs the `just ci` pieces, Kani, and packages both platforms on
+push, publishing a `ci-<run>` prerelease. Pages publishing is gated off while the repo is private.
