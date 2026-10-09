@@ -60,13 +60,11 @@ which is why the refinement learns the lag before it looks for each beat's onset
 
 Timing › Find timing with Mapperatorinator… is the alternative to Beat This!: a Rust port of
 [Mapperatorinator](https://github.com/OliBomby/Mapperatorinator)'s super timing generator in
-`charter-mapperatorinator-burn`, which keeps burn out of the rest of charter. Its V32 model
-hears 16.4 seconds of audio at a time and writes beat, measure and timing point events;
-twenty passes at shifted offsets are fused into one beat grid and then osu! timing points. Its
-weights, pruned to what timing reads and stored as float16, are one 416 MB GGUF file at
-[cnf3rd/timingator-v32-f16-gguf](https://huggingface.co/cnf3rd/timingator-v32-f16-gguf). The
-crate's README has the file's URL and checksum. Charter asks before downloading it into its data
-folder, as it does for Beat This!.
+`charter-mapperatorinator-burn`. Its V32 model hears 16.4 seconds of audio at a time and writes
+beat, measure and timing point events; twenty passes at shifted offsets are fused into one beat
+grid and then osu! timing points. Its weights are one 416 MB GGUF file, which charter asks before
+downloading into its data folder, as it does for Beat This!. [Mapperatorinator
+port](mapperatorinator.md) describes the port and how it differs from upstream.
 
 The model writes the timing points itself, so charter fits nothing to them: each becomes a
 [section](format.md#anchors), as an imported osu! red line does. It runs on the graphics card

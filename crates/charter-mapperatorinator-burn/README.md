@@ -4,7 +4,8 @@ Song timing from audio by [Mapperatorinator](https://github.com/OliBomby/Mappera
 super timing generator, ported to Rust: the V32 model in burn, on the graphics card through wgpu
 or on the CPU through flex, its events fused into osu! timing points. `Timer` loads the model from
 its GGUF file and times mono samples at `SAMPLE_RATE`; `graphics_card` asks whether wgpu has a
-card to run it on. [Automatic timing](../../docs/src/autotiming.md) in the book describes it.
+card to run it on. [Mapperatorinator port](../../docs/src/mapperatorinator.md) in the book
+describes it and how it differs from upstream.
 
 ## Model
 

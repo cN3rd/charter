@@ -81,4 +81,5 @@
 - [User interface draft](./ui.md)
   - [Layers](./layers.md)
 - [Automatic timing](./autotiming.md)
+  - [Mapperatorinator port](./mapperatorinator.md)
 - [Packaging](./packaging.md)
