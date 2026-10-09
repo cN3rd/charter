@@ -49,12 +49,9 @@ timingator = { path = "third-party/timingator" }
 timingator-wrap = { path = "third-party/timingator-wrap" }
 rustfft = "6"
 # ponytail: CPU inference only; the flex backend runs everywhere charter does, and a GPU backend
-# is a feature away if the beat tracker proves too slow.
-burn = { version = "0.21", default-features = false, features = ["std", "flex"] }
-burn-store = { version = "0.21", default-features = false, features = ["std", "pytorch", "safetensors"] }
-# ponytail: named only for its default features, SIMD and threads, which burn's own defaults would
-# otherwise be the only way to turn on.
-burn-flex = "0.21"
+# is a feature away if the beat tracker proves too slow. `simd` and `rayon` are flex's SIMD and
+# threads; `pytorch` and `safetensors` bring in burn-store as `burn::store`.
+burn = { version = "0.22", default-features = false, features = ["std", "flex", "simd", "rayon", "pytorch", "safetensors"] }
 rubato = "5"
 # Pure Rust, no unsafe; its wide-range keylock keeps pitch from a quarter to twice the speed.
 timestretch = "0.15"
@@ -245,8 +242,7 @@ opt-level = 3
 opt-level = 3
 
 # The beat tracker runs a 20M-parameter network on the CPU; unoptimized, one song takes minutes.
-# Burn's kernels are generic, so they compile in the crate that names the backend: the tracker's own
-# crate needs optimizing too. Its API is not generic, so nothing past it instantiates them.
+# The trackers' own crates make the spectrograms the networks hear, so they are optimized too.
 
 [profile.dev.package."charter-beatthis-burn"]
 opt-level = 3
@@ -254,11 +250,9 @@ opt-level = 3
 [profile.dev.package.timingator]
 opt-level = 3
 
-[profile.dev.package."timingator-wrap"]
-opt-level = 3
-
 # Mapperatorinator's timing model runs on the graphics card, but unoptimized, burn's fusion and
 # cubecl's kernel launches keep the CPU the bottleneck: a song took nine minutes instead of one.
+# Burn's generic code compiles in burn-dispatch, the crate that names the backends.
 
 [profile.dev.package."burn-cubecl"]
 opt-level = 3
@@ -318,6 +312,9 @@ opt-level = 3
 opt-level = 3
 
 [profile.dev.package."burn-core"]
+opt-level = 3
+
+[profile.dev.package."burn-dispatch"]
 opt-level = 3
 
 [profile.dev.package."burn-flex"]

@@ -1,9 +1,9 @@
-//! Mapperatorinator's timing model behind an API without burn's generics, so its kernels compile
-//! here, once, rather than in every crate that runs it.
+//! Mapperatorinator's timing model behind an API that names no burn type, so nothing past it
+//! depends on burn.
 
 use anyhow::{Context, Result};
-use burn::backend::flex::{Flex, FlexDevice};
-use burn::backend::wgpu::{Wgpu, WgpuDevice};
+use burn::tensor::DeviceKind;
+use burn::tensor::wgpu::wgpu::DeviceType;
 use timingator::model::Model;
 use timingator::tokenizer::Tokenizer;
 
@@ -23,30 +23,20 @@ pub enum Device {
     Cpu,
 }
 
-/// The model loaded on one backend.
-enum Loaded {
-    /// On the graphics card.
-    Gpu(Model<Wgpu>),
-    /// On the CPU.
-    Cpu(Model<Flex>),
-}
-
 /// Mapperatorinator's timing model and its tokenizer, ready to time songs.
 pub struct Timer {
-    /// The model on its device.
-    model: Loaded,
+    /// The model, on `device`.
+    model: Model,
+    /// Where the model runs.
+    device: Device,
     /// The tokenizer the model's GGUF file holds.
     tokenizer: Tokenizer,
 }
 
 impl std::fmt::Debug for Timer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let device = match self.model {
-            Loaded::Gpu(_) => Device::Gpu,
-            Loaded::Cpu(_) => Device::Cpu,
-        };
         f.debug_struct("Timer")
-            .field("device", &device)
+            .field("device", &self.device)
             .finish_non_exhaustive()
     }
 }
@@ -64,11 +54,16 @@ impl Timer {
             .and_then(|value| value.as_str().map(str::to_owned))
             .context("no timingator.tokenizer")?;
         let tokenizer = Tokenizer::from_json(&tokenizer)?;
-        let model = match device {
-            Device::Gpu => Loaded::Gpu(Model::load(gguf, &WgpuDevice::DefaultDevice)?),
-            Device::Cpu => Loaded::Cpu(Model::load(gguf, &FlexDevice)?),
+        let backend = match device {
+            Device::Gpu => burn::tensor::Device::wgpu(DeviceKind::DefaultDevice),
+            Device::Cpu => burn::tensor::Device::flex(),
         };
-        Ok(Self { model, tokenizer })
+        let model = Model::load(gguf, &backend)?;
+        Ok(Self {
+            model,
+            device,
+            tokenizer,
+        })
     }
 
     /// The timing points of `samples`, mono at [`SAMPLE_RATE`] and divided by their peak,
@@ -83,34 +78,18 @@ impl Timer {
         progress: impl FnMut(usize, usize),
     ) -> Result<Vec<TimingPoint>> {
         let options = timingator::Options::default();
-        let found = match &self.model {
-            Loaded::Gpu(model) => {
-                timingator::run(model, &self.tokenizer, samples, &options, progress)
-            }
-            Loaded::Cpu(model) => {
-                timingator::run(model, &self.tokenizer, samples, &options, progress)
-            }
-        }?;
+        let found = timingator::run(&self.model, &self.tokenizer, samples, &options, progress)?;
         Ok(found.timing_points)
     }
 }
 
 /// Whether wgpu finds a graphics card, rather than none or a software renderer that would be
-/// slower than the CPU backend. Asking sets the device up.
-///
-/// cubecl panics when wgpu has no adapter; that panic is caught here, so a caller with a panic
-/// hook may want to keep it from being reported.
+/// slower than the CPU backend. Asking sets the device up, so ask once.
 #[must_use]
 pub fn graphics_card() -> bool {
-    use burn::backend::wgpu::graphics::AutoGraphicsApi;
-    use burn::backend::wgpu::{RuntimeOptions, init_setup};
-
-    // ponytail: the adapter's type is named only in wgpu's own enum; its Debug name saves
-    // depending on that wgpu for one comparison.
-    std::panic::catch_unwind(|| {
-        init_setup::<AutoGraphicsApi>(&WgpuDevice::DefaultDevice, RuntimeOptions::default())
-    })
-    .is_ok_and(|setup| format!("{:?}", setup.adapter.get_info().device_type) != "Cpu")
+    burn::tensor::Device::wgpu_options()
+        .init_with_setup()
+        .is_ok_and(|(_, setup)| setup.adapter.get_info().device_type != DeviceType::Cpu)
 }
 
 #[cfg(test)]

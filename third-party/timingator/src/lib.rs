@@ -18,7 +18,6 @@ pub mod timing;
 pub mod tokenizer;
 
 use anyhow::Result;
-use burn::prelude::*;
 use serde::Serialize;
 
 use crate::audio::{SAMPLE_RATE, WINDOW_MS};
@@ -118,8 +117,8 @@ pub fn offsets(options: &Options) -> Vec<i64> {
 
 /// Times the song `samples`, normalized mono at 16 kHz, calling `progress` with the windows
 /// decoded so far and in all.
-pub fn run<B: Backend>(
-    model: &Model<B>,
+pub fn run(
+    model: &Model,
     tokenizer: &Tokenizer,
     samples: &[f32],
     options: &Options,

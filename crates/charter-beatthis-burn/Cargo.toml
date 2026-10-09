@@ -10,8 +10,6 @@ workspace = true
 
 [dependencies]
 burn.workspace = true
-burn-flex.workspace = true
-burn-store.workspace = true
 charter-audio.workspace = true
 rustfft.workspace = true
 thiserror.workspace = true

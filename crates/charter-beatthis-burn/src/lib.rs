@@ -13,14 +13,10 @@ use mel::{FPS, log_mel};
 
 use std::path::Path;
 
-use burn::backend::flex::{Flex, FlexDevice};
 use burn::prelude::*;
-use burn_store::{ModuleSnapshot, PytorchStore, SafetensorsStore};
+use burn::store::{ModuleSnapshot, PytorchStore, SafetensorsStore};
 
 use crate::model::{BeatThis, Dims};
-
-/// The backend the tracker runs on: the CPU, through burn's flex backend.
-type Cpu = Flex;
 
 /// Frames the network sees at once, 30 seconds, as it was trained.
 const CHUNK: usize = 1500;
@@ -47,9 +43,9 @@ pub enum Error {
 #[derive(Debug)]
 pub struct Tracker {
     /// Loaded network parameters for inference on the CPU.
-    model: BeatThis<Cpu>,
-    /// Device used to construct each inference tensor.
-    device: FlexDevice,
+    model: BeatThis,
+    /// The CPU, through burn's flex backend, where each inference tensor is made.
+    device: Device,
 }
 
 /// What the tracker finds: each frame's beat and downbeat logits, and the beats and downbeats
@@ -93,7 +89,7 @@ impl Tracker {
     fn from_safetensors(dims: Dims, bytes: Vec<u8>) -> Result<Self, Error> {
         let mut store = remapped(
             SafetensorsStore::from_bytes(Some(bytes))
-                .with_from_adapter(burn_store::PyTorchToBurnAdapter),
+                .with_from_adapter(burn::store::PyTorchToBurnAdapter),
         );
         Self::loaded(dims, |model| {
             model
@@ -106,9 +102,9 @@ impl Tracker {
     /// A model of `dims` populated by `load` on the CPU device.
     fn loaded(
         dims: Dims,
-        load: impl FnOnce(&mut BeatThis<Cpu>) -> Result<(), Error>,
+        load: impl FnOnce(&mut BeatThis) -> Result<(), Error>,
     ) -> Result<Self, Error> {
-        let device = FlexDevice;
+        let device = Device::flex();
         let mut model = BeatThis::new(dims, &device);
         load(&mut model)?;
         Ok(Self { model, device })
@@ -146,7 +142,7 @@ impl Tracker {
                 .map(|&start| {
                     scope.spawn(move || {
                         let (input, len) = chunk(spect, start);
-                        let tensor = Tensor::<Cpu, 1>::from_floats(input.as_slice(), &self.device)
+                        let tensor = Tensor::<1>::from_floats(input.as_slice(), &self.device)
                             .reshape([1, len, mel::BINS]);
                         let (beats, downbeats) = self.model.forward(tensor);
                         (floats(beats), floats(downbeats))
@@ -223,8 +219,8 @@ impl StoreRemap for SafetensorsStore {
 }
 
 /// The values of a 1D tensor.
-fn floats(tensor: Tensor<Cpu, 1>) -> Vec<f32> {
-    tensor.into_data().to_vec::<f32>().unwrap_or_default()
+fn floats(tensor: Tensor<1>) -> Vec<f32> {
+    tensor.try_into_vec_as::<f32>().unwrap_or_default()
 }
 
 /// Where each chunk of `frames` starts, as the reference splits a piece: the first a border
@@ -453,7 +449,7 @@ mod tests {
             .to_vec();
         let tracker = tiny();
         let input = spect.iter().flatten().copied().collect::<Vec<_>>();
-        let tensor = Tensor::<Cpu, 1>::from_floats(input.as_slice(), &tracker.device).reshape([
+        let tensor = Tensor::<1>::from_floats(input.as_slice(), &tracker.device).reshape([
             1,
             spect.len(),
             mel::BINS,

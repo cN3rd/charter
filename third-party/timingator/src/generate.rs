@@ -107,8 +107,8 @@ fn pick(logits: &[f32], vocab: usize, last_shift: &[Option<u32>], shifts: (u32, 
 
 /// The tokens each window's decoding wrote after its prompt, through the timing context's end
 /// token, or `None` when it stopped without one.
-pub fn decode<B: Backend>(
-    model: &Model<B>,
+pub fn decode(
+    model: &Model,
     t: &Tokenizer,
     c: &Conditions,
     windows: &[Window<'_>],
@@ -126,7 +126,7 @@ pub fn decode<B: Backend>(
     for chunk in windows.chunks(encoder_batch.max(1)) {
         let samples: Vec<&[f32]> = chunk.iter().map(|w| w.samples).collect();
         let power = mel::power_spectrograms(&samples, &model.hann);
-        let power = Tensor::<B, 3>::from_data(
+        let power = Tensor::<3>::from_data(
             TensorData::new(power, [chunk.len(), MEL_FRAMES, BINS]),
             device,
         );
@@ -151,9 +151,7 @@ pub fn decode<B: Backend>(
     let mut last_shift: Vec<Option<u32>> = vec![None; batch];
     for _ in 0..max_new {
         let values: Vec<f32> = logits
-            .into_data()
-            .convert::<f32>()
-            .to_vec()
+            .try_into_vec_as::<f32>()
             .map_err(|e| anyhow::anyhow!("{e:?}"))?;
         let next = pick(&values, model.vocab_size, &last_shift, shifts);
         let mut feed = Vec::with_capacity(batch);

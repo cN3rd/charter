@@ -58,16 +58,16 @@ impl Dims {
 
 /// Normalisation by the root mean square, as `F.normalize(x) * sqrt(size) * gamma`.
 #[derive(Module, Debug)]
-struct RmsNorm<B: Backend> {
+struct RmsNorm {
     /// Per-feature scale learned after RMS normalisation.
-    gamma: Param<Tensor<B, 1>>,
+    gamma: Param<Tensor<1>>,
     /// Square root of the feature count, restoring the input's scale after normalisation.
     scale: f64,
 }
 
-impl<B: Backend> RmsNorm<B> {
+impl RmsNorm {
     /// Unit `gamma` for `size` features on `device`.
-    fn new(size: usize, device: &B::Device) -> Self {
+    fn new(size: usize, device: &Device) -> Self {
         let scale = width_float(size).sqrt();
         Self {
             gamma: Param::from_tensor(Tensor::ones([size], device)),
@@ -76,7 +76,7 @@ impl<B: Backend> RmsNorm<B> {
     }
 
     /// `x` normalised across its last dimension and scaled per feature.
-    fn forward<const D: usize>(&self, x: Tensor<B, D>) -> Tensor<B, D> {
+    fn forward<const D: usize>(&self, x: Tensor<D>) -> Tensor<D> {
         let norm = x
             .clone()
             .powf_scalar(2.0)
@@ -111,18 +111,18 @@ const fn angle_float(angle: f64) -> f32 {
 
 /// Normalise, widen, GELU, narrow.
 #[derive(Module, Debug)]
-struct FeedForward<B: Backend> {
+struct FeedForward {
     /// Normalisation applied before the two projections.
-    norm: RmsNorm<B>,
+    norm: RmsNorm,
     /// Projection to `mult` times the input width.
-    inner: Linear<B>,
+    inner: Linear,
     /// Projection back to the input width.
-    outer: Linear<B>,
+    outer: Linear,
 }
 
-impl<B: Backend> FeedForward<B> {
+impl FeedForward {
     /// A feed-forward block of width `dim` with expansion factor `mult`.
-    fn new(dim: usize, mult: usize, device: &B::Device) -> Self {
+    fn new(dim: usize, mult: usize, device: &Device) -> Self {
         Self {
             norm: RmsNorm::new(dim, device),
             inner: LinearConfig::new(dim, dim.saturating_mul(mult)).init(device),
@@ -131,7 +131,7 @@ impl<B: Backend> FeedForward<B> {
     }
 
     /// `x` after normalisation, expansion, GELU and projection to its original width.
-    fn forward(&self, x: Tensor<B, 3>) -> Tensor<B, 3> {
+    fn forward(&self, x: Tensor<3>) -> Tensor<3> {
         self.outer
             .forward(gelu(self.inner.forward(self.norm.forward(x))))
     }
@@ -140,24 +140,24 @@ impl<B: Backend> FeedForward<B> {
 /// Self-attention over a sequence, its queries and keys rotated by position, each head's
 /// output gated by a sigmoid of the normalised input.
 #[derive(Module, Debug)]
-struct Attention<B: Backend> {
+struct Attention {
     /// Normalisation shared by the query and gate projections.
-    norm: RmsNorm<B>,
+    norm: RmsNorm,
     /// Packed projections of queries, keys and values for all heads.
-    to_qkv: Linear<B>,
+    to_qkv: Linear,
     /// One sigmoid gate per attention head.
-    to_gates: Linear<B>,
+    to_gates: Linear,
     /// Projection from the combined heads to the input width.
-    to_out: Linear<B>,
+    to_out: Linear,
     /// Number of heads fitted into the input width.
     heads: usize,
     /// Feature width of each head.
     head: usize,
 }
 
-impl<B: Backend> Attention<B> {
+impl Attention {
     /// Rotary, gated attention over `dim` features in heads of width `head`.
-    fn new(dim: usize, head: usize, device: &B::Device) -> Self {
+    fn new(dim: usize, head: usize, device: &Device) -> Self {
         let heads = dim.div_euclid(head);
         Self {
             norm: RmsNorm::new(dim, device),
@@ -174,7 +174,7 @@ impl<B: Backend> Attention<B> {
     }
 
     /// `x` of `[batch, sequence, dim]` attended.
-    fn forward(&self, x: Tensor<B, 3>) -> Tensor<B, 3> {
+    fn forward(&self, x: Tensor<3>) -> Tensor<3> {
         let [batch, len, _] = x.dims();
         let (heads, head) = (self.heads, self.head);
         let normalized = self.norm.forward(x);
@@ -212,7 +212,7 @@ impl<B: Backend> Attention<B> {
     clippy::arithmetic_side_effects,
     reason = "tensor addition combines the rotated features elementwise"
 )]
-fn rotated<B: Backend>(x: Tensor<B, 4>) -> Tensor<B, 4> {
+fn rotated(x: Tensor<4>) -> Tensor<4> {
     let [batch, heads, len, width] = x.dims();
     let device = x.device();
     let pairs = width.div_euclid(2);
@@ -225,8 +225,7 @@ fn rotated<B: Backend>(x: Tensor<B, 4>) -> Tensor<B, 4> {
             angles.push(angle_float(position_float * rate));
         }
     }
-    let angles =
-        Tensor::<B, 1>::from_floats(angles.as_slice(), &device).reshape([1, 1, len, width]);
+    let angles = Tensor::<1>::from_floats(angles.as_slice(), &device).reshape([1, 1, len, width]);
     let halves = x.clone().reshape([batch, heads, len, pairs, 2]);
     let first = halves.clone().narrow(4, 0, 1);
     let second = halves.narrow(4, 1, 1);
@@ -236,20 +235,20 @@ fn rotated<B: Backend>(x: Tensor<B, 4>) -> Tensor<B, 4> {
 
 /// Attention and feed-forward across frequency, then across time, each added to its input.
 #[derive(Module, Debug)]
-struct PartialFt<B: Backend> {
+struct PartialFt {
     /// Attention across mel frequencies at each time step.
-    attn_f: Attention<B>,
+    attn_f: Attention,
     /// Feed-forward projection after frequency attention.
-    ff_f: FeedForward<B>,
+    ff_f: FeedForward,
     /// Attention across time at each mel frequency.
-    attn_t: Attention<B>,
+    attn_t: Attention,
     /// Feed-forward projection after time attention.
-    ff_t: FeedForward<B>,
+    ff_t: FeedForward,
 }
 
-impl<B: Backend> PartialFt<B> {
+impl PartialFt {
     /// Frequency and time residual blocks operating on `dim` channels.
-    fn new(dim: usize, head: usize, device: &B::Device) -> Self {
+    fn new(dim: usize, head: usize, device: &Device) -> Self {
         Self {
             attn_f: Attention::new(dim, head, device),
             ff_f: FeedForward::new(dim, 4, device),
@@ -263,7 +262,7 @@ impl<B: Backend> PartialFt<B> {
         clippy::arithmetic_side_effects,
         reason = "tensor additions are the network's residual connections"
     )]
-    fn forward(&self, x: Tensor<B, 4>) -> Tensor<B, 4> {
+    fn forward(&self, x: Tensor<4>) -> Tensor<4> {
         let [batch, channels, freqs, time] = x.dims();
         let sequence =
             x.permute([0, 3, 2, 1])
@@ -285,18 +284,18 @@ impl<B: Backend> PartialFt<B> {
 /// Across frequency and time, then a convolution halving the frequencies and doubling the
 /// channels.
 #[derive(Module, Debug)]
-struct FrontendBlock<B: Backend> {
+struct FrontendBlock {
     /// Frequency and time residual attention before downsampling.
-    partial: PartialFt<B>,
+    partial: PartialFt,
     /// Convolution halving the frequency count and doubling channels.
-    conv2d: Conv2d<B>,
+    conv2d: Conv2d,
     /// Normalisation of the doubled channels.
-    norm: BatchNorm<B>,
+    norm: BatchNorm,
 }
 
-impl<B: Backend> FrontendBlock<B> {
+impl FrontendBlock {
     /// One frequency-halving block starting with `dim` channels.
-    fn new(dim: usize, head: usize, device: &B::Device) -> Self {
+    fn new(dim: usize, head: usize, device: &Device) -> Self {
         Self {
             partial: PartialFt::new(dim, head, device),
             conv2d: Conv2dConfig::new([dim, dim.saturating_mul(2)], [2, 3])
@@ -309,7 +308,7 @@ impl<B: Backend> FrontendBlock<B> {
     }
 
     /// `x` after attention, downsampling, normalisation and GELU.
-    fn forward(&self, x: Tensor<B, 4>) -> Tensor<B, 4> {
+    fn forward(&self, x: Tensor<4>) -> Tensor<4> {
         gelu(
             self.norm
                 .forward(self.conv2d.forward(self.partial.forward(x))),
@@ -319,18 +318,18 @@ impl<B: Backend> FrontendBlock<B> {
 
 /// Normalise each mel band, then a convolution over four bands at a time.
 #[derive(Module, Debug)]
-struct Stem<B: Backend> {
+struct Stem {
     /// Normalisation across the input's mel bands.
-    bn1d: BatchNorm<B>,
+    bn1d: BatchNorm,
     /// Strided convolution reducing mel bands by four.
-    conv2d: Conv2d<B>,
+    conv2d: Conv2d,
     /// Normalisation across the stem's output channels.
-    bn2d: BatchNorm<B>,
+    bn2d: BatchNorm,
 }
 
-impl<B: Backend> Stem<B> {
+impl Stem {
     /// The spectrogram-to-channel projection at width `stem`.
-    fn new(stem: usize, device: &B::Device) -> Self {
+    fn new(stem: usize, device: &Device) -> Self {
         Self {
             bn1d: BatchNormConfig::new(BINS).init(device),
             conv2d: Conv2dConfig::new([1, stem], [4, 3])
@@ -343,7 +342,7 @@ impl<B: Backend> Stem<B> {
     }
 
     /// `x` of `[batch, time, bins]` as `[batch, channels, bins / 4, time]`.
-    fn forward(&self, x: Tensor<B, 3>) -> Tensor<B, 4> {
+    fn forward(&self, x: Tensor<3>) -> Tensor<4> {
         let x = self.bn1d.forward(x.swap_dims(1, 2)).unsqueeze_dim::<4>(1);
         gelu(self.bn2d.forward(self.conv2d.forward(x)))
     }
@@ -351,18 +350,18 @@ impl<B: Backend> Stem<B> {
 
 /// The spectrogram stem and three frequency-halving blocks, projected into transformer width.
 #[derive(Module, Debug)]
-struct Frontend<B: Backend> {
+struct Frontend {
     /// First convolution from mel bands into channels.
-    stem: Stem<B>,
+    stem: Stem,
     /// Three blocks of attention and frequency downsampling.
-    blocks: Vec<FrontendBlock<B>>,
+    blocks: Vec<FrontendBlock>,
     /// Flattens each time step's channels and frequencies into transformer width.
-    linear: Linear<B>,
+    linear: Linear,
 }
 
-impl<B: Backend> Frontend<B> {
+impl Frontend {
     /// A frontend with the channel and attention widths in `dims`.
-    fn new(dims: Dims, device: &B::Device) -> Self {
+    fn new(dims: Dims, device: &Device) -> Self {
         let blocks = (0..3)
             .map(|block| FrontendBlock::new(dims.stem << block, dims.head, device))
             .collect();
@@ -378,7 +377,7 @@ impl<B: Backend> Frontend<B> {
     }
 
     /// Mel frames `x` projected into one transformer-width vector per time step.
-    fn forward(&self, x: Tensor<B, 3>) -> Tensor<B, 3> {
+    fn forward(&self, x: Tensor<3>) -> Tensor<3> {
         let mut x = self.stem.forward(x);
         for block in &self.blocks {
             x = block.forward(x);
@@ -393,25 +392,25 @@ impl<B: Backend> Frontend<B> {
 
 /// One attention and feed-forward residual pair over time.
 #[derive(Module, Debug)]
-struct Layer<B: Backend> {
+struct Layer {
     /// Rotary self-attention across time.
-    attn: Attention<B>,
+    attn: Attention,
     /// Feed-forward network after attention.
-    ff: FeedForward<B>,
+    ff: FeedForward,
 }
 
 /// Stacked temporal residual pairs with a final RMS normalisation.
 #[derive(Module, Debug)]
-struct Transformer<B: Backend> {
+struct Transformer {
     /// The `dims.layers` attention and feed-forward pairs.
-    layers: Vec<Layer<B>>,
+    layers: Vec<Layer>,
     /// Output normalisation after the last residual pair.
-    norm: RmsNorm<B>,
+    norm: RmsNorm,
 }
 
-impl<B: Backend> Transformer<B> {
+impl Transformer {
     /// `dims.layers` temporal blocks of width `dims.transformer`.
-    fn new(dims: Dims, device: &B::Device) -> Self {
+    fn new(dims: Dims, device: &Device) -> Self {
         let layers = std::iter::repeat_with(|| Layer {
             attn: Attention::new(dims.transformer, dims.head, device),
             ff: FeedForward::new(dims.transformer, dims.ff_mult, device),
@@ -429,7 +428,7 @@ impl<B: Backend> Transformer<B> {
         reason = "tensor additions are the transformer's residual connections"
     )]
     /// `x` after temporal residual layers and final normalisation.
-    fn forward(&self, x: Tensor<B, 3>) -> Tensor<B, 3> {
+    fn forward(&self, x: Tensor<3>) -> Tensor<3> {
         let mut transformed = x;
         for layer in &self.layers {
             transformed = layer.attn.forward(transformed.clone()) + transformed;
@@ -441,25 +440,25 @@ impl<B: Backend> Transformer<B> {
 
 /// A beat and a downbeat logit a frame, the downbeat's added to the beat's.
 #[derive(Module, Debug)]
-struct SumHead<B: Backend> {
+struct SumHead {
     /// Projection to separate beat and downbeat logits before the latter is added to the former.
-    beat_downbeat_lin: Linear<B>,
+    beat_downbeat_lin: Linear,
 }
 
 /// The full spectrogram-to-beat network whose field paths match the released checkpoint.
 #[derive(Module, Debug)]
-pub(crate) struct BeatThis<B: Backend> {
+pub(crate) struct BeatThis {
     /// Stem and frequency-reducing attention blocks.
-    frontend: Frontend<B>,
+    frontend: Frontend,
     /// Attention across the projected frame sequence.
-    transformer_blocks: Transformer<B>,
+    transformer_blocks: Transformer,
     /// Beat and downbeat projections.
-    task_heads: SumHead<B>,
+    task_heads: SumHead,
 }
 
-impl<B: Backend> BeatThis<B> {
+impl BeatThis {
     /// An unweighted model with the dimensions needed to load its checkpoint.
-    pub(crate) fn new(dims: Dims, device: &B::Device) -> Self {
+    pub(crate) fn new(dims: Dims, device: &Device) -> Self {
         Self {
             frontend: Frontend::new(dims, device),
             transformer_blocks: Transformer::new(dims, device),
@@ -474,7 +473,7 @@ impl<B: Backend> BeatThis<B> {
         clippy::arithmetic_side_effects,
         reason = "tensor addition combines beat and downbeat logits elementwise"
     )]
-    pub(crate) fn forward(&self, spect: Tensor<B, 3>) -> (Tensor<B, 1>, Tensor<B, 1>) {
+    pub(crate) fn forward(&self, spect: Tensor<3>) -> (Tensor<1>, Tensor<1>) {
         let x = self
             .transformer_blocks
             .forward(self.frontend.forward(spect));

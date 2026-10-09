@@ -87,7 +87,7 @@ floats, and one proof mixing division, multiplication and rounding never finishe
 | `plugins/{stepmania,ttr,osu-mania}` | ruleset plugins: typed game models over `charter-core` with a `Plugin` the editor validates through. `ttr` reads/writes `.ttr2_track` and EOF MIDI through one `exchange.rs` model; `osu-mania` imports osu! `[TimingPoints]`, pasted or from a `.osu` |
 | `third-party/symphonia-wrap` | build-time facade over `symphonia`, `dylib` + `rlib`. **Read its README before touching audio deps, features or dev profiles** |
 | `third-party/timingator` | vendored port of Mapperatorinator's super timing: osu! timing points via the V32 model in burn on wgpu. Weights on Hugging Face, read its README |
-| `third-party/timingator-wrap` | facade over `timingator`, hiding burn's generics so nothing past it depends on burn. Read its README |
+| `third-party/timingator-wrap` | facade over `timingator`, so nothing past it depends on burn. Read its README |
 | `third-party/cubecl-macros` | **excluded** from the workspace, patched in via `[patch.crates-io]`: upstream emits code in HashMap order, this copy sorts it so release builds are byte-identical |
 | `packaging/pack.py` | writes `.tar.gz`/`.zip` deterministically; `just pack-check` self-tests it |
 
