@@ -7,8 +7,9 @@ windows := "x86_64-pc-windows-msvc"
 # The C runtime built in, so Windows users need no Visual C++ redistributable; /Brepro leaves the
 # link time out of the executable, so a package rebuilds byte for byte.
 windows_flags := "target." + windows + ".rustflags=['-C', 'target-feature=+crt-static', '-C', 'link-arg=/Brepro']"
-# On Windows itself the MSVC toolchain builds for Windows; elsewhere cargo-xwin cross-compiles.
-windows_build := if os() == "windows" { "cargo build" } else { "cargo xwin build" }
+# On Windows itself the MSVC toolchain builds for Windows; elsewhere cargo-xwin cross-compiles,
+# with packaging/xwin's rc.exe on the PATH for the build scripts that want one.
+windows_build := if os() == "windows" { "cargo build" } else { "PATH=\"" + justfile_directory() + "/packaging/xwin:$PATH\" cargo xwin build" }
 # Windows installs Python as `python`, without a `python3`.
 python := if os() == "windows" { "python" } else { "python3" }
 
@@ -21,7 +22,7 @@ setup:
     git submodule update --init
     rustup target add {{ windows }}
     command -v cargo-xwin >/dev/null || cargo install --locked cargo-xwin
-    @echo "cargo xwin needs clang-cl and lld-link (clang and lld from your package manager)."
+    @echo "cargo xwin needs clang-cl, lld-link and llvm-rc (clang, lld and llvm from your package manager)."
 
 # Type-check everything, tests included
 check:

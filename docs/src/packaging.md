@@ -12,9 +12,10 @@ status: draft
 It writes two packages to `dist/`: `charter-<version>-linux-x86_64.tar.gz` and
 `charter-<version>-windows-x86_64.zip`. `just dist-linux` and `just dist-windows` build one each;
 the Windows build cross-compiles with cargo-xwin, or builds with MSVC when run on Windows as CI
-does, and links the C runtime in, so it needs no Visual C++ redistributable. CI tests every push
-and pull request, and publishes each push to `main` as a prerelease of both packages, its notes
-listing the commits since the one before.
+does, and links the C runtime in, so it needs no Visual C++ redistributable. Cross-compiling, LLVM's
+`llvm-rc` stands in for the `rc.exe` that turso's build script, under burn's kernel cache, runs.
+CI tests every push and pull request, and publishes each push to `main` as a prerelease of both
+packages, its notes listing the commits since the one before.
 
 ## What a package holds
 

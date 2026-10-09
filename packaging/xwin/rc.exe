@@ -1,0 +1,4 @@
+#!/bin/sh
+# turso_sdk_kit's build script runs rc.exe for MSVC targets; cargo-xwin cross-compiles without
+# one, so the justfile puts this folder on the PATH and llvm-rc stands in.
+exec llvm-rc "$@"
