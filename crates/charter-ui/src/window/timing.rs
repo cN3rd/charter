@@ -20,22 +20,35 @@ impl Window {
         };
         let ticks_per_beat = song.document().document().ticks_per_beat;
         self.requests.push(Request::FindTiming {
-            file,
+            file: file.clone(),
             ticks_per_beat,
             tracker,
         });
         self.dialogs.finding = Finding::Running(None);
+        self.dialogs.finding_for = Some((file, ticks_per_beat));
         self.dialogs.tracker = tracker;
     }
-    /// Accepts automatic timing from the host or shows why it failed.
+    /// Accepts automatic timing from the host or shows why it failed. Timing found for audio or
+    /// a resolution the open song no longer has is left out.
     pub fn timing_found(&mut self, found: Result<charter_core::Timing, String>) {
         self.dialogs.finding = Finding::Idle;
+        let asked = self.dialogs.finding_for.take();
+        let open = self.audio_file().zip(
+            self.song
+                .as_ref()
+                .map(|song| song.document().document().ticks_per_beat),
+        );
         let Some(song) = &mut self.song else {
             return;
         };
-        self.failure = Some(match found.map(|timing| song.replace_timing(timing)) {
-            Ok(Ok(())) => found_message(song),
-            Ok(Err(refusal)) => format!("The timing found was refused: {refusal}"),
+        self.failure = Some(match found {
+            Ok(_) if asked != open => {
+                "The timing found no longer fits the open song, so it was not used".to_owned()
+            }
+            Ok(timing) => match song.replace_timing(timing) {
+                Ok(()) => found_message(song),
+                Err(refusal) => format!("The timing found was refused: {refusal}"),
+            },
             Err(why) => format!("No timing found: {why}"),
         });
     }
@@ -1373,6 +1386,26 @@ mod tests {
         );
     }
     #[test]
+    fn a_timing_found_for_a_song_since_left_leaves_the_open_song_alone() {
+        let mut harness = playable();
+        find_from_the_menu(&mut harness);
+        harness.state_mut().take_requests();
+        harness
+            .state_mut()
+            .open(Path::new("/other/four.json"), &four_taps());
+        harness.run();
+        let before = anchor_seconds(&harness);
+        let found = serde_json::from_value(serde_json::json!({
+            "anchors": [{ "tick": 0, "seconds": 1.0 }],
+            "tempo": 120.0,
+            "events": []
+        }))
+        .unwrap();
+        harness.state_mut().timing_found(Ok(found));
+        harness.run();
+        assert_eq!(anchor_seconds(&harness), before);
+    }
+    #[test]
     fn a_timing_result_for_a_song_that_cannot_be_edited_is_refused() {
         let mut app = Window::new(&[]);
         app.open(Path::new("four.json"), &four_taps());
@@ -1383,6 +1416,7 @@ mod tests {
             "events": []
         }))
         .unwrap();
+        app.find_timing(Tracker::BeatThis);
         app.timing_found(Ok(found));
         assert!(
             app.message()

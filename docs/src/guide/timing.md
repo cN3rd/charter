@@ -84,7 +84,8 @@ window before charting on it.
 
 The first time each runs it asks before downloading its model into charter's data folder. The song
 itself is never sent anywhere. The status bar shows the download and the search, and editing goes
-on meanwhile. Without a graphics card Mapperatorinator asks whether to run on the processor, which
+on meanwhile. A timing found after another song was opened, or after the song's audio changed, is
+not used. Without a graphics card Mapperatorinator asks whether to run on the processor, which
 can take over 15 minutes a song. [Automatic timing](../autotiming.md) explains how each works and how
 well.
 

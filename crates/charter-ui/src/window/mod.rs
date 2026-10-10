@@ -912,6 +912,9 @@ struct Dialogs {
     resetting: bool,
     /// Where finding the timing from the audio has got to.
     finding: Finding,
+    /// The audio and resolution the timing last asked for is for, which a song open when it
+    /// arrives must still have for it to take the timing.
+    finding_for: Option<(PathBuf, charter_core::TicksPerBeat)>,
     /// The model finding it, or last asked to.
     tracker: Tracker,
     /// Unsaved changes from an earlier run, waiting on whether to restore them.
