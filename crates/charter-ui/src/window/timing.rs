@@ -1005,8 +1005,8 @@ mod tests {
         let at = in_row(&harness, 960);
         harness.hover_at(at);
         for _ in 0..2 {
-            press(&harness, at, true, egui::Modifiers::NONE);
-            press(&harness, at, false, egui::Modifiers::NONE);
+            press(&harness, at, Press::Down, egui::Modifiers::NONE);
+            press(&harness, at, Press::Up, egui::Modifiers::NONE);
             harness.step();
         }
         harness.run();

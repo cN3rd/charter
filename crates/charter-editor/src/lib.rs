@@ -22,7 +22,7 @@ pub use song::{
     clippy::useless_attribute,
     reason = "timing pins are part of charter-editor's flat API"
 )]
-pub use sync::Pin;
+pub use sync::{Pin, Scale};
 
 /// Deterministic property tests with no regression files.
 #[cfg(test)]

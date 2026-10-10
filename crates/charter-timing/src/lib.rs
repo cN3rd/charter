@@ -21,11 +21,11 @@ pub mod rows;
 
 use charter_audio::{Onset, Peaks};
 use charter_core::{Bpm, ResolvedTime, Tick, TimeShift, Timing, Valid};
-use charter_editor::{Pin, Refusal, Song};
+use charter_editor::{Pin, Refusal, Scale, Song};
 use charter_style as style;
 use egui::Pos2;
 
-use crate::accuracy::{Fitted, Issue, Residual};
+use crate::accuracy::{Fitted, Issue, Residual, Rounding};
 use crate::grid::{Grid, RESOLUTIONS};
 use crate::rows::{Bars, BarsPerRow, Layout, ROW, SecondsPerRow};
 
@@ -99,8 +99,8 @@ pub enum Edit {
     Scale {
         /// Anchors whose following segments change tempo.
         ticks: Vec<Tick>,
-        /// Double when true, halve otherwise.
-        double: bool,
+        /// Whether to double or halve their tempo.
+        scale: Scale,
     },
     /// Makes these the anchors, with this tempo after the last, as a fit does.
     Repin {
@@ -125,7 +125,7 @@ impl Edit {
             Self::MoveAnchors(moves) => song.move_anchors(moves),
             Self::Nudge { ticks, by, merge } => song.nudge_anchors(ticks, *by, *merge),
             Self::TailBpm { bpm, merge } => song.set_tail_bpm(*bpm, *merge),
-            Self::Scale { ticks, double } => song.scale_tempo(ticks, *double),
+            Self::Scale { ticks, scale } => song.scale_tempo(ticks, *scale),
             Self::Repin { pins, tail } => song.repin(pins, *tail, false),
         }
     }
@@ -386,7 +386,7 @@ impl TimingWindow {
 
     /// Fits the focused anchor, or the selection, to the onsets, as a preview to apply or
     /// discard.
-    fn fit(&mut self, frame: &Frame<'_>, half_bpm: bool) {
+    fn fit(&mut self, frame: &Frame<'_>, rounding: Rounding) {
         let range = self.range(frame);
         let Some(range) = range else {
             self.status = Some("Focus or select anchors to fit".to_owned());
@@ -399,7 +399,7 @@ impl TimingWindow {
             (frame.pins, frame.tail),
             range,
             frame.residuals,
-            half_bpm,
+            rounding,
         );
         match fitted {
             Some(fitted) => {

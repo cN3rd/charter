@@ -2,8 +2,8 @@
 
 use super::{
     Arc, Artwork, Autosave, Discard, EmbeddedArtwork, Leaving, NO_AUDIO, OfFile, Offer, Path,
-    PathBuf, Peaks, RECENT, Request, Restoring, Saved, Saving, Song, Spectrum, Window, Zoom, demo,
-    file_name, new_song, notefield, panels, recovery, refused, shown_strip,
+    PathBuf, Peaks, RECENT, Request, Restoring, Saved, Saving, Song, Spectrum, TagTarget, Window,
+    Zoom, demo, file_name, new_song, notefield, panels, recovery, refused, shown_strip,
 };
 
 impl Window {
@@ -100,7 +100,7 @@ impl Window {
                 draft.fill(named, by);
             } else {
                 self.dialogs.offer = Some(Offer {
-                    draft: true,
+                    target: TagTarget::Draft,
                     title,
                     artist,
                 });
@@ -122,24 +122,32 @@ impl Window {
             return;
         }
         if untouched {
-            self.take_tags(false, named, by);
+            self.take_tags(TagTarget::Song, named, by);
         } else {
             self.dialogs.offer = Some(Offer {
-                draft: false,
+                target: TagTarget::Song,
                 title,
                 artist,
             });
         }
     }
     /// Applies accepted title and artist tags.
-    pub(super) fn take_tags(&mut self, draft: bool, title: Option<&str>, artist: Option<&str>) {
-        if draft {
-            if let Some(new_song_draft) = &mut self.dialogs.new_song {
-                new_song_draft.fill(title, artist);
+    pub(super) fn take_tags(
+        &mut self,
+        target: TagTarget,
+        title: Option<&str>,
+        artist: Option<&str>,
+    ) {
+        let song = match target {
+            TagTarget::Draft => {
+                if let Some(new_song_draft) = &mut self.dialogs.new_song {
+                    new_song_draft.fill(title, artist);
+                }
+                return;
             }
-            return;
-        }
-        let Some(song) = &mut self.song else {
+            TagTarget::Song => self.song.as_mut(),
+        };
+        let Some(song) = song else {
             return;
         };
         let metadata = &song.document().document().metadata;
@@ -1116,6 +1124,46 @@ mod tests {
     }
 
     #[test]
+    fn audio_tags_change_only_the_target_they_were_taken_for() {
+        let mut app = Window::new(PLUGINS);
+        app.open_demo();
+        let original = app
+            .song
+            .as_ref()
+            .unwrap()
+            .document()
+            .document()
+            .metadata
+            .title
+            .clone();
+        app.dialogs.new_song = Some(new_song::Draft::default());
+
+        app.take_tags(TagTarget::Draft, Some("Draft title"), None);
+        assert!(
+            !app.dialogs
+                .new_song
+                .as_ref()
+                .unwrap()
+                .differs(Some("Draft title"), None)
+        );
+        assert_eq!(
+            app.song
+                .as_ref()
+                .unwrap()
+                .document()
+                .document()
+                .metadata
+                .title,
+            original
+        );
+
+        app.take_tags(TagTarget::Song, Some("Song title"), Some("Singer"));
+        let metadata = &app.song.as_ref().unwrap().document().document().metadata;
+        assert_eq!(metadata.title, "Song title");
+        assert_eq!(metadata.artist, "Singer");
+    }
+
+    #[test]
     fn a_save_that_fails_leaves_everything_as_it_was() {
         let mut harness = edited_four_taps();
         harness.get_by_label("Help").click();
@@ -1335,19 +1383,19 @@ mod tests {
     #[test]
     fn a_save_holds_every_edit_made_in_its_frame() {
         let mut harness = editable_four_taps();
-        let key = |key, pressed, modifiers| egui::Event::Key {
+        let key = |key, press: Press, modifiers| egui::Event::Key {
             key,
-            pressed,
+            pressed: matches!(press, Press::Down),
             repeat: false,
             modifiers,
             physical_key: None,
         };
         let command = egui::Modifiers::COMMAND;
         let events = &mut harness.input_mut().events;
-        events.push(key(egui::Key::S, true, command));
-        events.push(key(egui::Key::S, false, command));
-        events.push(key(egui::Key::Num4, true, egui::Modifiers::NONE));
-        events.push(key(egui::Key::Num4, false, egui::Modifiers::NONE));
+        events.push(key(egui::Key::S, Press::Down, command));
+        events.push(key(egui::Key::S, Press::Up, command));
+        events.push(key(egui::Key::Num4, Press::Down, egui::Modifiers::NONE));
+        events.push(key(egui::Key::Num4, Press::Up, egui::Modifiers::NONE));
         harness.run();
         let Request::Write { path, bytes } = request(&mut harness) else {
             panic!("expected a write");

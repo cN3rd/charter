@@ -616,7 +616,7 @@ mod tests {
         harness.event(keyboard(
             egui::Key::Num1,
             egui::Key::Num1,
-            true,
+            Press::Down,
             egui::Modifiers::NONE,
         ));
         harness.run();
@@ -624,7 +624,7 @@ mod tests {
         harness.event(keyboard(
             egui::Key::Exclamationmark,
             egui::Key::Num1,
-            false,
+            Press::Up,
             shift,
         ));
         harness.run();
@@ -636,7 +636,12 @@ mod tests {
         shift_down(&harness, egui::Key::Exclamationmark, egui::Key::Num1);
         harness.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
         let none = egui::Modifiers::NONE;
-        harness.event(keyboard(egui::Key::Num1, egui::Key::Num1, true, none));
+        harness.event(keyboard(
+            egui::Key::Num1,
+            egui::Key::Num1,
+            Press::Down,
+            none,
+        ));
         harness.run();
         assert_eq!(note_at(&harness, 0, 0), Some(mine()));
     }
@@ -644,8 +649,18 @@ mod tests {
     fn a_numpad_arrow_moves_the_cursor_rather_than_placing_a_note() {
         let mut harness = editable_demo();
         let none = egui::Modifiers::NONE;
-        harness.event(keyboard(egui::Key::ArrowDown, egui::Key::Num2, true, none));
-        harness.event(keyboard(egui::Key::ArrowDown, egui::Key::Num2, false, none));
+        harness.event(keyboard(
+            egui::Key::ArrowDown,
+            egui::Key::Num2,
+            Press::Down,
+            none,
+        ));
+        harness.event(keyboard(
+            egui::Key::ArrowDown,
+            egui::Key::Num2,
+            Press::Up,
+            none,
+        ));
         harness.run();
         assert!(cursor_shows(&harness, "0:0:240"));
         assert_eq!(lanes_at(&harness, 0), [3]);
@@ -695,7 +710,7 @@ mod tests {
         harness.event(keyboard(
             egui::Key::Exclamationmark,
             egui::Key::Num1,
-            false,
+            Press::Up,
             egui::Modifiers::SHIFT,
         ));
         harness.run();
@@ -1172,10 +1187,10 @@ mod tests {
         );
         harness.hover_at(from);
         harness.event(egui::Event::ModifiersChanged(egui::Modifiers::COMMAND));
-        press(&harness, from, true, egui::Modifiers::COMMAND);
+        press(&harness, from, Press::Down, egui::Modifiers::COMMAND);
         harness.hover_at(from.lerp(near, 0.5));
         harness.hover_at(near);
-        press(&harness, far, false, egui::Modifiers::COMMAND);
+        press(&harness, far, Press::Up, egui::Modifiers::COMMAND);
         harness.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
         harness.run();
         assert_eq!(note_at(&harness, 240, 3), Some(hold(720)));
@@ -1185,11 +1200,11 @@ mod tests {
         let mut harness = editable_four_taps();
         let (from, to) = (spot(&harness, 1, 180, 0.0), spot(&harness, 2, 540, 0.0));
         harness.hover_at(from);
-        press(&harness, from, true, egui::Modifiers::NONE);
+        press(&harness, from, Press::Down, egui::Modifiers::NONE);
         harness.hover_at(from.lerp(to, 0.5));
         harness.hover_at(to);
         harness.key_press(egui::Key::Escape);
-        press(&harness, to, false, egui::Modifiers::NONE);
+        press(&harness, to, Press::Up, egui::Modifiers::NONE);
         harness.run();
         assert!(nothing_selected(&harness));
     }

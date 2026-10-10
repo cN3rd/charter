@@ -192,14 +192,23 @@ pub struct Fitted {
     pub after_ms: f64,
 }
 
+/// Whether to round fitted tempos to half BPMs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Rounding {
+    /// Leave the fitted tempos as they are.
+    Unrounded,
+    /// Round fitted tempos to half BPMs.
+    HalfBpm,
+}
+
 /// Fits anchors to audio onsets by least squares.
 ///
 /// A least-squares fit of the anchors `range` indexes among `pins` to the `residuals`, the
 /// tempo after the last anchor as well when the range reaches it: each anchor's moment moves so
 /// the grid lines of the segments it bounds pass as near their onsets as they can. With
-/// `half_bpm`, the tempos inside the range then round to the nearest half BPM, from its first
-/// anchor on. None when there is nothing in the range to fit to, or the fit would put anchors
-/// out of order.
+/// [`Rounding::HalfBpm`], the tempos inside the range round to the nearest half BPM from its
+/// first anchor on. None when there is nothing in the range to fit to, or the fit would put
+/// anchors out of order.
 #[must_use]
 #[expect(
     clippy::indexing_slicing,
@@ -210,7 +219,7 @@ pub fn fit(
     (pins, tail): (&[Pin], Bpm),
     range: RangeInclusive<usize>,
     residuals: &[Residual],
-    half_bpm: bool,
+    rounding: Rounding,
 ) -> Option<Fitted> {
     let (first, last) = (*range.start(), *range.end());
     let last_pin = pins.len().checked_sub(1)?;
@@ -284,10 +293,11 @@ pub fn fit(
     }
     let current: Vec<f64> = free.iter().map(|&point| points[point].1).collect();
     let before = rows_error(&rows, &current);
-    let mut solved = least_squares(&rows, &current)?;
-    if half_bpm {
-        solved = to_half_bpm(timing, &points, &free, &solved)?;
-    }
+    let solved = least_squares(&rows, &current)?;
+    let solved = match rounding {
+        Rounding::Unrounded => solved,
+        Rounding::HalfBpm => to_half_bpm(timing, &points, &free, &solved)?,
+    };
     let after = rows_error(&rows, &solved);
     let mut fitted = points;
     for (point, seconds) in free.iter().zip(&solved) {
@@ -671,7 +681,7 @@ mod tests {
         let found = residuals(timing, Grid::default(), &onsets, 0.0);
         let pins = pins_of(&document);
         let tail = Bpm::try_from(138.0).unwrap();
-        let fitted = fit(timing, (&pins, tail), 0..=0, &found, false).unwrap();
+        let fitted = fit(timing, (&pins, tail), 0..=0, &found, Rounding::Unrounded).unwrap();
         assert!(
             (f64::from(fitted.tail) - 140.0).abs() < 0.02,
             "{}",
@@ -679,7 +689,7 @@ mod tests {
         );
         assert!(fitted.after_ms <= 1.0, "{}", fitted.after_ms);
         assert!(fitted.before_ms > fitted.after_ms);
-        let rounded = fit(timing, (&pins, tail), 0..=0, &found, true).unwrap();
+        let rounded = fit(timing, (&pins, tail), 0..=0, &found, Rounding::HalfBpm).unwrap();
         assert!((f64::from(rounded.tail) - 140.0).abs() < 0.02);
     }
 
@@ -705,7 +715,7 @@ mod tests {
         let found = residuals(timing, Grid::default(), &onsets, 0.0);
         let pins = pins_of(&document);
         let tail = Bpm::try_from(120.0).unwrap();
-        let fitted = fit(timing, (&pins, tail), 1..=1, &found, false).unwrap();
+        let fitted = fit(timing, (&pins, tail), 1..=1, &found, Rounding::Unrounded).unwrap();
         assert!(
             (fitted.pins[1].seconds.seconds() - 2.1).abs() < 0.01,
             "{:?}",
@@ -744,7 +754,7 @@ mod tests {
             (&pins_of(&document), Bpm::try_from(120.0).unwrap()),
             0..=0,
             &found,
-            false,
+            Rounding::Unrounded,
         )
         .unwrap();
         assert!(fitted.before_ms.abs() < 1e-6, "{}", fitted.before_ms);
@@ -778,7 +788,7 @@ mod tests {
             (&pins_of(&document), Bpm::try_from(120.0).unwrap()),
             0..=0,
             &found,
-            false,
+            Rounding::Unrounded,
         )
         .unwrap();
         assert!(fitted.before_ms.abs() < 1e-6, "{}", fitted.before_ms);
@@ -803,7 +813,7 @@ mod tests {
             (&pins_of(&document), Bpm::try_from(120.0).unwrap()),
             1..=1,
             &[residual],
-            false,
+            Rounding::Unrounded,
         )
         .expect("tail onset should be fitted");
         assert!(fitted.before_ms > 600.0, "{}", fitted.before_ms);
@@ -838,7 +848,7 @@ mod tests {
                 (&pins_of(&document), Bpm::try_from(120.0).unwrap()),
                 0..=0,
                 &[residual],
-                false,
+                Rounding::Unrounded,
             )
             .is_some()
         );
@@ -913,7 +923,7 @@ mod tests {
                 (&pins_of(&document), Bpm::try_from(120.0).unwrap()),
                 0..=0,
                 &[],
-                false
+                Rounding::Unrounded
             )
             .is_none()
         );
@@ -936,7 +946,16 @@ mod tests {
             (pins.as_slice(), 1..=1),
             (pins.as_slice(), 1..=pins.len() - 1),
         ] {
-            assert!(fit(timing, (candidate_pins, tail), range, &found, false).is_none());
+            assert!(
+                fit(
+                    timing,
+                    (candidate_pins, tail),
+                    range,
+                    &found,
+                    Rounding::Unrounded
+                )
+                .is_none()
+            );
         }
     }
 

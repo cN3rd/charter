@@ -9,6 +9,15 @@
 )]
 use super::*;
 
+/// Which layer added notes belong to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NoteLayer {
+    /// The active layer.
+    Active,
+    /// Each note's original layer.
+    Original,
+}
+
 impl Song {
     /// Places an instant note of `kind` on `lane` at `tick`, or removes the object that starts there.
     ///
@@ -318,7 +327,7 @@ impl Song {
     /// Refuses on a read-only song, and when the notes break a rule of the format or of the
     /// song's game.
     pub fn paste(&mut self, clip: &[Object], at: Tick) -> Result<usize, Refusal> {
-        self.paste_with_layers(clip, at, false)
+        self.paste_with_layers(clip, at, NoteLayer::Active)
     }
 
     /// Duplicate selected notes within the open chart, keeping their original layers.
@@ -327,15 +336,15 @@ impl Song {
     /// Refuses read-only songs, invalid placements and plugin rejections.
     pub fn duplicate_selection(&mut self, at: Tick) -> Result<usize, Refusal> {
         let clip = self.copied();
-        self.paste_with_layers(&clip, at, true)
+        self.paste_with_layers(&clip, at, NoteLayer::Original)
     }
 
-    /// Paste clipboard notes, optionally keeping the source layer for a same-chart duplicate.
+    /// Paste clipboard notes on `layer`.
     fn paste_with_layers(
         &mut self,
         clip: &[Object],
         at: Tick,
-        preserve_layers: bool,
+        layer: NoteLayer,
     ) -> Result<usize, Refusal> {
         let offset = Tick::new(0).offset_to(at);
         let on = |tick: Tick| tick.checked_offset(offset).ok_or(Refusal::OffTheChart);
@@ -343,7 +352,7 @@ impl Song {
             .iter()
             .filter_map(|object| shifted_at(object, on).ok())
             .collect();
-        self.add(placed, preserve_layers)
+        self.add(placed, layer)
     }
 
     /// Adds a tap on each lane at each tick of `taps`, as one step, and selects them, leaving out
@@ -360,7 +369,7 @@ impl Song {
             .into_iter()
             .map(|(tick, lane)| note(tick, lane, Kind::Tap))
             .collect();
-        self.add(taps, false)
+        self.add(taps, NoteLayer::Active)
     }
 
     /// The open chart's lanes, or none without a chart.
@@ -370,17 +379,16 @@ impl Song {
 
     /// Adds `objects` as one step and selects them, leaving out those past the lanes, where a
     /// note already starts on a lane they cover, or the same as one added before them.
-    fn add(&mut self, mut objects: Vec<Object>, preserve_layers: bool) -> Result<usize, Refusal> {
-        let active = if preserve_layers {
-            None
-        } else {
-            self.editable_layer(self.active_layer().get())?.cloned()
+    fn add(&mut self, mut objects: Vec<Object>, layer: NoteLayer) -> Result<usize, Refusal> {
+        let active = match layer {
+            NoteLayer::Active => self.editable_layer(self.active_layer().get())?.cloned(),
+            NoteLayer::Original => None,
         };
         let Some(chart) = self.chart() else {
             return Err(Refusal::NoChart);
         };
         let width = self.lane_count();
-        if !preserve_layers {
+        if layer == NoteLayer::Active {
             for object in &mut objects {
                 object.layer.clone_from(&active);
             }
@@ -639,6 +647,24 @@ mod tests {
 
     fn lane(index: u16) -> LaneIndex {
         LaneIndex::new(index)
+    }
+
+    #[test]
+    fn adding_notes_can_keep_the_original_layer_or_use_the_active_one() {
+        let mut song = Song::new(document(json!([])), EDITABLE);
+        song.add_layer().unwrap();
+        let mut source = super::note(at(0), lane(0), Kind::Tap);
+        source.layer = Some(LayerName::new("Layer 0").unwrap());
+        song.add(vec![source.clone()], NoteLayer::Original).unwrap();
+        source.tick = at(240);
+        song.add(vec![source], NoteLayer::Active).unwrap();
+        let chart = song.chart().unwrap();
+        let layers: Vec<_> = chart
+            .objects
+            .iter()
+            .map(|object| object.layer.as_ref().map(LayerName::as_str))
+            .collect();
+        assert_eq!(layers, [Some("Layer 0"), Some("Layer 1")]);
     }
 
     #[test]

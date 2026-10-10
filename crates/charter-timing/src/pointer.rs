@@ -5,7 +5,8 @@ use crate::rows::{GRAB, Ghost, Reach, Row};
 use charter_core::{ResolvedTime, TickOffset};
 
 use super::{
-    Command, Edit, FINE, Frame, Pos2, Tick, TimeShift, TimingWindow, accuracy, audition_from, rows,
+    Command, Edit, FINE, Frame, Pos2, Rounding, Scale, Tick, TimeShift, TimingWindow, accuracy,
+    audition_from, rows,
 };
 
 /// What a press or drag in the rows is doing, as the specification's state machine has it.
@@ -482,20 +483,20 @@ pub(crate) fn menu(
             ui.close();
         }
         if ui.button("Fit tempo").clicked() {
-            window.fit(frame, false);
+            window.fit(frame, Rounding::Unrounded);
             ui.close();
         }
         if ui.button("Double tempo").clicked() {
             commands.push(Command::Edit(Edit::Scale {
                 ticks: window.targets(),
-                double: true,
+                scale: Scale::Double,
             }));
             ui.close();
         }
         if ui.button("Halve tempo").clicked() {
             commands.push(Command::Edit(Edit::Scale {
                 ticks: window.targets(),
-                double: false,
+                scale: Scale::Halve,
             }));
             ui.close();
         }
@@ -749,7 +750,7 @@ mod tests {
             harness.state().commands,
             [Command::Edit(Edit::Scale {
                 ticks: vec![Tick::new(960)],
-                double: true
+                scale: Scale::Double
             })]
         );
     }

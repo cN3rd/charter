@@ -295,11 +295,20 @@ enum Finding {
     Running(Option<f32>),
 }
 
+/// Where accepted tags from an audio file belong.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TagTarget {
+    /// The new-song dialog.
+    Draft,
+    /// The open song.
+    Song,
+}
+
 /// What tags read from an audio file would change, waiting on whether to take them.
 #[derive(Debug)]
 struct Offer {
-    /// Whether they go to the new-song dialog rather than the open song.
-    draft: bool,
+    /// Where accepted tags belong.
+    target: TagTarget,
     /// Title from the audio tags, if it would change the song's title.
     title: Option<String>,
     /// Artist from the audio tags, if it would change the song's artist.
@@ -1550,6 +1559,15 @@ pub(crate) mod test_support {
     pub(crate) use crate::settings::Sound;
     pub(crate) use charter_audio::{Gain, Kit, Tone, Volumes};
 
+    /// Whether a test sends a key or pointer down or up.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub(crate) enum Press {
+        /// The key or pointer goes down.
+        Down,
+        /// The key or pointer comes up.
+        Up,
+    }
+
     /// The format chapter, embedded at compile time so the tests do no I/O.
     pub(crate) const SPEC: &str = include_str!("../../../../docs/src/format.md");
 
@@ -1693,12 +1711,12 @@ pub(crate) mod test_support {
     pub(crate) fn keyboard(
         key: egui::Key,
         place: egui::Key,
-        pressed: bool,
+        press: Press,
         modifiers: egui::Modifiers,
     ) -> egui::Event {
         egui::Event::Key {
             key,
-            pressed,
+            pressed: matches!(press, Press::Down),
             repeat: false,
             modifiers,
             physical_key: Some(place),
@@ -1739,7 +1757,7 @@ pub(crate) mod test_support {
     pub(crate) fn shift_down(harness: &Harness<'_, Window>, symbol: egui::Key, place: egui::Key) {
         let shift = egui::Modifiers::SHIFT;
         harness.event(egui::Event::ModifiersChanged(shift));
-        harness.event(keyboard(symbol, place, true, shift));
+        harness.event(keyboard(symbol, place, Press::Down, shift));
     }
 
     /// An `sm` song with one four-lane chart of taps walking across the lanes a sixteenth apart.
@@ -1835,13 +1853,13 @@ pub(crate) mod test_support {
     pub(crate) fn press(
         harness: &Harness<'_, Window>,
         pos: egui::Pos2,
-        pressed: bool,
+        press: Press,
         modifiers: egui::Modifiers,
     ) {
         harness.event(egui::Event::PointerButton {
             pos,
             button: egui::PointerButton::Primary,
-            pressed,
+            pressed: matches!(press, Press::Down),
             modifiers,
         });
     }
@@ -1853,8 +1871,8 @@ pub(crate) mod test_support {
     ) {
         harness.hover_at(pos);
         harness.event(egui::Event::ModifiersChanged(modifiers));
-        press(harness, pos, true, modifiers);
-        press(harness, pos, false, modifiers);
+        press(harness, pos, Press::Down, modifiers);
+        press(harness, pos, Press::Up, modifiers);
         harness.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
         harness.run();
     }
@@ -1867,12 +1885,12 @@ pub(crate) mod test_support {
     ) {
         harness.hover_at(from);
         harness.event(egui::Event::ModifiersChanged(modifiers));
-        press(harness, from, true, modifiers);
+        press(harness, from, Press::Down, modifiers);
         for step in 1..=4 {
             harness
                 .hover_at(from.lerp(to, f32::from(u16::try_from(step).unwrap_or(u16::MAX)) / 4.0));
         }
-        press(harness, to, false, modifiers);
+        press(harness, to, Press::Up, modifiers);
         harness.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
         harness.run();
     }
@@ -2568,6 +2586,24 @@ pub(crate) mod test_support {
 #[cfg(test)]
 mod tests {
     use crate::window::test_support::*;
+
+    #[test]
+    fn named_key_press_and_release_set_the_event_state() {
+        let down = keyboard(
+            egui::Key::Num1,
+            egui::Key::Num1,
+            Press::Down,
+            egui::Modifiers::NONE,
+        );
+        let up = keyboard(
+            egui::Key::Num1,
+            egui::Key::Num1,
+            Press::Up,
+            egui::Modifiers::NONE,
+        );
+        assert!(matches!(down, egui::Event::Key { pressed: true, .. }));
+        assert!(matches!(up, egui::Event::Key { pressed: false, .. }));
+    }
 
     #[test]
     fn pending_questions_take_keys_but_background_work_does_not() {

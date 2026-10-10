@@ -46,7 +46,7 @@ impl Window {
                 panels::OfferTags::Import => {
                     if let Some(taken) = taken {
                         self.take_tags(
-                            taken.draft,
+                            taken.target,
                             taken.title.as_deref(),
                             taken.artist.as_deref(),
                         );
@@ -498,7 +498,12 @@ mod tests {
         let mut harness = editable_demo();
         let command = egui::Modifiers::COMMAND;
         harness.event(egui::Event::ModifiersChanged(command));
-        harness.event(keyboard(egui::Key::Minus, egui::Key::Num6, true, command));
+        harness.event(keyboard(
+            egui::Key::Minus,
+            egui::Key::Num6,
+            Press::Down,
+            command,
+        ));
         harness.run();
         assert!(harness.query_by_label("Zoom 80%").is_some());
     }

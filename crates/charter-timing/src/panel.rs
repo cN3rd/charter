@@ -5,7 +5,7 @@ use charter_core::{Bpm, ResolvedTime, Tick};
 use charter_style as style;
 use egui::{RichText, Ui};
 
-use crate::accuracy::{self, Issue, Metrics, ON_ONSET_MS};
+use crate::accuracy::{self, Issue, Metrics, ON_ONSET_MS, Rounding};
 use crate::grid::{Grid, RESOLUTIONS};
 use crate::rows::{BarsPerRow, Layout, SecondsPerRow};
 use crate::{Command, Edit, Frame, Gesture, TimingWindow};
@@ -397,7 +397,7 @@ fn anchor(
             .on_hover_text("Fit this anchor, and the tail tempo after the last, to the onsets")
             .clicked()
     {
-        window.fit(frame, false);
+        window.fit(frame, Rounding::Unrounded);
     }
 }
 

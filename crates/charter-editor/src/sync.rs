@@ -17,6 +17,15 @@ pub struct Pin {
     pub seconds: ResolvedTime,
 }
 
+/// How to change the tempo after an anchor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Scale {
+    /// Double the tempo.
+    Double,
+    /// Halve the tempo.
+    Halve,
+}
+
 /// How far apart two moments have to be to count as two: a microsecond, the finest time the
 /// format holds.
 const APART: f64 = 1e-6;
@@ -174,8 +183,8 @@ impl Song {
         self.repin(&pins, bpm, merge)
     }
 
-    /// Doubles the tempo after each anchor on `ticks`, or halves it when not `double`, as one
-    /// step. Every anchor keeps its moment in the audio: a segment's beats double or halve, and
+    /// Doubles or halves the tempo after each anchor on `ticks`, as one step. Every anchor keeps
+    /// its moment in the audio: a segment's beats double or halve, and
     /// the anchors and timing events after it move by as many ticks, so the audio after keeps its
     /// grid. The tail's tempo simply doubles or halves. Notes and markers keep their ticks, so
     /// this is for mapping a song before charting it.
@@ -184,7 +193,7 @@ impl Song {
     ///
     /// Refuses on a read-only song, when a halved segment would not be whole ticks, and when a
     /// tempo or tick would go out of range.
-    pub fn scale_tempo(&mut self, ticks: &[Tick], double: bool) -> Result<(), Refusal> {
+    pub fn scale_tempo(&mut self, ticks: &[Tick], scale: Scale) -> Result<(), Refusal> {
         let pins = self.anchors();
         let tail = self.tail_bpm();
         // Each scaled segment, by its old start and end: ticks after it move by what it grew.
@@ -201,26 +210,29 @@ impl Song {
             let mut new = old;
             for &(start, end) in &segments {
                 let span = end.saturating_sub(start);
-                let grown = if double {
-                    span
-                } else {
-                    span.div_euclid(2).saturating_neg()
+                let within_growth = match scale {
+                    Scale::Double => span,
+                    Scale::Halve => {
+                        if span.rem_euclid(2) != 0 {
+                            return Err(Refusal::NotWhole);
+                        }
+                        span.div_euclid(2).saturating_neg()
+                    }
                 };
-                if !double && span.rem_euclid(2) != 0 {
-                    return Err(Refusal::NotWhole);
-                }
                 if old >= end {
-                    new = new.saturating_add(grown);
+                    new = new.saturating_add(within_growth);
                 } else if old > start {
                     let within = old.saturating_sub(start);
-                    if !double && within.rem_euclid(2) != 0 {
-                        return Err(Refusal::NotWhole);
-                    }
-                    new = new.saturating_add(if double {
-                        within
-                    } else {
-                        within.div_euclid(2).saturating_neg()
-                    });
+                    let grown = match scale {
+                        Scale::Double => within,
+                        Scale::Halve => {
+                            if within.rem_euclid(2) != 0 {
+                                return Err(Refusal::NotWhole);
+                            }
+                            within.div_euclid(2).saturating_neg()
+                        }
+                    };
+                    new = new.saturating_add(grown);
                 }
             }
             i32::try_from(new)
@@ -243,7 +255,11 @@ impl Song {
             })
             .collect::<Result<Vec<_>, Refusal>>()?;
         let tail = if last.is_some_and(|last| ticks.contains(&last)) {
-            let scaled = f64::from(tail) * if double { 2.0 } else { 0.5 };
+            let factor = match scale {
+                Scale::Double => 2.0,
+                Scale::Halve => 0.5,
+            };
+            let scaled = f64::from(tail) * factor;
             micro(scaled)
                 .and_then(|bpm| Bpm::try_from(bpm).ok())
                 .ok_or(Refusal::NotWhole)?
@@ -668,7 +684,7 @@ mod tests {
             .iter()
             .map(|pin| pin.seconds.seconds())
             .collect();
-        song.scale_tempo(&[at(1920)], true).unwrap();
+        song.scale_tempo(&[at(1920)], Scale::Double).unwrap();
         let pins = song.anchors();
         let ticks: Vec<Tick> = pins.iter().map(|pin| pin.tick).collect();
         assert_eq!(ticks, [at(0), at(1920), at(5760)]);
@@ -680,7 +696,7 @@ mod tests {
             event.tick == at(5760) && matches!(event.kind, TimingKind::TimeSignature(_))
         });
         assert!(moved);
-        song.scale_tempo(&[at(5760)], false).unwrap();
+        song.scale_tempo(&[at(5760)], Scale::Halve).unwrap();
         assert_eq!(song.tail_bpm(), Bpm::try_from(30.0).unwrap());
     }
 
@@ -710,7 +726,7 @@ mod tests {
     fn a_segment_of_an_odd_number_of_ticks_does_not_halve() {
         let mut song = timed(&json!([bpm_event(0, 120.0), bpm_event(1921, 120.0)]), None);
         assert!(matches!(
-            song.scale_tempo(&[at(0)], false),
+            song.scale_tempo(&[at(0)], Scale::Halve),
             Err(Refusal::NotWhole)
         ));
     }

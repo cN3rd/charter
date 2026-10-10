@@ -68,6 +68,15 @@ const DEFAULT_BEAT: u32 = 500_000;
 /// Ticks to a beat in a file this writes, as EOF writes them.
 const PER_BEAT: u16 = 480;
 
+/// A MIDI key turning off or on, in that order at the same tick.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Switch {
+    /// Release the key.
+    Off,
+    /// Press the key.
+    On,
+}
+
 /// What of a MIDI file a track is read from.
 #[derive(Clone, Copy, Debug)]
 enum Event {
@@ -79,8 +88,8 @@ enum Event {
     Note {
         /// The MIDI key.
         key: u8,
-        /// Whether it switched on.
-        on: bool,
+        /// Whether it switched off or on.
+        switch: Switch,
     },
 }
 
@@ -123,19 +132,22 @@ pub(crate) fn read(bytes: &[u8], layout: Layout, report: &mut Report) -> Result<
                 }
                 meter = std::num::NonZeroU16::new(u16::from(beats)).unwrap_or(meter);
             }
-            Event::Note { key, on } => {
-                let Some((difficulty, key)) = level_key(key, layout, on, report) else {
+            Event::Note { key, switch } => {
+                let Some((difficulty, key)) = level_key(key, layout, switch, report) else {
                     continue;
                 };
                 let waiting = open.entry((difficulty.index(), key)).or_default();
-                if on {
-                    waiting.push_back(moment);
-                } else if let Some(start) = waiting.pop_front() {
-                    level(&mut levels, difficulty).notes.push(Played {
-                        key,
-                        on: start,
-                        off: moment,
-                    });
+                match switch {
+                    Switch::On => waiting.push_back(moment),
+                    Switch::Off => {
+                        if let Some(start) = waiting.pop_front() {
+                            level(&mut levels, difficulty).notes.push(Played {
+                                key,
+                                on: start,
+                                off: moment,
+                            });
+                        }
+                    }
                 }
                 continue;
             }
@@ -210,13 +222,20 @@ fn events(smf: &Smf<'_>, report: &mut Report) -> Result<Vec<(u64, Event)>, Strin
                     Event::Meter(beats, unit)
                 }
                 TrackEventKind::Midi { message, .. } => {
-                    let (key, on) = match message {
-                        MidiMessage::NoteOn { key, vel } => (key.as_int(), vel.as_int() > 0),
-                        MidiMessage::NoteOff { key, .. } => (key.as_int(), false),
+                    let (key, switch) = match message {
+                        MidiMessage::NoteOn { key, vel } => (
+                            key.as_int(),
+                            if vel.as_int() > 0 {
+                                Switch::On
+                            } else {
+                                Switch::Off
+                            },
+                        ),
+                        MidiMessage::NoteOff { key, .. } => (key.as_int(), Switch::Off),
                         _ => continue,
                     };
                     if !notes {
-                        if on {
+                        if switch == Switch::On {
                             let track = name(track).map_or_else(
                                 || "without a name".to_owned(),
                                 |name| String::from_utf8_lossy(name).into_owned(),
@@ -230,7 +249,7 @@ fn events(smf: &Smf<'_>, report: &mut Report) -> Result<Vec<(u64, Event)>, Strin
                     if events.len() >= MAX_NOTES {
                         return Err("the file holds more notes than any chart".to_owned());
                     }
-                    Event::Note { key, on }
+                    Event::Note { key, switch }
                 }
                 _ => continue,
             };
@@ -270,14 +289,14 @@ fn beats(ticks: u64, per_beat: f64) -> f64 {
 fn level_key(
     key: u8,
     layout: Layout,
-    on: bool,
+    switch: Switch,
     report: &mut Report,
 ) -> Option<(Difficulty, TrackKey)> {
     let above = key.checked_sub(LOWEST);
     let difficulty =
         above.and_then(|above| Difficulty::ALL.get(usize::from(above.div_euclid(OCTAVE))));
     let Some(&difficulty) = difficulty else {
-        if on {
+        if switch == Switch::On {
             report.add("notes outside keys 60 to 107, which hold no level");
         }
         return None;
@@ -285,7 +304,7 @@ fn level_key(
     let found = above
         .and_then(|above| layout.track_key(above % OCTAVE))
         .and_then(TrackKey::new);
-    if found.is_none() && on {
+    if found.is_none() && switch == Switch::On {
         report.add(format!(
             "notes on MIDI key {key}, which the layout gives no note in a {} level",
             difficulty.name()
@@ -374,10 +393,13 @@ pub(crate) fn write(track: &Track, layout: Layout, report: &mut Report) -> Vec<u
     }
     let mut switches = switches(track, layout, &tick, report);
     // A note ending where the next on its key starts switches off first.
-    switches.sort_by_key(|&(at, on, _)| (at, on));
+    switches.sort_by_key(|&(at, switch, _)| (at, switch));
     // Every switch is a note-on, off at velocity zero, as TTRToMidi writes them.
-    let notes = switches.into_iter().map(|(at, on, key)| {
-        let vel = u7::new(if on { 100 } else { 0 });
+    let notes = switches.into_iter().map(|(at, switch, key)| {
+        let vel = u7::new(match switch {
+            Switch::Off => 0,
+            Switch::On => 100,
+        });
         let message = MidiMessage::NoteOn {
             key: u7::new(key),
             vel,
@@ -422,16 +444,15 @@ fn meta_text(text: &str, most: usize) -> &str {
         .unwrap_or_default()
 }
 
-/// Each note of `track`'s three-lane levels switched on and off, as its tick, whether it switches
-/// on, and its MIDI key in `layout`, with `tick` placing a moment; what has no place is said in
-/// `report`.
+/// Each note of `track`'s three-lane levels switched on and off, as its tick, switch and MIDI
+/// key in `layout`, with `tick` placing a moment; what has no place is said in `report`.
 fn switches(
     track: &Track,
     layout: Layout,
     tick: &impl Fn(Moment) -> Option<u32>,
     report: &mut Report,
-) -> Vec<(u32, bool, u8)> {
-    let mut switches: Vec<(u32, bool, u8)> = Vec::new();
+) -> Vec<(u32, Switch, u8)> {
+    let mut switches: Vec<(u32, Switch, u8)> = Vec::new();
     for level in &track.levels {
         if level.lanes != Lanes::Three {
             report.add(format!(
@@ -454,8 +475,8 @@ fn switches(
                 continue;
             };
             let key = LOWEST.saturating_add(octave).saturating_add(key);
-            switches.push((on, true, key));
-            switches.push((off.max(on.saturating_add(1)), false, key));
+            switches.push((on, Switch::On, key));
+            switches.push((off.max(on.saturating_add(1)), Switch::Off, key));
         }
     }
     switches
@@ -578,6 +599,40 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn note_off_precedes_note_on_when_two_notes_share_a_tick() {
+        let track = Track {
+            title: String::new(),
+            artist: String::new(),
+            genre: None,
+            theme: None,
+            levels: vec![Level {
+                difficulty: Difficulty::Easy,
+                theme: None,
+                lanes: Lanes::Three,
+                tempo: vec![change(0.0, 120.0)],
+                notes: vec![played(0, 0.5, 1.0), played(0, 1.0, 1.5)],
+            }],
+        };
+        let tick = |moment: Moment| match moment.seconds() {
+            0.5 => Some(10),
+            1.0 => Some(20),
+            1.5 => Some(30),
+            _ => None,
+        };
+        let mut events = switches(&track, Layout::Standard, &tick, &mut Report::default());
+        events.sort_by_key(|&(at, switch, _)| (at, switch));
+        assert_eq!(
+            events,
+            [
+                (10, Switch::On, LOWEST),
+                (20, Switch::Off, LOWEST),
+                (20, Switch::On, LOWEST),
+                (30, Switch::Off, LOWEST),
+            ]
+        );
     }
 
     #[test]

@@ -5,8 +5,8 @@ use egui::{Key, Modifiers};
 use crate::pointer::Gesture;
 
 use super::{
-    Bpm, Command, Edit, Frame, Grid, LastNudge, Layout, NUDGE_MERGE, RESOLUTIONS, ROW, Tick,
-    TimingWindow, audition_from, style,
+    Bpm, Command, Edit, Frame, Grid, LastNudge, Layout, NUDGE_MERGE, RESOLUTIONS, ROW, Rounding,
+    Scale, Tick, TimingWindow, audition_from, style,
 };
 
 /// What a key asks of the timing window.
@@ -34,13 +34,13 @@ pub(crate) enum Intent {
     Grid(usize),
     /// Preview fitting the focused or selected anchors to the onsets.
     Fit {
-        /// Round fitted tempos to half-BPM increments.
-        half_bpm: bool,
+        /// How to round fitted tempos.
+        rounding: Rounding,
     },
     /// Double or halve the tempo at the selected anchors.
     Scale {
-        /// Double when true, halve otherwise.
-        double: bool,
+        /// Whether to double or halve.
+        scale: Scale,
     },
     /// Toggle whether rows scroll to keep the playhead visible.
     Follow,
@@ -94,8 +94,16 @@ pub(crate) fn intent(key: Key, modifiers: Modifiers) -> Option<Intent> {
         Key::ArrowDown => Intent::Move(1),
         Key::Plus | Key::Equals => Intent::Tail(if shift { 1.0 } else { 0.1 }),
         Key::Minus => Intent::Tail(if shift { -1.0 } else { -0.1 }),
-        Key::F => Intent::Fit { half_bpm: shift },
-        Key::D => Intent::Scale { double: !shift },
+        Key::F => Intent::Fit {
+            rounding: if shift {
+                Rounding::HalfBpm
+            } else {
+                Rounding::Unrounded
+            },
+        },
+        Key::D => Intent::Scale {
+            scale: if shift { Scale::Halve } else { Scale::Double },
+        },
         Key::O => Intent::Follow,
         Key::V => Intent::Layout,
         Key::L => Intent::Loop { selection: shift },
@@ -370,11 +378,11 @@ pub(crate) fn act(
                 window.grid = Grid { resolution };
             }
         }
-        Intent::Fit { half_bpm } => window.fit(frame, half_bpm),
-        Intent::Scale { double } => {
+        Intent::Fit { rounding } => window.fit(frame, rounding),
+        Intent::Scale { scale } => {
             commands.push(Command::Edit(Edit::Scale {
                 ticks: window.targets(),
-                double,
+                scale,
             }));
         }
         Intent::Follow => window.follow = !window.follow,
@@ -584,11 +592,15 @@ mod tests {
         assert_eq!(intent(Key::Num0, none), Some(Intent::Grid(9)));
         assert_eq!(
             intent(Key::F, Modifiers::SHIFT),
-            Some(Intent::Fit { half_bpm: true })
+            Some(Intent::Fit {
+                rounding: Rounding::HalfBpm
+            })
         );
         assert_eq!(
             intent(Key::D, Modifiers::SHIFT),
-            Some(Intent::Scale { double: false })
+            Some(Intent::Scale {
+                scale: Scale::Halve
+            })
         );
         assert_eq!(intent(Key::A, Modifiers::COMMAND), Some(Intent::SelectAll));
         assert_eq!(intent(Key::A, none), Some(Intent::AddAtPlayhead));
