@@ -182,8 +182,8 @@ impl Song {
     /// Refuses on a read-only song, when a note would leave the lanes or the ticks, when one
     /// would start where a note that is not moving starts on a lane it covers, and when the move
     /// breaks a rule of the format or of the song's game. The notes stay as they were.
-    pub fn move_selection(&mut self, ticks: i32, lanes: i32) -> Result<(), Refusal> {
-        if (ticks, lanes) == (0, 0) {
+    pub fn move_selection(&mut self, ticks: TickOffset, lanes: LaneOffset) -> Result<(), Refusal> {
+        if ticks == TickOffset::default() && lanes == LaneOffset::default() {
             return Ok(());
         }
         let width = self.lane_count();
@@ -216,9 +216,10 @@ impl Song {
                 .saturating_add(step.div_euclid(2))
                 .div_euclid(step)
                 .saturating_mul(step);
-            let by = i32::try_from(nearest.saturating_sub(tick))
-                .map_err(|_out_of_range| Refusal::OffTheChart)?;
-            object.shifted_by(by, 0).ok_or(Refusal::OffTheChart)
+            let by = TickOffset::new(nearest.saturating_sub(tick));
+            object
+                .shifted_by(by, LaneOffset::default())
+                .ok_or(Refusal::OffTheChart)
         })
     }
 
@@ -287,9 +288,9 @@ impl Song {
         let Some(first) = selected.next() else {
             return Vec::new();
         };
-        let origin = i64::from(first.tick);
+        let origin = first.tick;
         let back = |tick: Tick| {
-            i32::try_from(i64::from(tick).saturating_sub(origin))
+            i32::try_from(origin.offset_to(tick).get())
                 .map(Tick::new)
                 .map_err(|_out_of_range| Refusal::NotWhole)
         };
@@ -327,12 +328,8 @@ impl Song {
         at: Tick,
         preserve_layers: bool,
     ) -> Result<usize, Refusal> {
-        let offset = i64::from(at);
-        let on = |tick: Tick| {
-            i32::try_from(i64::from(tick).saturating_add(offset))
-                .map(Tick::new)
-                .map_err(|_out_of_range| Refusal::OffTheChart)
-        };
+        let offset = Tick::new(0).offset_to(at);
+        let on = |tick: Tick| tick.checked_offset(offset).ok_or(Refusal::OffTheChart);
         let placed: Vec<Object> = clip
             .iter()
             .filter_map(|object| shifted_at(object, on).ok())
@@ -529,7 +526,7 @@ pub(super) const fn note_at(object: &Object) -> Option<NoteAt> {
     reason = "tempo math uses floating-point tick spans"
 )]
 pub(super) fn tick_delta_as_f64(to: Tick, from: Tick) -> f64 {
-    i64::from(to).saturating_sub(i64::from(from)) as f64
+    from.offset_to(to).get() as f64
 }
 
 /// Rounded tempo interpolation, checked as a tick by the caller.
@@ -544,9 +541,8 @@ pub(super) const fn rounded_tick_delta(value: f64) -> i64 {
 
 /// `tick` moved `by` ticks, if that is still a tick.
 pub(super) fn moved(tick: Tick, by: i64) -> Result<Tick, Refusal> {
-    i32::try_from(i64::from(tick).saturating_add(by))
-        .map(Tick::new)
-        .map_err(|_out_of_range| Refusal::NotWhole)
+    tick.checked_offset(TickOffset::new(by))
+        .ok_or(Refusal::NotWhole)
 }
 
 /// `object` with every tick it holds, its children's and its path's, and its end, moved by
@@ -619,6 +615,7 @@ pub(super) const fn note(tick: Tick, lane: LaneIndex, kind: Kind) -> Object {
 mod tests {
     use super::*;
     use crate::song::tests::*;
+    use charter_core::{LaneOffset, TickOffset};
     use serde_json::{Value, json};
 
     fn objects(song: &Song) -> Vec<Value> {
@@ -951,10 +948,11 @@ mod tests {
         let mut song = Song::new(document(json!([object(0, 3, "tap")])), EDITABLE);
         select_everything(&mut song);
         assert!(matches!(
-            song.move_selection(0, 1),
+            song.move_selection(TickOffset::new(0), LaneOffset::new(1)),
             Err(Refusal::OffTheChart)
         ));
-        song.move_selection(0, -2).unwrap();
+        song.move_selection(TickOffset::new(0), LaneOffset::new(-2))
+            .unwrap();
         assert_eq!(objects(&song), [object(0, 1, "tap")]);
     }
 

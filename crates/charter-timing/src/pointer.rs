@@ -2,7 +2,7 @@
 
 use crate::keyboard::nudge_notches;
 use crate::rows::{GRAB, Ghost, Reach, Row};
-use charter_core::ResolvedTime;
+use charter_core::{ResolvedTime, TickOffset};
 
 use super::{
     Command, Edit, FINE, Frame, Pos2, Tick, TimeShift, TimingWindow, accuracy, audition_from, rows,
@@ -357,29 +357,26 @@ pub(crate) fn clamp_beat(
     to: Tick,
 ) -> Tick {
     let (first, last) = moving_bounds(window, from);
-    let delta = i64::from(to).saturating_sub(i64::from(from));
+    let delta = from.offset_to(to).get();
     let before = frame.pins.iter().rev().find(|pin| pin.tick < first);
     let after = frame.pins.iter().find(|pin| pin.tick > last);
     let mut clamped = delta;
     if let Some(before) = before {
-        let lowest = i64::from(before.tick)
-            .saturating_add(1)
-            .saturating_sub(i64::from(first));
+        let lowest = first.offset_to(before.tick).get().saturating_add(1);
         if clamped < lowest {
             clamped = lowest;
             window.pulse = Some((before.tick, frame.now));
         }
     }
     if let Some(after) = after {
-        let highest = i64::from(after.tick)
-            .saturating_sub(1)
-            .saturating_sub(i64::from(last));
+        let highest = last.offset_to(after.tick).get().saturating_sub(1);
         if clamped > highest {
             clamped = highest;
             window.pulse = Some((after.tick, frame.now));
         }
     }
-    Tick::new(i32::try_from(i64::from(from).saturating_add(clamped)).unwrap_or(i32::MAX))
+    from.checked_offset(TickOffset::new(clamped))
+        .unwrap_or(Tick::new(i32::MAX))
 }
 
 /// `to` seconds, or the nearest moment the anchors moving with the one on `tick` can reach
@@ -429,13 +426,10 @@ pub(crate) fn release(
 ) {
     match std::mem::replace(&mut window.gesture, Gesture::Idle) {
         Gesture::DragBeat { from, to, .. } if from != to => {
-            let delta = i64::from(to).saturating_sub(i64::from(from));
+            let delta = from.offset_to(to);
             let moved: Vec<(Tick, Tick)> = moving(window, from)
                 .into_iter()
-                .filter_map(|tick| {
-                    let destination = i32::try_from(i64::from(tick).saturating_add(delta)).ok()?;
-                    Some((tick, Tick::new(destination)))
-                })
+                .filter_map(|tick| Some((tick, tick.checked_offset(delta)?)))
                 .collect();
             window.selection = moved.iter().map(|(_, destination)| *destination).collect();
             window.focus = Some(to);

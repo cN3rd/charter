@@ -13,7 +13,9 @@ use std::sync::Arc;
 
 use charter_audio::{Peaks, Spectrum};
 
-use charter_core::{Kind, LaneIndex, ResolvedTime, RulesetPlugin, Tick, TimeShift};
+use charter_core::{
+    Kind, LaneIndex, LaneOffset, ResolvedTime, RulesetPlugin, Tick, TickOffset, TimeShift,
+};
 use egui::Ui;
 
 use charter_editor::{KeepNotes, NoteAt, Refusal, Selecting, Song, Step, Toggled, demo};
@@ -464,9 +466,9 @@ pub(crate) enum Action {
     /// negative.
     MoveSelection {
         /// Signed distance to move along the chart, in ticks.
-        ticks: i32,
+        ticks: TickOffset,
         /// Signed distance to move across lanes.
-        lanes: i32,
+        lanes: LaneOffset,
     },
     /// Meets the selection with the notes starting inside this tick and lane rectangle.
     SelectBetween {
@@ -508,7 +510,7 @@ pub(crate) enum Action {
         /// Signed number of snap lines to move the notes.
         snaps: i32,
         /// Signed number of lanes to move the notes.
-        lanes: i32,
+        lanes: LaneOffset,
     },
     /// Flips the selected notes across the lanes.
     Mirror,

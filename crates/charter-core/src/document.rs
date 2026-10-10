@@ -8,8 +8,8 @@ use crate::ident::{Ease, Key, Kind, LayerName, MarkerKind, Namespace, string_new
 use crate::number::Decimal;
 use crate::path::ResourcePath;
 use crate::unit::{
-    AudioTime, Bpm, LaneCount, LaneIndex, LaneSpan, Origin, Seconds, Tick, Ticks, TicksPerBeat,
-    TimeSignature,
+    AudioTime, Bpm, LaneCount, LaneIndex, LaneOffset, LaneSpan, Origin, Seconds, Tick, TickOffset,
+    Ticks, TicksPerBeat, TimeSignature,
 };
 
 /// The format version this crate reads and writes.
@@ -436,16 +436,12 @@ impl Position {
 
     /// This position shifted by `lanes` lane indexes, if it stays representable.
     #[must_use]
-    pub fn shifted_by_lanes(self, lanes: i32) -> Option<Self> {
+    pub fn shifted_by_lanes(self, lanes: LaneOffset) -> Option<Self> {
         match self {
-            Self::Lane { index, width } => {
-                let index =
-                    u16::try_from(i32::from(u16::from(index)).saturating_add(lanes)).ok()?;
-                Some(Self::Lane {
-                    index: LaneIndex::new(index),
-                    width,
-                })
-            }
+            Self::Lane { index, width } => Some(Self::Lane {
+                index: index.checked_offset(lanes)?,
+                width,
+            }),
             Self::Plane { .. } => Some(self),
         }
     }
@@ -474,13 +470,11 @@ impl Object {
     /// This object moved `ticks` later and `lanes` to the right, with negative values moving it
     /// earlier or left, if all moved ticks and lanes stay representable.
     #[must_use]
-    pub fn shifted_by(&self, ticks: i32, lanes: i32) -> Option<Self> {
-        let tick = |tick: Tick| {
-            i32::try_from(i64::from(tick).saturating_add(i64::from(ticks)))
-                .ok()
-                .map(Tick::new)
-        };
-        self.map_ticks_positions(tick, |position| position.shifted_by_lanes(lanes))
+    pub fn shifted_by(&self, ticks: TickOffset, lanes: LaneOffset) -> Option<Self> {
+        self.map_ticks_positions(
+            |tick| tick.checked_offset(ticks),
+            |position| position.shifted_by_lanes(lanes),
+        )
     }
 }
 
@@ -939,7 +933,9 @@ mod tests {
             ext: Extensions::new(),
         };
 
-        let shifted = object.shifted_by(5, -1).unwrap();
+        let shifted = object
+            .shifted_by(TickOffset::new(5), LaneOffset::new(-1))
+            .unwrap();
 
         assert_eq!(shifted.tick, Tick::new(15));
         assert_eq!(

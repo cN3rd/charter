@@ -1,8 +1,8 @@
 use super::{
-    Canvas, Columns, FontId, Kind, LaneCount, LaneIndex, MOST_BEATS, MarkerKind, Measure,
-    NonZeroU16, Object, Peaks, Position, Rangef, Rect, Shape, Song, Stroke, StrokeKind, Tick,
-    Ticks, TicksPerBeat, Timing, TimingKind, Valid, View, Visuals, egui, nearest_line, pos2, style,
-    vec2,
+    Canvas, Columns, FontId, Kind, LaneCount, LaneIndex, LaneOffset, MOST_BEATS, MarkerKind,
+    Measure, NonZeroU16, Object, Peaks, Position, Rangef, Rect, Shape, Song, Stroke, StrokeKind,
+    Tick, TickOffset, Ticks, TicksPerBeat, Timing, TimingKind, Valid, View, Visuals, egui,
+    nearest_line, pos2, style, vec2,
 };
 use egui::Align2;
 
@@ -520,20 +520,16 @@ pub(super) fn ghost(
     painter: &Canvas,
     (columns, timing, view): (&Columns, Valid<'_, Timing>, View),
     object: &Object,
-    (ticks, lanes): (i32, i32),
+    (ticks, lanes): (TickOffset, LaneOffset),
     (first, last): (Tick, Tick),
 ) {
     let Position::Lane { index, width } = object.position else {
         return;
     };
-    let Ok(index) = u16::try_from(i32::from(u16::from(index)).saturating_add(lanes)) else {
+    let Some(index) = index.checked_offset(lanes) else {
         return;
     };
-    let shift = |tick: Tick| {
-        i32::try_from(i64::from(tick).saturating_add(i64::from(ticks)))
-            .ok()
-            .map(Tick::new)
-    };
+    let shift = |tick: Tick| tick.checked_offset(ticks);
     let end = object.shape.end(object.tick).and_then(shift);
     let (Some(start), Some(end)) = (shift(object.tick), end) else {
         return;
@@ -542,7 +538,7 @@ pub(super) fn ghost(
         return;
     }
     let across = columns
-        .span(LaneIndex::new(index), width)
+        .span(index, width)
         .shrink((columns.lane_w * 0.12).max(2.0));
     let (head, tail) = (view.y(timing.time_at(start)), view.y(timing.time_at(end)));
     if end > start {
@@ -634,7 +630,7 @@ pub(super) fn now_line(painter: &Canvas, columns: &Columns, now_y: f32) {
 
 #[cfg(test)]
 mod tests {
-    use charter_core::RulesetPlugin;
+    use charter_core::{LaneOffset, RulesetPlugin, TickOffset};
     use egui::{Modifiers, MouseWheelUnit, TouchPhase, Vec2};
     use egui_kittest::Harness;
     use egui_kittest::kittest::{NodeT, Queryable};
@@ -1421,16 +1417,16 @@ mod tests {
         let moving = Gesture::MoveNotes {
             tick: Tick::new(0),
             lane: LaneIndex::new(1),
-            room: (-1, 1),
+            room: (LaneOffset::new(-1), LaneOffset::new(1)),
         };
         let far_right = pos2(field.columns.lanes.max + 50.0, field.view.now_y + 100.0);
         assert_eq!(
             moving.moved_by(&field, Tick::new(960), far_right, true),
-            Some((0, 1))
+            Some((TickOffset::new(0), LaneOffset::new(1)))
         );
         assert_eq!(
             moving.moved_by(&field, Tick::new(960), far_right, false),
-            Some((960, 1))
+            Some((TickOffset::new(960), LaneOffset::new(1)))
         );
         assert_eq!(
             moving.moved_by(
@@ -1439,7 +1435,16 @@ mod tests {
                 pos2(field.columns.lanes.min - 50.0, far_right.y),
                 false
             ),
-            Some((0, -1))
+            Some((TickOffset::new(0), LaneOffset::new(-1)))
+        );
+        let from_first_tick = Gesture::MoveNotes {
+            tick: Tick::new(i32::MIN),
+            lane: LaneIndex::new(1),
+            room: (LaneOffset::new(-1), LaneOffset::new(1)),
+        };
+        assert_eq!(
+            from_first_tick.moved_by(&field, Tick::new(i32::MAX), far_right, false),
+            Some((TickOffset::new(4_294_967_295), LaneOffset::new(1)))
         );
     }
 
@@ -1585,14 +1590,14 @@ mod tests {
                 &canvas,
                 (&field.columns, chart.timing(), field.view),
                 object,
-                (960, -1),
+                (TickOffset::new(960), LaneOffset::new(-1)),
                 (Tick::new(0), Tick::new(3840)),
             );
             ghost(
                 &canvas,
                 (&field.columns, chart.timing(), field.view),
                 object,
-                (960, -1),
+                (TickOffset::new(960), LaneOffset::new(-1)),
                 (Tick::new(10000), Tick::new(11000)),
             );
         });

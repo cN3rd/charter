@@ -532,7 +532,7 @@ pub fn issues(
     let beat = i64::from(u16::from(timing.ticks_per_beat()));
     for pair in pins.windows(2) {
         if let [from, to] = pair
-            && i64::from(to.tick).saturating_sub(i64::from(from.tick)) < beat
+            && from.tick.offset_to(to.tick).get() < beat
         {
             found.push(Issue::Short { tick: from.tick });
         }

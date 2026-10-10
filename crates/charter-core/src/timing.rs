@@ -288,7 +288,7 @@ fn bpm_of(per_tick: f64, ticks_per_beat: TicksPerBeat) -> f64 {
 /// land `to` on the same tick. An anchor sits on a whole tick, so the exact rate between two is a
 /// typed tempo off by up to half a tick; this is the tempo that was typed.
 fn simplest(exact: f64, from: Tick, to: Tick) -> f64 {
-    let span = span_as_f64(i64::from(to).saturating_sub(i64::from(from)));
+    let span = span_as_f64(from.offset_to(to).get());
     (0..6)
         .map(|places| {
             let scale = 10_f64.powi(places);

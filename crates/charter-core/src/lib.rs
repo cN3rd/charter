@@ -104,6 +104,6 @@ fn proptest_config() -> proptest::test_runner::Config {
     reason = "unit-safe timing and lane types are exposed through the flat format API"
 )]
 pub use unit::{
-    AudioTime, BeatLength, Bpm, LaneCount, LaneIndex, LaneSpan, Origin, ResolvedTime, Seconds,
-    Tick, Ticks, TicksPerBeat, TimeShift, TimeSignature,
+    AudioTime, BeatLength, Bpm, LaneCount, LaneIndex, LaneOffset, LaneSpan, Origin, ResolvedTime,
+    Seconds, Tick, TickOffset, Ticks, TicksPerBeat, TimeShift, TimeSignature,
 };

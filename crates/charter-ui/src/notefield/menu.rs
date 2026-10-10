@@ -1,5 +1,5 @@
 use super::gesture::{hit_on_layers, snap_line};
-use super::{Action, Field, Flip, LaneIndex, Selecting, Song, Step, Tick, Ui, egui};
+use super::{Action, Field, Flip, LaneIndex, LaneOffset, Selecting, Song, Step, Tick, Ui, egui};
 
 /// The patterns the right-click menu places, by the lanes each step counts from the lane
 /// clicked, and the spacings it places them at, as how many to a beat.
@@ -96,9 +96,12 @@ pub(super) fn menu_items(
     ui.separator();
     let move_left = Action::ShiftSelection {
         snaps: 0,
-        lanes: -1,
+        lanes: LaneOffset::new(-1),
     };
-    let move_right = Action::ShiftSelection { snaps: 0, lanes: 1 };
+    let move_right = Action::ShiftSelection {
+        snaps: 0,
+        lanes: LaneOffset::new(1),
+    };
     item(
         ui,
         actions,

@@ -26,7 +26,7 @@ impl Measure {
     /// for ticks outside it. A view laying a measure out across a row places ticks by this.
     #[must_use]
     pub fn fraction(&self, tick: Tick) -> f64 {
-        let past = i64::from(tick.get()).saturating_sub(i64::from(self.start.get()));
+        let past = self.start.offset_to(tick).get();
         let past = tick_distance_as_f64(past);
         past / f64::from(self.length.get())
     }

@@ -732,8 +732,9 @@ shown.
 
 | Type | Holds | Meaning | Operations |
 |---|---|---|---|
-| `Tick` | `i32` | A musical position | Adding `Ticks` gives a `Tick`; a later `Tick` is `Ticks` away; steps to the nearest line of a grid either way |
+| `Tick` | `i32` | A musical position | Adds `Ticks` or a checked `TickOffset`; finds the offset to another tick; steps to a grid line |
 | `Ticks` | `NonZeroU32` | A length in ticks | |
+| `TickOffset` | `i64` | A signed shift in ticks, never stored | Moves a `Tick` if the result fits |
 | `TicksPerBeat` | `NonZeroU16` | The resolution of the time base | Gives the length of an Nth note when it is whole |
 | `TimeSignature` | Two `NonZeroU16` | A meter | Tells whether its measure is a whole number of ticks |
 | `Bpm` | `i64` millionths above 0 | Quarter notes per minute | Resolves `Ticks` at a `TicksPerBeat` to seconds |
@@ -743,7 +744,8 @@ shown.
 | `Origin` | `i64` millionths | The audio time of tick 0, negative before the file starts | Converts to a `ResolvedTime` |
 | `ResolvedTime` | `f64` | An audio time resolved from a timing map, never stored | Compares; gives seconds for an audio API or a display |
 | `TimeShift` | `f64` | A signed span between audio moments, never stored | Moves a `ResolvedTime` earlier or later |
-| `LaneIndex` | `u16` | A lane, counting from 0 | Gives its number to a view |
+| `LaneIndex` | `u16` | A lane, counting from 0 | Moves by a checked `LaneOffset`; gives its number to a view |
+| `LaneOffset` | `i32` | A signed shift across lanes, never stored | Moves a `LaneIndex` if the result fits |
 | `LaneCount` | `NonZeroU16` | A number of lanes | Names its last and middle lanes; gives its number to a view |
 | `LaneSpan` | Two `u32` | The lanes a lane position covers | Tells whether it fits a chart or overlaps another span |
 | `Decimal` | `i64` millionths | A quantity the ruleset defines, such as a plane coordinate | |

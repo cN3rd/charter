@@ -10,10 +10,10 @@ use std::num::NonZeroU16;
 use std::ops::RangeInclusive;
 
 use charter_core::{
-    Anchor, Bpm, Chart, Error, Extensions, Kind, LaneCount, LaneIndex, LaneSpan, Layer,
+    Anchor, Bpm, Chart, Error, Extensions, Kind, LaneCount, LaneIndex, LaneOffset, LaneSpan, Layer,
     LayerColour, LayerName, LayerView, Marker, MarkerKind, Metadata, Object, Position,
-    ResourcePath, RulesetPlugin, SettingScope, Shape, Tick, Ticks, TicksPerBeat, Timing,
-    TimingKind, Valid, ValidDocument,
+    ResourcePath, RulesetPlugin, SettingScope, Shape, Tick, TickOffset, Ticks, TicksPerBeat,
+    Timing, TimingKind, Valid, ValidDocument,
 };
 
 use crate::edit::{Edit, Op};

@@ -9,8 +9,8 @@ use std::num::NonZeroU16;
 
 use charter_audio::{Peaks, Spectrum};
 use charter_core::{
-    Chart, Kind, LaneCount, LaneIndex, MarkerKind, Measure, Object, Position, ResolvedTime, Shape,
-    Tick, Ticks, TicksPerBeat, Timing, TimingKind, Valid,
+    Chart, Kind, LaneCount, LaneIndex, LaneOffset, MarkerKind, Measure, Object, Position,
+    ResolvedTime, Shape, Tick, TickOffset, Ticks, TicksPerBeat, Timing, TimingKind, Valid,
 };
 use charter_editor::{NoteAt, Selecting, Song, Step};
 use egui::{self, FontId, Pos2, Rangef, Rect, Sense, Stroke, StrokeKind, Ui, Visuals, pos2, vec2};

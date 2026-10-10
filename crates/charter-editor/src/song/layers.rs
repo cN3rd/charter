@@ -713,6 +713,7 @@ impl Song {
 mod tests {
     use super::*;
     use crate::song::tests::*;
+    use charter_core::{LaneOffset, TickOffset};
     use serde_json::{Value, json};
 
     #[test]
@@ -1229,7 +1230,7 @@ mod tests {
         song.select([note_at(0, 0)], Selecting::Replace);
         song.move_selection_to_layer(0).unwrap();
         assert!(
-            matches!(song.move_selection(240, 1), Err(Refusal::OnLayer(name)) if name == "Layer 0")
+            matches!(song.move_selection(TickOffset::new(240), LaneOffset::new(1)), Err(Refusal::OnLayer(name)) if name == "Layer 0")
         );
         song.undo().unwrap();
         assert_eq!(*song.document().document(), original);

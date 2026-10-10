@@ -530,7 +530,7 @@ impl TimingWindow {
         let close = frame
             .pins
             .iter()
-            .find(|pin| i64::from(pin.tick).saturating_sub(i64::from(tick)).abs() < half.max(1));
+            .find(|pin| tick.offset_to(pin.tick).get().abs() < half.max(1));
         if let Some(close) = close {
             self.pulse = Some((close.tick, frame.now));
             self.status = Some(format!(

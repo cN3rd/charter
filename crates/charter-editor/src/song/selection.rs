@@ -120,6 +120,7 @@ mod tests {
     use super::super::notes::note;
     use super::*;
     use crate::song::tests::*;
+    use charter_core::{LaneOffset, TickOffset};
     use serde_json::json;
 
     fn four_taps() -> Song {
@@ -221,7 +222,8 @@ mod tests {
     fn moving_the_selection_is_one_step_that_keeps_it_selected() {
         let mut song = four_taps();
         song.select([note_at(0, 0), note_at(480, 2)], Selecting::Replace);
-        song.move_selection(120, 1).unwrap();
+        song.move_selection(TickOffset::new(120), LaneOffset::new(1))
+            .unwrap();
         assert_eq!(
             objects(&song),
             [
@@ -243,7 +245,8 @@ mod tests {
                            "kind": "hold", "shape": { "sustain": { "duration": 480 } } });
         let mut song = Song::new(document(json!([hold, object(960, 3, "tap")])), EDITABLE);
         song.select([note_at(0, 0)], Selecting::Replace);
-        song.move_selection(1920, 2).unwrap();
+        song.move_selection(TickOffset::new(1920), LaneOffset::new(2))
+            .unwrap();
         let moved = json!({ "tick": 1920, "position": { "lane": { "index": 2 } },
                             "kind": "hold", "shape": { "sustain": { "duration": 480 } } });
         assert_eq!(objects(&song), [object(960, 3, "tap"), moved]);
@@ -260,7 +263,8 @@ mod tests {
         };
         let mut song = Song::new(document(json!([hold(0, 0)])), EDITABLE);
         song.select([note_at(0, 0)], Selecting::Replace);
-        song.move_selection(960, 1).unwrap();
+        song.move_selection(TickOffset::new(960), LaneOffset::new(1))
+            .unwrap();
         assert_eq!(objects(&song), [hold(960, 1)]);
     }
 
@@ -268,7 +272,9 @@ mod tests {
     fn a_move_onto_a_note_that_stays_is_refused() {
         let mut song = four_taps();
         song.select([note_at(0, 0)], Selecting::Replace);
-        let refused = song.move_selection(240, 1).unwrap_err();
+        let refused = song
+            .move_selection(TickOffset::new(240), LaneOffset::new(1))
+            .unwrap_err();
         assert!(matches!(refused, Refusal::Occupied), "{refused:?}");
         assert_eq!(objects(&song), objects(&four_taps()));
         assert_eq!(selection(&song), [note_at(0, 0)]);
@@ -278,8 +284,14 @@ mod tests {
     fn a_move_off_either_side_of_the_lanes_is_refused() {
         let mut song = four_taps();
         song.select([note_at(240, 1)], Selecting::Replace);
-        assert!(song.move_selection(0, -2).is_err());
-        assert!(song.move_selection(0, 3).is_err());
+        assert!(
+            song.move_selection(TickOffset::new(0), LaneOffset::new(-2))
+                .is_err()
+        );
+        assert!(
+            song.move_selection(TickOffset::new(0), LaneOffset::new(3))
+                .is_err()
+        );
         assert_eq!(objects(&song), objects(&four_taps()));
         assert!(!song.can_undo());
     }
@@ -288,7 +300,8 @@ mod tests {
     fn selected_notes_can_trade_places_with_each_other() {
         let mut song = four_taps();
         song.select_all();
-        song.move_selection(240, 0).unwrap();
+        song.move_selection(TickOffset::new(240), LaneOffset::new(0))
+            .unwrap();
         assert_eq!(selection(&song).len(), 4);
         assert_eq!(selection(&song)[0], note_at(240, 0));
     }
@@ -296,10 +309,23 @@ mod tests {
     #[test]
     fn a_move_by_nothing_or_of_nothing_changes_nothing() {
         let mut song = four_taps();
-        song.move_selection(240, 1).unwrap();
+        song.move_selection(TickOffset::new(240), LaneOffset::new(1))
+            .unwrap();
         song.select([note_at(0, 0)], Selecting::Replace);
-        song.move_selection(0, 0).unwrap();
+        song.move_selection(TickOffset::new(0), LaneOffset::new(0))
+            .unwrap();
         assert!(!song.can_undo());
+    }
+
+    #[test]
+    fn a_move_can_span_the_whole_tick_range() {
+        let mut song = Song::new(document(json!([object(i32::MIN, 0, "tap")])), EDITABLE);
+        song.select_all();
+        song.move_selection(TickOffset::new(4_294_967_295), LaneOffset::new(0))
+            .unwrap();
+        assert_eq!(objects(&song), [object(i32::MAX, 0, "tap")]);
+        song.undo().unwrap();
+        assert_eq!(objects(&song), [object(i32::MIN, 0, "tap")]);
     }
 
     #[test]

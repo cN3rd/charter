@@ -1,7 +1,8 @@
 use super::draw::reaching;
 use super::{
-    Action, Chart, Field, Flip, LaneIndex, Note, NoteAt, Object, Pos2, Position, Rangef,
-    ResolvedTime, Selecting, Song, Tick, Ticks, Timing, Ui, Valid, View, egui, nearest_line,
+    Action, Chart, Field, Flip, LaneIndex, LaneOffset, Note, NoteAt, Object, Pos2, Position,
+    Rangef, ResolvedTime, Selecting, Song, Tick, TickOffset, Ticks, Timing, Ui, Valid, View, egui,
+    nearest_line,
 };
 use charter_core::TimeShift;
 
@@ -58,7 +59,7 @@ pub(crate) enum Gesture {
         /// Lane where the notes were grabbed.
         lane: LaneIndex,
         /// Permitted lane offsets to the left and right.
-        room: (i32, i32),
+        room: (LaneOffset, LaneOffset),
     },
 }
 
@@ -74,19 +75,20 @@ impl Gesture {
         to: Tick,
         pos: Pos2,
         keep_time: bool,
-    ) -> Option<(i32, i32)> {
+    ) -> Option<(TickOffset, LaneOffset)> {
         let Self::MoveNotes { tick, lane, room } = self else {
             return None;
         };
         let ticks = if keep_time {
-            0
+            TickOffset::default()
         } else {
-            i32::try_from(i64::from(to).checked_sub(i64::from(tick))?).ok()?
+            tick.offset_to(to)
         };
         let inside = field.columns.lanes;
         let over = field.lane_at(pos.x.clamp(inside.min, inside.max - 0.5))?;
         let lanes = i32::from(u16::from(over)).saturating_sub(i32::from(u16::from(lane)));
-        Some((ticks, lanes.clamp(room.0, room.1.max(room.0))))
+        let lanes = LaneOffset::new(lanes.clamp(room.0.get(), room.1.get().max(room.0.get())));
+        Some((ticks, lanes))
     }
 }
 
@@ -95,7 +97,7 @@ struct MoveRoom {
     /// Whether the grabbed note is already selected, so the whole selection moves.
     selected: bool,
     /// Permitted lane offsets to the left and right.
-    lanes: (i32, i32),
+    lanes: (LaneOffset, LaneOffset),
 }
 
 /// The notes a drag from `note` moves, the selection when `note` is in it and otherwise `note`
@@ -135,8 +137,8 @@ fn room(chart: Valid<'_, Chart>, song: &Song, note: NoteAt, lanes: u16) -> MoveR
     MoveRoom {
         selected,
         lanes: (
-            first.saturating_neg(),
-            i32::from(lanes).saturating_sub(1).saturating_sub(last),
+            LaneOffset::new(first.saturating_neg()),
+            LaneOffset::new(i32::from(lanes).saturating_sub(1).saturating_sub(last)),
         ),
     }
 }

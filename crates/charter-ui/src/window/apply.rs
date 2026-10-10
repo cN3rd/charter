@@ -2,8 +2,8 @@
 
 use super::{
     Action, KeepNotes, Mode, Note, PASTE_WAIT, PendingPaste, Rate, Request, Saving, Selecting,
-    Song, Step, Tick, Toggled, Window, grow, nudge_bpm, pattern, placing_at, refused, retime,
-    stretch,
+    Song, Step, Tick, TickOffset, Toggled, Window, grow, nudge_bpm, pattern, placing_at, refused,
+    retime, stretch,
 };
 use charter_core::TimeShift;
 
@@ -448,7 +448,7 @@ impl Window {
                 let ticks =
                     i32::try_from(i64::from(*snaps).saturating_mul(step)).unwrap_or(i32::MAX);
                 self.failure = song
-                    .move_selection(ticks, *lanes)
+                    .move_selection(TickOffset::new(i64::from(ticks)), *lanes)
                     .err()
                     .as_ref()
                     .map(refused);

@@ -2,6 +2,7 @@ use super::{
     Action, HELP, NEW_SONG, OPEN, REDO, SAVE, SAVE_AS, SETTINGS, Song, Step, Tick, UNDO, Ui, Zoom,
     egui,
 };
+use charter_core::LaneOffset;
 
 /// The menu bar. `recent` is the songs opened before, the latest first.
 #[expect(clippy::too_many_lines, reason = "menus read left to right")]
@@ -100,13 +101,16 @@ pub(crate) fn menu_bar(
                         "Ctrl+Left",
                         Action::ShiftSelection {
                             snaps: 0,
-                            lanes: -1,
+                            lanes: LaneOffset::new(-1),
                         },
                     ),
                     (
                         "Move a lane right",
                         "Ctrl+Right",
-                        Action::ShiftSelection { snaps: 0, lanes: 1 },
+                        Action::ShiftSelection {
+                            snaps: 0,
+                            lanes: LaneOffset::new(1),
+                        },
                     ),
                     ("Mirror across the lanes", "Ctrl+M", Action::Mirror),
                     ("Snap to the grid", "G", Action::Quantize),

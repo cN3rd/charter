@@ -1,7 +1,7 @@
 //! What the keyboard asks the editor to do: shortcuts by what a key means, and lane keys by where
 //! they sit on the keyboard.
 
-use charter_core::{LaneIndex, Tick};
+use charter_core::{LaneIndex, LaneOffset, Tick};
 use egui::{Key, KeyboardShortcut, Modifiers};
 
 use charter_editor::Step;
@@ -265,14 +265,20 @@ fn command(key: Key, modifiers: Modifiers) -> Option<Action> {
             Key::M => Some(Action::Mirror),
             Key::ArrowLeft => Some(Action::ShiftSelection {
                 snaps: 0,
-                lanes: -1,
+                lanes: LaneOffset::new(-1),
             }),
-            Key::ArrowRight => Some(Action::ShiftSelection { snaps: 0, lanes: 1 }),
+            Key::ArrowRight => Some(Action::ShiftSelection {
+                snaps: 0,
+                lanes: LaneOffset::new(1),
+            }),
             Key::ArrowUp => Some(Action::ShiftSelection {
                 snaps: -1,
-                lanes: 0,
+                lanes: LaneOffset::new(0),
             }),
-            Key::ArrowDown => Some(Action::ShiftSelection { snaps: 1, lanes: 0 }),
+            Key::ArrowDown => Some(Action::ShiftSelection {
+                snaps: 1,
+                lanes: LaneOffset::new(0),
+            }),
             Key::Backslash => Some(Action::ToggleSongPanel),
             _ => None,
         };
@@ -305,6 +311,7 @@ fn command(key: Key, modifiers: Modifiers) -> Option<Action> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use charter_core::LaneOffset;
     use egui_kittest::Harness;
 
     const NONE: Modifiers = Modifiers::NONE;
@@ -425,26 +432,32 @@ mod tests {
                 cmd,
                 Action::ShiftSelection {
                     snaps: 0,
-                    lanes: -1,
+                    lanes: LaneOffset::new(-1),
                 },
             ),
             (
                 Key::ArrowRight,
                 cmd,
-                Action::ShiftSelection { snaps: 0, lanes: 1 },
+                Action::ShiftSelection {
+                    snaps: 0,
+                    lanes: LaneOffset::new(1),
+                },
             ),
             (
                 Key::ArrowUp,
                 cmd,
                 Action::ShiftSelection {
                     snaps: -1,
-                    lanes: 0,
+                    lanes: LaneOffset::new(0),
                 },
             ),
             (
                 Key::ArrowDown,
                 cmd,
-                Action::ShiftSelection { snaps: 1, lanes: 0 },
+                Action::ShiftSelection {
+                    snaps: 1,
+                    lanes: LaneOffset::new(0),
+                },
             ),
             (Key::Backslash, cmd, Action::ToggleSongPanel),
             (Key::Delete, NONE, Action::DeleteSelection),

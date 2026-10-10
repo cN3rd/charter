@@ -237,7 +237,7 @@ impl Song {
         if to <= start {
             return Err(Refusal::Crosses(old_next));
         }
-        let by = i64::from(to).saturating_sub(i64::from(old_next));
+        let by = old_next.offset_to(to).get();
         Ok(TempoShift::Stretch {
             timing,
             resolution,

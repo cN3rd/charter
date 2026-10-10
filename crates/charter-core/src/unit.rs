@@ -286,6 +286,23 @@ pub struct Ticks(NonZeroU32);
 #[serde(transparent)]
 pub struct Tick(i32);
 
+/// A signed distance in ticks, positive toward later ticks.
+///
+/// ```
+/// # use charter_core::{Tick, TickOffset};
+/// let by = Tick::new(-480).offset_to(Tick::new(480));
+/// assert_eq!(Tick::new(-480).checked_offset(by), Some(Tick::new(480)));
+/// ```
+///
+/// A lane offset cannot move a tick:
+///
+/// ```compile_fail
+/// # use charter_core::{LaneOffset, Tick};
+/// let _ = Tick::new(0).checked_offset(LaneOffset::new(1));
+/// ```
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TickOffset(i64);
+
 /// A lane, counting from 0.
 ///
 /// ```
@@ -304,6 +321,22 @@ pub struct Tick(i32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct LaneIndex(u16);
+
+/// A signed distance across lanes, positive toward the right.
+///
+/// ```
+/// # use charter_core::{LaneIndex, LaneOffset};
+/// assert_eq!(LaneIndex::new(2).checked_offset(LaneOffset::new(-1)), Some(LaneIndex::new(1)));
+/// ```
+///
+/// A tick offset cannot move a lane:
+///
+/// ```compile_fail
+/// # use charter_core::{LaneIndex, TickOffset};
+/// let _ = LaneIndex::new(2).checked_offset(TickOffset::new(-1));
+/// ```
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LaneOffset(i32);
 
 /// A number of lanes, never zero.
 ///
@@ -362,6 +395,29 @@ impl LaneIndex {
     #[must_use]
     pub const fn new(index: u16) -> Self {
         Self(index)
+    }
+
+    /// This lane moved by `by`, if the result is a lane index.
+    #[must_use]
+    pub fn checked_offset(self, by: LaneOffset) -> Option<Self> {
+        i32::from(self.0)
+            .checked_add(by.0)
+            .and_then(|lane| u16::try_from(lane).ok())
+            .map(Self)
+    }
+}
+
+impl LaneOffset {
+    /// Signed number of lanes to move.
+    #[must_use]
+    pub const fn new(lanes: i32) -> Self {
+        Self(lanes)
+    }
+
+    /// Signed number of lanes to move.
+    #[must_use]
+    pub const fn get(self) -> i32 {
+        self.0
     }
 }
 
@@ -439,6 +495,21 @@ impl Tick {
         self.0.checked_add_unsigned(span.0.get()).map(Self)
     }
 
+    /// Signed distance from this tick to `later`, negative when `later` is earlier.
+    #[must_use]
+    pub fn offset_to(self, later: Self) -> TickOffset {
+        TickOffset(i64::from(later.0).saturating_sub(i64::from(self.0)))
+    }
+
+    /// This tick moved by `by`, if the result is a tick.
+    #[must_use]
+    pub fn checked_offset(self, by: TickOffset) -> Option<Self> {
+        i64::from(self.0)
+            .checked_add(by.0)
+            .and_then(|tick| i32::try_from(tick).ok())
+            .map(Self)
+    }
+
     /// The first tick after this one on a grid of lines `step` apart from tick 0, or `None` past
     /// the last tick.
     #[must_use]
@@ -466,9 +537,23 @@ impl Tick {
     /// How far `later` lies after this tick, or `None` unless it is later.
     #[must_use]
     pub fn ticks_until(self, later: Self) -> Option<Ticks> {
-        u32::try_from(i64::from(later.0).saturating_sub(i64::from(self.0)))
+        u32::try_from(self.offset_to(later).get())
             .ok()
             .and_then(Ticks::new)
+    }
+}
+
+impl TickOffset {
+    /// Signed number of ticks to move.
+    #[must_use]
+    pub const fn new(ticks: i64) -> Self {
+        Self(ticks)
+    }
+
+    /// Signed number of ticks to move.
+    #[must_use]
+    pub const fn get(self) -> i64 {
+        self.0
     }
 }
 
@@ -906,6 +991,43 @@ mod tests {
             Tick::new(i32::MIN).ticks_until(Tick::new(i32::MAX)),
             Some(largest)
         );
+    }
+
+    #[test]
+    fn tick_offsets_reach_both_extremes_but_refuse_out_of_range_ticks() {
+        let first = Tick::new(i32::MIN);
+        let last = Tick::new(i32::MAX);
+        assert_eq!(first.offset_to(last).get(), 4_294_967_295);
+        assert_eq!(last.offset_to(first).get(), -4_294_967_295);
+        assert_eq!(
+            first.checked_offset(TickOffset::new(4_294_967_295)),
+            Some(last)
+        );
+        assert_eq!(
+            last.checked_offset(TickOffset::new(-4_294_967_295)),
+            Some(first)
+        );
+        assert_eq!(last.checked_offset(TickOffset::new(1)), None);
+        assert_eq!(first.checked_offset(TickOffset::new(-1)), None);
+        assert_eq!(last.checked_offset(TickOffset::new(i64::MAX)), None);
+        assert_eq!(first.checked_offset(TickOffset::new(i64::MIN)), None);
+        assert_eq!(
+            Tick::new(0).checked_offset(TickOffset::new(0)),
+            Some(Tick::new(0))
+        );
+    }
+
+    #[test]
+    fn lane_offsets_reach_both_extremes_but_refuse_out_of_range_lanes() {
+        let first = LaneIndex::new(0);
+        let last = LaneIndex::new(u16::MAX);
+        assert_eq!(first.checked_offset(LaneOffset::new(65_535)), Some(last));
+        assert_eq!(last.checked_offset(LaneOffset::new(-65_535)), Some(first));
+        assert_eq!(last.checked_offset(LaneOffset::new(1)), None);
+        assert_eq!(first.checked_offset(LaneOffset::new(-1)), None);
+        assert_eq!(last.checked_offset(LaneOffset::new(i32::MAX)), None);
+        assert_eq!(first.checked_offset(LaneOffset::new(i32::MIN)), None);
+        assert_eq!(first.checked_offset(LaneOffset::new(0)), Some(first));
     }
 
     #[test]

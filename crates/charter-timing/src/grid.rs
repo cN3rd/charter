@@ -89,10 +89,7 @@ impl Grid {
     #[must_use]
     pub fn nearest(self, timing: Valid<'_, Timing>, tick: Tick) -> Tick {
         self.around(timing, tick).map_or(tick, |(below, above)| {
-            let (from, to) = (
-                i64::from(tick).saturating_sub(i64::from(below)),
-                i64::from(above).saturating_sub(i64::from(tick)),
-            );
+            let (from, to) = (below.offset_to(tick).get(), tick.offset_to(above).get());
             if to < from { above } else { below }
         })
     }
