@@ -14,7 +14,7 @@ mod ident;
 mod json;
 /// Exact six-place decimals and their textual representation.
 mod number;
-/// Relative resource paths safe for chart audio and assets.
+/// Relative resource paths and plain file names.
 mod path;
 mod plugin;
 /// Converts audio-based tempo sections into anchored timing.
@@ -68,9 +68,9 @@ pub use number::Decimal;
 #[expect(
     clippy::pub_use,
     clippy::useless_attribute,
-    reason = "validated resource paths are part of the flat format API"
+    reason = "validated resource paths and file names are part of the flat format API"
 )]
-pub use path::ResourcePath;
+pub use path::{FileName, ResourcePath};
 #[expect(
     clippy::pub_use,
     clippy::useless_attribute,

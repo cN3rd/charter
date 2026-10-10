@@ -16,6 +16,8 @@ use std::io::Cursor;
 
 use plist::{Dictionary, Uid, Value};
 
+use charter_core::{FileName, InvalidValue};
+
 use crate::exchange::{Change, KEYS, Level, MAX_NOTES, Played, Report, Track, beats_at};
 use crate::{Difficulty, Lanes, Song};
 
@@ -197,7 +199,19 @@ impl Info {
 /// The `info.plist` a track folder holding `track`, of `song`, keeps beside it, as the game's own
 /// and custom tracks write theirs: its title and artist, levels, columns and themes, the files the
 /// folder holds, and how long `audio` says the audio lasts.
-pub(crate) fn info(song: &Song, track: &Track, audio: Option<std::time::Duration>) -> Vec<u8> {
+///
+/// # Errors
+///
+/// Returns why a theme cannot name a file in the fixed `Themes` folder.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the game's single info.plist holds all of these fixed fields"
+)]
+pub(crate) fn info(
+    song: &Song,
+    track: &Track,
+    audio: Option<std::time::Duration>,
+) -> Result<Vec<u8>, InvalidValue> {
     let number = |level: &Level| level.difficulty.index().saturating_add(1);
     let numbers: Vec<Value> = track
         .levels
@@ -237,22 +251,22 @@ pub(crate) fn info(song: &Song, track: &Track, audio: Option<std::time::Duration
         command.insert("kTTRDownloadableItemSourceURLKey".to_owned(), "null".into());
         Value::Dictionary(command)
     };
-    let mut commands: Vec<Value> = ["audio.m4a", "artwork.png", "taptrack.ttr2_track"]
-        .into_iter()
+    let mut commands: Vec<_> = ["audio.m4a", "artwork.png", "taptrack.ttr2_track"]
         .map(file)
-        .collect();
+        .into();
     let mut needed: Vec<&str> = themes.values().filter_map(Value::as_string).collect();
     needed.push(theme);
     needed.sort_unstable();
     needed.dedup();
-    commands.extend(needed.into_iter().map(|dependency| {
+    for dependency in needed {
         let mut command = Dictionary::new();
-        let path = format!("Themes/{dependency}.ttrTheme");
+        let theme_file = FileName::new(format!("{dependency}.ttrTheme"))?;
+        let path = format!("Themes/{theme_file}");
         command.insert("kTTRDownloadableItemDependencyKey".to_owned(), path.into());
         command.insert("kTTRDownloadableItemSourceURLKey".to_owned(), "null".into());
         command.insert("kTTRDownloadableItemVersionKey".to_owned(), 0_u64.into());
-        Value::Dictionary(command)
-    }));
+        commands.push(Value::Dictionary(command));
+    }
     let metadata = song.metadata();
     let mut info = Dictionary::new();
     if let Some(length) = audio {
@@ -292,12 +306,13 @@ pub(crate) fn info(song: &Song, track: &Track, audio: Option<std::time::Duration
     let mut bytes = Vec::new();
     #[expect(
         clippy::expect_used,
+        clippy::unwrap_in_result,
         reason = "a plist of strings, numbers and lists always writes into memory"
     )]
     Value::Dictionary(info)
         .to_writer_xml(&mut bytes)
         .expect("an info.plist writes into memory");
-    bytes
+    Ok(bytes)
 }
 
 /// The difficulty the game numbers `level`.

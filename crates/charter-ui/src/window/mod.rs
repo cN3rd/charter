@@ -14,8 +14,8 @@ use std::sync::Arc;
 use charter_audio::{Peaks, Spectrum};
 
 use charter_core::{
-    Kind, LaneIndex, LaneOffset, MarkerKey, ResolvedTime, RulesetPlugin, Tick, TickOffset,
-    TimeShift,
+    FileName, Kind, LaneIndex, LaneOffset, MarkerKey, ResolvedTime, RulesetPlugin, Tick,
+    TickOffset, TimeShift,
 };
 use egui::Ui;
 
@@ -181,7 +181,7 @@ pub enum Request {
         /// Formats a plugin reads songs from, with their extensions.
         formats: Vec<(String, Vec<String>)>,
         /// Files a format reads beside the song's, by name, such as `info.plist`.
-        companions: Vec<String>,
+        companions: Vec<FileName>,
     },
     /// Ask where to write the open song in one of `formats`, suggesting the name `name`, and pass
     /// the path to [`Window::export_song`].

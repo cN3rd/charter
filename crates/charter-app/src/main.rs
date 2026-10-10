@@ -238,6 +238,8 @@ fn picture(bytes: Vec<u8>) -> Option<Picture> {
 
 #[cfg(test)]
 mod tests {
+    use charter_core::FileName;
+
     use super::*;
     use crate::disk::Disk;
     use crate::disk::memory::Memory;
@@ -1124,7 +1126,10 @@ mod tests {
             vec![charter_core::SongFormat {
                 name: "track".to_owned(),
                 extensions: vec!["ttr2_track".to_owned()],
-                companions: vec!["info.plist".to_owned(), "missing.plist".to_owned()],
+                companions: vec![
+                    FileName::new("info.plist").unwrap(),
+                    FileName::new("missing.plist").unwrap(),
+                ],
             }]
         }
 
@@ -1132,7 +1137,7 @@ mod tests {
             &self,
             _: usize,
             bytes: &[u8],
-            companions: &std::collections::BTreeMap<String, Vec<u8>>,
+            companions: &std::collections::BTreeMap<FileName, Vec<u8>>,
         ) -> Result<charter_core::ImportedSong, Box<dyn std::error::Error + Send + Sync>> {
             let found: Vec<String> = companions
                 .iter()
@@ -1152,7 +1157,10 @@ mod tests {
         host.window = Window::new(&[&Companions]);
         host.read_import(
             Path::new(path),
-            &["info.plist".to_owned(), "missing.plist".to_owned()],
+            &[
+                FileName::new("info.plist").unwrap(),
+                FileName::new("missing.plist").unwrap(),
+            ],
         );
         assert_eq!(
             host.window.message(),
@@ -1167,7 +1175,7 @@ mod tests {
         let path = "/t/sudo.track/taptrack.ttr2_track";
         let mut host = host(Memory::with(&[(path, &ttr2_track())]));
         host.window = Window::new(PLUGINS);
-        host.read_import(Path::new(path), &["info.plist".to_owned()]);
+        host.read_import(Path::new(path), &[FileName::new("info.plist").unwrap()]);
         assert_eq!(host.window.message(), None);
         assert_eq!(host.window.title(), "charter");
     }

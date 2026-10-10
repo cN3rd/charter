@@ -6,6 +6,7 @@ use std::fmt::Debug;
 
 use crate::document::{Metadata, Object, Timing};
 use crate::json::ValidDocument;
+use crate::path::FileName;
 use crate::unit::LaneCount;
 
 /// A lane layout every chart of a new song gets, such as StepMania's `dance-single`.
@@ -151,7 +152,7 @@ pub struct SongFormat {
     pub extensions: Vec<String>,
     /// Files the format keeps beside the song's, by name, which an import is handed when they are
     /// there, such as a Tap Tap Revenge track's `info.plist`.
-    pub companions: Vec<String>,
+    pub companions: Vec<FileName>,
 }
 
 /// A song read from another program's format, with what the format held that it leaves out.
@@ -173,12 +174,12 @@ pub struct ExportedSong {
     pub bytes: Vec<u8>,
     /// The name the main file must have, such as `taptrack.ttr2_track`, in the folder the user
     /// chose its place in; none to keep the name the user gave it.
-    pub file_name: Option<String>,
+    pub file_name: Option<FileName>,
     /// Files made beside the main one, by name, such as an `info.plist`.
-    pub beside: BTreeMap<String, Vec<u8>>,
+    pub beside: BTreeMap<FileName, Vec<u8>>,
     /// The song's resources copied beside the main file, each under a name, such as its audio as
     /// `audio.m4a`.
-    pub copies: Vec<(String, SongResource)>,
+    pub copies: Vec<(FileName, SongResource)>,
     /// What the song held that the file leaves out, in words for the user.
     pub left_out: Vec<String>,
 }
@@ -295,9 +296,9 @@ pub trait RulesetPlugin: Debug {
         &self,
         format: usize,
         bytes: &[u8],
-        companions: &BTreeMap<String, Vec<u8>>,
+        companions: &BTreeMap<FileName, Vec<u8>>,
     ) -> Result<ImportedSong, Box<dyn Error + Send + Sync>> {
-        let _: (usize, &[u8], &BTreeMap<String, Vec<u8>>) = (format, bytes, companions);
+        let _: (usize, &[u8], &BTreeMap<FileName, Vec<u8>>) = (format, bytes, companions);
         Err(format!("{} imports no songs", self.id()).into())
     }
 

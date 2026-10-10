@@ -2,6 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
+use charter_core::FileName;
 use charter_ui::{Request, Saved, Window};
 
 use crate::disk::Disk;
@@ -429,7 +430,7 @@ impl<D: Disk> Host<D> {
 
     /// Hands the window the song at `path` to import with those of the `companions` beside it
     /// that can be read, or says why the song could not be.
-    pub(crate) fn read_import(&mut self, path: &Path, companions: &[String]) {
+    pub(crate) fn read_import(&mut self, path: &Path, companions: &[FileName]) {
         let bytes = match self.disk.read(path) {
             Ok(bytes) => bytes,
             Err(error) => return self.window.refuse(path, &error),
@@ -438,7 +439,12 @@ impl<D: Disk> Host<D> {
         // A companion missing or unreadable is one the format goes without.
         let found = companions
             .iter()
-            .filter_map(|name| Some((name.clone(), self.disk.read(&folder.join(name)).ok()?)))
+            .filter_map(|name| {
+                Some((
+                    name.clone(),
+                    self.disk.read(&folder.join(name.as_str())).ok()?,
+                ))
+            })
             .collect();
         self.window.import_song(path, &bytes, &found);
     }

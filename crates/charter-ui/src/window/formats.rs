@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use charter_core::{RulesetPlugin, SongFormat, SongResource};
+use charter_core::{FileName, RulesetPlugin, SongFormat, SongResource};
 use charter_editor::Song;
 
 use super::{Discard, Request, Window};
@@ -35,7 +35,7 @@ enum Pending {
         /// What it holds.
         bytes: Vec<u8>,
         /// Files beside it, by name.
-        companions: BTreeMap<String, Vec<u8>>,
+        companions: BTreeMap<FileName, Vec<u8>>,
     },
     /// The open song, to write to `path`.
     Export {
@@ -82,7 +82,7 @@ impl Window {
     /// Asks the host for a song in any format a plugin reads, with the files any of them reads
     /// beside it.
     pub(super) fn ask_import(&mut self) {
-        let mut companions: Vec<String> = Vec::new();
+        let mut companions: Vec<FileName> = Vec::new();
         let formats = self
             .song_formats()
             .map(|(_, _, format)| {
@@ -123,7 +123,7 @@ impl Window {
         &mut self,
         path: &Path,
         bytes: &[u8],
-        companions: &BTreeMap<String, Vec<u8>>,
+        companions: &BTreeMap<FileName, Vec<u8>>,
     ) {
         let extension = extension(path);
         let formats: Vec<Choice> = self
@@ -262,7 +262,7 @@ impl Window {
                         let path = exported
                             .file_name
                             .as_ref()
-                            .map_or(path, |main| folder.join(main));
+                            .map_or(path, |main| folder.join(main.as_str()));
                         let mut left_out = exported.left_out;
                         let (mut copies, mut encodes) = (Vec::new(), Vec::new());
                         for (copy, resource) in &exported.copies {
@@ -274,7 +274,7 @@ impl Window {
                                 left_out.push(format!("{copy}, as the song's file is not chosen"));
                                 continue;
                             };
-                            let to = folder.join(copy);
+                            let to = folder.join(copy.as_str());
                             if *resource == SongResource::AacAudio && !is_aac(&from) {
                                 encodes.push((from, to));
                             } else {
@@ -284,7 +284,7 @@ impl Window {
                         let beside = exported
                             .beside
                             .into_iter()
-                            .map(|(made, bytes)| (folder.join(made), bytes))
+                            .map(|(made, bytes)| (folder.join(made.as_str()), bytes))
                             .collect();
                         self.failure = Some(described(
                             &format!("Exported {name} to {}", path.display()),
@@ -348,7 +348,7 @@ mod tests {
 
     use egui_kittest::Harness;
 
-    use charter_core::{Metadata, NewChart, NewSong, ResourcePath, RulesetPlugin};
+    use charter_core::{FileName, Metadata, NewChart, NewSong, ResourcePath, RulesetPlugin};
 
     use crate::window::test_support::*;
     use crate::window::{Action, Note, Request, Window};
@@ -430,7 +430,7 @@ mod tests {
                 "Tap Tap Reloaded MIDI",
             ]
         );
-        assert_eq!(companions, &["info.plist"]);
+        assert_eq!(companions, &[FileName::new("info.plist").unwrap()]);
     }
 
     #[test]
@@ -587,6 +587,70 @@ mod tests {
                  MIDI file has no place for; the theme, which a MIDI file has no place for."
             )
         );
+    }
+
+    #[test]
+    fn a_plugin_cannot_export_a_file_outside_the_chosen_folder() {
+        #[derive(Debug)]
+        struct Escaping;
+
+        #[expect(
+            clippy::missing_trait_methods,
+            reason = "the test plugin uses the trait's defaults for unrelated methods"
+        )]
+        impl RulesetPlugin for Escaping {
+            fn id(&self) -> &'static str {
+                "ttr"
+            }
+
+            fn check(
+                &self,
+                _: &charter_core::ValidDocument,
+            ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+                Ok(())
+            }
+
+            fn song_formats(&self) -> Vec<charter_core::SongFormat> {
+                vec![charter_core::SongFormat {
+                    name: "track".to_owned(),
+                    extensions: vec!["ttr2_track".to_owned()],
+                    companions: Vec::new(),
+                }]
+            }
+
+            fn export_song(
+                &self,
+                _: usize,
+                _: &charter_core::ValidDocument,
+                _: Option<std::time::Duration>,
+            ) -> Result<charter_core::ExportedSong, Box<dyn std::error::Error + Send + Sync>>
+            {
+                Ok(charter_core::ExportedSong {
+                    bytes: Vec::new(),
+                    file_name: None,
+                    beside: BTreeMap::from([(FileName::new("../escape.txt")?, b"escape".to_vec())]),
+                    copies: Vec::new(),
+                    left_out: Vec::new(),
+                })
+            }
+        }
+
+        let mut app = Window::new(&[&Escaping]);
+        let song = ttr_song();
+        app.open(
+            std::path::Path::new("/songs/sudo.json"),
+            &song.to_json().unwrap(),
+        );
+        app.export_song(std::path::Path::new("/chosen/song.ttr2_track"));
+
+        let requests = app.take_requests();
+        assert!(
+            !requests
+                .iter()
+                .any(|request| matches!(request, Request::WriteExport { .. })),
+            "{requests:?}"
+        );
+        assert!(app.message().unwrap().contains("../escape.txt"));
     }
 
     #[test]

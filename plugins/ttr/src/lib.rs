@@ -23,11 +23,11 @@ use serde_json::Value;
 
 use charter_core::{
     Anchor, Bpm, Chart as CoreChart, Difficulties, DifficultyPreset, Document, ExportedSong,
-    Extensions, FORMAT_VERSION, ImportedSong, InvalidValue, Key, Kind, LaneCount, LaneIndex,
-    Layout, Location, Marker, Metadata, Name, Namespace, NewSong, NoteChange, Object, Origin,
-    Position, Ruleset, RulesetPlugin, SettingScope, Settings, Shape, SongFormat, SongResource,
-    Stream, TextSetting, Tick, Ticks, TicksPerBeat, TimeSignature, Timing, TimingEvent, TimingKind,
-    ValidDocument,
+    Extensions, FORMAT_VERSION, FileName, ImportedSong, InvalidValue, Key, Kind, LaneCount,
+    LaneIndex, Layout, Location, Marker, Metadata, Name, Namespace, NewSong, NoteChange, Object,
+    Origin, Position, Ruleset, RulesetPlugin, SettingScope, Settings, Shape, SongFormat,
+    SongResource, Stream, TextSetting, Tick, Ticks, TicksPerBeat, TimeSignature, Timing,
+    TimingEvent, TimingKind, ValidDocument,
 };
 
 /// The ruleset namespace.
@@ -734,10 +734,18 @@ impl SongFile {
             Self::Midi(_) => (&["mid", "midi"], &[]),
         };
         let owned = |names: &[&str]| names.iter().map(|&each| each.to_owned()).collect();
+        #[expect(
+            clippy::expect_used,
+            reason = "the only built-in companion is the fixed plain name info.plist"
+        )]
+        let companions = companions
+            .iter()
+            .map(|&companion| FileName::new(companion).expect("built-in companions are plain"))
+            .collect();
         SongFormat {
             name: name.to_owned(),
             extensions: owned(extensions),
-            companions: owned(companions),
+            companions,
         }
     }
 
@@ -870,7 +878,7 @@ impl RulesetPlugin for Plugin {
         &self,
         format: usize,
         bytes: &[u8],
-        companions: &BTreeMap<String, Vec<u8>>,
+        companions: &BTreeMap<FileName, Vec<u8>>,
     ) -> Result<ImportedSong, Box<dyn std::error::Error + Send + Sync>> {
         let file = SongFile::at(format)?;
         let mut report = exchange::Report::default();
@@ -903,7 +911,7 @@ impl RulesetPlugin for Plugin {
             report.add("the preview, which the game has no place for");
         }
         let exported = match file {
-            SongFile::Track(_) => track_folder(&parsed, &track, audio, &mut report),
+            SongFile::Track(_) => track_folder(&parsed, &track, audio, &mut report)?,
             SongFile::Midi(layout) => {
                 let themed = parsed.theme().is_some()
                     || parsed.charts().iter().any(|chart| chart.theme.is_some());
@@ -995,7 +1003,7 @@ fn track_folder(
     track: &exchange::Track,
     audio: Option<std::time::Duration>,
     report: &mut exchange::Report,
-) -> ExportedSong {
+) -> Result<ExportedSong, InvalidValue> {
     let metadata = song.metadata();
     let extension = |path: &str| {
         std::path::Path::new(path)
@@ -1004,11 +1012,11 @@ fn track_folder(
             .map(str::to_lowercase)
             .unwrap_or_default()
     };
-    let mut copies = vec![("audio.m4a".to_owned(), SongResource::AacAudio)];
+    let mut copies = vec![(FileName::new("audio.m4a")?, SongResource::AacAudio)];
     if let Some(artwork) = &metadata.artwork {
         if extension(artwork.as_str()) == "png" {
             for name in ["artwork.png", "artwork@2x.png"] {
-                copies.push((name.to_owned(), SongResource::Artwork));
+                copies.push((FileName::new(name)?, SongResource::Artwork));
             }
         } else {
             report.add("the artwork, which the game reads as a PNG");
@@ -1022,14 +1030,17 @@ fn track_folder(
     if tempo.into_iter().any(|change| change.meter != common) {
         report.add("the meter, which a .ttr2_track does not hold");
     }
-    let beside = BTreeMap::from([("info.plist".to_owned(), track::info(song, track, audio))]);
-    ExportedSong {
+    let beside = BTreeMap::from([(
+        FileName::new("info.plist")?,
+        track::info(song, track, audio)?,
+    )]);
+    Ok(ExportedSong {
         bytes: track::write(track),
-        file_name: Some("taptrack.ttr2_track".to_owned()),
+        file_name: Some(FileName::new("taptrack.ttr2_track")?),
         beside,
         copies,
         left_out: Vec::new(),
-    }
+    })
 }
 
 /// Every lane count a song can have.
@@ -2108,7 +2119,7 @@ mod tests {
         );
         for track in &formats[..3] {
             assert_eq!(track.extensions, ["ttr2_track"]);
-            assert_eq!(track.companions, ["info.plist"]);
+            assert_eq!(track.companions, [FileName::new("info.plist").unwrap()]);
         }
         for midi in &formats[3..] {
             assert_eq!(midi.extensions, ["mid", "midi"]);
@@ -2170,10 +2181,13 @@ mod tests {
             exported.left_out,
             ["how long the audio lasts, which info.plist holds, as the audio has not loaded"]
         );
-        assert_eq!(exported.file_name.as_deref(), Some("taptrack.ttr2_track"));
+        assert_eq!(
+            exported.file_name.as_ref().map(FileName::as_str),
+            Some("taptrack.ttr2_track")
+        );
         assert_eq!(
             exported.copies,
-            [("audio.m4a".to_owned(), SongResource::AacAudio)]
+            [(FileName::new("audio.m4a").unwrap(), SongResource::AacAudio)]
         );
         let companions = exported.beside.clone();
         let info =
@@ -2228,6 +2242,26 @@ mod tests {
             .map(|object| format!("{:?}", object.kind))
             .collect();
         assert!(kinds[0].contains("shake"), "{kinds:?}");
+    }
+
+    #[test]
+    fn a_theme_with_a_path_separator_cannot_be_exported_as_a_dependency() {
+        for in_chart in [false, true] {
+            let mut value = document(json!([]));
+            value["charts"][0]["settings"] = json!({ "difficulty": "easy" });
+            let settings = if in_chart {
+                &mut value["charts"][0]["settings"]
+            } else {
+                &mut value["settings"]
+            };
+            settings["theme"] = json!("../x");
+            let song = ValidDocument::from_json(&serde_json::to_vec(&value).unwrap()).unwrap();
+
+            let Err(why) = Plugin.export_song(TRACK, &song, None) else {
+                panic!("a path-like theme was exported");
+            };
+            assert!(why.to_string().contains("../x"), "{why}");
+        }
     }
 
     #[test]

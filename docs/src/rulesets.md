@@ -82,12 +82,13 @@ each a name and its extensions, and `import_song` and `export_song` convert byte
 game and back, each with a list of known conversion losses. The bytes are untrusted. Same-format
 fidelity and complete loss reports are requirements, not guarantees of every current adapter.
 A format may name `companions`, files it keeps beside the song's, which the host reads and the
-import is handed by name. An export may name its main
-file, make files beside it and have the song's audio and artwork copied in under names of its
-own, as a format that keeps a song as a folder does; the editor passes it how long the audio
-lasts, when the audio has loaded. Formats may share an
-extension, as one file read the ways different games play it, and the editor asks which game a
-file is for.
+import is handed by name. An export may name its main file, make files beside it and have the
+song's audio and artwork copied in under names of its own, as a format that keeps a song as a
+folder does; the editor passes it how long the audio lasts, when the audio has loaded. These
+names use `FileName` in `SongFormat::companions`, `ExportedSong::file_name`, `beside` and `copies`,
+and as keys handed to `import_song`. It refuses empty names, `.` or `..`, separators, NUL and `:`,
+so the host joins only one component onto the chosen folder. Formats may share an extension, as
+one file read the ways different games play it, and the editor asks which game a file is for.
 
 Tap Tap Revenge reads and writes the game's [`.ttr2_track`](research/formats/ttr2_track.md) and
 the Editor on Fire MIDI files MidiToTTR converts, both through one model of the game's files: each
@@ -111,7 +112,8 @@ and the export says so when it is not. The host does not create a named `.track`
 replace files under the fixed export names, so the user must choose a file inside a separate,
 empty track folder. Imported back with that `info.plist`, the supported game data returns,
 subject to conversion losses. A track's import takes the title, artist, genre and themes from
-its `info.plist` too, as the game shows them.
+its `info.plist` too, as the game shows them. A theme dependency uses the fixed `Themes/` folder;
+export refuses a theme whose `{theme}.ttrTheme` file name has a separator.
 
 A level becomes a chart of its difficulty with the columns `info.plist` gives it, three without
 one. Three lanes take keys 60, 62 and 64 as taps, or holds when held over 0.15 seconds, and 61, 63
