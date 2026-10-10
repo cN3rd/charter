@@ -4,14 +4,20 @@ use std::fmt;
 /// through a double.
 pub(crate) const MAX_MILLIONTHS: i64 = 999_999_999_999_999;
 
-/// The whole millionths `value` holds, if it has at most six places and fifteen significant
-/// digits.
-pub(crate) fn to_millionths(value: f64) -> Option<i64> {
-    let scaled = (value * 1e6).round_ties_even();
+/// The whole millionths nearest `value`, halves away from zero, if there are at most fifteen
+/// significant digits of them.
+pub(crate) fn nearest_millionths(value: f64) -> Option<i64> {
+    let scaled = (value * 1e6).round();
     if scaled.is_nan() || scaled.abs() > i64_to_f64(MAX_MILLIONTHS) {
         return None;
     }
-    let millionths = bounded_whole_to_i64(scaled);
+    Some(bounded_whole_to_i64(scaled))
+}
+
+/// The whole millionths `value` holds, if it has at most six places and fifteen significant
+/// digits.
+pub(crate) fn to_millionths(value: f64) -> Option<i64> {
+    let millionths = nearest_millionths(value)?;
     #[expect(clippy::float_cmp, reason = "exactness is the point")]
     (from_millionths(millionths) == value).then_some(millionths)
 }
@@ -70,6 +76,21 @@ macro_rules! decimal {
 
             fn try_from(value: f64) -> Result<Self, Self::Error> {
                 $crate::number::to_millionths(value)
+                    .filter(|&$m| $accepts)
+                    .map(Self)
+                    .ok_or_else(|| $crate::error::InvalidValue::new($expected, value))
+            }
+        }
+
+        impl $name {
+            /// The value of six places nearest `value`, halves away from zero: for a sum or a
+            /// product, which a double seldom leaves on six places exactly.
+            ///
+            /// # Errors
+            ///
+            /// Returns why that value is not one of these, as [`TryFrom`] does.
+            pub fn nearest(value: f64) -> Result<Self, $crate::error::InvalidValue> {
+                $crate::number::nearest_millionths(value)
                     .filter(|&$m| $accepts)
                     .map(Self)
                     .ok_or_else(|| $crate::error::InvalidValue::new($expected, value))
@@ -186,6 +207,26 @@ mod tests {
     fn a_decimal_reads_back_as_the_number_it_holds() {
         assert!((f64::from(crate::Bpm::try_from(150.5).unwrap()) - 150.5).abs() < f64::EPSILON);
         assert!((f64::from(decimal(-0.25).unwrap()) + 0.25).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn every_decimal_takes_the_value_of_six_places_nearest_a_sum() {
+        // 128.2 - 1.0 is 127.19999999999999 as a double.
+        assert_eq!(
+            crate::Bpm::nearest(128.2 - 1.0),
+            crate::Bpm::try_from(127.2)
+        );
+        assert_eq!(
+            crate::AudioTime::nearest(1.234_567_8),
+            crate::AudioTime::try_from(1.234_568)
+        );
+        assert_eq!(
+            crate::Origin::nearest(-0.000_000_4),
+            crate::Origin::try_from(0.0)
+        );
+        crate::Seconds::nearest(0.000_000_4).unwrap_err();
+        Decimal::nearest(1e9).unwrap_err();
+        Decimal::nearest(f64::NAN).unwrap_err();
     }
 
     #[test]

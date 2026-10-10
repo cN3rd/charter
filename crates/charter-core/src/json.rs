@@ -230,7 +230,7 @@ impl Valid<'_, Timing> {
     #[must_use]
     pub fn bpm_at(&self, tick: Tick) -> Option<Bpm> {
         let tempo = self.part.bpm_at(self.document.ticks_per_beat, tick)?;
-        Bpm::nearest(tempo)
+        Bpm::nearest(tempo).ok()
     }
 
     /// One tempo per anchor: each inner anchor's following segment, and the last anchor's tail.
@@ -418,7 +418,7 @@ impl V0Timing {
                 let seconds = self
                     .seconds_at(ticks_per_beat, event.tick)
                     .ok_or_else(|| format!("tick {} has no time", event.tick))?;
-                let seconds = Origin::try_from((seconds * 1e6).round() / 1e6)
+                let seconds = Origin::nearest(seconds)
                     .map_err(|why| format!("tick {}: {why}", event.tick))?;
                 anchors.push(Anchor {
                     tick: event.tick,

@@ -310,7 +310,7 @@ fn preview_rows(
                 return Ok(changed(metadata, |new| new.preview = None));
             }
             let new_start = crate::timing_panel::moment(typed)
-                .and_then(|at| charter_core::AudioTime::try_from((at * 1e6).round() / 1e6).ok())
+                .and_then(|at| charter_core::AudioTime::nearest(at).ok())
                 .ok_or_else(|| format!("{typed} is not a time in the audio, such as 00:45.000"))?;
             Ok(changed(metadata, |new| {
                 let length_seconds = new.preview.and_then(|preview| preview.length_seconds);

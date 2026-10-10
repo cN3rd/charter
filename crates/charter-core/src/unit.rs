@@ -29,13 +29,6 @@ decimal!(
 );
 
 impl Bpm {
-    /// The tempo nearest `value` that six places hold, as a derived tempo is shown and edited;
-    /// none for a value that is not a tempo at all.
-    #[must_use]
-    pub fn nearest(value: f64) -> Option<Self> {
-        Self::try_from((value * 1e6).round() / 1e6).ok()
-    }
-
     /// Seconds that `ticks` last at this tempo and `resolution`.
     pub(crate) fn seconds(self, ticks: Ticks, resolution: TicksPerBeat) -> f64 {
         f64::from(ticks.0.get()) * 60.0 / (from_millionths(self.0) * f64::from(resolution.0.get()))

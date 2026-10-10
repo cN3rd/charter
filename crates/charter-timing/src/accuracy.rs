@@ -297,7 +297,7 @@ pub fn fit(
         let span = TimedSpan::between(timing, last_tick, end_tick)?;
         let active_seconds = end_seconds - last_seconds - span.paused_seconds();
         let tempo = 60.0 * span.timed_beats(ticks_per_beat) / active_seconds;
-        Bpm::try_from((tempo * 1e6).round() / 1e6).ok()?
+        Bpm::nearest(tempo).ok()?
     } else {
         tail
     };

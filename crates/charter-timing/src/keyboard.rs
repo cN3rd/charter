@@ -350,7 +350,7 @@ pub(crate) fn act(
         }
         Intent::Tail(by) => {
             let tempo = f64::from(frame.tail) + by;
-            match Bpm::try_from((tempo * 1e6).round() / 1e6) {
+            match Bpm::nearest(tempo) {
                 Ok(bpm) => {
                     let merge = window.last_nudge.as_ref().is_some_and(|last| {
                         last.ticks.is_empty() && frame.now - last.at < NUDGE_MERGE

@@ -125,7 +125,7 @@ impl Song {
                 index,
                 charter_core::Anchor {
                     tick: at,
-                    seconds: charter_core::Origin::try_from((seconds * 1e6).round() / 1e6)
+                    seconds: charter_core::Origin::nearest(seconds)
                         .map_err(|_invalid_origin| Refusal::NotWhole)?,
                 },
             );
@@ -313,10 +313,8 @@ impl Song {
         let index = new.anchors.partition_point(|anchor| anchor.tick <= at);
         let change = charter_core::Anchor {
             tick: at,
-            seconds: charter_core::Origin::try_from(
-                (self.timing().time_at(at).seconds() * 1e6).round() / 1e6,
-            )
-            .map_err(|_invalid_origin| Refusal::NotWhole)?,
+            seconds: charter_core::Origin::nearest(self.timing().time_at(at).seconds())
+                .map_err(|_invalid_origin| Refusal::NotWhole)?,
         };
         new.anchors.insert(index, change);
         self.retime(own, new)
@@ -401,7 +399,7 @@ impl Song {
         let mut new = timing.clone();
         for anchor in &mut new.anchors {
             let seconds = charter_core::ResolvedTime::from(anchor.seconds).seconds() + delta;
-            anchor.seconds = charter_core::Origin::try_from((seconds * 1e6).round() / 1e6)
+            anchor.seconds = charter_core::Origin::nearest(seconds)
                 .map_err(|_invalid_origin| Refusal::NotWhole)?;
         }
         self.retime(own, new)

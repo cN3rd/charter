@@ -1402,8 +1402,7 @@ fn retime(song: &mut Song, action: &Action) -> Option<String> {
         Action::ResetTiming => song.replace_timing(fresh_timing()),
         Action::NudgeOffset(by) => {
             let moved = song.timing().time_at(charter_core::Tick::new(0)).seconds() + by;
-            let micros = (moved * 1e6).round() / 1e6;
-            match charter_core::Origin::try_from(micros) {
+            match charter_core::Origin::nearest(moved) {
                 Ok(offset) => song.set_offset(offset),
                 Err(_) => return Some(format!("{moved} s is not an offset")),
             }
@@ -1419,8 +1418,8 @@ fn nudge_bpm(song: &mut Song, by: f64) -> Option<String> {
     let (_, bpm) = song.bpm()?;
     let nudged = f64::from(bpm) + by;
     match charter_core::Bpm::nearest(nudged) {
-        Some(new_bpm) => song.set_bpm(new_bpm).err().as_ref().map(refused),
-        None => Some(format!("{nudged} is not a tempo")),
+        Ok(new_bpm) => song.set_bpm(new_bpm).err().as_ref().map(refused),
+        Err(_) => Some(format!("{nudged} is not a tempo")),
     }
 }
 

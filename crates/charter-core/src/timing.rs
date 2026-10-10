@@ -103,7 +103,7 @@ impl Timing {
             self.event_span_with_prior_warp(from, to)?,
         )?;
         let tempo = bpm_of(per_tick, ticks_per_beat);
-        Bpm::try_from((tempo * 1e6).round() / 1e6).ok()
+        Bpm::nearest(tempo).ok()
     }
 
     /// Seconds a timed tick takes between the anchors `previous` and `next`, exactly: their
@@ -658,7 +658,7 @@ mod tests {
                 }
                 seconds += pauses + slack;
             }
-            let Ok(at) = Origin::try_from((seconds * 1e6).round() / 1e6) else {
+            let Ok(at) = Origin::nearest(seconds) else {
                 continue;
             };
             timing.anchors.push(Anchor { tick, seconds: at });
