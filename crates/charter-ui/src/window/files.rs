@@ -1385,6 +1385,38 @@ mod tests {
         assert_eq!(folders, &[PathBuf::from("/backups").join(name)]);
     }
     #[test]
+    fn an_unsaved_songs_snapshots_stay_in_its_folder_whatever_its_title() {
+        for title in ["../../escaped/x", "/etc/passwd", "..", "Re: Zero?"] {
+            let mut harness = created();
+            harness
+                .state_mut()
+                .use_snapshot_folder(Path::new("/backups"));
+            at_time(&mut harness, 100.0);
+            let song = harness.state().song.as_ref().unwrap();
+            let mut metadata = song.document().document().metadata.clone();
+            metadata.title = title.to_owned();
+            harness
+                .state_mut()
+                .apply(Action::SetMetadata(Box::new(metadata)));
+            at_time(&mut harness, 101.0);
+            at_time(&mut harness, 500.0);
+            let taken = snapshots(&mut harness);
+            let [(name, folders)] = taken.as_slice() else {
+                panic!("one snapshot of {title:?}, got {taken:?}");
+            };
+            assert_eq!(folders, &[PathBuf::from("/backups").join(name)]);
+            let parts: Vec<_> = Path::new(name).components().collect();
+            assert!(
+                matches!(parts.as_slice(), [std::path::Component::Normal(_)]),
+                "{title:?} named {name:?}"
+            );
+            assert!(
+                !name.contains(['\\', ':', '*', '?', '"', '<', '>', '|']),
+                "{title:?} named {name:?}"
+            );
+        }
+    }
+    #[test]
     fn an_unavailable_snapshot_folder_does_not_consume_the_songs_revision() {
         let mut harness = four_taps_with(Settings {
             snapshots_in_folder: true,

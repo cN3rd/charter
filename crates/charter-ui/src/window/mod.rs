@@ -1021,9 +1021,30 @@ impl Window {
 /// The file name of `song`, read from `path`, or one made from its title when it has no file.
 fn file_name(path: Option<&Path>, song: &Song) -> String {
     path.and_then(Path::file_name).map_or_else(
-        || format!("{}.json", song.document().document().metadata.title),
+        || {
+            let title = &song.document().document().metadata.title;
+            format!("{}.json", file_stem(title))
+        },
         |name| name.to_string_lossy().into_owned(),
     )
+}
+
+/// `title` as the stem of a file name every system takes: a character a path or Windows gives a
+/// meaning to becomes `_`, and a title of nothing but dots and spaces becomes `untitled`.
+fn file_stem(title: &str) -> String {
+    // ponytail: names Windows reserves, such as `CON`, pass; a sanitising crate is the upgrade.
+    let stem: String = title
+        .chars()
+        .map(|c| {
+            let special = matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|');
+            if special || c.is_control() { '_' } else { c }
+        })
+        .collect();
+    if stem.trim_matches(['.', ' ']).is_empty() {
+        "untitled".to_owned()
+    } else {
+        stem
+    }
 }
 
 /// How many lanes of the open chart lane keys can edit: none when the song is read-only.
