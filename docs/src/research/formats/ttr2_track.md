@@ -14,7 +14,7 @@ sources:
 
 The chart of a Tap Tap Revenge track. It sits in a `.track` folder beside `info.plist`, which
 holds the title, levels, theme and column counts, and the song's `audio.m4a` and artwork.
-Charter writes both `artwork.png` and `artwork@2x.png` when the song has artwork.
+Charter writes both `artwork.png` and `artwork@2x.png` when the song has PNG or JPEG artwork.
 
 ## Shape
 
