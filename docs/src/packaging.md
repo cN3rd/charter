@@ -65,8 +65,8 @@ What keeps the build from depending on the machine:
   rustc writes into the binary, panic locations included. `-ffile-prefix-map` does the same for
   the C that `ring` and `zstd-sys` compile. The toolchain's own paths are remapped by rustc already.
 - `--locked` builds the crates `Cargo.lock` names and refuses to resolve others.
-- The `dist` profile's `codegen-units = 1` and fat LTO leave the code's order to the compiler alone,
-  and `strip` removes the debug information.
+- The `dist` profile's `codegen-units = 1` and thin LTO leave the code's order to the compiler
+  alone, and `strip` removes the debug information.
 - On Windows `/Brepro` keeps the link time out of the executable.
 - `packaging/pack.py` writes the archive itself, entries sorted, every file stamped with the
   commit's time, owners and permissions fixed, where `tar` and `zip` would record the machine's.

@@ -175,10 +175,12 @@ debug = "line-tables-only"
 overflow-checks = true
 
 # What `just dist` packages: a release build without its symbols.
+# ponytail: thin LTO, as fat LTO of burn's kernels ran past CI's two hours on Windows; fat is
+# the upgrade if the binary's speed or size ever needs the last few percent.
 [profile.dist]
 inherits = "release"
 strip = true
-lto = "fat"
+lto = "thin"
 codegen-units = 1
 
 # Optimize runtime-hot third-party dependencies that are noticeably slow in debug builds.

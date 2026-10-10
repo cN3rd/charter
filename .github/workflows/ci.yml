@@ -92,8 +92,7 @@ jobs:
     name: Package ${{ matrix.os }}
     if: github.event_name != 'pull_request'
     runs-on: ${{ matrix.runner }}
-    # On Windows a cold cache rebuilds burn's kernels for half an hour before fat LTO, itself
-    # longer than that.
+    # On Windows a cold cache spends half an hour on burn's kernels alone.
     timeout-minutes: 120
     strategy:
       matrix:

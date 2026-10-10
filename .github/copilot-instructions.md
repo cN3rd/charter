@@ -42,7 +42,7 @@ crates opt in with `[lints] workspace = true`.
 - Narrow a lint at the call site with **`#[expect(.., reason = "..")]`**, never `#[allow]`, and
   never by weakening the workspace table. (277 `expect`s, 0 `allow`s.)
 - Root `clippy.toml` lets test code unwrap, index, panic and `dbg!`.
-- `overflow-checks = true` in release. `dist` profile adds fat LTO and strips symbols.
+- `overflow-checks = true` in release. `dist` profile adds thin LTO and strips symbols.
 
 ### Tests
 
