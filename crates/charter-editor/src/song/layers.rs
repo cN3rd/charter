@@ -880,6 +880,19 @@ mod tests {
     }
 
     #[test]
+    fn undo_and_redo_keep_the_active_row_on_its_layer() {
+        let mut song = Song::new(document(json!([object(0, 0, "tap")])), EDITABLE);
+        song.add_layer().unwrap();
+        song.add_layer().unwrap();
+        song.set_active_layer(2);
+        song.delete_layer(0, LayerNotes::Delete).unwrap();
+        song.undo().unwrap();
+        assert_eq!(song.layers()[song.active_layer()].name, "Layer 0");
+        song.redo().unwrap();
+        assert_eq!(song.layers()[song.active_layer()].name, "Layer 0");
+    }
+
+    #[test]
     fn copying_into_a_layered_chart_explicitly_names_its_existing_implicit_notes() {
         let mut value =
             serde_json::to_value(document(json!([object(240, 1, "tap")])).document()).unwrap();

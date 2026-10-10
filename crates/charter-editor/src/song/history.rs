@@ -269,11 +269,13 @@ impl Song {
             return Ok(());
         };
         let layered = layered(&change.edit);
+        let active = self.active_names(&layered);
         self.document = self.edited(change.chart, &change.edit.inverse())?;
         let (chart, cursor) = (change.chart, change.cursor);
         self.history.finish_undo(last);
         self.return_to(chart, cursor);
         self.forget_solos(&layered);
+        self.follow_active(active);
         Ok(())
     }
 
@@ -289,11 +291,13 @@ impl Song {
             return Ok(());
         };
         let layered = layered(&change.edit);
+        let active = self.active_names(&layered);
         self.document = self.edited(change.chart, &change.edit)?;
         let (chart, cursor) = (change.chart, change.cursor);
         self.history.finish_redo();
         self.return_to(chart, cursor);
         self.forget_solos(&layered);
+        self.follow_active(active);
         Ok(())
     }
 
@@ -302,6 +306,38 @@ impl Song {
         for chart in charts {
             if let Some(state) = self.chart_state.get_mut(*chart) {
                 state.solo = None;
+            }
+        }
+    }
+
+    /// The name of the active layer of each of `charts` that has one.
+    fn active_names(&self, charts: &[usize]) -> Vec<(usize, LayerName)> {
+        charts
+            .iter()
+            .filter_map(|&chart| {
+                let row = self.chart_state.get(chart)?.active_layer.get();
+                let layer = self
+                    .document
+                    .document()
+                    .charts
+                    .get(chart)?
+                    .layers
+                    .get(row)?;
+                Some((chart, layer.name.clone()))
+            })
+            .collect()
+    }
+
+    /// Makes each chart's active row the layer `active` names for it again, wherever an undo or
+    /// redo moved it, unless it took that layer away.
+    fn follow_active(&mut self, active: Vec<(usize, LayerName)>) {
+        for (chart, name) in active {
+            let charts = &self.document.document().charts;
+            let row = charts
+                .get(chart)
+                .and_then(|layered| layered.layers.iter().position(|layer| layer.name == name));
+            if let (Some(row), Some(state)) = (row, self.chart_state.get_mut(chart)) {
+                state.active_layer = LayerIndex::new(row);
             }
         }
     }
