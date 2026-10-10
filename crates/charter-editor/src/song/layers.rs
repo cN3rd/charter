@@ -349,6 +349,8 @@ impl Song {
     /// # Errors
     /// Refuses the only row, a missing row, read-only song or plugin rejection.
     pub fn delete_layer(&mut self, index: usize, notes: LayerNotes) -> Result<(), Refusal> {
+        // Read before the row goes, which would clamp the last row onto the one above it.
+        let active = self.active_layer();
         self.edit_layers(|layers, objects| {
             if layers.len() <= 1 {
                 return Err(Refusal::LastLayer);
@@ -380,7 +382,6 @@ impl Song {
             layers.remove(index);
             Ok(())
         })?;
-        let active = self.active_layer();
         self.set_active_layer(if active > index {
             active.saturating_sub(1)
         } else {
@@ -866,6 +867,16 @@ mod tests {
         song.solo_layer(0).unwrap();
         let views: Vec<_> = song.layers().iter().map(|layer| layer.view).collect();
         assert_eq!(views, [LayerView::Shown, LayerView::Shown]);
+    }
+
+    #[test]
+    fn deleting_a_layer_above_the_active_last_one_keeps_it_active() {
+        let mut song = Song::new(document(json!([object(0, 0, "tap")])), EDITABLE);
+        song.add_layer().unwrap();
+        song.add_layer().unwrap();
+        song.set_active_layer(2);
+        song.delete_layer(0, LayerNotes::Delete).unwrap();
+        assert_eq!(song.layers()[song.active_layer()].name, "Layer 0");
     }
 
     #[test]
