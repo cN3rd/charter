@@ -373,7 +373,11 @@ pub(crate) fn write(track: &Track, layout: Layout, report: &mut Report) -> Vec<u
         (at, TrackEventKind::Midi { channel, message })
     });
     let named = |name: &'static [u8]| (0, TrackEventKind::Meta(MetaMessage::TrackName(name)));
-    let title = track.title.as_bytes();
+    let title = meta_text(&track.title, META_TEXT);
+    if title.len() < track.title.len() {
+        report.add("the title past its first 256 MiB, which a MIDI track name cannot hold");
+    }
+    let title = title.as_bytes();
     let tracks = [
         std::iter::once((0, TrackEventKind::Meta(MetaMessage::TrackName(title))))
             .chain(timing)
@@ -388,11 +392,21 @@ pub(crate) fn write(track: &Track, layout: Layout, report: &mut Report) -> Vec<u
     let mut bytes = Vec::new();
     #[expect(
         clippy::expect_used,
-        reason = "a MIDI file of valid events always writes into memory"
+        reason = "a MIDI file of valid events, its text cut to what a meta event holds, always \
+                  writes into memory"
     )]
     smf.write_std(&mut bytes)
         .expect("a MIDI file writes into memory");
     bytes
+}
+
+/// Most bytes of text a meta event holds, the largest length its variable-length count writes.
+const META_TEXT: usize = 0x0FFF_FFFF;
+
+/// `text` cut to at most `most` bytes, on a character.
+fn meta_text(text: &str, most: usize) -> &str {
+    text.get(..text.floor_char_boundary(most))
+        .unwrap_or_default()
 }
 
 /// Each note of `track`'s three-lane levels switched on and off, as its tick, whether it switches
@@ -495,6 +509,13 @@ mod tests {
             bpm,
             meter: meter(4),
         }
+    }
+
+    #[test]
+    fn text_past_what_a_meta_event_holds_is_cut_on_a_character() {
+        assert_eq!(meta_text("a\u{f1}b", 2), "a");
+        assert_eq!(meta_text("a\u{f1}b", 3), "a\u{f1}");
+        assert_eq!(meta_text("a\u{f1}b", 99), "a\u{f1}b");
     }
 
     #[test]
