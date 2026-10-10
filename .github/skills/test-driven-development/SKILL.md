@@ -5,6 +5,8 @@ description: Use when implementing any feature or bugfix, before writing impleme
 
 # Test-Driven Development (TDD)
 
+Read [PITFALLS.md](PITFALLS.md) first: charter's local rules for this skill and the mistakes it has caused here. Where it and the text below disagree, PITFALLS.md wins.
+
 ## Overview
 
 Write the test first. Watch it fail. Write minimal code to pass.

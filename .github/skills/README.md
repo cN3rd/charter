@@ -28,10 +28,9 @@ OKF skill. Refresh it by copying `skills/test-driven-development/` from upstream
 updating the commit above.
 
 Red-green-refactor with a verified red step. Invoke with `/test-driven-development` before
-writing any production code. Its examples are TypeScript; in Rust a test calling a function that
-does not exist yet is a compile error, which the skill counts as an error rather than a failure.
-Add the signature with a stub that returns a wrong value, so `cargo test` shows the assertion
-failing, then implement.
+writing any production code. Its examples are TypeScript; its `PITFALLS.md`, which a line atop
+`SKILL.md` links, holds the Rust form of the red step and the mistakes it has caused here. After a
+refresh, put that line back.
 
 ## commit
 
