@@ -606,6 +606,21 @@ mod tests {
     }
 
     #[test]
+    fn m4a_audio_chosen_as_artwork_is_read_for_its_cover() {
+        let mut host = host(Memory::with(&[("/m/track.m4a", b"not tagged")]));
+        host.window = Window::new(PLUGINS);
+        host.window.open(Path::new("/s/Song/Song.json"), &sm_song());
+        host.choose_artwork(Path::new("/m/track.m4a"));
+        assert!(
+            host.window
+                .message()
+                .is_some_and(|message| message.contains("has no cover in its tags")),
+            "{:?}",
+            host.window.message()
+        );
+    }
+
+    #[test]
     fn saving_writes_the_cover_new_audio_holds_into_the_song_folder() {
         let mut host = host(Memory::with(&[("/m/track.flac", b"audio")]));
         host.window = Window::new(PLUGINS);

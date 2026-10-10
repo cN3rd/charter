@@ -1243,6 +1243,16 @@ mod tests {
             Some(PathBuf::from("/music/track.ogg"))
         );
     }
+
+    #[test]
+    fn aac_and_mp4_audio_can_be_dropped_on_a_new_song() {
+        for path in ["/music/track.aac", "/music/track.m4a", "/music/track.mp4"] {
+            let mut harness = created();
+            drop_file(&mut harness, path);
+            assert_eq!(harness.state().audio_file(), Some(PathBuf::from(path)));
+        }
+    }
+
     #[test]
     fn audio_whose_name_cannot_be_a_song_path_is_refused() {
         let mut harness = created();

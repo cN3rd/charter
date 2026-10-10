@@ -32,7 +32,7 @@ use crate::settings::{self, Settings};
 use crate::{import, keys, latency, minimap, panels, recovery, style, timing_panel};
 
 /// The extensions of the audio files a song can play.
-const AUDIO: [&str; 4] = ["ogg", "mp3", "wav", "flac"];
+const AUDIO: [&str; 7] = ["ogg", "mp3", "wav", "flac", "aac", "m4a", "mp4"];
 
 /// Which model finds a song's timing from its audio.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

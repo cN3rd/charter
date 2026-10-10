@@ -30,11 +30,13 @@ pub(crate) struct Host<D: Disk> {
 }
 
 /// The audio files charter plays.
-const AUDIO: [&str; 4] = ["ogg", "mp3", "wav", "flac"];
+const AUDIO: [&str; 7] = ["ogg", "mp3", "wav", "flac", "aac", "m4a", "mp4"];
 /// The pictures a song's artwork can be.
 const PICTURES: [&str; 3] = ["png", "jpg", "jpeg"];
 /// What can be chosen as a song's artwork: a picture, or audio whose tags hold a cover.
-const ARTWORK: [&str; 7] = ["png", "jpg", "jpeg", "ogg", "mp3", "wav", "flac"];
+const ARTWORK: [&str; 10] = [
+    "png", "jpg", "jpeg", "ogg", "mp3", "wav", "flac", "aac", "m4a", "mp4",
+];
 
 #[expect(
     clippy::missing_trait_methods,

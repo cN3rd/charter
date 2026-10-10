@@ -64,6 +64,8 @@ Help, to try things on.
 - the charts and their names, or for Tap Tap Revenge the levels, with presets for the usual sets;
 - the audio, dropped on the dialog or chosen with its button. It can also come later.
 
+Audio in AAC, M4A or MP4 files can be chosen or dropped alongside Ogg, MP3, WAV and FLAC.
+
 The song starts at 120 BPM in 4/4 with no notes. Next comes its [timing](timing.md), then the
 notes.
 
