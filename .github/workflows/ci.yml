@@ -33,9 +33,7 @@ jobs:
       - run: just fmt-check
       - run: just docs
       - run: just docs-check
-      # ponytail: off while the repository is private;
-      # drop `false &&` here and on the book job to publish again.
-      - if: false && github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/upload-pages-artifact@v5
         with:
           path: docs/book
@@ -136,8 +134,7 @@ jobs:
   book:
     name: Publish the book
     needs: format-and-book
-    # ponytail: off while the repository is private; see the upload step above.
-    if: false && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       pages: write

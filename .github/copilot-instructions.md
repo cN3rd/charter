@@ -113,4 +113,4 @@ fetched by `just setup`), `/test-driven-development` before writing production c
 split work into atomic commits. `.github/lsp.json` registers rust-analyzer for code intelligence.
 
 CI (`.github/workflows/ci.yml`) runs the `just ci` pieces, Kani, and packages both platforms on
-push, publishing a `ci-<run>` prerelease. Pages publishing is gated off while the repo is private.
+push, publishing a `ci-<run>` prerelease and the book to GitHub Pages.

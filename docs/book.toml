@@ -3,7 +3,7 @@ title = "Charter Docs"
 authors = ["cN3rd"]
 language = "en"
 
-# Reserved GitHub Pages path; publication is currently disabled in CI.
+# The GitHub Pages path CI publishes the book under on every push to main.
 [output.html]
 site-url = "/charter/"
 git-repository-url = "https://github.com/cN3rd/charter"
