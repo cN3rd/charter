@@ -106,9 +106,11 @@ so each format is offered once for each game:
 A track export writes `taptrack.ttr2_track` directly in the selected file's parent folder, ignoring
 its selected filename, and an `info.plist` beside it with the title, artist, genre, levels, their
 columns and themes and how long the audio lasts. The audio goes in as `audio.m4a`, with AAC or
-MP3 audio in an MP4 container, and PNG artwork as `artwork.png` and `artwork@2x.png`. AAC already
-in MP4 is copied. Other AAC and MP3 sources are remuxed with ffmpeg without re-encoding; other
-codecs are encoded with ffmpeg's built-in AAC encoder at 320 kbps (`-c:a aac -b:a 320k`).
+MP3 audio in an MP4 container. AAC already in MP4 is copied. Other AAC and MP3 sources are
+remuxed with ffmpeg without re-encoding; other codecs are encoded with ffmpeg's built-in AAC
+encoder at 320 kbps (`-c:a aac -b:a 320k`). PNG or JPEG artwork becomes `artwork.png` on an
+80x80 transparent canvas and `artwork@2x.png` on a 160x160 canvas. The picture fits inside
+each square, centred with padding rather than cropped.
 Charter probes the source codec rather than trusting its extension. ffmpeg runs from the path
 chosen under Settings > Sounds or from the `PATH`. If conversion needs ffmpeg and neither runs,
 the export says so; Settings offers installation help, including verified downloads on Windows
@@ -126,8 +128,9 @@ lane and tick a note of the same kind already takes are dropped, as are levels o
 and keys a level has no place for, and tempo changes after the last note. Export writes a kind the
 chosen game plays as another, such as a slice in a Tap Tap Revenge track, as that one. It leaves
 out, saying so, charts of no level, shakes and the like in four or five lanes, markers, the
-preview and artwork that is not PNG. In MIDI it also leaves out the artist, genre, artwork and
-themes and levels of four or five lanes, which this adapter's MIDI layout does not represent.
+preview and artwork that is neither PNG nor JPEG. In MIDI it also leaves out the artist, genre,
+artwork and themes and levels of four or five lanes, which this adapter's MIDI layout does not
+represent.
 
 Layers are merged, and their names, colours, visibility and locks are dropped without a loss
 entry. This reporting gap is described in [the layers design](layers.md#in-the-file); a game

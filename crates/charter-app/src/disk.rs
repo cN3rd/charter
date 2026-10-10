@@ -2,6 +2,7 @@
 //! against files held in memory.
 
 use std::io;
+use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 
 use charter_audio::AudioCodec;
@@ -299,6 +300,37 @@ pub(crate) fn m4a_over(
     }
 }
 
+/// Fits the source picture within a transparent square and writes it as a PNG.
+///
+/// # Errors
+///
+/// The picture cannot be read or decoded, or the PNG cannot be written; the destination is as
+/// it was.
+pub(crate) fn square_artwork_over(
+    disk: &impl Disk,
+    transfer: Transfer<'_>,
+    side: NonZeroU32,
+) -> io::Result<()> {
+    let source = disk.read(transfer.from)?;
+    let side = side.get();
+    let fitted = image::load_from_memory(&source)
+        .map_err(io::Error::other)?
+        .resize(side, side, image::imageops::FilterType::Lanczos3)
+        .to_rgba8();
+    let mut canvas = image::RgbaImage::new(side, side);
+    let x = i64::from(side.saturating_sub(fitted.width()).div_euclid(2));
+    let y = i64::from(side.saturating_sub(fitted.height()).div_euclid(2));
+    image::imageops::overlay(&mut canvas, &fitted, x, y);
+    let mut output = io::Cursor::new(Vec::new());
+    canvas
+        .write_to(&mut output, image::ImageFormat::Png)
+        .map_err(io::Error::other)?;
+    if let Some(folder) = transfer.to.parent() {
+        disk.make_folder(folder)?;
+    }
+    write_whole(disk, transfer.to, &output.into_inner())
+}
+
 /// Converts the source to M4A through a partial file, then replaces the destination.
 ///
 /// # Errors
@@ -493,8 +525,87 @@ pub(crate) mod memory {
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroU32;
+
     use super::memory::Memory;
     use super::*;
+
+    /// A solid red picture encoded without using the filesystem.
+    fn picture_bytes(width: u32, height: u32, format: image::ImageFormat) -> Vec<u8> {
+        let image = image::RgbImage::from_pixel(width, height, image::Rgb([255, 0, 0]));
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        image.write_to(&mut bytes, format).unwrap();
+        bytes.into_inner()
+    }
+
+    /// Exports an in-memory picture as a square PNG and decodes it for pixel assertions.
+    fn square(width: u32, height: u32, format: image::ImageFormat, side: u32) -> image::RgbaImage {
+        let source = picture_bytes(width, height, format);
+        let disk = Memory::with(&[("/songs/cover.jpg", &source)]);
+        square_artwork_over(
+            &disk,
+            Transfer {
+                from: Path::new("/songs/cover.jpg"),
+                to: Path::new("/out/artwork.png"),
+            },
+            NonZeroU32::new(side).unwrap(),
+        )
+        .unwrap();
+        let saved = disk.get("/out/artwork.png").unwrap();
+        assert!(saved.starts_with(b"\x89PNG\r\n\x1a\n"));
+        image::load_from_memory(&saved).unwrap().to_rgba8()
+    }
+
+    #[test]
+    fn wide_png_fits_an_80_pixel_square_with_transparent_top_and_bottom() {
+        let canvas = square(400, 100, image::ImageFormat::Png, 80);
+        assert_eq!(canvas.dimensions(), (80, 80));
+        assert_eq!(canvas.get_pixel(40, 29).0, [0, 0, 0, 0]);
+        assert_eq!(canvas.get_pixel(40, 79).0, [0, 0, 0, 0]);
+        assert_eq!(canvas.get_pixel(40, 40).0, [255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn tall_jpeg_fits_a_160_pixel_square_with_transparent_sides() {
+        let canvas = square(100, 400, image::ImageFormat::Jpeg, 160);
+        assert_eq!(canvas.dimensions(), (160, 160));
+        assert_eq!(canvas.get_pixel(59, 80).0, [0, 0, 0, 0]);
+        assert_eq!(canvas.get_pixel(159, 80).0, [0, 0, 0, 0]);
+        let centre = canvas.get_pixel(80, 80).0;
+        assert!(centre[0] > 240 && centre[3] == 255, "{centre:?}");
+    }
+
+    #[test]
+    fn square_picture_fills_either_canvas_without_padding() {
+        for side in [80, 160] {
+            let canvas = square(40, 40, image::ImageFormat::Png, side);
+            assert_eq!(canvas.dimensions(), (side, side));
+            assert_eq!(canvas.get_pixel(0, 0).0, [255, 0, 0, 255]);
+            assert_eq!(canvas.get_pixel(side - 1, side - 1).0, [255, 0, 0, 255]);
+        }
+    }
+
+    #[test]
+    fn unreadable_artwork_does_not_replace_an_existing_export() {
+        let disk = Memory::with(&[
+            ("/songs/cover.jpg", b"not a picture"),
+            ("/out/artwork.png", b"old artwork"),
+        ]);
+        let result = square_artwork_over(
+            &disk,
+            Transfer {
+                from: Path::new("/songs/cover.jpg"),
+                to: Path::new("/out/artwork.png"),
+            },
+            NonZeroU32::new(80).unwrap(),
+        );
+        assert!(result.is_err());
+        assert_eq!(
+            disk.get("/out/artwork.png").as_deref(),
+            Some(&b"old artwork"[..])
+        );
+        assert_eq!(disk.get("/out/artwork.png.partial"), None);
+    }
 
     #[test]
     fn a_whole_write_replaces_the_file_and_leaves_nothing_beside_it() {

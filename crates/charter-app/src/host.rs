@@ -290,6 +290,9 @@ impl<D: Disk> Host<D> {
                 let result = match resource {
                     SongResource::Audio | SongResource::Artwork => disk::copy_over(disk, transfer),
                     SongResource::M4aAudio => disk::m4a_over(disk, ffmpeg, transfer),
+                    SongResource::SquareArtwork { side } => {
+                        disk::square_artwork_over(disk, transfer, *side)
+                    }
                 };
                 (to.as_path(), result)
             }));

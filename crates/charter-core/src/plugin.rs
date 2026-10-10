@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt::Debug;
+use std::num::NonZeroU32;
 
 use crate::document::{Metadata, Object, Timing};
 use crate::json::ValidDocument;
@@ -193,8 +194,14 @@ pub enum SongResource {
     /// The song's audio in an MP4 container with an M4A name: AAC and MP3 streams are kept
     /// without re-encoding; other codecs are encoded as AAC at 320 kbps.
     M4aAudio,
-    /// The song's artwork.
+    /// The song's artwork, copied byte-for-byte.
     Artwork,
+    /// The song's PNG or JPEG artwork, fitted inside a transparent square PNG of this side
+    /// length, without cropping.
+    SquareArtwork {
+        /// Width and height of the PNG canvas in pixels.
+        side: NonZeroU32,
+    },
 }
 
 /// A game's rules over the documents that name it as their ruleset, past the format's own.

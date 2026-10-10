@@ -273,7 +273,9 @@ impl Window {
                         for (copy, resource) in &exported.copies {
                             let from = match resource {
                                 SongResource::Audio | SongResource::M4aAudio => self.audio_file(),
-                                SongResource::Artwork => self.artwork_file(),
+                                SongResource::Artwork | SongResource::SquareArtwork { .. } => {
+                                    self.artwork_file()
+                                }
                             };
                             let Some(from) = from else {
                                 left_out.push(format!("{copy}, as the song's file is not chosen"));
@@ -338,6 +340,7 @@ fn described(done: &str, left_out: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::num::NonZeroU32;
     use std::path::PathBuf;
 
     use egui_kittest::Harness;
@@ -670,7 +673,7 @@ mod tests {
     fn a_track_is_written_as_the_game_s_folder_with_its_info_audio_and_artwork() {
         let mut song = ttr_song().document().clone();
         song.metadata.audio = ResourcePath::new("song.mp3").unwrap();
-        song.metadata.artwork = Some(ResourcePath::new("cover.png").unwrap());
+        song.metadata.artwork = Some(ResourcePath::new("cover.jpg").unwrap());
         song.metadata.preview = Some(charter_core::Preview {
             start_seconds: charter_core::AudioTime::try_from(30.0).unwrap(),
             length_seconds: None,
@@ -711,14 +714,18 @@ mod tests {
                     SongResource::M4aAudio
                 ),
                 (
-                    PathBuf::from("/songs/cover.png"),
+                    PathBuf::from("/songs/cover.jpg"),
                     folder.join("artwork.png"),
-                    SongResource::Artwork
+                    SongResource::SquareArtwork {
+                        side: NonZeroU32::new(80).unwrap()
+                    }
                 ),
                 (
-                    PathBuf::from("/songs/cover.png"),
+                    PathBuf::from("/songs/cover.jpg"),
                     folder.join("artwork@2x.png"),
-                    SongResource::Artwork
+                    SongResource::SquareArtwork {
+                        side: NonZeroU32::new(160).unwrap()
+                    }
                 ),
             ]
         );

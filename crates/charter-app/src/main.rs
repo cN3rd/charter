@@ -1307,6 +1307,44 @@ mod tests {
     }
 
     #[test]
+    fn a_track_export_writes_both_square_pngs_from_jpeg_artwork() {
+        let image = image::RgbImage::from_pixel(320, 80, image::Rgb([255, 0, 0]));
+        let mut encoded = std::io::Cursor::new(Vec::new());
+        image
+            .write_to(&mut encoded, image::ImageFormat::Jpeg)
+            .unwrap();
+        let mut host = host(Memory::with(&[("/songs/cover.jpg", &encoded.into_inner())]));
+        let folder = PathBuf::from("/out/track");
+        host.handle_requests(vec![Request::WriteExport {
+            path: folder.join("taptrack.ttr2_track"),
+            bytes: b"bplist00".to_vec(),
+            beside: Vec::new(),
+            resources: [("artwork.png", 80), ("artwork@2x.png", 160)]
+                .into_iter()
+                .map(|(name, side)| {
+                    (
+                        PathBuf::from("/songs/cover.jpg"),
+                        folder.join(name),
+                        SongResource::SquareArtwork {
+                            side: NonZeroU32::new(side).unwrap(),
+                        },
+                    )
+                })
+                .collect(),
+        }]);
+        for (name, side) in [("artwork.png", 80), ("artwork@2x.png", 160)] {
+            let png = host.disk.read(&folder.join(name)).unwrap();
+            assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
+            let canvas = image::load_from_memory(&png).unwrap().to_rgba8();
+            assert_eq!(canvas.dimensions(), (side, side));
+            let centre = side.div_euclid(2);
+            assert_eq!(canvas.get_pixel(centre, 0).0, [0, 0, 0, 0]);
+            assert_eq!(canvas.get_pixel(centre, centre).0[3], 255);
+        }
+        assert_eq!(host.window.message(), None);
+    }
+
+    #[test]
     fn audio_that_cannot_be_encoded_is_reported_and_leaves_no_partial_file() {
         let mut host = host(Memory::with(&[("/songs/song.ogg", b"vorbis")]));
         host.handle_requests(vec![Request::WriteExport {

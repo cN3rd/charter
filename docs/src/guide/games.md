@@ -60,7 +60,8 @@ an empty folder such as `Anthem.track`, enter it in the save dialog and choose
   (`-c:a aac -b:a 320k`). Charter probes the source codec, not its filename. Choose ffmpeg under
   Settings > Sounds or use one on the `PATH`. Without it when conversion is needed, the rest
   still exports, and a message says the audio was not written. Settings has installation help;
-- `artwork.png` and `artwork@2x.png`, when the artwork is a PNG.
+- `artwork.png` at 80x80 and `artwork@2x.png` at 160x160, from PNG or JPEG artwork. The picture
+  is scaled to fit and centred on a transparent square, without cropping. Both files are PNG.
 
 The selected filename is ignored for a track: choosing `Anthem.ttr2_track` still writes
 `taptrack.ttr2_track` beside it, without creating an `Anthem.track` folder. Existing files under

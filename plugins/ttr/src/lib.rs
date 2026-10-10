@@ -18,6 +18,7 @@ mod midi;
 mod track;
 
 use std::collections::BTreeMap;
+use std::num::NonZeroU32;
 
 use serde_json::Value;
 
@@ -996,7 +997,7 @@ impl RulesetPlugin for Plugin {
 }
 
 /// `track`, of `song`, as the folder the game keeps a track in: `taptrack.ttr2_track`, its
-/// `info.plist`, and the song's audio and artwork copied in as the game names them, when the game
+/// `info.plist`, and the song's audio and artwork written as the game names them, when the game
 /// can play them; what it cannot is said in `report`.
 fn track_folder(
     song: &Song,
@@ -1014,12 +1015,23 @@ fn track_folder(
     };
     let mut copies = vec![(FileName::new("audio.m4a")?, SongResource::M4aAudio)];
     if let Some(artwork) = &metadata.artwork {
-        if extension(artwork.as_str()) == "png" {
-            for name in ["artwork.png", "artwork@2x.png"] {
-                copies.push((FileName::new(name)?, SongResource::Artwork));
+        if matches!(extension(artwork.as_str()).as_str(), "png" | "jpg" | "jpeg") {
+            #[expect(
+                clippy::expect_used,
+                reason = "the game's fixed 80 and 160 pixel artwork sides cannot be zero"
+            )]
+            let artwork_sizes = [
+                ("artwork.png", NonZeroU32::new(80).expect("80 is not zero")),
+                (
+                    "artwork@2x.png",
+                    NonZeroU32::new(160).expect("160 is not zero"),
+                ),
+            ];
+            for (name, side) in artwork_sizes {
+                copies.push((FileName::new(name)?, SongResource::SquareArtwork { side }));
             }
         } else {
-            report.add("the artwork, which the game reads as a PNG");
+            report.add("the artwork, which must be a PNG or JPEG");
         }
     }
     if audio.is_none() {
@@ -1304,6 +1316,7 @@ fn to_tap(object: &Object, lanes: LaneCount) -> Option<Object> {
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroU32;
     use std::time::Duration;
 
     use super::*;
@@ -2242,6 +2255,66 @@ mod tests {
             .map(|object| format!("{:?}", object.kind))
             .collect();
         assert!(kinds[0].contains("shake"), "{kinds:?}");
+    }
+
+    #[test]
+    fn a_jpeg_picture_is_exported_instead_of_reported_as_lost() {
+        for extension in ["jpg", "jpeg"] {
+            let mut value = document(json!([]));
+            value["metadata"]["artwork"] = json!(format!("cover.{extension}"));
+            value["charts"][0]["settings"] = json!({ "difficulty": "easy" });
+            let song = ValidDocument::from_json(&serde_json::to_vec(&value).unwrap()).unwrap();
+            let export = Plugin.export_song(TRACK, &song, None).unwrap();
+            assert_eq!(
+                export.left_out,
+                ["how long the audio lasts, which info.plist holds, as the audio has not loaded"]
+            );
+            assert_eq!(export.copies.len(), 3);
+        }
+    }
+
+    #[test]
+    fn a_track_requests_two_sizes_of_square_png_artwork() {
+        let mut value = document(json!([]));
+        value["metadata"]["artwork"] = json!("cover.png");
+        value["charts"][0]["settings"] = json!({ "difficulty": "easy" });
+        let song = ValidDocument::from_json(&serde_json::to_vec(&value).unwrap()).unwrap();
+        let export = Plugin.export_song(TRACK, &song, None).unwrap();
+        assert_eq!(
+            export.copies,
+            [
+                (FileName::new("audio.m4a").unwrap(), SongResource::M4aAudio),
+                (
+                    FileName::new("artwork.png").unwrap(),
+                    SongResource::SquareArtwork {
+                        side: NonZeroU32::new(80).unwrap()
+                    }
+                ),
+                (
+                    FileName::new("artwork@2x.png").unwrap(),
+                    SongResource::SquareArtwork {
+                        side: NonZeroU32::new(160).unwrap()
+                    }
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn artwork_other_than_png_or_jpeg_is_reported_as_left_out() {
+        let mut value = document(json!([]));
+        value["metadata"]["artwork"] = json!("cover.gif");
+        value["charts"][0]["settings"] = json!({ "difficulty": "easy" });
+        let song = ValidDocument::from_json(&serde_json::to_vec(&value).unwrap()).unwrap();
+        let export = Plugin.export_song(TRACK, &song, None).unwrap();
+        assert_eq!(
+            export.left_out,
+            [
+                "how long the audio lasts, which info.plist holds, as the audio has not loaded",
+                "the artwork, which must be a PNG or JPEG",
+            ]
+        );
+        assert_eq!(export.copies.len(), 1);
     }
 
     #[test]
