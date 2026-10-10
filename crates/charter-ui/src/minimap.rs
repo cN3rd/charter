@@ -2,7 +2,7 @@
 //! and its sections across, with a box over the stretch the notefield shows. A click or a drag on
 //! it moves the cursor there.
 
-use charter_core::{Kind, MarkerKind, Position};
+use charter_core::{Kind, MarkerKind, Position, ResolvedTime};
 use charter_editor::Song;
 use egui::{Rect, Sense, Stroke, StrokeKind, Ui};
 
@@ -129,16 +129,16 @@ pub(crate) fn show(
     );
     if response.is_pointer_button_down_on()
         && let Some(at) = response.interact_pointer_pos()
+        && let Some(hovered) = ResolvedTime::from_seconds(map.seconds_at(at.y))
     {
-        let hovered_seconds = map.seconds_at(at.y);
         let step = song
             .document()
             .document()
             .ticks_per_beat
             .note_length(song.snap());
         let tick = step.map_or_else(
-            || timing.latest_tick_by(hovered_seconds),
-            |step| nearest_line(timing, hovered_seconds, step),
+            || timing.latest_tick_by(hovered),
+            |step| nearest_line(timing, hovered, step),
         );
         if tick != song.cursor() {
             actions.push(Action::JumpTo(tick));

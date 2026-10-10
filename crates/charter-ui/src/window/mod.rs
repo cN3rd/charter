@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use charter_audio::{Peaks, Spectrum};
 
-use charter_core::{Kind, LaneIndex, RulesetPlugin, Tick};
+use charter_core::{Kind, LaneIndex, ResolvedTime, RulesetPlugin, Tick, TimeShift};
 use egui::Ui;
 
 use charter_editor::{KeepNotes, NoteAt, Refusal, Selecting, Song, Step, Toggled, demo};
@@ -1086,7 +1086,14 @@ fn placing_at(song: &Song, input_latency: Option<f64>) -> Tick {
     match step {
         Some(step) if let Some(input_latency) = input_latency => {
             let timing = song.timing();
-            let now = timing.time_at(song.cursor()).seconds() - input_latency;
+            let Some(delay) = TimeShift::from_seconds(input_latency) else {
+                return song.cursor();
+            };
+            #[expect(
+                clippy::arithmetic_side_effects,
+                reason = "input latency moves a floating audio moment"
+            )]
+            let now = timing.time_at(song.cursor()) - delay;
             notefield::nearest_line(timing, now, step)
         }
         _ => song.cursor(),
@@ -1104,7 +1111,7 @@ fn grow(
     song: &mut Song,
     holding: &[(LaneIndex, Tick)],
     pressed: &[(LaneIndex, f64)],
-    now: f64,
+    now: ResolvedTime,
 ) -> Option<String> {
     let step = song
         .document()
@@ -1112,10 +1119,16 @@ fn grow(
         .ticks_per_beat
         .note_length(song.snap())?;
     let to = notefield::nearest_line(song.timing(), now, step);
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "signed float audio distances determine when a held note grows"
+    )]
     let long = |lane: LaneIndex| {
-        pressed
-            .iter()
-            .any(|&(held, since)| held == lane && now - since >= HOLD_AFTER)
+        pressed.iter().any(|&(held, since)| {
+            held == lane
+                && ResolvedTime::from_seconds(since)
+                    .is_some_and(|since| (now - since).seconds() >= HOLD_AFTER)
+        })
     };
     let refusals: Vec<_> = holding
         .iter()
@@ -1283,6 +1296,9 @@ fn clicks(
 ) -> Vec<(f64, charter_audio::Tone)> {
     use charter_audio::Tone;
     use charter_timing::grid::Line;
+    let Some(start_time) = ResolvedTime::from_seconds(from) else {
+        return Vec::new();
+    };
     let timing = song.timing();
     let mut clicks = Vec::new();
     let tick = settings.note_ticks.then(|| settings.tick_sound.tick());
@@ -1310,7 +1326,7 @@ fn clicks(
             charter_timing::grid::Grid::default()
         };
         let resolution = timing.ticks_per_beat();
-        let first = timing.latest_tick_by(from);
+        let first = timing.latest_tick_by(start_time);
         'measures: for measure in timing.measures_from(first) {
             for (line_tick, line) in grid.lines(&measure, resolution) {
                 let at = timing.time_at(line_tick).seconds();

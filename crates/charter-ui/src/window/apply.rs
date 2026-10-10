@@ -5,6 +5,7 @@ use super::{
     Song, Step, Tick, Toggled, Window, grow, nudge_bpm, pattern, placing_at, refused, retime,
     stretch,
 };
+use charter_core::TimeShift;
 
 impl Window {
     /// Applies actions that affect the window state rather than the open song.
@@ -269,7 +270,12 @@ impl Window {
             Action::LaneUp(lane) => {
                 if self.playback.playing.is_some() {
                     // Where the key came up is where the hold ends.
-                    let now = song.timing().time_at(song.cursor()).seconds() - input_latency;
+                    #[expect(
+                        clippy::arithmetic_side_effects,
+                        reason = "input latency moves a floating audio moment"
+                    )]
+                    let now = TimeShift::from_seconds(input_latency)
+                        .map(|latency| song.timing().time_at(song.cursor()) - latency);
                     let held: Vec<_> = self
                         .typing
                         .holding
@@ -277,7 +283,8 @@ impl Window {
                         .copied()
                         .filter(|(held, _)| held == lane)
                         .collect();
-                    self.failure = grow(song, &held, &self.typing.pressed, now)
+                    self.failure = now
+                        .and_then(|now| grow(song, &held, &self.typing.pressed, now))
                         .or_else(|| self.failure.take());
                 }
                 self.typing.holding.retain(|(held, _)| held != lane);

@@ -2,6 +2,7 @@
 
 use crate::keyboard::nudge_notches;
 use crate::rows::{GRAB, Ghost, Reach, Row};
+use charter_core::ResolvedTime;
 
 use super::{Command, Edit, FINE, Frame, Pos2, Tick, TimingWindow, accuracy, lead, rows};
 
@@ -115,7 +116,8 @@ pub(crate) fn ghost(
 
 /// Where the moment `seconds` lies across `row`, if it shows there.
 pub(crate) fn seconds_x(frame: &Frame<'_>, row: &Row, seconds: f64) -> Option<f32> {
-    let tick = frame.timing.latest_tick_by(seconds);
+    let moment = ResolvedTime::from_seconds(seconds)?;
+    let tick = frame.timing.latest_tick_by(moment);
     row.holds(&frame.bars, tick).then(|| {
         let at = frame.timing.time_at(tick).seconds();
         let next = frame

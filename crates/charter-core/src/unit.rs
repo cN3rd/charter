@@ -74,8 +74,23 @@ decimal!(
     Origin, "a time of at most six places", |_m| true
 );
 
-/// An audio time in seconds, resolved from a timing map rather than stored, so a float.
-/// Negative before the audio starts.
+/// An audio time in seconds, resolved from a timing map rather than stored, so a float, and a
+/// finite one. Negative before the audio starts. Two moments are a [`TimeShift`] apart:
+///
+/// ```
+/// # use charter_core::{ResolvedTime, TimeShift};
+/// let beat = ResolvedTime::from_seconds(1.5).unwrap();
+/// let later = beat + TimeShift::from_seconds(0.25).unwrap();
+/// assert_eq!(later - beat, TimeShift::from_seconds(0.25).unwrap());
+/// ```
+///
+/// Two moments do not add up to one:
+///
+/// ```compile_fail
+/// # use charter_core::{ResolvedTime, TimeShift};
+/// let beat = ResolvedTime::from_seconds(1.5).unwrap();
+/// let later = beat + ResolvedTime::from_seconds(0.25).unwrap();
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
 pub struct ResolvedTime(f64);
 
@@ -85,10 +100,72 @@ impl ResolvedTime {
         Self(seconds)
     }
 
+    /// The audio time `seconds` from the start of the audio file, if that is a number.
+    #[must_use]
+    pub fn from_seconds(seconds: f64) -> Option<Self> {
+        seconds.is_finite().then_some(Self(seconds))
+    }
+
     /// Seconds from the start of the audio file, for an audio API or a display.
     #[must_use]
     pub const fn seconds(self) -> f64 {
         self.0
+    }
+}
+
+/// How far one audio time is from another, in seconds, later when positive.
+///
+/// ```
+/// # use charter_core::{ResolvedTime, TimeShift};
+/// let nudge = TimeShift::from_seconds(-0.001).unwrap();
+/// let _ = ResolvedTime::from_seconds(2.0).unwrap() + nudge;
+/// ```
+///
+/// A moment is not a shift:
+///
+/// ```compile_fail
+/// # use charter_core::{ResolvedTime, TimeShift};
+/// let nudge = ResolvedTime::from_seconds(-0.001).unwrap();
+/// let _ = ResolvedTime::from_seconds(2.0).unwrap() + nudge;
+/// ```
+#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
+pub struct TimeShift(f64);
+
+impl TimeShift {
+    /// A shift of `seconds`, if that is a number.
+    #[must_use]
+    pub fn from_seconds(seconds: f64) -> Option<Self> {
+        seconds.is_finite().then_some(Self(seconds))
+    }
+
+    /// The shift in seconds, later when positive.
+    #[must_use]
+    pub const fn seconds(self) -> f64 {
+        self.0
+    }
+}
+
+impl std::ops::Sub for ResolvedTime {
+    type Output = TimeShift;
+
+    fn sub(self, rhs: Self) -> TimeShift {
+        TimeShift(self.0 - rhs.0)
+    }
+}
+
+impl std::ops::Add<TimeShift> for ResolvedTime {
+    type Output = Self;
+
+    fn add(self, rhs: TimeShift) -> Self {
+        Self(self.0 + rhs.0)
+    }
+}
+
+impl std::ops::Sub<TimeShift> for ResolvedTime {
+    type Output = Self;
+
+    fn sub(self, rhs: TimeShift) -> Self {
+        Self(self.0 - rhs.0)
     }
 }
 
@@ -721,6 +798,20 @@ mod tests {
             ResolvedTime::from(AudioTime::try_from(1.25).unwrap())
         );
         assert!(origin < later);
+    }
+
+    #[test]
+    fn moments_and_shifts_only_accept_finite_seconds() {
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert_eq!(ResolvedTime::from_seconds(bad), None);
+            assert_eq!(TimeShift::from_seconds(bad), None);
+        }
+        let first = ResolvedTime::from_seconds(-0.25).unwrap();
+        let second = ResolvedTime::from_seconds(0.5).unwrap();
+        let shift = TimeShift::from_seconds(0.75).unwrap();
+        assert_eq!(second - first, shift);
+        assert_eq!(first + shift, second);
+        assert_eq!(second - shift, first);
     }
 
     #[test]

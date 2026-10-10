@@ -1,8 +1,9 @@
 use super::draw::reaching;
 use super::{
-    Action, Chart, Field, Flip, LaneIndex, Note, NoteAt, Object, Pos2, Position, Rangef, Selecting,
-    Song, Tick, Ticks, Timing, Ui, Valid, View, egui, nearest_line,
+    Action, Chart, Field, Flip, LaneIndex, Note, NoteAt, Object, Pos2, Position, Rangef,
+    ResolvedTime, Selecting, Song, Tick, Ticks, Timing, Ui, Valid, View, egui, nearest_line,
 };
+use charter_core::TimeShift;
 
 /// A drag across the notefield in progress.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -21,8 +22,8 @@ pub(crate) enum Gesture {
         how: Selecting,
         /// Screen x of the fixed corner.
         x: f32,
-        /// Audio seconds at the fixed corner.
-        seconds: f64,
+        /// Audio time at the fixed corner.
+        seconds: ResolvedTime,
     },
     /// The timing point being dragged to another line.
     MoveTiming {
@@ -36,16 +37,16 @@ pub(crate) enum Gesture {
     },
     /// The cursor's handle, dragged from `y` on screen while the cursor was at `seconds`.
     Scrub {
-        /// Cursor's audio time when the drag began, in seconds.
-        seconds: f64,
+        /// Cursor's audio time when the drag began.
+        seconds: ResolvedTime,
         /// Screen height at the start of the drag, in points.
         y: f32,
     },
     /// The chart, grabbed with the middle button from `y` on screen while the cursor was at
     /// `seconds`, and dragged along as a page is.
     Pan {
-        /// Cursor's audio time when the drag began, in seconds.
-        seconds: f64,
+        /// Cursor's audio time when the drag began.
+        seconds: ResolvedTime,
         /// Screen height where the chart was grabbed, in points.
         y: f32,
     },
@@ -198,14 +199,20 @@ pub(super) fn panned(
     field: &Field,
     timing: Valid<'_, Timing>,
     step: Option<Ticks>,
-    (seconds, y): (f64, f32),
+    (seconds, y): (ResolvedTime, f32),
     pos: Pos2,
-) -> Tick {
-    let earlier = f64::from((pos.y - y) / field.view.zoom.points_per_second());
-    match step {
-        Some(step) => nearest_line(timing, seconds - earlier, step),
-        None => timing.latest_tick_by(seconds - earlier),
-    }
+) -> Option<Tick> {
+    let earlier =
+        TimeShift::from_seconds(f64::from((pos.y - y) / field.view.zoom.points_per_second()))?;
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "a finite pointer movement shifts the audio position"
+    )]
+    let at = seconds - earlier;
+    Some(match step {
+        Some(step) => nearest_line(timing, at, step),
+        None => timing.latest_tick_by(at),
+    })
 }
 
 /// What clicks and drags over the notefield ask for. With Ctrl they place notes, a tap or under
@@ -297,20 +304,20 @@ pub(super) fn pointer(
     }
     if response.dragged()
         && let (Some(Gesture::Pan { seconds, y }), Some(pos)) = (*gesture, latest)
+        && let Some(to) = panned(field, timing, step, (seconds, y), pos)
     {
-        actions.push(Action::JumpTo(panned(
-            field,
-            timing,
-            step,
-            (seconds, y),
-            pos,
-        )));
+        actions.push(Action::JumpTo(to));
     }
     if response.dragged()
         && let (Some(Gesture::Scrub { seconds, y }), Some(pos)) = (*gesture, latest)
         && let Some(step) = step
+        && let Some(later) =
+            TimeShift::from_seconds(f64::from((pos.y - y) / field.view.zoom.points_per_second()))
     {
-        let later = f64::from((pos.y - y) / field.view.zoom.points_per_second());
+        #[expect(
+            clippy::arithmetic_side_effects,
+            reason = "a finite pointer movement shifts the audio position"
+        )]
         let to = nearest_line(timing, seconds + later, step);
         actions.push(Action::JumpTo(to));
     }
@@ -422,9 +429,10 @@ pub(super) fn let_go(
         Gesture::Hold { lane, from } => line(pos).map(|to| Action::Stretch { lane, from, to }),
         // A tempo point is a moment of the audio, so it goes where it is dropped; a point of
         // meters and stops alone is a beat, so it goes to the line there.
-        Gesture::MoveTiming { from } if anchored(timing, from) => {
-            Some(Action::MovePointTo(from, field.view.seconds_at(pos.y)))
-        }
+        Gesture::MoveTiming { from } if anchored(timing, from) => Some(Action::MovePointTo(
+            from,
+            field.view.seconds_at(pos.y).seconds(),
+        )),
         Gesture::MoveTiming { from } => line(pos).map(|to| Action::MoveTiming { from, to }),
         Gesture::MoveMarker { index } => line(pos).map(|to| Action::MoveMarker { index, to }),
         Gesture::Marquee { how, x, seconds } => {

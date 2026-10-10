@@ -1,8 +1,8 @@
 //! Playback and audio-rate state changes.
 
 use super::{
-    AudioStatus, Finding, Loaded, Mode, NO_AUDIO, Path, PlayedAudio, Rate, Request, Sounds, Step,
-    Tick, Ui, Window, clicks, grow, latency,
+    AudioStatus, Finding, Loaded, Mode, NO_AUDIO, Path, PlayedAudio, Rate, Request, ResolvedTime,
+    Sounds, Step, Tick, TimeShift, Ui, Window, clicks, grow, latency,
 };
 
 impl Window {
@@ -23,25 +23,42 @@ impl Window {
     }
     /// Moves the cursor to the audio position the host says is playing.
     pub fn playhead(&mut self, seconds: f64) {
+        let Some(seconds) = ResolvedTime::from_seconds(seconds) else {
+            return;
+        };
         let Some(mode) = self.playback.playing else {
             return;
         };
         if let Mode::Snippet { until, .. } = mode {
-            if seconds >= until {
+            if seconds.seconds() >= until {
                 self.playback.playing = None;
                 self.requests.push(Request::Pause);
             }
             return;
         }
         // What plays now is heard a moment later: the cursor shows what is heard.
-        let seconds = seconds
-            - self
-                .settings
+        let Some(latency) = TimeShift::from_seconds(
+            self.settings
                 .audio_latency_ms
-                .seconds_at(self.playback.rate.factor());
-        let tapped = seconds - self.input_latency();
+                .seconds_at(self.playback.rate.factor()),
+        ) else {
+            return;
+        };
+        #[expect(
+            clippy::arithmetic_side_effects,
+            reason = "audio latency moves a floating audio moment"
+        )]
+        let heard = seconds - latency;
+        let Some(input_latency) = TimeShift::from_seconds(self.input_latency()) else {
+            return;
+        };
+        #[expect(
+            clippy::arithmetic_side_effects,
+            reason = "input latency moves a floating audio moment"
+        )]
+        let tapped = heard - input_latency;
         if let Some(song) = &mut self.song {
-            let tick = song.timing().latest_tick_by(seconds);
+            let tick = song.timing().latest_tick_by(heard);
             song.jump_to(tick);
             if let Some(why) = grow(song, &self.typing.holding, &self.typing.pressed, tapped) {
                 self.failure = Some(why);
@@ -452,6 +469,18 @@ mod tests {
         assert_eq!(harness.state_mut().take_requests(), []);
     }
     #[test]
+    fn a_non_finite_playhead_does_not_move_the_cursor() {
+        let mut harness = playable();
+        space(&mut harness);
+        harness.state_mut().take_requests();
+        let before = harness.state().song.as_ref().unwrap().cursor();
+        for seconds in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            harness.state_mut().playhead(seconds);
+            assert_eq!(harness.state().song.as_ref().unwrap().cursor(), before);
+            assert_eq!(harness.state_mut().take_requests(), []);
+        }
+    }
+    #[test]
     fn a_lane_key_while_playing_places_the_input_latency_before_the_cursor() {
         let mut harness = playable_with(Settings {
             input_latency_ms: crate::settings::LatencyMs(250.0),
@@ -601,6 +630,20 @@ mod tests {
         assert!(
             matches!(request(&mut harness), Request::Play { from: again, .. } if (again - 2.0).abs() < 1e-9)
         );
+    }
+    #[test]
+    fn a_non_finite_playhead_does_not_end_a_snippet() {
+        let mut harness = playable();
+        harness.key_press(egui::Key::PageDown);
+        harness.run();
+        harness.state_mut().take_requests();
+        harness.key_press(egui::Key::W);
+        harness.run();
+        harness.state_mut().take_requests();
+        harness.state_mut().playhead(f64::INFINITY);
+        assert_eq!(harness.state_mut().take_requests(), []);
+        harness.state_mut().playhead(2.2);
+        assert_eq!(request(&mut harness), Request::Pause);
     }
     #[test]
     fn the_snippet_plays_as_long_as_the_settings_say() {

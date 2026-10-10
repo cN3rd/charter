@@ -135,7 +135,10 @@ pub(super) fn frequencies(
     let strip = columns.wave.shrink(2.0);
     let pixels = view.zoom.points_per_second() * ctx.pixels_per_point();
     let level = level_for(pixels);
-    let (top, bottom) = (view.seconds_at(rows.min), view.seconds_at(rows.max));
+    let (top, bottom) = (
+        view.seconds_at(rows.min).seconds(),
+        view.seconds_at(rows.max).seconds(),
+    );
     let (from, to) = (top.min(bottom), top.max(bottom));
     let seconds = crate::cast::usize_f64(TILE) * f64::from(1_u32 << level) / Spectrum::PER_SECOND;
     let (first, last) = (

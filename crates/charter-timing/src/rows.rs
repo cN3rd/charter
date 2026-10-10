@@ -2,7 +2,7 @@
 //! little of the previous row shown as lead-in, and everything drawn over a row.
 
 use charter_audio::{Onset, Peaks};
-use charter_core::{Measure, Tick, Timing, Valid};
+use charter_core::{Measure, ResolvedTime, Tick, Timing, Valid};
 use charter_style as style;
 use egui::{Align2, Color32, FontId, Pos2, Rect, Shape, Stroke, pos2, vec2};
 
@@ -281,7 +281,10 @@ pub(crate) struct Span {
 /// The tick, maybe between ticks, at `seconds` into the audio: the earliest of a paused stretch.
 #[must_use]
 pub(crate) fn tick_at_seconds(timing: Valid<'_, Timing>, seconds: f64) -> f64 {
-    let tick = timing.latest_tick_by(seconds);
+    let Some(moment) = ResolvedTime::from_seconds(seconds) else {
+        return seconds;
+    };
+    let tick = timing.latest_tick_by(moment);
     let after = Tick::new(i32::try_from(i64::from(tick).saturating_add(1)).unwrap_or(i32::MAX));
     let (at, next) = (
         timing.time_at(tick).seconds(),

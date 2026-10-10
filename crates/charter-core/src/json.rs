@@ -10,7 +10,9 @@ use crate::document::{
 };
 use crate::error::Error;
 use crate::grid::{GridPosition, Measures};
-use crate::unit::{Bpm, Origin, ResolvedTime, Seconds, Tick, Ticks, TicksPerBeat, TimeSignature};
+use crate::unit::{
+    Bpm, Origin, ResolvedTime, Seconds, Tick, Ticks, TicksPerBeat, TimeShift, TimeSignature,
+};
 use crate::validate::validate;
 
 /// Largest document a reader accepts.
@@ -195,14 +197,14 @@ impl Valid<'_, Timing> {
             .expect("a valid timing map resolves every tick")
     }
 
-    /// The tempo a segment beginning at `from` needs for `to` to fall `seconds` later, to six
-    /// places, as when syncing a beat to the audio. Stops, delays and warps keep their lengths.
-    /// `None` when `to` is not after `from`, or the pauses in between already take `seconds` or
+    /// The tempo a segment beginning at `from` needs for `to` to fall `later` after it in the
+    /// audio, to six places, as when syncing a beat. Stops, delays and warps keep their lengths.
+    /// `None` when `to` is not after `from`, or the pauses in between already take `later` or
     /// longer.
     #[must_use]
-    pub fn tempo_for(&self, from: Tick, to: Tick, seconds: f64) -> Option<Bpm> {
+    pub fn tempo_for(&self, from: Tick, to: Tick, later: TimeShift) -> Option<Bpm> {
         self.part
-            .tempo_for(self.document.ticks_per_beat, from, to, seconds)
+            .tempo_for(self.document.ticks_per_beat, from, to, later.seconds())
     }
 
     /// The tempo that governs `tick`, with anchored segments derived from their end points.
@@ -255,20 +257,20 @@ impl Valid<'_, Timing> {
         self.document.ticks_per_beat
     }
 
-    /// The last tick an object on which is hit at or before `seconds`, the inverse of
+    /// The last tick an object on which is hit at or before `at`, the inverse of
     /// [`Valid::time_at`] where tick to time rises and the earliest tick of a stretch it does
     /// not. Tick to time never decreases, so a binary search over every tick finds it without
     /// inverting the timing map.
     #[must_use]
-    pub fn latest_tick_by(&self, seconds: f64) -> Tick {
+    pub fn latest_tick_by(&self, at: ResolvedTime) -> Tick {
         let (mut early, mut late) = (i64::from(i32::MIN), i64::from(i32::MAX));
-        let tick = |at: i64| Tick::new(i32::try_from(at).unwrap_or(i32::MAX));
-        if self.time_at(tick(late)).seconds() <= seconds {
+        let tick = |index: i64| Tick::new(i32::try_from(index).unwrap_or(i32::MAX));
+        if self.time_at(tick(late)) <= at {
             return tick(late);
         }
         while late.saturating_sub(early) > 1 {
             let middle = early.saturating_add(late.saturating_sub(early).div_euclid(2));
-            if self.time_at(tick(middle)).seconds() <= seconds {
+            if self.time_at(tick(middle)) <= at {
                 early = middle;
             } else {
                 late = middle;
@@ -650,7 +652,8 @@ mod tests {
     use crate::number::{MAX_MILLIONTHS, from_millionths};
     use crate::path::ResourcePath;
     use crate::unit::{
-        AudioTime, LaneCount, LaneIndex, Seconds, Tick, Ticks, TicksPerBeat, TimeSignature,
+        AudioTime, LaneCount, LaneIndex, Seconds, Tick, Ticks, TicksPerBeat, TimeShift,
+        TimeSignature,
     };
 
     fn minimal() -> Value {
@@ -1022,7 +1025,10 @@ mod tests {
             vec![(Tick::new(480), 120.0), (Tick::new(960), 60.0)]
         );
         assert!((timing.time_at(Tick::new(1440)).seconds() - 2.5).abs() < 1e-10);
-        assert_eq!(timing.latest_tick_by(1.5), Tick::new(960));
+        assert_eq!(
+            timing.latest_tick_by(ResolvedTime::from_seconds(1.5).unwrap()),
+            Tick::new(960)
+        );
     }
 
     #[test]
@@ -1036,10 +1042,46 @@ mod tests {
         let copy = timing.clone();
         assert_eq!(copy.anchors, timing.anchors);
         assert_eq!(
-            copy.tempo_for(Tick::new(0), Tick::new(960), 1.0),
+            copy.tempo_for(
+                Tick::new(0),
+                Tick::new(960),
+                TimeShift::from_seconds(1.0).unwrap()
+            ),
             Bpm::try_from(60.0).ok()
         );
-        assert_eq!(copy.tempo_for(Tick::new(960), Tick::new(0), 1.0), None);
+        assert_eq!(
+            copy.tempo_for(
+                Tick::new(960),
+                Tick::new(0),
+                TimeShift::from_seconds(1.0).unwrap()
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn a_timing_view_finds_ticks_and_tempos_from_typed_audio_time() {
+        let doc = read(&minimal()).unwrap();
+        let timing = doc.timing();
+        let at = ResolvedTime::from_seconds(0.75).unwrap();
+        let later = TimeShift::from_seconds(0.75).unwrap();
+        assert_eq!(timing.latest_tick_by(at), Tick::new(1440));
+        assert_eq!(
+            timing.latest_tick_by(ResolvedTime::from_seconds(-0.25).unwrap()),
+            Tick::new(-480)
+        );
+        assert_eq!(
+            timing.tempo_for(Tick::new(0), Tick::new(960), later),
+            Bpm::try_from(80.0).ok()
+        );
+        assert_eq!(
+            timing.tempo_for(
+                Tick::new(0),
+                Tick::new(960),
+                TimeShift::from_seconds(-0.25).unwrap()
+            ),
+            None
+        );
     }
 
     proptest! {

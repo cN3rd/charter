@@ -12,8 +12,8 @@ use std::collections::{BTreeMap, HashSet};
 use std::num::NonZeroU16;
 
 use charter_core::{
-    LaneIndex, Metadata, Position, ResourcePath, Section, SectionError, Stream, Tick, Ticks,
-    TicksPerBeat, TimeSignature, Timing, TimingKind, Valid, ValidDocument, sectioned,
+    LaneIndex, Metadata, Position, ResolvedTime, ResourcePath, Section, SectionError, Stream, Tick,
+    Ticks, TicksPerBeat, TimeSignature, Timing, TimingKind, Valid, ValidDocument, sectioned,
 };
 
 use crate::{Chart, Difficulty, Lanes, Note, NoteKind, Shake, Side, Song, Tempo, read_tempo};
@@ -401,13 +401,20 @@ fn notes_of(
     let mut taken: HashSet<(i64, u16, bool)> = HashSet::new();
     let mut notes = Vec::with_capacity(level.notes.len());
     for note in &level.notes {
-        if !note.on.is_finite() || !note.off.is_finite() {
+        let (Some(on), Some(off)) = (
+            ResolvedTime::from_seconds(note.on),
+            ResolvedTime::from_seconds(note.off),
+        ) else {
             report.add("a note at a moment that is not a time");
             continue;
-        }
-        let tick = nearest(timing, note.on);
-        let held = (note.off - note.on > HOLD_SECONDS)
-            .then(|| tick.ticks_until(nearest(timing, note.off)))
+        };
+        let tick = nearest(timing, on);
+        #[expect(
+            clippy::arithmetic_side_effects,
+            reason = "signed float audio distances determine whether a note is held"
+        )]
+        let held = ((off - on).seconds() > HOLD_SECONDS)
+            .then(|| tick.ticks_until(nearest(timing, off)))
             .flatten();
         let Some(kind) = preset.kind(note.key, level.lanes, held) else {
             report.add(format!(
@@ -437,11 +444,15 @@ fn notes_of(
     notes
 }
 
-/// The tick `timing` puts nearest `seconds` into the audio.
-fn nearest(timing: Valid<'_, Timing>, seconds: f64) -> Tick {
-    let before = timing.latest_tick_by(seconds);
+/// The tick `timing` puts nearest `at` in the audio.
+fn nearest(timing: Valid<'_, Timing>, at: ResolvedTime) -> Tick {
+    let before = timing.latest_tick_by(at);
     let after = Ticks::new(1).and_then(|one| before.checked_add(one));
-    let off = |tick: Tick| (timing.time_at(tick).seconds() - seconds).abs();
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "signed float audio distances choose the closer tick"
+    )]
+    let off = |tick: Tick| (timing.time_at(tick) - at).seconds().abs();
     match after {
         Some(after) if off(after) < off(before) => after,
         _ => before,

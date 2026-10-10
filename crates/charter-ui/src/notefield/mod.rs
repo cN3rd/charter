@@ -93,8 +93,8 @@ impl Zoom {
 pub(crate) struct View {
     /// Screen height of the cursor's now line, in points.
     pub(crate) now_y: f32,
-    /// Cursor position in audio seconds.
-    cursor: f64,
+    /// Cursor position in the audio.
+    cursor: ResolvedTime,
     /// Vertical scale of the audio timeline.
     zoom: Zoom,
 }
@@ -104,7 +104,7 @@ impl View {
     pub(crate) const fn new(now_y: f32, cursor: ResolvedTime, zoom: Zoom) -> Self {
         Self {
             now_y,
-            cursor: cursor.seconds(),
+            cursor,
             zoom,
         }
     }
@@ -116,26 +116,32 @@ impl View {
 
     /// Where audio `seconds` into the song is drawn.
     pub(crate) fn y_of(self, seconds: f64) -> f32 {
-        let below = (seconds - self.cursor) * f64::from(self.zoom.points_per_second());
+        let below = (seconds - self.cursor.seconds()) * f64::from(self.zoom.points_per_second());
         let below = crate::cast::f64_f32(below);
         self.now_y + below
     }
 
     /// The audio time drawn at height `y`.
-    pub(crate) fn seconds_at(self, y: f32) -> f64 {
-        self.cursor + f64::from(y - self.now_y) / f64::from(self.zoom.points_per_second())
+    pub(crate) fn seconds_at(self, y: f32) -> ResolvedTime {
+        let seconds = self.cursor.seconds()
+            + f64::from(y - self.now_y) / f64::from(self.zoom.points_per_second());
+        ResolvedTime::from_seconds(seconds).unwrap_or(self.cursor)
     }
 }
 
-/// The line of a grid `step` ticks apart from tick 0 that is drawn nearest to `seconds`.
-pub(crate) fn nearest_line(timing: Valid<'_, Timing>, seconds: f64, step: Ticks) -> Tick {
-    let latest = timing.latest_tick_by(seconds);
+/// The line of a grid `step` ticks apart from tick 0 that is drawn nearest to `at`.
+pub(crate) fn nearest_line(timing: Valid<'_, Timing>, at: ResolvedTime, step: Ticks) -> Tick {
+    let latest = timing.latest_tick_by(at);
     let below = latest
         .next_on(step)
         .and_then(|next| next.previous_on(step))
         .unwrap_or(latest);
     let above = below.next_on(step).unwrap_or(below);
-    let off = |line: Tick| (timing.time_at(line).seconds() - seconds).abs();
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "signed float audio distances choose the closer grid line"
+    )]
+    let off = |line: Tick| (timing.time_at(line) - at).seconds().abs();
     if off(above) < off(below) {
         above
     } else {
@@ -143,10 +149,10 @@ pub(crate) fn nearest_line(timing: Valid<'_, Timing>, seconds: f64, step: Ticks)
     }
 }
 
-/// The first tick an object on which is hit at or after `seconds`.
-pub(crate) fn earliest_tick_from(timing: Valid<'_, Timing>, seconds: f64) -> Tick {
-    let latest = timing.latest_tick_by(seconds);
-    if timing.time_at(latest).seconds() >= seconds {
+/// The first tick an object on which is hit at or after `at`.
+pub(crate) fn earliest_tick_from(timing: Valid<'_, Timing>, at: ResolvedTime) -> Tick {
+    let latest = timing.latest_tick_by(at);
+    if timing.time_at(latest) >= at {
         return latest;
     }
     Ticks::new(1)
@@ -283,16 +289,16 @@ impl Field {
         Some(LaneIndex::new(lane))
     }
 
-    /// The ticks and lanes a box covers, from a corner at `x` and `seconds` to `pos`, if it
+    /// The ticks and lanes a box covers, from a corner at `x` and `at` to `pos`, if it
     /// reaches a lane.
     fn boxed(
         &self,
         timing: Valid<'_, Timing>,
-        (x, seconds): (f32, f64),
+        (x, at): (f32, ResolvedTime),
         pos: Pos2,
     ) -> Option<((Tick, Tick), (LaneIndex, LaneIndex))> {
         let lanes = self.lanes_between(x.min(pos.x), x.max(pos.x))?;
-        let y = self.view.y_of(seconds);
+        let y = self.view.y(at);
         let (top, bottom) = (y.min(pos.y), y.max(pos.y));
         let ticks = (
             earliest_tick_from(timing, self.view.seconds_at(top)),
@@ -484,7 +490,7 @@ pub(crate) fn show(
     if let Some(Gesture::Marquee { x, seconds, .. }) = *gesture
         && let Some(latest) = latest
     {
-        let corner = pos2(x, view.y_of(seconds));
+        let corner = pos2(x, view.y(seconds));
         clipped.rect(
             Rect::from_two_pos(corner, latest),
             0.0,
@@ -566,7 +572,12 @@ pub(crate) fn show(
     }
     now_line(&clipped, columns, view.now_y);
     let (top, bottom) = (view.seconds_at(rows.min), view.seconds_at(rows.max));
-    Some((top.min(bottom), top.max(bottom)))
+    let (earlier, later) = if top <= bottom {
+        (top, bottom)
+    } else {
+        (bottom, top)
+    };
+    Some((earlier.seconds(), later.seconds()))
 }
 
 /// How the notefield is shown: how close, which way it runs, and the waveform of the song's

@@ -6,7 +6,7 @@
 
 use std::num::NonZeroU16;
 
-use charter_core::{Measure, Tick, Ticks, TicksPerBeat, Timing, Valid};
+use charter_core::{Measure, ResolvedTime, Tick, Ticks, TicksPerBeat, Timing, Valid};
 
 /// The resolutions offered, as the fraction of a whole note between lines: keys 1 to 0.
 pub const RESOLUTIONS: [u16; 10] = [1, 2, 3, 4, 6, 8, 12, 16, 24, 32];
@@ -101,21 +101,28 @@ impl Grid {
     /// the moment, from which a step's length in time follows.
     #[must_use]
     pub fn nearest_in_time(self, timing: Valid<'_, Timing>, seconds: f64) -> Option<Near> {
-        let tick = timing.latest_tick_by(seconds);
+        let at = ResolvedTime::from_seconds(seconds)?;
+        let tick = timing.latest_tick_by(at);
         let (below, above) = self.around(timing, tick)?;
-        let (at_below, at_above) = (
-            timing.time_at(below).seconds(),
-            timing.time_at(above).seconds(),
-        );
-        let line = if (at_above - seconds).abs() < (seconds - at_below).abs() {
+        let (at_below, at_above) = (timing.time_at(below), timing.time_at(above));
+        #[expect(
+            clippy::arithmetic_side_effects,
+            reason = "signed float audio distances choose the closer grid line"
+        )]
+        let line = if (at_above - at).seconds().abs() < (at - at_below).seconds().abs() {
             above
         } else {
             below
         };
+        #[expect(
+            clippy::arithmetic_side_effects,
+            reason = "two finite grid times measure the length of a step"
+        )]
+        let step_seconds = (at_above - at_below).seconds();
         Some(Near {
             line,
             seconds: timing.time_at(line).seconds(),
-            step_seconds: at_above - at_below,
+            step_seconds,
         })
     }
 
@@ -245,6 +252,14 @@ mod tests {
         assert!((near.step_seconds - 0.5).abs() < 1e-9);
         let later = grid(4).nearest_in_time(document.timing(), 0.76).unwrap();
         assert_eq!(later.line, tick(1920));
+    }
+
+    #[test]
+    fn a_non_finite_audio_moment_has_no_nearest_grid_line() {
+        let document = song(&serde_json::json!([{ "tick": 0, "kind": { "bpm": 120.0 } }]));
+        for seconds in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert_eq!(grid(4).nearest_in_time(document.timing(), seconds), None);
+        }
     }
 
     #[test]

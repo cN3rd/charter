@@ -22,7 +22,7 @@ pub mod rows;
 use std::num::NonZeroU16;
 
 use charter_audio::{Onset, Peaks};
-use charter_core::{Bpm, Tick, Timing, Valid};
+use charter_core::{Bpm, ResolvedTime, Tick, Timing, Valid};
 use charter_editor::{Pin, Refusal, Song};
 use charter_style as style;
 use egui::Pos2;
@@ -511,7 +511,10 @@ impl TimingWindow {
         } else {
             seconds
         };
-        let tick = frame.timing.latest_tick_by(seconds);
+        let Some(at) = ResolvedTime::from_seconds(seconds) else {
+            return;
+        };
+        let tick = frame.timing.latest_tick_by(at);
         let tick = if self.snap_grid {
             self.grid.nearest(frame.timing, tick)
         } else {
@@ -675,7 +678,9 @@ fn frame<'a>(
     now: f64,
 ) -> Frame<'a> {
     let timing = song.timing();
-    let first = timing.latest_tick_by(0.0).min(Tick::new(0));
+    let first = ResolvedTime::from_seconds(0.0)
+        .map_or(Tick::new(0), |zero| timing.latest_tick_by(zero))
+        .min(Tick::new(0));
     let mut last = song.end().max(song.cursor());
     if let Some(anchor) = timing.anchors.last() {
         last = last.max(anchor.tick);

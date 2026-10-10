@@ -151,7 +151,10 @@ pub(super) fn wave_rows(peaks: &Peaks, view: View, rows: Rangef) -> Vec<(f32, f3
     let mut drawn = Vec::new();
     let mut y = rows.min.floor();
     while y < rows.max {
-        let (from, to) = (view.seconds_at(y), view.seconds_at(y + 1.0));
+        let (from, to) = (
+            view.seconds_at(y).seconds(),
+            view.seconds_at(y + 1.0).seconds(),
+        );
         let extent = peaks.between(from.min(to), from.max(to));
         drawn.push((y, extent.low, extent.high));
         y += 1.0;
@@ -570,7 +573,7 @@ pub(super) fn drop_guide(
 ) {
     let timing = song.timing();
     let (at, label) = if free {
-        (y, style::clock(view.seconds_at(y)))
+        (y, style::clock(view.seconds_at(y).seconds()))
     } else {
         let Some(step) = song
             .document()
@@ -1012,7 +1015,8 @@ mod tests {
         let timing = song.timing();
         let view = View::new(100.0, timing.time_at(Tick::new(960)), Zoom::default());
         let y = view.y(timing.time_at(Tick::new(1920)));
-        assert!((view.seconds_at(y) - 0.8).abs() < 1e-6);
+        let drawn = view.seconds_at(y);
+        assert!((drawn.seconds() - 0.8).abs() < 1e-6);
     }
 
     #[test]
@@ -1061,19 +1065,21 @@ mod tests {
         let song = song();
         let timing = song.timing();
         let sixteenth = Ticks::new(240).unwrap();
-        assert_eq!(nearest_line(timing, 0.26, sixteenth), Tick::new(720));
-        assert_eq!(nearest_line(timing, 0.24, sixteenth), Tick::new(480));
-        assert_eq!(nearest_line(timing, -0.01, sixteenth), Tick::new(0));
+        let at = |seconds| charter_core::ResolvedTime::from_seconds(seconds).unwrap();
+        assert_eq!(nearest_line(timing, at(0.26), sixteenth), Tick::new(720));
+        assert_eq!(nearest_line(timing, at(0.24), sixteenth), Tick::new(480));
+        assert_eq!(nearest_line(timing, at(-0.01), sixteenth), Tick::new(0));
     }
 
     #[test]
     fn the_earliest_tick_from_a_time_skips_what_a_stop_left_behind() {
         let song = song();
         let timing = song.timing();
-        assert_eq!(earliest_tick_from(timing, 0.5), Tick::new(1200));
-        assert_eq!(earliest_tick_from(timing, 0.50001), Tick::new(1201));
+        let at = |seconds| charter_core::ResolvedTime::from_seconds(seconds).unwrap();
+        assert_eq!(earliest_tick_from(timing, at(0.5)), Tick::new(1200));
+        assert_eq!(earliest_tick_from(timing, at(0.50001)), Tick::new(1201));
         let stop = Tick::new(30720);
-        let paused = timing.time_at(stop).seconds() + 0.25;
+        let paused = at(timing.time_at(stop).seconds() + 0.25);
         assert_eq!(earliest_tick_from(timing, paused), Tick::new(30721));
     }
 
@@ -1186,9 +1192,14 @@ mod tests {
     fn the_latest_tick_by_a_time_waits_out_a_stop() {
         let song = song();
         let timing = song.timing();
-        assert_eq!(timing.latest_tick_by(0.5), Tick::new(1200));
+        assert_eq!(
+            timing.latest_tick_by(charter_core::ResolvedTime::from_seconds(0.5).unwrap()),
+            Tick::new(1200)
+        );
         let stop = Tick::new(30720);
-        let paused = timing.time_at(stop).seconds() + 0.25;
+        let paused =
+            charter_core::ResolvedTime::from_seconds(timing.time_at(stop).seconds() + 0.25)
+                .unwrap();
         assert_eq!(timing.latest_tick_by(paused), stop);
     }
 
@@ -1291,7 +1302,7 @@ mod tests {
         assert_eq!(
             handle_at(&song, &field, handle),
             Some(Gesture::Scrub {
-                seconds: 0.0,
+                seconds: charter_core::ResolvedTime::from_seconds(0.0).unwrap(),
                 y: now
             })
         );
@@ -1364,18 +1375,42 @@ mod tests {
         let y = field.view.now_y;
         let pos = pos2(field.columns.lanes.center(), y - 48.0);
         assert_eq!(
-            panned(&field, song.timing(), None, (0.0, y), pos),
-            Tick::new(480)
+            panned(
+                &field,
+                song.timing(),
+                None,
+                (charter_core::ResolvedTime::from_seconds(0.0).unwrap(), y),
+                pos
+            ),
+            Some(Tick::new(480))
         );
         assert_eq!(
             panned(
                 &field,
                 song.timing(),
                 Ticks::new(240),
-                (0.0, y),
+                (charter_core::ResolvedTime::from_seconds(0.0).unwrap(), y),
                 pos2(pos.x, y - 51.0)
             ),
-            Tick::new(480)
+            Some(Tick::new(480))
+        );
+    }
+
+    #[test]
+    fn a_non_finite_pan_position_has_no_target_tick() {
+        let song = song();
+        let field = field(&song);
+        let y = field.view.now_y;
+        let pos = pos2(field.columns.lanes.center(), f32::NAN);
+        assert_eq!(
+            panned(
+                &field,
+                song.timing(),
+                None,
+                (charter_core::ResolvedTime::from_seconds(0.0).unwrap(), y),
+                pos
+            ),
+            None
         );
     }
 
@@ -1691,7 +1726,7 @@ mod tests {
             assert_eq!(
                 handle_at(&song, &field, pos2(field.columns.handle_x(), back.y)),
                 Some(Gesture::Scrub {
-                    seconds: 0.0,
+                    seconds: charter_core::ResolvedTime::from_seconds(0.0).unwrap(),
                     y: back.y
                 })
             );

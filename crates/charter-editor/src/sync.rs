@@ -674,8 +674,14 @@ mod tests {
         assert_eq!(song_events(&song)[0], bpm_event(0, 120.0));
         let timing = song.timing();
         assert!((timing.time_at(at(1920)).seconds() - 2.0).abs() < 1e-9);
-        assert_eq!(timing.latest_tick_by(4.0), at(5760));
-        assert_eq!(timing.latest_tick_by(0.0), at(-1920));
+        assert_eq!(
+            timing.latest_tick_by(charter_core::ResolvedTime::from_seconds(4.0).unwrap()),
+            at(5760)
+        );
+        assert_eq!(
+            timing.latest_tick_by(charter_core::ResolvedTime::from_seconds(0.0).unwrap()),
+            at(-1920)
+        );
     }
 
     #[test]
