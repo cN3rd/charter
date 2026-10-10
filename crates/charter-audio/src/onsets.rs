@@ -58,7 +58,8 @@ pub struct Onset {
 pub fn onsets(track: &Track) -> Vec<Onset> {
     let rate = f64::from(track.rate().get());
     let mono = track.to_mono();
-    let flux = flux(&mono);
+    let samples = mono.samples();
+    let flux = flux(samples);
     let frames_per = |seconds: f64| {
         let frames = cast::f64_usize((seconds * rate / HOP_SAMPLES).ceil());
         frames.max(1)
@@ -107,7 +108,7 @@ pub fn onsets(track: &Track) -> Vec<Onset> {
         peaks.push((sample, value - mean));
     }
     let strongest = peaks.iter().map(|(_, height)| *height).fold(0.0, f32::max);
-    let envelope = envelope(&mono, rate);
+    let envelope = envelope(samples, rate);
     let mut found: Vec<Onset> = peaks
         .into_iter()
         .map(|(sample, height)| {

@@ -108,7 +108,7 @@ pub use peaks::{Extent, Peaks, fingerprint};
     clippy::useless_attribute,
     reason = "resampling is part of the flat audio API"
 )]
-pub use resample::{ResampleError, resample};
+pub use resample::{Mono, ResampleError};
 #[expect(
     clippy::pub_use,
     clippy::useless_attribute,
@@ -126,4 +126,4 @@ pub use tags::{Artwork, Tags, tags};
     clippy::useless_attribute,
     reason = "decoded tracks and errors are part of the flat audio API"
 )]
-pub use track::{DecodeError, Track};
+pub use track::{DecodeError, SampleRate, Track};

@@ -20,6 +20,10 @@ use charter_core::{BeatLength, ResolvedTime, Section, TicksPerBeat};
     clippy::use_debug,
     reason = "this interactive benchmark reports timings and estimates to stdout"
 )]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the interactive benchmark keeps its start-to-summary flow together"
+)]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
     let (Some(weights), Some(audio)) = (args.get(1), args.get(2)) else {
@@ -27,11 +31,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let extension = Path::new(audio).extension().and_then(|ext| ext.to_str());
     let track = charter_audio::Track::decode(std::fs::read(audio)?, extension)?;
-    let mono: Vec<f32> = track.frames().iter().map(|[l, r]| (l + r) / 2.0).collect();
+    let mono = track.to_mono();
     let started = Instant::now();
     let onsets = charter_audio::onsets(&track);
     println!("{} onsets", onsets.len());
-    let beats = Tracker::from_checkpoint(Path::new(weights))?.track(&mono, track.rate().get())?;
+    let beats =
+        Tracker::from_checkpoint(Path::new(weights))?.track(mono.samples(), mono.rate().get())?;
     let mut shifts: Vec<f64> = beats
         .beats
         .iter()

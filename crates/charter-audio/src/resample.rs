@@ -4,6 +4,55 @@
 use audioadapter_buffers::owned::InterleavedOwned;
 use rubato::{Fft, FixedSync, Resampler};
 
+use crate::SampleRate;
+
+/// Mono samples with their sample rate.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Mono {
+    /// Samples per second.
+    rate: SampleRate,
+    /// Audio from first to last sample.
+    samples: Vec<f32>,
+}
+
+impl Mono {
+    /// Mono `samples` recorded at `rate`.
+    #[must_use]
+    pub const fn new(rate: SampleRate, samples: Vec<f32>) -> Self {
+        Self { rate, samples }
+    }
+
+    /// Samples per second.
+    #[must_use]
+    pub const fn rate(&self) -> SampleRate {
+        self.rate
+    }
+
+    /// Samples in playback order.
+    #[must_use]
+    pub fn samples(&self) -> &[f32] {
+        &self.samples
+    }
+
+    /// Takes the samples for an API with its own fixed rate.
+    #[must_use]
+    pub fn into_samples(self) -> Vec<f32> {
+        self.samples
+    }
+
+    /// The same audio at `to` samples per second.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ResampleError`] when the resampler cannot convert between the rates.
+    pub fn resampled(&self, to: SampleRate) -> Result<Self, ResampleError> {
+        Ok(Self {
+            rate: to,
+            samples: resample(&self.samples, self.rate.get(), to.get())?,
+        })
+    }
+}
+
 /// Why audio would not resample.
 #[derive(Debug, thiserror::Error)]
 #[error("the audio would not resample: {0}")]
@@ -14,7 +63,7 @@ pub struct ResampleError(String);
 /// # Errors
 ///
 /// Returns [`ResampleError`] for a rate the resampler cannot convert between.
-pub fn resample(samples: &[f32], from: u32, to: u32) -> Result<Vec<f32>, ResampleError> {
+fn resample(samples: &[f32], from: u32, to: u32) -> Result<Vec<f32>, ResampleError> {
     if from == to || samples.is_empty() {
         return Ok(samples.to_vec());
     }
@@ -41,6 +90,23 @@ fn why(error: impl std::fmt::Display) -> ResampleError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{SampleRate, Track};
+
+    #[test]
+    fn mono_keeps_its_source_rate_and_resampling_sets_the_target_rate() {
+        let mono = Track::from_frames(48_000, vec![[0.0, 0.5]; 4_800]).to_mono();
+        assert_eq!(mono.rate(), SampleRate::new(48_000).unwrap());
+        assert_eq!(mono.samples()[0], 0.25);
+        let slower = mono.resampled(SampleRate::new(24_000).unwrap()).unwrap();
+        assert_eq!(slower.rate(), SampleRate::new(24_000).unwrap());
+        assert!(slower.samples().len().abs_diff(2_400) <= 1);
+        assert!(
+            slower.samples()[200..2_000]
+                .iter()
+                .all(|sample| (sample - 0.25).abs() < 1e-3)
+        );
+        assert_eq!(mono.samples().len(), 4_800);
+    }
 
     #[test]
     fn audio_at_twice_the_rate_resamples_to_half_the_samples() {

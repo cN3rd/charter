@@ -45,6 +45,7 @@ impl Spectrum {
     pub fn of(track: &Track) -> Self {
         let rate = f64::from(track.rate().get());
         let mono = track.to_mono();
+        let samples = mono.samples();
         let window: Vec<f32> = (0..WINDOW)
             .map(|n| {
                 let phase = std::f32::consts::TAU * cast::usize_f32(n) / cast::usize_f32(WINDOW);
@@ -55,7 +56,7 @@ impl Spectrum {
         let fft = FftPlanner::<f32>::new().plan_fft_forward(WINDOW);
         let mut buffer = vec![Complex::new(0.0, 0.0); WINDOW];
         let mut scratch = vec![Complex::new(0.0, 0.0); fft.get_inplace_scratch_len()];
-        let seconds = cast::usize_f64(mono.len()) / rate;
+        let seconds = cast::usize_f64(samples.len()) / rate;
         let frames = cast::f64_usize((seconds * PER_SECOND).ceil());
         let mut decibels: Vec<[f64; Self::BANDS]> = Vec::with_capacity(frames);
         for frame in 0..frames {
@@ -68,7 +69,7 @@ impl Spectrum {
                 let sample = centre
                     .checked_add(at)
                     .and_then(|index| index.checked_sub(WINDOW.div_euclid(2)))
-                    .and_then(|index| mono.get(index))
+                    .and_then(|index| samples.get(index))
                     .copied()
                     .unwrap_or(0.0);
                 *slot = Complex::new(sample * weight, 0.0);

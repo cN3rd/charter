@@ -4,7 +4,7 @@ use std::io::Cursor;
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
-use crate::cast;
+use crate::{Mono, cast};
 use symphonia::core::codecs::audio::AudioDecoderOptions;
 use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, TrackType};
@@ -15,8 +15,8 @@ use symphonia_wrap as symphonia;
 /// Audio decoded to stereo frames of `f32` samples, left then right.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Track {
-    /// Nonzero sample rate in frames per second.
-    rate: NonZeroU32,
+    /// Sample rate in frames per second.
+    rate: SampleRate,
     /// Interleaved-in-time stereo samples, left then right per frame.
     frames: Arc<[[f32; 2]]>,
 }
@@ -38,6 +38,41 @@ pub enum DecodeError {
 /// The fastest sample rate a track decodes at, twice the most any studio records at; a file
 /// claiming more is damaged or hostile, and clicks mixed in at its rate would fill memory.
 const MAX_RATE: u32 = 768_000;
+
+/// Frames per second, from 1 to 768,000.
+///
+/// ```
+/// # use charter_audio::SampleRate;
+/// let rate = SampleRate::new(44_100).unwrap();
+/// assert_eq!(rate.get(), 44_100);
+/// ```
+///
+/// A sample rate is not a frame count:
+///
+/// ```compile_fail
+/// # use charter_audio::SampleRate;
+/// let rate = SampleRate::new(44_100).unwrap();
+/// let frames: u32 = rate;
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct SampleRate(NonZeroU32);
+
+impl SampleRate {
+    /// A sample rate if it is nonzero and no higher than 768 kHz.
+    #[must_use]
+    pub const fn new(rate: u32) -> Option<Self> {
+        match NonZeroU32::new(rate) {
+            Some(rate) if rate.get() <= MAX_RATE => Some(Self(rate)),
+            _ => None,
+        }
+    }
+
+    /// Frames per second.
+    #[must_use]
+    pub const fn get(self) -> u32 {
+        self.0.get()
+    }
+}
 
 impl Track {
     /// Decodes `bytes`, an audio file whose name ends in `extension`, if it is known.
@@ -105,15 +140,16 @@ impl Track {
             return Err(DecodeError::Rate(rate.get()));
         }
         Ok(Self {
-            rate,
+            rate: SampleRate(rate),
             frames: frames.into(),
         })
     }
 
-    /// `frames` at `rate` frames per second, using 44.1 kHz when the rate is zero.
+    /// `frames` at `rate`, using 44.1 kHz for zero and 768 kHz above that limit.
     #[must_use]
     pub fn from_frames(rate: u32, frames: Vec<[f32; 2]>) -> Self {
-        let rate = NonZeroU32::new(rate).unwrap_or(NonZeroU32::MIN.saturating_add(44_099));
+        let rate = SampleRate::new(rate.min(MAX_RATE))
+            .unwrap_or(SampleRate(NonZeroU32::MIN.saturating_add(44_099)));
         Self {
             rate,
             frames: frames.into(),
@@ -128,7 +164,7 @@ impl Track {
 
     /// Frames per second.
     #[must_use]
-    pub const fn rate(&self) -> NonZeroU32 {
+    pub const fn rate(&self) -> SampleRate {
         self.rate
     }
 
@@ -140,11 +176,14 @@ impl Track {
 
     /// Stereo frames mixed to mono by averaging left and right.
     #[must_use]
-    pub fn to_mono(&self) -> Vec<f32> {
-        self.frames
-            .iter()
-            .map(|[left, right]| (left + right) / 2.0)
-            .collect()
+    pub fn to_mono(&self) -> Mono {
+        Mono::new(
+            self.rate,
+            self.frames
+                .iter()
+                .map(|[left, right]| (left + right) / 2.0)
+                .collect(),
+        )
     }
 
     /// How long the track plays at its own speed, in seconds.
@@ -223,6 +262,14 @@ mod tests {
     }
 
     #[test]
+    fn a_sample_rate_cannot_be_zero_or_past_the_audio_limit() {
+        assert_eq!(SampleRate::new(0), None);
+        assert_eq!(SampleRate::new(768_001), None);
+        assert_eq!(SampleRate::new(768_000).unwrap().get(), 768_000);
+        assert_eq!(Track::silence(768_001, 0).rate().get(), 768_000);
+    }
+
+    #[test]
     fn a_track_lasts_its_frames_over_its_rate() {
         let track = Track::decode(wav(4000, 1, &[0; 1000]), Some("wav")).unwrap();
         assert!((track.seconds() - 0.25).abs() < 1e-9);
@@ -231,7 +278,7 @@ mod tests {
     #[test]
     fn a_track_mixes_to_mono_by_averaging_each_stereo_frame() {
         let track = Track::from_frames(1000, vec![[1.0, -0.5], [0.25, 0.75]]);
-        assert_eq!(track.to_mono(), [0.25, 0.5]);
+        assert_eq!(track.to_mono().samples(), [0.25, 0.5]);
     }
 
     #[test]

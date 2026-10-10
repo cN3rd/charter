@@ -6,7 +6,7 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 
-use charter_audio::{Onset, Track};
+use charter_audio::{Onset, SampleRate, Track};
 use charter_core::{BeatLength, ResolvedTime, Section, TicksPerBeat, Timing};
 use charter_ui::{Tracker, Window};
 
@@ -223,7 +223,7 @@ fn timing_of(
     let tracker = charter_beatthis_burn::Tracker::from_checkpoint(weights)
         .map_err(|why| format!("{}: {}", weights.display(), chain(&why)))?;
     let beats = tracker
-        .track(&mono, track.rate().get())
+        .track(mono.samples(), mono.rate().get())
         .map_err(|why| chain(&why).to_string())?;
     let onsets = onsets.unwrap_or_else(|| charter_audio::onsets(&track));
     charter_autotiming::estimate(&beats.beats, &beats.downbeats, &onsets, ticks_per_beat)
@@ -255,8 +255,12 @@ fn mapperatorinator(
     let extension = file.extension().and_then(|extension| extension.to_str());
     let track = Track::decode(bytes, extension).map_err(|why| chain(&why).to_string())?;
     let rate = u32::try_from(SAMPLE_RATE).map_err(|why| chain(&why).to_string())?;
-    let mut samples = charter_audio::resample(&track.to_mono(), track.rate().get(), rate)
-        .map_err(|why| chain(&why).to_string())?;
+    let rate = SampleRate::new(rate).ok_or_else(|| format!("invalid model sample rate: {rate}"))?;
+    let mut samples = track
+        .to_mono()
+        .resampled(rate)
+        .map_err(|why| chain(&why).to_string())?
+        .into_samples();
     // Divided by the peak, as Mapperatorinator's model hears it.
     let peak = samples
         .iter()

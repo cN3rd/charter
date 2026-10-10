@@ -116,9 +116,14 @@ impl Tracker {
     ///
     /// Returns [`Error::Resample`] when the audio cannot be brought to the network's rate.
     pub fn track(&self, samples: &[f32], rate: u32) -> Result<Beats, Error> {
-        let audio = charter_audio::resample(samples, rate, mel::RATE)
+        let rate = charter_audio::SampleRate::new(rate)
+            .ok_or_else(|| Error::Resample(format!("invalid sample rate: {rate}")))?;
+        let target = charter_audio::SampleRate::new(mel::RATE)
+            .ok_or_else(|| Error::Resample("invalid model sample rate".into()))?;
+        let audio = charter_audio::Mono::new(rate, samples.to_vec())
+            .resampled(target)
             .map_err(|why| Error::Resample(why.to_string()))?;
-        let spect = log_mel(&audio);
+        let spect = log_mel(audio.samples());
         let (beat_logits, downbeat_logits) = self.logits(&spect);
         Ok(peaks(beat_logits, downbeat_logits))
     }

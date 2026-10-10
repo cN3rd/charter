@@ -23,12 +23,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let extension = Path::new(audio).extension().and_then(|ext| ext.to_str());
     let track = charter_audio::Track::decode(std::fs::read(audio)?, extension)?;
-    let mono: Vec<f32> = track.frames().iter().map(|[l, r]| (l + r) / 2.0).collect();
+    let mono = track.to_mono();
     let loaded_at = Instant::now();
     let tracker = Tracker::from_checkpoint(Path::new(weights))?;
     println!("loaded in {:.2?}", loaded_at.elapsed());
     let tracked_at = Instant::now();
-    let found = tracker.track(&mono, track.rate().get())?;
+    let found = tracker.track(mono.samples(), mono.rate().get())?;
     println!(
         "tracked {:.1} s of audio in {:.2?}",
         track.seconds(),
