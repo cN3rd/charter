@@ -242,6 +242,8 @@ fn command(key: Key, modifiers: Modifiers) -> Option<Action> {
         return match key {
             Key::ArrowRight => Some(Action::NudgeRate(0.01)),
             Key::ArrowLeft => Some(Action::NudgeRate(-0.01)),
+            // Plus is Shift and = on a US keyboard.
+            Key::Plus => Some(Action::ZoomBy(Zoom::STEP)),
             _ => None,
         };
     }
@@ -414,6 +416,8 @@ mod tests {
             (Key::D, cmd, Action::Duplicate),
             (Key::M, cmd, Action::Mirror),
             (Key::Plus, cmd, Action::ZoomBy(Zoom::STEP)),
+            // Plus is Shift and = on a US keyboard.
+            (Key::Plus, both, Action::ZoomBy(Zoom::STEP)),
             (Key::Equals, cmd, Action::ZoomBy(Zoom::STEP)),
             (Key::Minus, cmd, Action::ZoomBy(Zoom::STEP.recip())),
             (
