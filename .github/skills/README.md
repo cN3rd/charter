@@ -18,7 +18,8 @@ submodule because upstream ships many unrelated skills in one repo. Refresh it b
 `skills/okf-open-knowledge-format/` from upstream again and updating the commit above.
 
 Covers the Open Knowledge Format spec for markdown-plus-YAML knowledge bundles. Invoke with
-`/okf-open-knowledge-format`.
+`/okf-open-knowledge-format`. Its description is cut to three sentences naming charter's
+triggers, since every turn pays for it; keep that after a refresh.
 
 ## test-driven-development
 

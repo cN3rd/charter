@@ -1,17 +1,11 @@
 ---
 name: okf-open-knowledge-format
 description: >
-  Create, validate, and enrich Open Knowledge Format (OKF) bundles — the open
-  spec for representing organizational knowledge as markdown files with YAML
-  frontmatter. Use when the user mentions 'OKF', 'Open Knowledge Format',
-  'knowledge bundle', 'OKF bundle', 'create a knowledge base for agents',
-  'validate OKF', 'convert to OKF', 'enrich knowledge docs', 'agent-readable
-  knowledge', 'LLM wiki', 'knowledge catalog', 'kcmd', or wants to structure
-  knowledge as markdown files for AI agent consumption. Also use when the user
-  has a directory of markdown files and wants to make them interoperable or
-  conformant with the OKF standard. Even for simple requests like 'make this
-  folder OKF conformant' — the skill has critical structural rules the agent
-  needs.
+  Use when adding a chapter under docs/src/, editing a chapter's frontmatter,
+  or fixing an OKF error from `just docs-check`. Also use for any request to
+  create, convert, validate or enrich an Open Knowledge Format bundle. Gives
+  OKF v0.2's frontmatter fields, file conventions and conformance rules for
+  markdown knowledge bundles.
 metadata:
   author: ft.ia.br
   version: "2.0"
