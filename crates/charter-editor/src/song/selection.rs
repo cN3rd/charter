@@ -240,7 +240,7 @@ mod tests {
         let mut song = four_taps();
         song.select_all();
         assert_eq!(selection(&song).len(), 4);
-        song.open_chart(1);
+        song.open_chart(chart_index(1));
         assert_eq!(selection(&song), []);
     }
 

@@ -10,22 +10,6 @@ use super::notes::{note_at as object_note_at, taken as note_taken};
 )]
 use super::*;
 
-/// A chart in the document's chart list.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct ChartIndex(usize);
-
-impl ChartIndex {
-    /// Wraps a raw chart index at public API boundaries.
-    const fn new(index: usize) -> Self {
-        Self(index)
-    }
-
-    /// Raw index for collection access and edit records.
-    const fn get(self) -> usize {
-        self.0
-    }
-}
-
 /// Lock state requested for a layer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LayerLock {
@@ -130,19 +114,18 @@ impl Song {
 
     /// Active row of the open chart, clamped to a row that exists.
     #[must_use]
-    pub fn active_layer(&self) -> usize {
+    pub fn active_layer(&self) -> LayerIndex {
         self.chart_state
             .get(self.chart)
             .map_or(LayerIndex::ZERO, |state| state.active_layer)
-            .get()
-            .min(self.layer_count().saturating_sub(1))
+            .clamped(self.layer_count())
     }
 
     /// Choose the row where subsequently placed notes go; out-of-range indices clamp.
-    pub fn set_active_layer(&mut self, index: usize) {
+    pub fn set_active_layer(&mut self, index: LayerIndex) {
         let len = self.layer_count();
         if let Some(state) = self.chart_state.get_mut(self.chart) {
-            state.active_layer = LayerIndex::clamped(index, len);
+            state.active_layer = index.clamped(len);
         }
     }
 
@@ -182,7 +165,7 @@ impl Song {
             };
             let colour = LayerColour::next_unused(layers.iter().map(|layer| layer.colour));
             layers.insert(
-                active,
+                active.get(),
                 Layer {
                     name: LayerName::new(name)
                         .map_err(|error| Refusal::LayerName(error.to_string()))?,
@@ -201,7 +184,8 @@ impl Song {
     ///
     /// # Errors
     /// Refuses invalid or duplicate names, read-only songs and plugin rejections.
-    pub fn rename_layer(&mut self, index: usize, name: &str) -> Result<(), Refusal> {
+    pub fn rename_layer(&mut self, index: LayerIndex, name: &str) -> Result<(), Refusal> {
+        let index = index.get();
         let name = LayerName::new(name).map_err(|error| Refusal::LayerName(error.to_string()))?;
         if self
             .layers()
@@ -235,7 +219,12 @@ impl Song {
     ///
     /// # Errors
     /// Refuses a missing row, read-only song or plugin rejection.
-    pub fn recolour_layer(&mut self, index: usize, colour: LayerColour) -> Result<(), Refusal> {
+    pub fn recolour_layer(
+        &mut self,
+        index: LayerIndex,
+        colour: LayerColour,
+    ) -> Result<(), Refusal> {
+        let index = index.get();
         if self
             .layers()
             .get(index)
@@ -256,7 +245,8 @@ impl Song {
     ///
     /// # Errors
     /// Refuses a missing row, read-only song or plugin rejection.
-    pub fn set_layer_view(&mut self, index: usize, view: LayerView) -> Result<(), Refusal> {
+    pub fn set_layer_view(&mut self, index: LayerIndex, view: LayerView) -> Result<(), Refusal> {
+        let index = index.get();
         if self.layers().get(index).is_some_and(|row| row.view == view) {
             if let Some(state) = self.chart_state.get_mut(self.chart) {
                 state.solo = None;
@@ -280,8 +270,8 @@ impl Song {
     ///
     /// # Errors
     /// Refuses a missing row, read-only song or plugin rejection.
-    pub fn set_layer_locked(&mut self, index: usize, locked: bool) -> Result<(), Refusal> {
-        self.set_layer_lock(LayerIndex::new(index), LayerLock::from(locked))
+    pub fn set_layer_locked(&mut self, index: LayerIndex, locked: bool) -> Result<(), Refusal> {
+        self.set_layer_lock(index, LayerLock::from(locked))
     }
 
     /// Lock or unlock a row through typed internals.
@@ -308,11 +298,12 @@ impl Song {
     ///
     /// # Errors
     /// Refuses a missing row, read-only song or plugin rejection.
-    pub fn move_layer(&mut self, from: usize, to: usize) -> Result<(), Refusal> {
+    pub fn move_layer(&mut self, from: LayerIndex, to: LayerIndex) -> Result<(), Refusal> {
+        let (from, to) = (from.get(), to.get());
         if from == to && from < self.layer_count() {
             return Ok(());
         }
-        let active = self.active_layer();
+        let active = self.active_layer().get();
         self.edit_layers(|layers, _| {
             if from >= layers.len() || to >= layers.len() {
                 return Err(Refusal::LayerName("no such layer".into()));
@@ -321,7 +312,7 @@ impl Song {
             layers.insert(to, layer);
             Ok(())
         })?;
-        self.set_active_layer(if active == from {
+        self.set_active_layer(LayerIndex::new(if active == from {
             to
         } else if from < active && active <= to {
             active.saturating_sub(1)
@@ -329,7 +320,7 @@ impl Song {
             active.saturating_add(1)
         } else {
             active
-        });
+        }));
         if let Some(state) = self.chart_state.get_mut(self.chart) {
             state.solo = None;
         }
@@ -340,7 +331,7 @@ impl Song {
     ///
     /// # Errors
     /// Refuses the last row, read-only song or plugin rejection.
-    pub fn merge_layer_down(&mut self, index: usize) -> Result<(), Refusal> {
+    pub fn merge_layer_down(&mut self, index: LayerIndex) -> Result<(), Refusal> {
         self.delete_layer(index, LayerNotes::MergeDown)
     }
 
@@ -348,9 +339,10 @@ impl Song {
     ///
     /// # Errors
     /// Refuses the only row, a missing row, read-only song or plugin rejection.
-    pub fn delete_layer(&mut self, index: usize, notes: LayerNotes) -> Result<(), Refusal> {
+    pub fn delete_layer(&mut self, index: LayerIndex, notes: LayerNotes) -> Result<(), Refusal> {
+        let index = index.get();
         // Read before the row goes, which would clamp the last row onto the one above it.
-        let active = self.active_layer();
+        let active = self.active_layer().get();
         self.edit_layers(|layers, objects| {
             if layers.len() <= 1 {
                 return Err(Refusal::LastLayer);
@@ -382,11 +374,11 @@ impl Song {
             layers.remove(index);
             Ok(())
         })?;
-        self.set_active_layer(if active > index {
+        self.set_active_layer(LayerIndex::new(if active > index {
             active.saturating_sub(1)
         } else {
             active
-        });
+        }));
         if let Some(state) = self.chart_state.get_mut(self.chart) {
             state.solo = None;
         }
@@ -398,7 +390,8 @@ impl Song {
     ///
     /// # Errors
     /// Refuses a missing row, read-only song or plugin rejection.
-    pub fn solo_layer(&mut self, index: usize) -> Result<(), Refusal> {
+    pub fn solo_layer(&mut self, index: LayerIndex) -> Result<(), Refusal> {
+        let index = index.get();
         let previous = self
             .chart_state
             .get(self.chart)
@@ -441,7 +434,8 @@ impl Song {
     ///
     /// # Errors
     /// Refuses protected destinations, read-only songs and plugin rejections.
-    pub fn move_selection_to_layer(&mut self, index: usize) -> Result<(), Refusal> {
+    pub fn move_selection_to_layer(&mut self, index: LayerIndex) -> Result<(), Refusal> {
+        let index = index.get();
         let name = self.editable_layer(index)?.cloned();
         if self.selection.is_empty()
             || self
@@ -471,7 +465,8 @@ impl Song {
     }
 
     /// Select notes in an editable row; protected rows select nothing.
-    pub fn select_layer(&mut self, index: usize) {
+    pub fn select_layer(&mut self, index: LayerIndex) {
+        let index = index.get();
         let found = self
             .document
             .document()
@@ -492,16 +487,11 @@ impl Song {
     }
 
     /// Copy one layer, its view, lock state and notes into another chart, skipping occupied note
-    /// spots.
+    /// spots. Returns the number of notes skipped.
     ///
     /// # Errors
     /// Refuses missing charts or rows, read-only songs and plugin rejections.
-    pub fn copy_layer_to_chart(&mut self, index: usize, chart: usize) -> Result<usize, Refusal> {
-        self.copy_layer_to_chart_typed(LayerIndex::new(index), ChartIndex::new(chart))
-    }
-
-    /// Copy one typed source layer into one typed target chart.
-    fn copy_layer_to_chart_typed(
+    pub fn copy_layer_to_chart(
         &mut self,
         index: LayerIndex,
         chart: ChartIndex,
@@ -749,7 +739,7 @@ mod tests {
         assert_eq!(saved["charts"][0]["objects"][0]["layer"], "Layer 0");
         song.add_layer().unwrap();
         assert_eq!(song.layers()[0].name, "Layer 1");
-        song.rename_layer(0, "Other").unwrap();
+        song.rename_layer(layer_index(0), "Other").unwrap();
         song.add_layer().unwrap();
         assert_eq!(song.layers()[0].name, "Layer 1");
     }
@@ -791,7 +781,7 @@ mod tests {
         assert_eq!(song.layers()[0].name, "Layer 0");
         song.add_layer().unwrap();
         assert_eq!(song.layers().len(), 2);
-        assert_eq!(song.active_layer(), 0);
+        assert_eq!(song.active_layer(), layer_index(0));
         assert_eq!(
             song.document().document().charts[0].objects[0]
                 .layer
@@ -800,7 +790,7 @@ mod tests {
                 .as_str(),
             "Layer 0"
         );
-        song.move_layer(1, 0).unwrap();
+        song.move_layer(layer_index(1), layer_index(0)).unwrap();
         assert_eq!(song.layers()[0].name, "Layer 0");
         song.undo().unwrap();
         song.undo().unwrap();
@@ -814,26 +804,29 @@ mod tests {
     fn layer_visibility_and_lock_protect_selection_and_placement() {
         let mut song = Song::new(document(json!([object(0, 0, "tap")])), EDITABLE);
         song.add_layer().unwrap();
-        song.set_layer_view(1, LayerView::Hidden).unwrap();
+        song.set_layer_view(layer_index(1), LayerView::Hidden)
+            .unwrap();
         song.select_all();
         assert!(song.selection().next().is_none());
-        song.set_active_layer(1);
+        song.set_active_layer(layer_index(1));
         assert!(matches!(
             song.toggle(at(0), lane(1), Kind::Tap),
             Err(Refusal::LayerHidden(_))
         ));
-        song.set_layer_view(1, LayerView::Ghosted).unwrap();
+        song.set_layer_view(layer_index(1), LayerView::Ghosted)
+            .unwrap();
         assert!(matches!(
             song.toggle(at(0), lane(1), Kind::Tap),
             Err(Refusal::LayerGhosted(_))
         ));
-        song.set_layer_view(1, LayerView::Shown).unwrap();
-        song.set_layer_locked(1, true).unwrap();
+        song.set_layer_view(layer_index(1), LayerView::Shown)
+            .unwrap();
+        song.set_layer_locked(layer_index(1), true).unwrap();
         assert!(matches!(
             song.toggle(at(0), lane(1), Kind::Tap),
             Err(Refusal::LayerLocked(_))
         ));
-        song.set_active_layer(0);
+        song.set_active_layer(layer_index(0));
         assert!(matches!(
             song.toggle(at(0), lane(0), Kind::Tap),
             Err(Refusal::OnLayer(_))
@@ -848,10 +841,14 @@ mod tests {
         );
         song.add_layer().unwrap();
         let before = song.document().document().clone();
-        song.open_chart(1);
+        song.open_chart(chart_index(1));
         song.toggle(at(0), lane(0), Kind::Tap).unwrap();
-        song.open_chart(0);
-        assert_eq!(song.copy_layer_to_chart(1, 1).unwrap(), 1);
+        song.open_chart(chart_index(0));
+        assert_eq!(
+            song.copy_layer_to_chart(layer_index(1), chart_index(1))
+                .unwrap(),
+            1
+        );
         assert_eq!(song.document().document().charts[1].objects.len(), 2);
         song.undo().unwrap();
         assert_eq!(song.document().document().charts[0], before.charts[0]);
@@ -862,10 +859,11 @@ mod tests {
     fn undoing_a_layer_copy_keeps_the_open_charts_solo() {
         let mut song = Song::new(document(json!([object(0, 0, "tap")])), EDITABLE);
         song.add_layer().unwrap();
-        song.solo_layer(0).unwrap();
-        song.copy_layer_to_chart(1, 1).unwrap();
+        song.solo_layer(layer_index(0)).unwrap();
+        song.copy_layer_to_chart(layer_index(1), chart_index(1))
+            .unwrap();
         song.undo().unwrap();
-        song.solo_layer(0).unwrap();
+        song.solo_layer(layer_index(0)).unwrap();
         let views: Vec<_> = song.layers().iter().map(|layer| layer.view).collect();
         assert_eq!(views, [LayerView::Shown, LayerView::Shown]);
     }
@@ -875,9 +873,10 @@ mod tests {
         let mut song = Song::new(document(json!([object(0, 0, "tap")])), EDITABLE);
         song.add_layer().unwrap();
         song.add_layer().unwrap();
-        song.set_active_layer(2);
-        song.delete_layer(0, LayerNotes::Delete).unwrap();
-        assert_eq!(song.layers()[song.active_layer()].name, "Layer 0");
+        song.set_active_layer(layer_index(2));
+        song.delete_layer(layer_index(0), LayerNotes::Delete)
+            .unwrap();
+        assert_eq!(song.layers()[song.active_layer().get()].name, "Layer 0");
     }
 
     #[test]
@@ -885,12 +884,13 @@ mod tests {
         let mut song = Song::new(document(json!([object(0, 0, "tap")])), EDITABLE);
         song.add_layer().unwrap();
         song.add_layer().unwrap();
-        song.set_active_layer(2);
-        song.delete_layer(0, LayerNotes::Delete).unwrap();
+        song.set_active_layer(layer_index(2));
+        song.delete_layer(layer_index(0), LayerNotes::Delete)
+            .unwrap();
         song.undo().unwrap();
-        assert_eq!(song.layers()[song.active_layer()].name, "Layer 0");
+        assert_eq!(song.layers()[song.active_layer().get()].name, "Layer 0");
         song.redo().unwrap();
-        assert_eq!(song.layers()[song.active_layer()].name, "Layer 0");
+        assert_eq!(song.layers()[song.active_layer().get()].name, "Layer 0");
     }
 
     #[test]
@@ -905,7 +905,8 @@ mod tests {
             .remove("layer");
         let valid = ValidDocument::from_json(&serde_json::to_vec(&value).unwrap()).unwrap();
         let mut song = Song::new(valid, EDITABLE);
-        song.copy_layer_to_chart(0, 1).unwrap();
+        song.copy_layer_to_chart(layer_index(0), chart_index(1))
+            .unwrap();
         assert_eq!(
             song.document().document().charts[1].objects[0]
                 .layer
@@ -921,12 +922,12 @@ mod tests {
         let mut song = Song::new(document(json!([object(0, 0, "tap")])), EDITABLE);
         song.add_layer().unwrap();
         for edit in [
-            |editing: &mut Song| editing.rename_layer(0, "Kick"),
-            |editing: &mut Song| editing.recolour_layer(0, LayerColour::Pink),
-            |editing: &mut Song| editing.set_layer_view(0, LayerView::Ghosted),
-            |editing: &mut Song| editing.set_layer_locked(0, true),
-            |editing: &mut Song| editing.move_layer(0, 1),
-            |editing: &mut Song| editing.solo_layer(1),
+            |editing: &mut Song| editing.rename_layer(layer_index(0), "Kick"),
+            |editing: &mut Song| editing.recolour_layer(layer_index(0), LayerColour::Pink),
+            |editing: &mut Song| editing.set_layer_view(layer_index(0), LayerView::Ghosted),
+            |editing: &mut Song| editing.set_layer_locked(layer_index(0), true),
+            |editing: &mut Song| editing.move_layer(layer_index(0), layer_index(1)),
+            |editing: &mut Song| editing.solo_layer(layer_index(1)),
         ] {
             let before = song.document().document().clone();
             edit(&mut song).unwrap();
@@ -943,16 +944,18 @@ mod tests {
     fn solo_restores_hidden_and_ghosted_views_and_manual_view_change_forgets_it() {
         let mut song = Song::new(document(json!([])), EDITABLE);
         song.add_layer().unwrap();
-        song.set_layer_view(1, LayerView::Hidden).unwrap();
-        song.solo_layer(1).unwrap();
+        song.set_layer_view(layer_index(1), LayerView::Hidden)
+            .unwrap();
+        song.solo_layer(layer_index(1)).unwrap();
         assert_eq!(song.layers()[1].view, LayerView::Shown);
         assert_eq!(song.layers()[0].view, LayerView::Ghosted);
-        song.solo_layer(1).unwrap();
+        song.solo_layer(layer_index(1)).unwrap();
         assert_eq!(song.layers()[1].view, LayerView::Hidden);
         assert_eq!(song.layers()[0].view, LayerView::Shown);
-        song.solo_layer(1).unwrap();
-        song.set_layer_view(0, LayerView::Hidden).unwrap();
-        song.solo_layer(1).unwrap();
+        song.solo_layer(layer_index(1)).unwrap();
+        song.set_layer_view(layer_index(0), LayerView::Hidden)
+            .unwrap();
+        song.solo_layer(layer_index(1)).unwrap();
         assert_eq!(song.layers()[0].view, LayerView::Hidden);
     }
 
@@ -960,11 +963,11 @@ mod tests {
     fn undoing_a_note_edit_does_not_forget_the_solo_views() {
         let mut song = Song::new(document(json!([])), EDITABLE);
         song.add_layer().unwrap();
-        song.solo_layer(1).unwrap();
-        song.set_active_layer(1);
+        song.solo_layer(layer_index(1)).unwrap();
+        song.set_active_layer(layer_index(1));
         song.toggle(at(0), lane(0), Kind::Tap).unwrap();
         song.undo().unwrap();
-        song.solo_layer(1).unwrap();
+        song.solo_layer(layer_index(1)).unwrap();
         assert_eq!(song.layers()[1].view, LayerView::Shown);
         assert_eq!(song.layers()[0].view, LayerView::Shown);
     }
@@ -986,22 +989,23 @@ mod tests {
         song.add_layer().unwrap();
         assert_eq!(song.layers()[0].name, "Layer 2");
         assert_eq!(song.layers()[0].colour, LayerColour::Orange);
-        song.set_active_layer(999);
-        assert_eq!(song.active_layer(), 2);
+        song.set_active_layer(layer_index(999));
+        assert_eq!(song.active_layer(), layer_index(2));
         assert!(matches!(
-            song.rename_layer(0, "Layer 0"),
+            song.rename_layer(layer_index(0), "Layer 0"),
             Err(Refusal::LayerName(_))
         ));
         assert!(matches!(
-            song.rename_layer(0, " bad "),
+            song.rename_layer(layer_index(0), " bad "),
             Err(Refusal::LayerName(_))
         ));
         assert!(matches!(
-            song.rename_layer(44, "ok"),
+            song.rename_layer(layer_index(44), "ok"),
             Err(Refusal::LayerName(_))
         ));
-        song.rename_layer(0, "Kick").unwrap();
-        song.set_layer_view(2, LayerView::Hidden).unwrap();
+        song.rename_layer(layer_index(0), "Kick").unwrap();
+        song.set_layer_view(layer_index(2), LayerView::Hidden)
+            .unwrap();
         assert_eq!(
             song.layer_look(&song.chart().unwrap().objects[0]),
             (LayerView::Hidden, Some(LayerColour::Blue))
@@ -1013,24 +1017,25 @@ mod tests {
         let mut song = Song::new(document(json!([object(0, 0, "tap")])), EDITABLE);
         song.add_layer().unwrap();
         for view in [LayerView::Ghosted, LayerView::Hidden] {
-            song.set_layer_view(1, view).unwrap();
+            song.set_layer_view(layer_index(1), view).unwrap();
             song.select([note_at(0, 0)], Selecting::Replace);
             assert_eq!(song.selection().count(), 0);
             song.select_between(at(0)..=at(1), lane(0)..=lane(3), Selecting::Replace);
             assert_eq!(song.selection().count(), 0);
-            song.select_layer(1);
+            song.select_layer(layer_index(1));
             assert_eq!(song.selection().count(), 0);
             song.select_all();
             assert_eq!(song.selection().count(), 0);
         }
-        song.set_layer_view(1, LayerView::Shown).unwrap();
-        song.set_layer_locked(1, true).unwrap();
+        song.set_layer_view(layer_index(1), LayerView::Shown)
+            .unwrap();
+        song.set_layer_locked(layer_index(1), true).unwrap();
         song.select_all();
         assert_eq!(song.selection().count(), 0);
-        song.set_layer_locked(1, false).unwrap();
-        song.select_layer(1);
+        song.set_layer_locked(layer_index(1), false).unwrap();
+        song.select_layer(layer_index(1));
         assert_eq!(song.selection().count(), 1);
-        song.select_layer(99);
+        song.select_layer(layer_index(99));
         assert_eq!(song.selection().count(), 0);
     }
 
@@ -1039,15 +1044,15 @@ mod tests {
         let mut song = Song::new(document(json!([])), &[]);
         assert!(matches!(song.add_layer(), Err(Refusal::ReadOnly)));
         assert!(matches!(
-            song.copy_layer_to_chart(0, 1),
+            song.copy_layer_to_chart(layer_index(0), chart_index(1)),
             Err(Refusal::ReadOnly)
         ));
         assert!(matches!(
-            song.set_layer_view(0, LayerView::Hidden),
+            song.set_layer_view(layer_index(0), LayerView::Hidden),
             Err(Refusal::ReadOnly)
         ));
         assert!(matches!(
-            song.rename_layer(0, "Kick"),
+            song.rename_layer(layer_index(0), "Kick"),
             Err(Refusal::ReadOnly)
         ));
     }
@@ -1065,14 +1070,16 @@ mod tests {
     fn layer_no_ops_do_not_materialise_an_implicit_chart_or_add_history() {
         let mut song = Song::new(document(json!([object(0, 0, "tap")])), EDITABLE);
         let before = song.document().document().clone();
-        song.move_selection_to_layer(0).unwrap();
+        song.move_selection_to_layer(layer_index(0)).unwrap();
         song.select_all();
-        song.move_selection_to_layer(0).unwrap();
-        song.rename_layer(0, "Layer 0").unwrap();
-        song.recolour_layer(0, LayerColour::Blue).unwrap();
-        song.set_layer_view(0, LayerView::Shown).unwrap();
-        song.set_layer_locked(0, false).unwrap();
-        song.move_layer(0, 0).unwrap();
+        song.move_selection_to_layer(layer_index(0)).unwrap();
+        song.rename_layer(layer_index(0), "Layer 0").unwrap();
+        song.recolour_layer(layer_index(0), LayerColour::Blue)
+            .unwrap();
+        song.set_layer_view(layer_index(0), LayerView::Shown)
+            .unwrap();
+        song.set_layer_locked(layer_index(0), false).unwrap();
+        song.move_layer(layer_index(0), layer_index(0)).unwrap();
         assert_eq!(*song.document().document(), before);
         assert!(!song.is_modified());
     }
@@ -1082,7 +1089,11 @@ mod tests {
         let mut song = Song::new(document(json!([])), EDITABLE);
         song.add_layer().unwrap();
         song.mark_saved();
-        assert_eq!(song.copy_layer_to_chart(0, 0).unwrap(), 0);
+        assert_eq!(
+            song.copy_layer_to_chart(layer_index(0), chart_index(0))
+                .unwrap(),
+            0
+        );
         assert!(!song.is_modified());
     }
 
@@ -1093,7 +1104,7 @@ mod tests {
         song.add_layer().unwrap();
         song.select([note_at(0, 0)], Selecting::Replace);
         let before_move = song.document().document().clone();
-        song.move_selection_to_layer(0).unwrap();
+        song.move_selection_to_layer(layer_index(0)).unwrap();
         let after_move = song.document().document().clone();
         song.undo().unwrap();
         assert_eq!(*song.document().document(), before_move);
@@ -1101,7 +1112,8 @@ mod tests {
         assert_eq!(*song.document().document(), after_move);
 
         let before_copy = song.document().document().clone();
-        song.copy_layer_to_chart(0, 1).unwrap();
+        song.copy_layer_to_chart(layer_index(0), chart_index(1))
+            .unwrap();
         let after_copy = song.document().document().clone();
         song.undo().unwrap();
         assert_eq!(*song.document().document(), before_copy);
@@ -1109,7 +1121,7 @@ mod tests {
         assert_eq!(*song.document().document(), after_copy);
 
         let before_merge = song.document().document().clone();
-        song.merge_layer_down(0).unwrap();
+        song.merge_layer_down(layer_index(0)).unwrap();
         let after_merge = song.document().document().clone();
         song.undo().unwrap();
         assert_eq!(*song.document().document(), before_merge);
@@ -1118,7 +1130,8 @@ mod tests {
 
         song.undo().unwrap();
         let before_delete = song.document().document().clone();
-        song.delete_layer(0, LayerNotes::Delete).unwrap();
+        song.delete_layer(layer_index(0), LayerNotes::Delete)
+            .unwrap();
         let after_delete = song.document().document().clone();
         song.undo().unwrap();
         assert_eq!(*song.document().document(), before_delete);
@@ -1133,23 +1146,24 @@ mod tests {
             EDITABLE,
         );
         song.add_layer().unwrap();
-        song.select_layer(1);
+        song.select_layer(layer_index(1));
         assert_eq!(song.selection().count(), 2);
-        song.move_selection_to_layer(0).unwrap();
+        song.move_selection_to_layer(layer_index(0)).unwrap();
         assert_eq!(song.layers()[0].notes, 2);
         assert_eq!(song.layers()[1].notes, 0);
         song.undo().unwrap();
         assert_eq!(song.layers()[1].notes, 2);
-        song.move_layer(1, 0).unwrap();
-        song.merge_layer_down(0).unwrap();
+        song.move_layer(layer_index(1), layer_index(0)).unwrap();
+        song.merge_layer_down(layer_index(0)).unwrap();
         assert_eq!(song.layers().len(), 1);
         assert_eq!(song.layers()[0].notes, 2);
         assert!(matches!(
-            song.delete_layer(0, LayerNotes::Delete),
+            song.delete_layer(layer_index(0), LayerNotes::Delete),
             Err(Refusal::LastLayer)
         ));
         song.undo().unwrap();
-        song.delete_layer(0, LayerNotes::Delete).unwrap();
+        song.delete_layer(layer_index(0), LayerNotes::Delete)
+            .unwrap();
         assert!(song.document().document().charts[0].objects.is_empty());
     }
 
@@ -1157,12 +1171,12 @@ mod tests {
     fn switching_charts_keeps_their_active_rows_and_pasting_uses_the_active_name() {
         let mut song = Song::new(document(json!([object(0, 0, "tap")])), EDITABLE);
         song.add_layer().unwrap();
-        song.set_active_layer(1);
-        song.open_chart(1);
-        assert_eq!(song.active_layer(), 0);
+        song.set_active_layer(layer_index(1));
+        song.open_chart(chart_index(1));
+        assert_eq!(song.active_layer(), layer_index(0));
         song.add_layer().unwrap();
-        song.open_chart(0);
-        assert_eq!(song.active_layer(), 1);
+        song.open_chart(chart_index(0));
+        assert_eq!(song.active_layer(), layer_index(1));
         let mut clip: Object = serde_json::from_value(object(0, 2, "tap")).unwrap();
         clip.layer = Some(LayerName::new("Layer 1").unwrap());
         song.paste(&[clip], at(240)).unwrap();
@@ -1184,14 +1198,14 @@ mod tests {
         );
         song.add_layer().unwrap();
         song.select([note_at(0, 1)], Selecting::Replace);
-        song.move_selection_to_layer(0).unwrap();
+        song.move_selection_to_layer(layer_index(0)).unwrap();
         song.select_all();
         assert_eq!(song.duplicate_selection(at(240)).unwrap(), 2);
         let chart = &song.document().document().charts[0];
         assert_eq!(chart.objects[2].layer, chart.objects[0].layer);
         assert_eq!(chart.objects[3].layer, chart.objects[1].layer);
         let clip = song.copied();
-        song.set_active_layer(1);
+        song.set_active_layer(layer_index(1));
         song.paste(&clip, at(480)).unwrap();
         assert_eq!(
             song.document().document().charts[0].objects[4]
@@ -1207,8 +1221,9 @@ mod tests {
     fn duplication_uses_source_layers_even_when_the_active_layer_is_hidden() {
         let mut song = Song::new(document(json!([object(0, 0, "tap")])), EDITABLE);
         song.add_layer().unwrap();
-        song.set_layer_view(0, LayerView::Hidden).unwrap();
-        song.select_layer(1);
+        song.set_layer_view(layer_index(0), LayerView::Hidden)
+            .unwrap();
+        song.select_layer(layer_index(1));
         assert_eq!(song.duplicate_selection(at(240)).unwrap(), 1);
         assert_eq!(song.layers()[1].notes, 2);
     }
@@ -1228,7 +1243,7 @@ mod tests {
             matches!(song.add_taps([(at(240), lane(1))]), Err(Refusal::OnLayer(name)) if name == "Layer 0")
         );
         song.select([note_at(0, 0)], Selecting::Replace);
-        song.move_selection_to_layer(0).unwrap();
+        song.move_selection_to_layer(layer_index(0)).unwrap();
         assert!(
             matches!(song.move_selection(TickOffset::new(240), LaneOffset::new(1)), Err(Refusal::OnLayer(name)) if name == "Layer 0")
         );

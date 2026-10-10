@@ -1,8 +1,8 @@
 use super::entry::{entry_sized, shown};
 use super::layers::{layer_menu, layers};
 use super::{
-    Action, Metadata, ResolvedTime, ResourcePath, SettingScope, Song, Ui, egui, fields, icon,
-    style, table,
+    Action, ChartIndex, LayerIndex, Metadata, ResolvedTime, ResourcePath, SettingScope, Song, Ui,
+    egui, fields, icon, style, table,
 };
 use charter_core::LayerName;
 
@@ -27,6 +27,7 @@ pub(crate) fn song_panel(
         }
         table(ui, "charts", |ui| {
             for (index, chart) in document.charts.iter().enumerate() {
+                let index = ChartIndex::new(index);
                 let open = index == song.chart_index();
                 if ui.selectable_label(open, &chart.name).clicked() {
                     actions.push(Action::OpenChart(index));
@@ -69,7 +70,7 @@ pub(crate) fn song_panel(
 #[derive(Debug, Default)]
 pub(crate) struct SongDrafts {
     /// Name being typed for a layer.
-    pub(super) layer_name: Option<(usize, String)>,
+    pub(super) layer_name: Option<(LayerIndex, String)>,
     /// Layer whose notes need a deletion decision.
     pub(super) deleting_layer: Option<LayerName>,
     /// Title being edited, while its field has the keyboard.
@@ -248,7 +249,7 @@ fn setting_rows(
     let document = song.document().document();
     let settings = match scope {
         SettingScope::Song => &document.settings,
-        SettingScope::Chart => &document.charts.get(song.chart_index())?.settings,
+        SettingScope::Chart => &document.charts.get(song.chart_index().get())?.settings,
     };
     let mut refused = None;
     for setting in plugin
@@ -704,14 +705,29 @@ mod tests {
             });
         }
         harness.run();
-        assert!(harness.state().2.contains(&Action::SetActiveLayer(1)));
+        assert!(
+            harness
+                .state()
+                .2
+                .contains(&Action::SetActiveLayer(LayerIndex::new(1)))
+        );
         harness.state_mut().2.clear();
         harness
             .get_by_label("Layer row Layer 0")
             .click_modifiers(egui::Modifiers::COMMAND);
         harness.run();
-        assert!(harness.state().2.contains(&Action::SelectLayer(1)));
-        assert!(!harness.state().2.contains(&Action::SetActiveLayer(1)));
+        assert!(
+            harness
+                .state()
+                .2
+                .contains(&Action::SelectLayer(LayerIndex::new(1)))
+        );
+        assert!(
+            !harness
+                .state()
+                .2
+                .contains(&Action::SetActiveLayer(LayerIndex::new(1)))
+        );
     }
 
     #[test]
@@ -751,18 +767,21 @@ mod tests {
         harness.run();
         harness.get_by_label("Ghost").click();
         harness.run();
-        assert!(
-            harness
-                .state()
-                .2
-                .contains(&Action::SetLayerView(1, LayerView::Ghosted))
-        );
+        assert!(harness.state().2.contains(&Action::SetLayerView(
+            LayerIndex::new(1),
+            LayerView::Ghosted
+        )));
         harness.state_mut().2.clear();
         harness.get_by_label("Layer row Layer 0").click_secondary();
         harness.run();
         harness.get_by_label("Lock").click();
         harness.run();
-        assert!(harness.state().2.contains(&Action::SetLayerLocked(1, true)));
+        assert!(
+            harness
+                .state()
+                .2
+                .contains(&Action::SetLayerLocked(LayerIndex::new(1), true))
+        );
     }
 
     #[test]
@@ -778,13 +797,13 @@ mod tests {
             harness
                 .state()
                 .2
-                .contains(&Action::SetLayerView(0, LayerView::Hidden))
+                .contains(&Action::SetLayerView(LayerIndex::new(0), LayerView::Hidden))
         );
         harness.state_mut().2.clear();
         harness
             .state_mut()
             .0
-            .set_layer_view(0, LayerView::Hidden)
+            .set_layer_view(LayerIndex::new(0), LayerView::Hidden)
             .unwrap();
         harness.run();
         harness.get_by_label("Layer row Layer 0").click_secondary();
@@ -797,7 +816,7 @@ mod tests {
             harness
                 .state()
                 .2
-                .contains(&Action::SetLayerView(0, LayerView::Shown))
+                .contains(&Action::SetLayerView(LayerIndex::new(0), LayerView::Shown))
         );
     }
 
@@ -811,19 +830,34 @@ mod tests {
         harness.run();
         harness.get_by_label("Move selected notes here").click();
         harness.run();
-        assert!(harness.state().2.contains(&Action::MoveSelectionToLayer(1)));
+        assert!(
+            harness
+                .state()
+                .2
+                .contains(&Action::MoveSelectionToLayer(LayerIndex::new(1)))
+        );
         harness.state_mut().2.clear();
         harness.get_by_label("Layer row Layer 0").click_secondary();
         harness.run();
         harness.get_by_label("Solo").click();
         harness.run();
-        assert!(harness.state().2.contains(&Action::SoloLayer(1)));
+        assert!(
+            harness
+                .state()
+                .2
+                .contains(&Action::SoloLayer(LayerIndex::new(1)))
+        );
         harness.state_mut().2.clear();
         harness.get_by_label("Layer row Layer 0").click_secondary();
         harness.run();
         harness.get_by_label("New layer above").click();
         harness.run();
-        assert!(harness.state().2.contains(&Action::SetActiveLayer(1)));
+        assert!(
+            harness
+                .state()
+                .2
+                .contains(&Action::SetActiveLayer(LayerIndex::new(1)))
+        );
         assert!(harness.state().2.contains(&Action::AddLayer));
     }
 
@@ -835,12 +869,10 @@ mod tests {
         assert!(harness.state().2.contains(&Action::AddLayer));
         harness.get_by_label("Cycle visibility of Layer 0").click();
         harness.run();
-        assert!(
-            harness
-                .state()
-                .2
-                .contains(&Action::SetLayerView(0, charter_core::LayerView::Ghosted))
-        );
+        assert!(harness.state().2.contains(&Action::SetLayerView(
+            LayerIndex::new(0),
+            charter_core::LayerView::Ghosted
+        )));
     }
 
     #[test]
@@ -852,20 +884,28 @@ mod tests {
             .get_by_label("Cycle visibility of Layer 0")
             .click_modifiers(egui::Modifiers::ALT);
         harness.run();
-        assert!(harness.state().2.contains(&Action::SoloLayer(1)));
+        assert!(
+            harness
+                .state()
+                .2
+                .contains(&Action::SoloLayer(LayerIndex::new(1)))
+        );
         harness.get_by_label("Toggle lock of Layer 0").click();
-        harness.run();
-        assert!(harness.state().2.contains(&Action::SetLayerLocked(1, true)));
-        harness.get_by_label("Colour of Layer 0").click();
-        harness.run();
-        harness.get_by_label("Pink").click();
         harness.run();
         assert!(
             harness
                 .state()
                 .2
-                .contains(&Action::RecolourLayer(1, LayerColour::Pink))
+                .contains(&Action::SetLayerLocked(LayerIndex::new(1), true))
         );
+        harness.get_by_label("Colour of Layer 0").click();
+        harness.run();
+        harness.get_by_label("Pink").click();
+        harness.run();
+        assert!(harness.state().2.contains(&Action::RecolourLayer(
+            LayerIndex::new(1),
+            LayerColour::Pink
+        )));
     }
 
     #[test]
@@ -877,15 +917,29 @@ mod tests {
             .get_by_label("Layer Layer 0")
             .click_modifiers(egui::Modifiers::COMMAND);
         harness.run();
-        assert!(harness.state().2.contains(&Action::SelectLayer(1)));
-        assert!(!harness.state().2.contains(&Action::SetActiveLayer(1)));
+        assert!(
+            harness
+                .state()
+                .2
+                .contains(&Action::SelectLayer(LayerIndex::new(1)))
+        );
+        assert!(
+            !harness
+                .state()
+                .2
+                .contains(&Action::SetActiveLayer(LayerIndex::new(1)))
+        );
     }
 
     #[test]
     fn deleting_a_layer_with_notes_asks_what_to_do_with_them() {
         let mut harness = editable_panel();
         harness.state_mut().0.add_layer().unwrap();
-        harness.state_mut().0.move_layer(1, 0).unwrap();
+        harness
+            .state_mut()
+            .0
+            .move_layer(LayerIndex::new(1), LayerIndex::new(0))
+            .unwrap();
         harness.run();
         harness.get_by_label("Layer Layer 0").click_secondary();
         harness.run();
@@ -905,12 +959,10 @@ mod tests {
         );
         harness.get_by_label("Merge them down").click();
         harness.run();
-        assert!(
-            harness
-                .state()
-                .2
-                .contains(&Action::DeleteLayer(0, LayerNotes::MergeDown))
-        );
+        assert!(harness.state().2.contains(&Action::DeleteLayer(
+            LayerIndex::new(0),
+            LayerNotes::MergeDown
+        )));
     }
 
     #[test]
@@ -935,7 +987,7 @@ mod tests {
             harness
                 .state()
                 .2
-                .contains(&Action::DeleteLayer(1, LayerNotes::Delete))
+                .contains(&Action::DeleteLayer(LayerIndex::new(1), LayerNotes::Delete))
         );
     }
 
@@ -952,12 +1004,10 @@ mod tests {
         harness.run();
         harness.drop_at(to);
         harness.run();
-        assert!(
-            harness
-                .state()
-                .2
-                .contains(&Action::MoveLayer { from: 1, to: 0 })
-        );
+        assert!(harness.state().2.contains(&Action::MoveLayer {
+            from: LayerIndex::new(1),
+            to: LayerIndex::new(0)
+        }));
     }
 
     #[test]
@@ -981,7 +1031,7 @@ mod tests {
             harness
                 .state()
                 .2
-                .contains(&Action::RenameLayer(0, "Kick".into()))
+                .contains(&Action::RenameLayer(LayerIndex::new(0), "Kick".into()))
         );
     }
 
@@ -989,7 +1039,11 @@ mod tests {
     fn layer_menu_copies_its_notes_to_another_chart() {
         let mut harness = editable_panel();
         harness.state_mut().0.add_layer().unwrap();
-        harness.state_mut().0.move_layer(1, 0).unwrap();
+        harness
+            .state_mut()
+            .0
+            .move_layer(LayerIndex::new(1), LayerIndex::new(0))
+            .unwrap();
         harness.run();
         harness.get_by_label("Layer Layer 0").click_secondary();
         harness.run();
@@ -997,12 +1051,10 @@ mod tests {
         harness.run();
         harness.get_by_label("Copy to Hard").click();
         harness.run();
-        assert!(
-            harness
-                .state()
-                .2
-                .contains(&Action::CopyLayerToChart { layer: 0, chart: 1 })
-        );
+        assert!(harness.state().2.contains(&Action::CopyLayerToChart {
+            layer: LayerIndex::new(0),
+            chart: ChartIndex::new(1)
+        }));
     }
 
     #[test]
@@ -1020,7 +1072,12 @@ mod tests {
         harness.run();
         harness.get_by_label("Layer 0").click();
         harness.run();
-        assert!(harness.state().1.contains(&Action::SetActiveLayer(1)));
+        assert!(
+            harness
+                .state()
+                .1
+                .contains(&Action::SetActiveLayer(LayerIndex::new(1)))
+        );
     }
 
     #[test]

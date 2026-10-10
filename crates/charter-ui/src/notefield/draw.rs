@@ -758,8 +758,11 @@ mod tests {
     #[test]
     fn a_hidden_layer_is_not_hit_even_where_its_note_was_drawn() {
         let mut song = Song::new(demo::song(), &[&charter_stepmania::Plugin]);
-        song.set_layer_view(0, charter_core::LayerView::Hidden)
-            .unwrap();
+        song.set_layer_view(
+            charter_editor::LayerIndex::new(0),
+            charter_core::LayerView::Hidden,
+        )
+        .unwrap();
         let field = field(&song);
         let chart = song.chart().unwrap();
         let note = chart
@@ -887,8 +890,11 @@ mod tests {
             count
         };
         assert!(painted_taps(&song) > 0);
-        song.set_layer_view(0, charter_core::LayerView::Hidden)
-            .unwrap();
+        song.set_layer_view(
+            charter_editor::LayerIndex::new(0),
+            charter_core::LayerView::Hidden,
+        )
+        .unwrap();
         assert_eq!(painted_taps(&song), 0);
     }
 
@@ -924,14 +930,16 @@ mod tests {
         harness.run();
         harness.get_by_label("Layer 1").click();
         harness.run();
-        assert!(harness.state().1.contains(&Action::MoveSelectionToLayer(0)));
+        assert!(harness.state().1.contains(&Action::MoveSelectionToLayer(
+            charter_editor::LayerIndex::new(0)
+        )));
     }
 
     #[test]
     fn lower_layers_are_painted_before_higher_ones() {
         let mut song = Song::new(demo::song(), &[&charter_stepmania::Plugin]);
         song.add_layer().unwrap();
-        song.set_active_layer(0);
+        song.set_active_layer(charter_editor::LayerIndex::new(0));
         song.toggle(Tick::new(1_000_000), LaneIndex::new(0), Kind::Tap)
             .unwrap();
         let mut order = ObjectOrder::default();

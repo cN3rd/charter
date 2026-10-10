@@ -619,14 +619,17 @@ mod tests {
     #[test]
     fn panel_layer_edits_each_undo_as_one_step() {
         let edits = [
-            Action::RenameLayer(0, "Kick".into()),
-            Action::RecolourLayer(0, charter_core::LayerColour::Pink),
-            Action::SetLayerView(0, charter_core::LayerView::Ghosted),
-            Action::SetLayerLocked(0, true),
-            Action::SoloLayer(0),
-            Action::MoveLayer { from: 0, to: 1 },
-            Action::MergeLayer(0),
-            Action::DeleteLayer(0, charter_editor::LayerNotes::Delete),
+            Action::RenameLayer(LayerIndex::new(0), "Kick".into()),
+            Action::RecolourLayer(LayerIndex::new(0), charter_core::LayerColour::Pink),
+            Action::SetLayerView(LayerIndex::new(0), charter_core::LayerView::Ghosted),
+            Action::SetLayerLocked(LayerIndex::new(0), true),
+            Action::SoloLayer(LayerIndex::new(0)),
+            Action::MoveLayer {
+                from: LayerIndex::new(0),
+                to: LayerIndex::new(1),
+            },
+            Action::MergeLayer(LayerIndex::new(0)),
+            Action::DeleteLayer(LayerIndex::new(0), charter_editor::LayerNotes::Delete),
         ];
         for action in edits {
             let mut app = Window::new(PLUGINS);
@@ -1624,7 +1627,7 @@ mod tests {
         harness.get_by_label("Hard").click();
         harness.run();
         let song = harness.state().song.as_ref().unwrap();
-        assert_eq!(song.chart_index(), 1);
+        assert_eq!(song.chart_index(), ChartIndex::new(1));
     }
     #[test]
     fn a_file_that_breaks_a_rule_says_what_and_where() {

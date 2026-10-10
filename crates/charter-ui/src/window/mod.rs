@@ -19,7 +19,9 @@ use charter_core::{
 };
 use egui::Ui;
 
-use charter_editor::{KeepNotes, NoteAt, Refusal, Selecting, Song, Step, Toggled, demo};
+use charter_editor::{
+    ChartIndex, KeepNotes, LayerIndex, NoteAt, Refusal, Selecting, Song, Step, Toggled, demo,
+};
 
 use crate::artwork::{Artwork, Picture};
 use crate::flip::Direction;
@@ -382,42 +384,42 @@ pub(crate) enum Action {
     /// Make a layer above the active one.
     AddLayer,
     /// Choose the layer at this row.
-    SetActiveLayer(usize),
+    SetActiveLayer(LayerIndex),
     /// Choose the adjacent row.
     StepLayer(Step),
     /// Move the selected notes onto this row.
-    MoveSelectionToLayer(usize),
+    MoveSelectionToLayer(LayerIndex),
     /// Select the notes on this row.
-    SelectLayer(usize),
+    SelectLayer(LayerIndex),
     /// Set the view of this row.
-    SetLayerView(usize, charter_core::LayerView),
+    SetLayerView(LayerIndex, charter_core::LayerView),
     /// Solo this row, or restore the preceding views.
-    SoloLayer(usize),
+    SoloLayer(LayerIndex),
     /// Set the lock on this row.
-    SetLayerLocked(usize, bool),
+    SetLayerLocked(LayerIndex, bool),
     /// Set the palette colour of this row.
-    RecolourLayer(usize, charter_core::LayerColour),
+    RecolourLayer(LayerIndex, charter_core::LayerColour),
     /// Give this row a new name.
-    RenameLayer(usize, String),
+    RenameLayer(LayerIndex, String),
     /// Drag a row to a new position.
     MoveLayer {
         /// Row moved.
-        from: usize,
+        from: LayerIndex,
         /// Row it moves to.
-        to: usize,
+        to: LayerIndex,
     },
     /// Merge the active row into the next row.
     MergeActiveLayer,
     /// Merge this row into the next row.
-    MergeLayer(usize),
+    MergeLayer(LayerIndex),
     /// Remove the row, either discarding or moving its notes.
-    DeleteLayer(usize, charter_editor::LayerNotes),
+    DeleteLayer(LayerIndex, charter_editor::LayerNotes),
     /// Copy this row into another chart.
     CopyLayerToChart {
         /// Row whose notes are copied.
-        layer: usize,
+        layer: LayerIndex,
         /// Chart receiving the copied notes.
-        chart: usize,
+        chart: ChartIndex,
     },
     /// Show or hide the active row.
     ToggleActiveLayerView,
@@ -426,7 +428,7 @@ pub(crate) enum Action {
     /// Replace the open song with the built-in demo.
     OpenDemo,
     /// Show the chart at this index in the open song.
-    OpenChart(usize),
+    OpenChart(ChartIndex),
     /// Move the cursor by a snap in the given direction.
     Move(Step),
     /// Move the cursor by a measure in the given direction.

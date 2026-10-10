@@ -194,6 +194,37 @@ pub struct Song {
     chart_state: Vec<ChartState>,
 }
 
+/// A chart's position in the song's chart list.
+///
+/// ```
+/// # use charter_editor::{ChartIndex, Song};
+/// let _: fn(&mut Song, ChartIndex) = Song::open_chart;
+/// let _ = ChartIndex::new(1).get();
+/// ```
+///
+/// A layer index cannot open a chart:
+///
+/// ```compile_fail
+/// # use charter_editor::{LayerIndex, Song};
+/// let _: fn(&mut Song, LayerIndex) = Song::open_chart;
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChartIndex(usize);
+
+impl ChartIndex {
+    /// Wrap a chart's position in the song.
+    #[must_use]
+    pub const fn new(index: usize) -> Self {
+        Self(index)
+    }
+
+    /// Position in the chart list.
+    #[must_use]
+    pub const fn get(self) -> usize {
+        self.0
+    }
+}
+
 /// Editor state kept per chart beside the document.
 #[derive(Clone, Debug, Default)]
 struct ChartState {
@@ -204,26 +235,41 @@ struct ChartState {
 }
 
 /// A row in a chart's layer list.
+///
+/// ```
+/// # use charter_editor::{LayerIndex, Song};
+/// let _: fn(&mut Song, LayerIndex) = Song::set_active_layer;
+/// let _ = LayerIndex::new(1).get();
+/// ```
+///
+/// A chart index cannot select a layer:
+///
+/// ```compile_fail
+/// # use charter_editor::{ChartIndex, Song};
+/// let _: fn(&mut Song, ChartIndex) = Song::set_active_layer;
+/// ```
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct LayerIndex(usize);
+pub struct LayerIndex(usize);
 
 impl LayerIndex {
     /// The first layer row.
     const ZERO: Self = Self(0);
 
-    /// Wraps a raw layer row index at public API boundaries.
-    const fn new(index: usize) -> Self {
+    /// Wrap a row's position in the layer list.
+    #[must_use]
+    pub const fn new(index: usize) -> Self {
         Self(index)
     }
 
-    /// Raw index for collection access and public API returns.
-    const fn get(self) -> usize {
+    /// Position in the layer list.
+    #[must_use]
+    pub const fn get(self) -> usize {
         self.0
     }
 
     /// Clamps a caller-provided index to the last row that exists.
-    fn clamped(index: usize, len: usize) -> Self {
-        Self(index.min(len.saturating_sub(1)))
+    fn clamped(self, len: usize) -> Self {
+        Self(self.0.min(len.saturating_sub(1)))
     }
 }
 
@@ -314,8 +360,8 @@ impl Song {
 
     /// Index of the chart currently open, even when the song has no charts.
     #[must_use]
-    pub const fn chart_index(&self) -> usize {
-        self.chart
+    pub const fn chart_index(&self) -> ChartIndex {
+        ChartIndex::new(self.chart)
     }
 
     /// The open chart, unless the song has none.
@@ -332,7 +378,8 @@ impl Song {
     }
 
     /// Opens another chart, keeping the cursor on its tick so the two compare at one spot.
-    pub fn open_chart(&mut self, index: usize) {
+    pub fn open_chart(&mut self, index: ChartIndex) {
+        let index = index.get();
         if index < self.document.document().charts.len() && index != self.chart {
             self.chart = index;
             self.selection.clear();
@@ -354,6 +401,14 @@ pub(crate) mod tests {
 
     pub(crate) fn at(tick: i32) -> Tick {
         Tick::new(tick)
+    }
+
+    pub(crate) const fn layer_index(index: usize) -> LayerIndex {
+        LayerIndex::new(index)
+    }
+
+    pub(crate) const fn chart_index(index: usize) -> ChartIndex {
+        ChartIndex::new(index)
     }
 
     /// Accepts every document of the `test` ruleset.
@@ -504,7 +559,7 @@ pub(crate) mod tests {
         });
         document.charts[0].objects[0].layer = Some(shake_layer);
         let mut song = Song::new(ValidDocument::new(document).unwrap(), EDITABLE);
-        song.set_layer_locked(1, true).unwrap();
+        song.set_layer_locked(layer_index(1), true).unwrap();
         song
     }
 
@@ -597,5 +652,20 @@ pub(crate) mod tests {
     fn a_song_its_plugin_accepts_is_editable() {
         let song = Song::new(document(json!([])), EDITABLE);
         assert_eq!(song.read_only(), None);
+    }
+
+    #[test]
+    fn public_chart_and_layer_indices_address_their_own_rows() {
+        use crate::{ChartIndex, LayerIndex};
+
+        let mut song = Song::new(document(json!([])), EDITABLE);
+        let layer = LayerIndex::new(0);
+        let chart = ChartIndex::new(1);
+        assert_eq!(song.chart_index(), ChartIndex::new(0));
+        song.set_active_layer(layer);
+        assert_eq!(song.active_layer(), layer);
+        assert_eq!(song.copy_layer_to_chart(layer, chart).unwrap(), 0);
+        song.open_chart(chart);
+        assert_eq!(song.chart_index(), chart);
     }
 }

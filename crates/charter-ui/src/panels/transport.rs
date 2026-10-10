@@ -1,5 +1,6 @@
 use super::{
-    Action, Align, Layout, NonZeroU16, Rate, RichText, Song, Tick, Ui, Zoom, egui, icon, style,
+    Action, Align, LayerIndex, Layout, NonZeroU16, Rate, RichText, Song, Tick, Ui, Zoom, egui,
+    icon, style,
 };
 
 /// Draws the playback and editing controls, sending their choices as `actions`.
@@ -271,7 +272,7 @@ pub(crate) fn status_bar(
         ui.label(state);
         ui.weak(audio);
         let layers = song.layers();
-        if let Some(row) = layers.get(song.active_layer()) {
+        if let Some(row) = layers.get(song.active_layer().get()) {
             ui.separator();
             let menu = ui.menu_button(
                 (
@@ -281,7 +282,7 @@ pub(crate) fn status_bar(
                 |ui| {
                     for (index, layer) in layers.iter().enumerate() {
                         if ui.button(&layer.name).clicked() {
-                            actions.push(Action::SetActiveLayer(index));
+                            actions.push(Action::SetActiveLayer(LayerIndex::new(index)));
                             ui.close();
                         }
                     }

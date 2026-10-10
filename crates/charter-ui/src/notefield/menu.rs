@@ -1,5 +1,6 @@
 use super::gesture::{hit_on_layers, snap_line};
 use super::{Action, Field, Flip, LaneIndex, LaneOffset, Selecting, Song, Step, Tick, Ui, egui};
+use charter_editor::LayerIndex;
 
 /// The patterns the right-click menu places, by the lanes each step counts from the lane
 /// clicked, and the spacings it places them at, as how many to a beat.
@@ -86,7 +87,7 @@ pub(super) fn menu_items(
                             .all(|object| chart.layer_index(&object) == Some(index))
                     });
                     if !already_there && ui.button(&row.name).clicked() {
-                        actions.push(Action::MoveSelectionToLayer(index));
+                        actions.push(Action::MoveSelectionToLayer(LayerIndex::new(index)));
                         ui.close();
                     }
                 }

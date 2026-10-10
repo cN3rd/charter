@@ -73,7 +73,7 @@ mod tests {
             charter_timing::grid::Grid::default(),
         );
         assert!(!before.is_empty());
-        song.set_layer_view(0, charter_core::LayerView::Hidden)
+        song.set_layer_view(LayerIndex::new(0), charter_core::LayerView::Hidden)
             .unwrap();
         let after = clicks(
             &song,

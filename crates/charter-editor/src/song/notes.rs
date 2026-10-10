@@ -16,11 +16,11 @@ impl Song {
     ///
     /// Refuses on read-only songs, missing charts, format errors or game rejections.
     pub fn toggle(&mut self, tick: Tick, lane: LaneIndex, kind: Kind) -> Result<Toggled, Refusal> {
-        let active = self.editable_layer(self.active_layer())?.cloned();
+        let active = self.editable_layer(self.active_layer().get())?.cloned();
         let chart = self.chart().ok_or(Refusal::NoChart)?;
         let (edit, toggled) = if let Some((index, object)) = self.starting(tick, lane) {
             if !self.is_editable(object)
-                || chart.layer_index(object).unwrap_or(0) != self.active_layer()
+                || chart.layer_index(object).unwrap_or(0) != self.active_layer().get()
             {
                 return Err(Refusal::OnLayer(self.object_layer_name(object)));
             }
@@ -374,7 +374,7 @@ impl Song {
         let active = if preserve_layers {
             None
         } else {
-            self.editable_layer(self.active_layer())?.cloned()
+            self.editable_layer(self.active_layer().get())?.cloned()
         };
         let Some(chart) = self.chart() else {
             return Err(Refusal::NoChart);

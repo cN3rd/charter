@@ -126,7 +126,7 @@ mod tests {
     fn switching_charts_keeps_the_cursor_on_its_tick() {
         let mut song = Song::new(demo::song(), &[]);
         song.step(Step::Later);
-        song.open_chart(1);
+        song.open_chart(chart_index(1));
         assert_eq!(song.chart().unwrap().name, "Hard");
         assert_eq!(song.cursor(), at(240));
     }

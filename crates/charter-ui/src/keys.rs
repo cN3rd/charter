@@ -4,7 +4,7 @@
 use charter_core::{LaneIndex, LaneOffset, Tick};
 use egui::{Key, KeyboardShortcut, Modifiers};
 
-use charter_editor::Step;
+use charter_editor::{LayerIndex, Step};
 
 use crate::notefield::Zoom;
 use crate::{Action, Note};
@@ -223,6 +223,7 @@ fn command(key: Key, modifiers: Modifiers) -> Option<Action> {
         if !modifiers.command
             && let Some(index) = LANE_KEYS[..9].iter().position(|digit| *digit == key)
         {
+            let index = LayerIndex::new(index);
             return Some(if modifiers.shift {
                 Action::MoveSelectionToLayer(index)
             } else {
@@ -375,11 +376,11 @@ mod tests {
         );
         assert_eq!(
             command(Key::Num2, Modifiers::ALT),
-            Some(Action::SetActiveLayer(1))
+            Some(Action::SetActiveLayer(LayerIndex::new(1)))
         );
         assert_eq!(
             command(Key::Num2, Modifiers::ALT.plus(Modifiers::SHIFT)),
-            Some(Action::MoveSelectionToLayer(1))
+            Some(Action::MoveSelectionToLayer(LayerIndex::new(1)))
         );
     }
 

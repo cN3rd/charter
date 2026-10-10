@@ -10,7 +10,7 @@ use std::num::NonZeroU16;
 use charter_core::{
     LayerColour, LayerView, MarkerKind, Metadata, ResolvedTime, ResourcePath, SettingScope, Tick,
 };
-use charter_editor::{LayerNotes, Song, Step};
+use charter_editor::{ChartIndex, LayerIndex, LayerNotes, Song, Step};
 use egui::{self, Align, Layout, RichText, Ui};
 use serde_json::Value;
 

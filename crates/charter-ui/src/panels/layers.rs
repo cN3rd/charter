@@ -1,6 +1,6 @@
 use super::{
-    Action, Align, LayerColour, LayerNotes, LayerView, Layout, RichText, Song, SongDrafts, Ui,
-    egui, icon, style,
+    Action, Align, ChartIndex, LayerColour, LayerIndex, LayerNotes, LayerView, Layout, RichText,
+    Song, SongDrafts, Ui, egui, icon, style,
 };
 
 /// Rows of the open chart's layer stack and the confirmation for deleting notes.
@@ -12,13 +12,14 @@ use super::{
 pub(super) fn layers(ui: &mut Ui, song: &Song, drafts: &mut SongDrafts, actions: &mut Vec<Action>) {
     let rows = song.layers();
     for (index, row) in rows.iter().enumerate() {
+        let index = LayerIndex::new(index);
         let hover_rect = egui::Rect::from_min_size(
             ui.next_widget_position(),
             egui::vec2(ui.available_width(), 25.0),
         );
         let row_response = ui.interact(
             hover_rect,
-            ui.id().with(("layer row", index)),
+            ui.id().with(("layer row", index.get())),
             egui::Sense::click(),
         );
         let hovered = ui.rect_contains_pointer(hover_rect);
@@ -33,11 +34,11 @@ pub(super) fn layers(ui: &mut Ui, song: &Song, drafts: &mut SongDrafts, actions:
         let (drag, dropped) = ui
             .scope(|ui| {
                 ui.visuals_mut().widgets.inactive.bg_fill = fill;
-                ui.dnd_drop_zone::<usize, _>(egui::Frame::new().corner_radius(4), |ui| {
+                ui.dnd_drop_zone::<LayerIndex, _>(egui::Frame::new().corner_radius(4), |ui| {
                     ui.set_min_width(ui.available_width());
                     ui.horizontal(|ui| {
                         let handle =
-                            ui.dnd_drag_source(ui.id().with(("layer", index)), index, |ui| {
+                            ui.dnd_drag_source(ui.id().with(("layer", index.get())), index, |ui| {
                                 ui.label(
                                     style::glyph(ui, icon::DOTS_SIX_VERTICAL)
                                         .color(style::WEAK_TEXT),
@@ -247,6 +248,7 @@ pub(super) fn layers(ui: &mut Ui, song: &Song, drafts: &mut SongDrafts, actions:
             .enumerate()
             .find(|(_, row)| row.name == name.as_str())
         {
+            let index = LayerIndex::new(index);
             let modal =
                 egui::Modal::new(egui::Id::new("delete layer notes")).show(ui.ctx(), |modal_ui| {
                     modal_ui.heading(format!("Delete {}?", row.name));
@@ -261,7 +263,7 @@ pub(super) fn layers(ui: &mut Ui, song: &Song, drafts: &mut SongDrafts, actions:
                         }
                         if buttons
                             .add_enabled(
-                                index.saturating_add(1) < rows.len(),
+                                index.get().saturating_add(1) < rows.len(),
                                 egui::Button::new("Merge them down"),
                             )
                             .clicked()
@@ -316,8 +318,8 @@ fn paint_swatch(ui: &Ui, centre: egui::Pos2, colour: LayerColour, selected: bool
 }
 
 /// Eight named swatches arranged in two rows.
-fn layer_palette(ui: &mut Ui, index: usize, current: LayerColour, actions: &mut Vec<Action>) {
-    egui::Grid::new(("layer palette", index))
+fn layer_palette(ui: &mut Ui, index: LayerIndex, current: LayerColour, actions: &mut Vec<Action>) {
+    egui::Grid::new(("layer palette", index.get()))
         .num_columns(4)
         .show(ui, |ui| {
             for (i, colour) in LayerColour::ALL.into_iter().enumerate() {
@@ -342,12 +344,14 @@ fn layer_palette(ui: &mut Ui, index: usize, current: LayerColour, actions: &mut 
 pub(super) fn layer_menu(
     ui: &mut Ui,
     song: &Song,
-    index: usize,
+    index: LayerIndex,
     drafts: &mut SongDrafts,
     actions: &mut Vec<Action>,
 ) {
     let rows = song.layers();
-    let Some(row) = rows.get(index) else { return };
+    let Some(row) = rows.get(index.get()) else {
+        return;
+    };
     if ui.button("New layer above").clicked() {
         actions.push(Action::SetActiveLayer(index));
         actions.push(Action::AddLayer);
@@ -398,7 +402,7 @@ pub(super) fn layer_menu(
     }
     if ui
         .add_enabled(
-            index.saturating_add(1) < rows.len(),
+            index.get().saturating_add(1) < rows.len(),
             egui::Button::new("Merge down"),
         )
         .clicked()
@@ -408,6 +412,7 @@ pub(super) fn layer_menu(
     }
     ui.menu_button("Copy to chart", |ui| {
         for (chart, target) in song.document().document().charts.iter().enumerate() {
+            let chart = ChartIndex::new(chart);
             if chart != song.chart_index()
                 && ui.button(format!("Copy to {}", target.name)).clicked()
             {
@@ -427,9 +432,12 @@ pub(super) fn layer_menu(
         if row.notes == 0 {
             actions.push(Action::DeleteLayer(index, LayerNotes::Delete));
         } else {
-            drafts.deleting_layer = song
-                .chart()
-                .and_then(|chart| chart.layers.get(index).map(|layer| layer.name.clone()));
+            drafts.deleting_layer = song.chart().and_then(|chart| {
+                chart
+                    .layers
+                    .get(index.get())
+                    .map(|layer| layer.name.clone())
+            });
         }
         ui.close();
     }
@@ -471,14 +479,18 @@ mod tests {
         harness.run();
         ask_to_delete_layer_zero(&mut harness);
 
-        harness.state_mut().0.move_layer(1, 0).unwrap();
+        harness
+            .state_mut()
+            .0
+            .move_layer(LayerIndex::new(1), LayerIndex::new(0))
+            .unwrap();
         harness.run();
         assert!(harness.query_by_label("Delete Layer 0?").is_some());
         harness.get_by_label("Delete 124 notes").click();
         harness.run();
         assert_eq!(
             harness.state().2,
-            [Action::DeleteLayer(0, LayerNotes::Delete)]
+            [Action::DeleteLayer(LayerIndex::new(0), LayerNotes::Delete)]
         );
     }
 
@@ -487,14 +499,18 @@ mod tests {
         let mut harness = editable_layers();
         harness.state_mut().0.add_layer().unwrap();
         harness.state_mut().0.add_layer().unwrap();
-        harness.state_mut().0.move_layer(2, 0).unwrap();
+        harness
+            .state_mut()
+            .0
+            .move_layer(LayerIndex::new(2), LayerIndex::new(0))
+            .unwrap();
         harness.run();
         ask_to_delete_layer_zero(&mut harness);
 
         harness
             .state_mut()
             .0
-            .delete_layer(0, LayerNotes::Delete)
+            .delete_layer(LayerIndex::new(0), LayerNotes::Delete)
             .unwrap();
         harness.run();
         assert!(harness.state().1.deleting_layer.is_none());

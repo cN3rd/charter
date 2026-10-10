@@ -392,7 +392,7 @@ impl Song {
     /// Opens `chart` with the cursor where an undone or redone edit was made.
     pub(super) fn return_to(&mut self, chart: usize, cursor: Tick) {
         self.history.touch_revision();
-        self.open_chart(chart);
+        self.open_chart(ChartIndex::new(chart));
         self.cursor = cursor;
         self.prune_selection();
     }
@@ -471,7 +471,7 @@ mod tests {
                     Ok(()) | Err(_) => {}
                 },
                 Self::Step(step) => song.step(step),
-                Self::OpenChart(index) => song.open_chart(index),
+                Self::OpenChart(index) => song.open_chart(chart_index(index)),
                 Self::SelectAll => song.select_all(),
                 Self::DeleteSelection => match song.delete_selection() {
                     Ok(()) | Err(_) => {}
@@ -650,9 +650,9 @@ mod tests {
     fn undo_opens_the_chart_the_edit_was_made_in() {
         let mut song = Song::new(document(json!([])), EDITABLE);
         song.toggle(song.cursor(), lane(0), Kind::Tap).unwrap();
-        song.open_chart(1);
+        song.open_chart(chart_index(1));
         song.undo().unwrap();
-        assert_eq!(song.chart_index(), 0);
+        assert_eq!(song.chart_index(), chart_index(0));
         assert_eq!(objects(&song), Vec::<Value>::new());
     }
 
@@ -729,7 +729,7 @@ mod tests {
         let before = song.revision();
         song.step(Step::Later);
         song.select_all();
-        song.open_chart(1);
+        song.open_chart(chart_index(1));
         assert_eq!(song.revision(), before);
     }
 

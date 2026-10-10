@@ -14,8 +14,8 @@ mod sync;
     reason = "editor song state and edits form charter-editor's flat API"
 )]
 pub use song::{
-    KeepNotes, LayerNotes, LayerRow, NoteAt, Refusal, SNAPS, Selecting, Song, Step, TimedSpan,
-    Toggled,
+    ChartIndex, KeepNotes, LayerIndex, LayerNotes, LayerRow, NoteAt, Refusal, SNAPS, Selecting,
+    Song, Step, TimedSpan, Toggled,
 };
 #[expect(
     clippy::pub_use,

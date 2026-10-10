@@ -1,9 +1,9 @@
 //! Action dispatch from panels, keys and gestures.
 
 use super::{
-    Action, KeepNotes, Mode, Note, PASTE_WAIT, PendingPaste, Rate, Request, Saving, Selecting,
-    Song, Step, Tick, TickOffset, Toggled, Window, grow, nudge_bpm, pattern, placing_at, refused,
-    retime, stretch,
+    Action, KeepNotes, LayerIndex, Mode, Note, PASTE_WAIT, PendingPaste, Rate, Request, Saving,
+    Selecting, Song, Step, Tick, TickOffset, Toggled, Window, grow, nudge_bpm, pattern, placing_at,
+    refused, retime, stretch,
 };
 use charter_core::TimeShift;
 
@@ -136,10 +136,10 @@ impl Window {
             Action::SetActiveLayer(index) => song.set_active_layer(*index),
             Action::StepLayer(step) => {
                 let active = song.active_layer();
-                song.set_active_layer(match step {
-                    Step::Earlier => active.saturating_sub(1),
-                    Step::Later => active.saturating_add(1),
-                });
+                song.set_active_layer(LayerIndex::new(match step {
+                    Step::Earlier => active.get().saturating_sub(1),
+                    Step::Later => active.get().saturating_add(1),
+                }));
             }
             Action::MoveSelectionToLayer(index) => {
                 self.failure = song
@@ -205,7 +205,7 @@ impl Window {
             }
             Action::ToggleActiveLayerView => {
                 let index = song.active_layer();
-                if let Some(row) = song.layers().get(index) {
+                if let Some(row) = song.layers().get(index.get()) {
                     let view = if row.view == charter_core::LayerView::Hidden {
                         charter_core::LayerView::Shown
                     } else {
@@ -499,7 +499,10 @@ mod tests {
         let before = note_count(&harness);
         harness.key_press_modifiers(egui::Modifiers::ALT, egui::Key::Num2);
         harness.run();
-        assert_eq!(harness.state().song.as_ref().unwrap().active_layer(), 1);
+        assert_eq!(
+            harness.state().song.as_ref().unwrap().active_layer(),
+            LayerIndex::new(1)
+        );
         assert!(harness.query_by_label("Layer 0").is_some());
         select_note(&mut harness, 3, 720);
         harness.key_press_modifiers(
@@ -529,8 +532,8 @@ mod tests {
     #[test]
     fn hidden_or_locked_layers_contribute_no_notes_to_select_all() {
         for action in [
-            Action::SetLayerView(1, charter_core::LayerView::Hidden),
-            Action::SetLayerLocked(1, true),
+            Action::SetLayerView(LayerIndex::new(1), charter_core::LayerView::Hidden),
+            Action::SetLayerLocked(LayerIndex::new(1), true),
         ] {
             let mut harness = editable_four_taps();
             harness.state_mut().apply(Action::AddLayer);

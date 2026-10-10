@@ -312,7 +312,7 @@ impl Song {
             old: Box::new(old.clone()),
             new: Box::new(timing.clone()),
         }]);
-        self.edited(self.chart_index(), &edit)
+        self.edited(self.chart_index().get(), &edit)
     }
 }
 

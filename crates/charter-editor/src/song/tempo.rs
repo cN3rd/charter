@@ -639,9 +639,9 @@ mod tests {
         }
         song.stretch(lane(2), Tick::new(1440), Tick::new(2400))
             .unwrap();
-        song.open_chart(1);
+        song.open_chart(chart_index(1));
         song.toggle(Tick::new(2880), lane(3), Kind::Tap).unwrap();
-        song.open_chart(0);
+        song.open_chart(chart_index(0));
         let (point, after, hold_end) = (
             seconds(&song, 1920),
             seconds(&song, 2880),
@@ -659,12 +659,12 @@ mod tests {
         let hold = &song.chart().unwrap().objects[1];
         assert_eq!(hold.tick, Tick::new(1440));
         assert_eq!(hold.shape.end(hold.tick), Some(Tick::new(2880)));
-        song.open_chart(1);
+        song.open_chart(chart_index(1));
         assert!(song.starts_at(Tick::new(3360), lane(3)));
-        song.open_chart(0);
+        song.open_chart(chart_index(0));
         song.undo().unwrap();
         assert!(song.starts_at(Tick::new(2880), lane(1)));
-        song.open_chart(1);
+        song.open_chart(chart_index(1));
         assert!(song.starts_at(Tick::new(2880), lane(3)));
     }
 
@@ -786,7 +786,7 @@ mod tests {
             &json!([bpm_event(0, 120.0)]),
             Some(&json!([bpm_event(0, 100.0)])),
         );
-        song.open_chart(1);
+        song.open_chart(chart_index(1));
         assert_eq!(song.bpm(), Some((Tick::new(0), tempo(100.0))));
         song.set_bpm(tempo(200.0)).unwrap();
         assert_eq!(song_events(&song), json!([bpm_event(0, 120.0)]));
@@ -864,7 +864,7 @@ mod tests {
     fn a_chart_with_its_own_timing_moves_its_own_events() {
         let own = json!([bpm_event(0, 100.0), bpm_event(480, 90.0)]);
         let mut song = timed(&json!([bpm_event(0, 120.0)]), Some(&own));
-        song.open_chart(1);
+        song.open_chart(chart_index(1));
         song.move_timing_at(Tick::new(480), Tick::new(960)).unwrap();
         assert_eq!(song_events(&song), json!([bpm_event(0, 120.0)]));
         let chart = &song.document().document().charts[1];
@@ -892,7 +892,7 @@ mod tests {
     fn a_chart_with_its_own_timing_takes_the_offset_itself() {
         let own = json!([bpm_event(0, 100.0)]);
         let mut song = timed(&json!([bpm_event(0, 120.0)]), Some(&own));
-        song.open_chart(1);
+        song.open_chart(chart_index(1));
         song.set_offset(charter_core::Origin::try_from(-0.5).unwrap())
             .unwrap();
         assert_eq!(offset(&song), json!(0.0));
