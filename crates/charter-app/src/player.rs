@@ -6,7 +6,7 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 
 use charter_audio::{Clicks, Onset, Peaks, Spectrum, Track};
 use charter_core::ResolvedTime;
-use charter_ui::{Request, Window};
+use charter_ui::{LoopRegion, Request, Window};
 use kira::sound::PlaybackState;
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle, StaticSoundSettings};
 use kira::sound::streaming::{StreamingSoundData, StreamingSoundHandle, StreamingSoundSettings};
@@ -330,8 +330,9 @@ impl Player {
                     .start_position(from.seconds().max(0.0))
                     .playback_rate(rate);
                 let settings = match looping {
-                    Some((start, end)) if end > start => {
-                        settings.loop_region(start.seconds().max(0.0)..end.seconds())
+                    Some(region) if region.end().seconds() > region.start().seconds().max(0.0) => {
+                        settings
+                            .loop_region(region.start().seconds().max(0.0)..region.end().seconds())
                     }
                     _ => settings,
                 };
@@ -424,12 +425,7 @@ impl Player {
         &mut self,
         path: &Path,
         stretched: Option<Stretched>,
-        (from, rate, looping, volume): (
-            ResolvedTime,
-            f64,
-            Option<(ResolvedTime, ResolvedTime)>,
-            Option<Decibels>,
-        ),
+        (from, rate, looping, volume): (ResolvedTime, f64, Option<LoopRegion>, Option<Decibels>),
         window: &mut Window,
     ) {
         let Some(stretched) = stretched else {
@@ -445,10 +441,11 @@ impl Player {
             None => settings,
         };
         let settings = match looping {
-            Some((start, end)) if end > start => settings.loop_region(
-                stretched_position(SourceSeconds(start.seconds()).start(), rate).get()
-                    ..stretched_position(SourceSeconds(end.seconds()), rate).get(),
-            ),
+            Some(region) if region.end().seconds() > region.start().seconds().max(0.0) => settings
+                .loop_region(
+                    stretched_position(SourceSeconds(region.start().seconds()).start(), rate).get()
+                        ..stretched_position(SourceSeconds(region.end().seconds()), rate).get(),
+                ),
             _ => settings,
         };
         let data = StreamingSoundData::from_decoder(stretched).with_settings(settings);

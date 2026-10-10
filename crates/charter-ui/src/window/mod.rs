@@ -43,6 +43,52 @@ pub enum Tracker {
     Mapperatorinator,
 }
 
+/// An audio interval to repeat, with its start before its end.
+///
+/// ```
+/// # use charter_core::ResolvedTime;
+/// # use charter_ui::LoopRegion;
+/// let start = ResolvedTime::from_seconds(1.0).unwrap();
+/// let end = ResolvedTime::from_seconds(2.0).unwrap();
+/// assert_eq!(LoopRegion::new(start, end).unwrap().end(), end);
+/// ```
+///
+/// A region cannot be made without checking its order:
+///
+/// ```compile_fail
+/// # use charter_core::ResolvedTime;
+/// # use charter_ui::LoopRegion;
+/// let at = ResolvedTime::from_seconds(1.0).unwrap();
+/// let _ = LoopRegion { start: at, end: at };
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LoopRegion {
+    /// First audio moment to play.
+    start: ResolvedTime,
+    /// Audio moment after the part to repeat.
+    end: ResolvedTime,
+}
+
+impl LoopRegion {
+    /// The interval from `start` to `end`, if it has a positive length.
+    #[must_use]
+    pub fn new(start: ResolvedTime, end: ResolvedTime) -> Option<Self> {
+        (start < end).then_some(Self { start, end })
+    }
+
+    /// First audio moment to play.
+    #[must_use]
+    pub const fn start(self) -> ResolvedTime {
+        self.start
+    }
+
+    /// Audio moment after the part to repeat.
+    #[must_use]
+    pub const fn end(self) -> ResolvedTime {
+        self.end
+    }
+}
+
 /// Something only the program hosting the window can do. The host answers a save through
 /// [`Window::saved`], and an open by passing the file to [`Window::open`].
 #[derive(Debug, PartialEq)]
@@ -116,8 +162,8 @@ pub enum Request {
         clicks: Vec<(f64, charter_audio::Tone)>,
         /// Levels for the music and each kind of click.
         volumes: charter_audio::Volumes,
-        /// Audio moments bounding the interval to repeat.
-        looping: Option<(ResolvedTime, ResolvedTime)>,
+        /// Nonempty audio interval to repeat.
+        looping: Option<LoopRegion>,
         /// Whether audio played faster or slower than its speed keeps its pitch.
         keep_pitch: bool,
     },
@@ -2045,7 +2091,7 @@ pub(crate) mod test_support {
             {
                 Some((
                     from.seconds(),
-                    looping.map(|(start, end)| (start.seconds(), end.seconds())),
+                    looping.map(|region| (region.start().seconds(), region.end().seconds())),
                     clicks,
                 ))
             } else {
@@ -2478,6 +2524,16 @@ pub(crate) mod test_support {
 #[cfg(test)]
 mod tests {
     use crate::window::test_support::*;
+
+    #[test]
+    fn a_loop_region_requires_its_end_after_its_start() {
+        let start = ResolvedTime::from_seconds(0.5).unwrap();
+        let end = ResolvedTime::from_seconds(1.5).unwrap();
+        let region = LoopRegion::new(start, end).unwrap();
+        assert_eq!((region.start(), region.end()), (start, end));
+        assert_eq!(LoopRegion::new(start, start), None);
+        assert_eq!(LoopRegion::new(end, start), None);
+    }
 
     #[test]
     fn a_preview_that_is_not_a_time_says_so() {

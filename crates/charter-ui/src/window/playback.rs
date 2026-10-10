@@ -1,8 +1,8 @@
 //! Playback and audio-rate state changes.
 
 use super::{
-    AudioStatus, Finding, Loaded, Mode, NO_AUDIO, Path, PlayedAudio, Rate, Request, ResolvedTime,
-    Sounds, Step, Tick, TimeShift, Ui, Window, clicks, grow, latency,
+    AudioStatus, Finding, Loaded, LoopRegion, Mode, NO_AUDIO, Path, PlayedAudio, Rate, Request,
+    ResolvedTime, Sounds, Step, Tick, TimeShift, Ui, Window, clicks, grow, latency,
 };
 
 impl Window {
@@ -209,12 +209,12 @@ impl Window {
         let looping = match mode {
             Mode::Loop(first, last) => {
                 let timing = song.timing();
-                Some((timing.time_at(first), timing.time_at(last)))
+                LoopRegion::new(timing.time_at(first), timing.time_at(last))
             }
             Mode::Cursor | Mode::Audition | Mode::Snippet { .. } => None,
         };
         let metronome = matches!(mode, Mode::Audition | Mode::Loop(..));
-        let until = looping.map_or(seconds, |(_, end)| end.seconds().min(seconds));
+        let until = looping.map_or(seconds, |region| region.end().seconds().min(seconds));
         // From the song's start, so a seek back while playing still ticks.
         let clicks = clicks(
             song,
@@ -963,6 +963,20 @@ mod tests {
         assert_eq!(harness.state_mut().take_requests(), [Request::Pause]);
     }
     #[test]
+    fn empty_and_reversed_tick_loops_play_without_repeating() {
+        for (first, last) in [
+            (Tick::new(960), Tick::new(960)),
+            (Tick::new(960), Tick::new(0)),
+        ] {
+            let mut harness = playable();
+            harness.state_mut().play_loop(first, last);
+            let Request::Play { looping, .. } = request(&mut harness) else {
+                panic!("expected play");
+            };
+            assert_eq!(looping, None, "{first:?} to {last:?}");
+        }
+    }
+    #[test]
     fn r_switches_to_the_alternate_speed_and_back() {
         let mut harness = listening(Settings::default());
         harness.key_press(egui::Key::R);
@@ -1218,10 +1232,10 @@ mod tests {
         assert!(from.seconds().abs() < 1e-9);
         assert_eq!(
             *looping,
-            Some((
+            LoopRegion::new(
                 ResolvedTime::from_seconds(0.0).unwrap(),
                 ResolvedTime::from_seconds(2.0).unwrap()
-            ))
+            )
         );
         assert!(
             clicks

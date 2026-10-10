@@ -118,7 +118,7 @@ use window::{Action, Note};
     clippy::useless_attribute,
     reason = "the window and its host requests are charter-ui's flat host API"
 )]
-pub use window::{Request, Saved, Tracker, Window};
+pub use window::{LoopRegion, Request, Saved, Tracker, Window};
 
 /// Property tests run from a fixed seed and keep no regression files, so they repeat exactly
 /// and touch no files.
