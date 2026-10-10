@@ -38,6 +38,20 @@ impl HistoryStep {
     }
 }
 
+/// The charts whose layers `edit` changes.
+fn layered(edit: &Edit) -> Vec<usize> {
+    edit.0
+        .iter()
+        .filter_map(|op| {
+            if let Op::Layers { chart, .. } = op {
+                Some(*chart)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 /// An edit and where it was made, which undo and redo return to.
 #[derive(Clone, Debug)]
 pub(super) struct Change {
@@ -254,18 +268,12 @@ impl Song {
         let Some((last, change)) = self.history.undo_candidate() else {
             return Ok(());
         };
-        let changes_layers = change
-            .edit
-            .0
-            .iter()
-            .any(|op| matches!(op, Op::Layers { .. }));
+        let layered = layered(&change.edit);
         self.document = self.edited(change.chart, &change.edit.inverse())?;
         let (chart, cursor) = (change.chart, change.cursor);
         self.history.finish_undo(last);
         self.return_to(chart, cursor);
-        if changes_layers && let Some(state) = self.chart_state.get_mut(chart) {
-            state.solo = None;
-        }
+        self.forget_solos(&layered);
         Ok(())
     }
 
@@ -280,19 +288,22 @@ impl Song {
         let Some(change) = self.history.redo_candidate() else {
             return Ok(());
         };
-        let changes_layers = change
-            .edit
-            .0
-            .iter()
-            .any(|op| matches!(op, Op::Layers { .. }));
+        let layered = layered(&change.edit);
         self.document = self.edited(change.chart, &change.edit)?;
         let (chart, cursor) = (change.chart, change.cursor);
         self.history.finish_redo();
         self.return_to(chart, cursor);
-        if changes_layers && let Some(state) = self.chart_state.get_mut(chart) {
-            state.solo = None;
-        }
+        self.forget_solos(&layered);
         Ok(())
+    }
+
+    /// Forgets the solo of each of `charts`, whose layers an undo or redo changed.
+    fn forget_solos(&mut self, charts: &[usize]) {
+        for chart in charts {
+            if let Some(state) = self.chart_state.get_mut(*chart) {
+                state.solo = None;
+            }
+        }
     }
 
     /// Whether the song differs from when it was opened or last saved.

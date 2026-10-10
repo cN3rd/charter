@@ -857,6 +857,18 @@ mod tests {
     }
 
     #[test]
+    fn undoing_a_layer_copy_keeps_the_open_charts_solo() {
+        let mut song = Song::new(document(json!([object(0, 0, "tap")])), EDITABLE);
+        song.add_layer().unwrap();
+        song.solo_layer(0).unwrap();
+        song.copy_layer_to_chart(1, 1).unwrap();
+        song.undo().unwrap();
+        song.solo_layer(0).unwrap();
+        let views: Vec<_> = song.layers().iter().map(|layer| layer.view).collect();
+        assert_eq!(views, [LayerView::Shown, LayerView::Shown]);
+    }
+
+    #[test]
     fn copying_into_a_layered_chart_explicitly_names_its_existing_implicit_notes() {
         let mut value =
             serde_json::to_value(document(json!([object(240, 1, "tap")])).document()).unwrap();
