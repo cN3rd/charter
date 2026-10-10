@@ -6,7 +6,7 @@
 //! point, a green line, has a negative `beatLength` and sets the scroll speed to `-100 /
 //! beatLength` times.
 
-use std::num::NonZeroU16;
+use std::num::{NonZeroU16, NonZeroUsize};
 
 use charter_core::{
     BeatLength, Decimal, Extensions, ImportedTiming, Key, Name, Namespace, ResolvedTime, Section,
@@ -39,21 +39,54 @@ pub(crate) enum ImportError {
 struct Point {
     /// Milliseconds into the audio.
     time: f64,
-    /// Milliseconds per beat for a red line; negative inverse scroll speed for a green line.
-    beat_length: f64,
-    /// Quarter-note beats in a measure.
-    meter: NonZeroU16,
-    /// True for a red tempo line, false for an inherited green scroll-speed line.
-    uninherited: bool,
+    /// What this point changes.
+    kind: Line,
+}
+
+/// Tempo on an uninherited red line or scroll speed on an inherited green line.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Line {
+    /// Milliseconds per beat and quarter-note beats per measure.
+    Red {
+        /// Milliseconds per beat.
+        beat_length: f64,
+        /// Quarter-note beats per measure.
+        meter: NonZeroU16,
+    },
+    /// Speed relative to the current tempo.
+    Green {
+        /// Multiplier of the scroll speed.
+        speed: f64,
+    },
 }
 
 /// A parsed timing point with its source line.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct LocatedPoint {
     /// One-based line number in the pasted text or `.osu` file.
-    line: usize,
+    line: NonZeroUsize,
     /// Timing fields parsed from that line.
     point: Point,
+}
+
+/// A green line to place on the red grid in effect at its time.
+#[derive(Clone, Copy, Debug)]
+struct Green {
+    /// One-based source line.
+    line: NonZeroUsize,
+    /// Milliseconds into the audio.
+    time: f64,
+    /// Speed relative to the current tempo.
+    speed: f64,
+}
+
+/// Where a scroll speed change came from.
+#[derive(Clone, Copy, Debug)]
+enum Source {
+    /// A green timing point.
+    Line(NonZeroUsize),
+    /// A red line resetting the speed to 1.
+    RedReset,
 }
 
 /// A red line placed on charter's grid: its tick, where that tick falls in milliseconds, which
@@ -71,28 +104,29 @@ struct Placed {
 /// The timing in `text` for the song `into`, at its resolution. Scroll speeds are kept only
 /// when `into` is an osu!mania song.
 pub(crate) fn import(text: &str, into: &ValidDocument) -> Result<ImportedTiming, ImportError> {
-    let points = points(text)?;
+    let mut points = points(text)?;
+    points.sort_by(|a, b| a.point.time.total_cmp(&b.point.time));
     let ticks_per_beat = f64::from(u16::from(into.document().ticks_per_beat));
-    let mut reds: Vec<LocatedPoint> = points
-        .iter()
-        .copied()
-        .filter(|located| located.point.uninherited)
-        .collect();
-    reds.sort_by(|a, b| a.point.time.total_cmp(&b.point.time));
-    let sections: Vec<Section> = reds
-        .iter()
-        .map(|red| {
-            let start = ResolvedTime::from_seconds(red.point.time / 1000.0)
-                .ok_or_else(|| line_out_of_range(red.line, "timing point start"))?;
-            let beat = BeatLength::from_millis(red.point.beat_length)
-                .ok_or_else(|| line_out_of_range(red.line, "timing point beat length"))?;
-            Ok(Section {
-                start,
-                beat,
-                meter: red.point.meter,
-            })
-        })
-        .collect::<Result<_, ImportError>>()?;
+    let mut sections = Vec::new();
+    let mut greens = Vec::new();
+    for located in points {
+        let Point { time, kind } = located.point;
+        match kind {
+            Line::Red { beat_length, meter } => {
+                let start = ResolvedTime::from_seconds(time / 1000.0)
+                    .ok_or_else(|| line_out_of_range(located.line.get(), "timing point start"))?;
+                let beat = BeatLength::from_millis(beat_length).ok_or_else(|| {
+                    line_out_of_range(located.line.get(), "timing point beat length")
+                })?;
+                sections.push(Section { start, beat, meter });
+            }
+            Line::Green { speed } => greens.push(Green {
+                line: located.line,
+                time,
+                speed,
+            }),
+        }
+    }
     let made = sectioned(&sections, into.document().ticks_per_beat).map_err(|why| match why {
         SectionError::Empty => ImportError::NoTempo,
         SectionError::OutOfRange(what) => ImportError::OutOfRange(what),
@@ -121,12 +155,6 @@ pub(crate) fn import(text: &str, into: &ValidDocument) -> Result<ImportedTiming,
         tempo,
         mut events,
     } = made.timing;
-    let mut greens: Vec<LocatedPoint> = points
-        .iter()
-        .copied()
-        .filter(|located| !located.point.uninherited)
-        .collect();
-    greens.sort_by(|a, b| a.point.time.total_cmp(&b.point.time));
     match (into.document().ruleset.id.as_str() == ID, greens.is_empty()) {
         (true, _) => events.extend(scroll_speeds(&placed, &greens, ticks_per_beat)?),
         (false, false) => left_out.push(format!(
@@ -151,13 +179,12 @@ pub(crate) fn import(text: &str, into: &ValidDocument) -> Result<ImportedTiming,
 /// to 1 on each red line without one of its own, as osu! resets it.
 fn scroll_speeds(
     placed: &[(Placed, NonZeroU16)],
-    greens: &[LocatedPoint],
+    greens: &[Green],
     ticks_per_beat: f64,
 ) -> Result<Vec<TimingEvent>, ImportError> {
-    let mut changes: Vec<(i64, f64, f64, usize)> = greens
+    let mut changes: Vec<(i64, f64, f64, Source)> = greens
         .iter()
-        .map(|located| {
-            let green = located.point;
+        .map(|green| {
             let red = placed
                 .iter()
                 .rev()
@@ -174,8 +201,8 @@ fn scroll_speeds(
             let tick = red
                 .tick
                 .checked_add(ticks(green.time - red.at, red.beat_length, ticks_per_beat))
-                .ok_or_else(|| line_out_of_range(located.line, "timing point tick"))?;
-            Ok((tick, green.time, -100.0 / green.beat_length, located.line))
+                .ok_or_else(|| line_out_of_range(green.line.get(), "timing point tick"))?;
+            Ok((tick, green.time, green.speed, Source::Line(green.line)))
         })
         .collect::<Result<_, ImportError>>()?;
     let mut resets = Vec::new();
@@ -194,7 +221,7 @@ fn scroll_speeds(
         let own = changes.iter().any(|(_, time, _, _)| *time == red.at);
         #[expect(clippy::float_cmp, reason = "osu!'s own 1x is exact")]
         if !own && before != 1.0 {
-            resets.push((red.tick, red.at, 1.0, 0));
+            resets.push((red.tick, red.at, 1.0, Source::RedReset));
         }
     }
     changes.extend(resets);
@@ -215,15 +242,14 @@ fn scroll_speeds(
     });
     changes
         .into_iter()
-        .map(|(tick, _, ratio, line)| {
+        .map(|(tick, _, ratio, source)| {
             let ratio = micro(ratio)
                 .filter(|rounded| *rounded > 0.0)
                 .and_then(|rounded| Decimal::try_from(rounded).ok())
-                .ok_or_else(|| {
-                    if line == 0 {
+                .ok_or_else(|| match source {
+                    Source::Line(line) => line_out_of_range(line.get(), "scroll speed"),
+                    Source::RedReset => {
                         ImportError::OutOfRange("scroll speed is out of range".into())
-                    } else {
-                        line_out_of_range(line, "scroll speed")
                     }
                 })?;
             let name = Key::new(
@@ -231,13 +257,14 @@ fn scroll_speeds(
                 Name::new(SCROLL_SPEED).map_err(out_of_range)?,
             );
             let value = serde_json::to_value(ratio).map_err(out_of_range)?;
-            event(tick, TimingKind::Other { name, value }).map_err(|error| match error {
-                ImportError::OutOfRange(_) if line != 0 => {
-                    line_out_of_range(line, "timing point tick")
-                }
-                other @ (ImportError::Line { .. }
-                | ImportError::NoTempo
-                | ImportError::OutOfRange(_)) => other,
+            event(tick, TimingKind::Other { name, value }).map_err(|error| match source {
+                Source::Line(line) => match error {
+                    ImportError::OutOfRange(_) => {
+                        line_out_of_range(line.get(), "timing point tick")
+                    }
+                    other @ (ImportError::Line { .. } | ImportError::NoTempo) => other,
+                },
+                Source::RedReset => error,
             })
         })
         .collect()
@@ -263,8 +290,10 @@ fn points(text: &str) -> Result<Vec<LocatedPoint>, ImportError> {
         if line.is_empty() || line.starts_with("//") {
             continue;
         }
+        let source = NonZeroUsize::new(number)
+            .ok_or_else(|| ImportError::OutOfRange("too many timing lines".into()))?;
         points.push(LocatedPoint {
-            line: number,
+            line: source,
             point: point(line).map_err(|why| ImportError::Line { line: number, why })?,
         });
     }
@@ -314,12 +343,14 @@ fn point(line: &str) -> Result<Point, String> {
         let field = fields.get(2).copied().unwrap_or_default();
         format!("`{field}` is not a meter")
     })?;
-    Ok(Point {
-        time,
-        beat_length,
-        meter,
-        uninherited,
-    })
+    let kind = if uninherited {
+        Line::Red { beat_length, meter }
+    } else {
+        Line::Green {
+            speed: -100.0 / beat_length,
+        }
+    };
+    Ok(Point { time, kind })
 }
 
 #[expect(
@@ -385,10 +416,10 @@ mod proofs {
     fn bounded_numeric_point_lines_have_valid_meter_and_inheritance() {
         if kani::any() {
             let parsed = point("1,2,3").unwrap();
-            assert!(parsed.meter.get() == 3 && parsed.uninherited);
+            assert!(matches!(parsed.kind, Line::Red { meter, .. } if meter.get() == 3));
         } else {
             let parsed = point("0,-1,0").unwrap();
-            assert!(parsed.meter.get() == 4 && !parsed.uninherited);
+            assert!(matches!(parsed.kind, Line::Green { speed } if speed.is_finite()));
         }
     }
 
