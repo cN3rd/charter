@@ -51,8 +51,9 @@ burn = { version = "0.22", default-features = false, features = ["std", "flex", 
 rubato = "5"
 # Pure Rust, no unsafe; its wide-range keylock keeps pitch from a quarter to twice the speed.
 timestretch = "0.15"
-# ponytail: blocking, rustls; charter's one download, the beat tracker's weights, needs no runtime.
+# ponytail: blocking, rustls; model weights download once per tracker, with no runtime needed.
 ureq = "3"
+sha2 = "0.10.9"
 audioadapter-buffers = "5"
 # ponytail: reads and writes XML and binary property lists, keyed archives' containers; its serde
 # support is off, as nothing here maps plists onto types.

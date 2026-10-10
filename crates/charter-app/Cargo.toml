@@ -24,6 +24,7 @@ image.workspace = true
 kira.workspace = true
 rfd.workspace = true
 serde.workspace = true
+sha2.workspace = true
 system-fonts.workspace = true
 timestretch.workspace = true
 ureq.workspace = true

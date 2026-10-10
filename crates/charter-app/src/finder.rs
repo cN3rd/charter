@@ -9,22 +9,35 @@ use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use charter_audio::{Onset, SampleRate, Track};
 use charter_core::{BeatLength, ResolvedTime, Section, TicksPerBeat, Timing};
 use charter_ui::{Tracker, Window};
+use sha2::{Digest, Sha256};
 
 use crate::report::chain;
 
-/// Where each model's weights come from, and the file they are kept in within the data folder.
+/// Where each model's weights come from, the file they are kept in and their published SHA-256.
 /// Beat This!'s are its authors' `final0`, the one the reference uses by default;
 /// Mapperatorinator's are its V32 model pruned to what timing reads.
-const fn source(tracker: Tracker) -> (&'static str, &'static str) {
+struct Source {
+    /// Download URL.
+    url: &'static str,
+    /// Name in the data folder.
+    file_name: &'static str,
+    /// Published SHA-256 in lowercase hex.
+    sha256: &'static str,
+}
+
+/// The published source of `tracker`'s weights.
+const fn source(tracker: Tracker) -> Source {
     match tracker {
-        Tracker::BeatThis => (
-            "https://cloud.cp.jku.at/public.php/dav/files/7ik4RrBKTS273gp/final0.ckpt",
-            "beat_this-final0.ckpt",
-        ),
-        Tracker::Mapperatorinator => (
-            "https://huggingface.co/cnf3rd/timingator-v32-f16-gguf/resolve/main/timingator-v32-f16.gguf",
-            "timingator-v32-f16.gguf",
-        ),
+        Tracker::BeatThis => Source {
+            url: "https://cloud.cp.jku.at/public.php/dav/files/7ik4RrBKTS273gp/final0.ckpt",
+            file_name: "beat_this-final0.ckpt",
+            sha256: "8c328b45f59d8dd3dff219253ff6a8d6482be57d0133a29140e2febbf8eb8331",
+        },
+        Tracker::Mapperatorinator => Source {
+            url: "https://huggingface.co/cnf3rd/timingator-v32-f16-gguf/resolve/main/timingator-v32-f16.gguf",
+            file_name: "timingator-v32-f16.gguf",
+            sha256: "8554fca86c384d633442205a20f48b1072a1c842d82e2346bfc80e0811fd2792",
+        },
     }
 }
 
@@ -82,7 +95,7 @@ impl Finder {
                 "charter has no data folder to keep the beat tracker in".into(),
             ));
         }
-        folder.map(|folder| folder.join(source(tracker).1))
+        folder.map(|folder| folder.join(source(tracker).file_name))
     }
 
     /// Starts finding the timing of the audio in `file` at `ticks_per_beat` with `tracker`, with
@@ -153,7 +166,7 @@ impl Finder {
         };
         let (send, receive) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let done = fetch(source(tracker).0, &weights, &send);
+            let done = fetch(&source(tracker), &weights, &send);
             drop(send.send(Progress::Weights(done)));
         });
         self.work = Some(receive);
@@ -326,16 +339,16 @@ fn sections(points: &[charter_mapperatorinator_burn::TimingPoint]) -> Result<Vec
         .collect()
 }
 
-/// Downloads the weights at `url` to `weights` through a partial file beside it, telling
-/// `progress` how far it has got about every hundredth.
-fn fetch(url: &str, weights: &Path, progress: &Sender<Progress>) -> Result<(), String> {
+/// Downloads `source`'s weights to `weights` through a partial file beside it, checking the
+/// published SHA-256 before renaming and telling `progress` how far it has got.
+fn fetch(source: &Source, weights: &Path, progress: &Sender<Progress>) -> Result<(), String> {
     let partial = crate::disk::partial_path(weights);
     if let Some(folder) = weights.parent() {
         std::fs::create_dir_all(folder)
             .map_err(|why| format!("{}: {}", folder.display(), chain(&why)))?;
     }
     let downloaded = (|| {
-        let mut response = ureq::get(url)
+        let mut response = ureq::get(source.url)
             .call()
             .map_err(|why| chain(&why).to_string())?;
         let body = response.body_mut();
@@ -343,7 +356,7 @@ fn fetch(url: &str, weights: &Path, progress: &Sender<Progress>) -> Result<(), S
         let mut reader = body.as_reader();
         let mut file = std::fs::File::create(&partial)
             .map_err(|why| format!("{}: {}", partial.display(), chain(&why)))?;
-        copy_weights(&mut reader, &mut file, length, progress)
+        copy_weights(&mut reader, &mut file, length, source.sha256, progress)
             .map_err(|why| format!("{}: {why}", partial.display()))?;
         file.sync_all()
             .map_err(|why| format!("{}: {}", partial.display(), chain(&why)))?;
@@ -371,15 +384,17 @@ fn cleanup_partial_on_error<T>(
     result
 }
 
-/// Copies a response body while reporting the share received, when its length is known.
+/// Copies a response body, checking its SHA-256 and reporting the share received when known.
 fn copy_weights(
     reader: &mut impl Read,
     file: &mut impl Write,
     length: Option<u64>,
+    expected_sha256: &str,
     progress: &Sender<Progress>,
 ) -> Result<(), String> {
     let mut buffer = vec![0; 1 << 16];
     let (mut read, mut told) = (0_u64, 0_u64);
+    let mut hash = Sha256::new();
     loop {
         let count = reader
             .read(&mut buffer)
@@ -387,8 +402,10 @@ fn copy_weights(
         if count == 0 {
             break;
         }
-        file.write_all(buffer.get(..count).unwrap_or_default())
+        let chunk = buffer.get(..count).unwrap_or_default();
+        file.write_all(chunk)
             .map_err(|why| format!("writing the beat tracker: {}", chain(&why)))?;
+        hash.update(chunk);
         read = read.saturating_add(u64::try_from(count).unwrap_or(u64::MAX));
         if let Some(length) = length.filter(|length| *length > 0)
             && read.saturating_mul(100).div_euclid(length) > told
@@ -400,6 +417,9 @@ fn copy_weights(
     }
     if length.is_some_and(|length| length > 0 && read != length) {
         return Err("incomplete beat tracker download".into());
+    }
+    if format!("{:x}", hash.finalize()) != expected_sha256 {
+        return Err("the download does not match the published weights".into());
     }
     Ok(())
 }
@@ -418,6 +438,7 @@ fn download_share(read: u64, length: u64) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::{Digest, Sha256};
     use std::io::Cursor;
 
     fn window() -> Window {
@@ -559,6 +580,7 @@ mod tests {
     #[test]
     fn copying_weights_reports_each_crossed_percentage_and_preserves_the_bytes() {
         let bytes = vec![7; 2 * (1 << 16)];
+        let expected = format!("{:x}", Sha256::digest(&bytes));
         let mut output = Vec::new();
         let (send, receive) = std::sync::mpsc::channel();
 
@@ -566,6 +588,7 @@ mod tests {
             &mut Cursor::new(&bytes),
             &mut output,
             Some(u64::try_from(bytes.len()).unwrap()),
+            &expected,
             &send,
         )
         .unwrap();
@@ -579,13 +602,58 @@ mod tests {
 
     #[test]
     fn a_weight_stream_without_a_known_positive_length_sends_no_percentages() {
+        let expected = format!("{:x}", Sha256::digest(b"weights"));
         for length in [None, Some(0)] {
             let mut output = Vec::new();
             let (send, receive) = std::sync::mpsc::channel();
-            copy_weights(&mut Cursor::new(b"weights"), &mut output, length, &send).unwrap();
+            copy_weights(
+                &mut Cursor::new(b"weights"),
+                &mut output,
+                length,
+                &expected,
+                &send,
+            )
+            .unwrap();
             assert_eq!(output, b"weights");
             assert!(receive.try_recv().is_err());
         }
+    }
+
+    #[test]
+    fn a_weight_stream_matching_its_expected_hash_is_accepted() {
+        let expected = format!("{:x}", Sha256::digest(b"weights"));
+        let mut output = Vec::new();
+        let (send, _) = std::sync::mpsc::channel();
+
+        copy_weights(
+            &mut Cursor::new(b"weights"),
+            &mut output,
+            Some(7),
+            &expected,
+            &send,
+        )
+        .unwrap();
+
+        assert_eq!(output, b"weights");
+    }
+
+    #[test]
+    fn a_weight_stream_with_the_wrong_hash_is_refused_even_when_its_length_matches() {
+        let expected = format!("{:x}", Sha256::digest(b"weights"));
+        let mut output = Vec::new();
+        let (send, _) = std::sync::mpsc::channel();
+
+        let error = copy_weights(
+            &mut Cursor::new(b"weightz"),
+            &mut output,
+            Some(7),
+            &expected,
+            &send,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("does not match the published weights"));
+        assert_eq!(output, b"weightz");
     }
 
     #[test]
@@ -593,8 +661,15 @@ mod tests {
         let mut output = Vec::new();
         let (send, _) = std::sync::mpsc::channel();
 
-        let error =
-            copy_weights(&mut Cursor::new(b"partial"), &mut output, Some(10), &send).unwrap_err();
+        let expected = format!("{:x}", Sha256::digest(b"partial"));
+        let error = copy_weights(
+            &mut Cursor::new(b"partial"),
+            &mut output,
+            Some(10),
+            &expected,
+            &send,
+        )
+        .unwrap_err();
 
         assert!(error.contains("incomplete"));
         assert_eq!(output, b"partial");
@@ -617,10 +692,12 @@ mod tests {
             }
         }
         let (send, receive) = std::sync::mpsc::channel();
+        let expected = format!("{:x}", Sha256::digest(b"weights"));
         let error = copy_weights(
             &mut Cursor::new(b"weights"),
             &mut FailingWriter,
             Some(7),
+            &expected,
             &send,
         )
         .unwrap_err();
@@ -643,7 +720,9 @@ mod tests {
         }
         let (send, receive) = std::sync::mpsc::channel();
         let mut output = Vec::new();
-        let error = copy_weights(&mut FailingReader, &mut output, Some(7), &send).unwrap_err();
+        let expected = format!("{:x}", Sha256::digest(b"weights"));
+        let error =
+            copy_weights(&mut FailingReader, &mut output, Some(7), &expected, &send).unwrap_err();
         assert!(error.contains("reading the beat tracker"));
         assert!(error.contains("stream broke"));
         assert!(output.is_empty());
@@ -712,7 +791,7 @@ mod tests {
         );
         assert!(
             source(Tracker::Mapperatorinator)
-                .0
+                .url
                 .starts_with("https://huggingface.co/")
         );
     }

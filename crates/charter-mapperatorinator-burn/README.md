@@ -17,7 +17,8 @@ https://huggingface.co/cnf3rd/timingator-v32-f16-gguf/resolve/main/timingator-v3
 ```
 
 415,618,240 bytes, sha256 `8554fca86c384d633442205a20f48b1072a1c842d82e2346bfc80e0811fd2792`.
-`charter-app`'s finder downloads it into charter's data folder.
+`charter-app`'s finder checks each download against this published checksum before keeping it in
+charter's data folder.
 
 ## Rules
 

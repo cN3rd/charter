@@ -38,8 +38,9 @@ song takes about 13 seconds.
 Timing › Find timing with Beat This!… finds the open chart's timing and puts it in place as one
 step, saying what it found; Ctrl+Z takes it back. The first time, charter asks before it
 downloads the tracker's weights, 81 MB from the authors' server, into its data folder, where
-they stay; the song itself is never sent. The status bar shows the download and the search, which
-run off the window's thread; the host does both, and the window only asks and answers.
+they stay after charter checks them against the published SHA-256 checksum; the song itself is
+never sent. The status bar shows the download and the search, which run off the window's thread;
+the host does both, and the window only asks and answers.
 
 ## How well it does
 
@@ -63,7 +64,8 @@ Timing › Find timing with Mapperatorinator… is the alternative to Beat This!
 `charter-mapperatorinator-burn`. Its V32 model hears 16.4 seconds of audio at a time and writes
 beat, measure and timing point events; twenty passes at shifted offsets are fused into one beat
 grid and then osu! timing points. Its weights are one 416 MB GGUF file, which charter asks before
-downloading into its data folder, as it does for Beat This!. [Mapperatorinator
+downloading into its data folder, checking its published SHA-256 checksum as it does for Beat
+This!. [Mapperatorinator
 port](mapperatorinator.md) describes the port and how it differs from upstream.
 
 The model writes the timing points itself, so charter fits nothing to them: each becomes a

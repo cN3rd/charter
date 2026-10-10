@@ -1681,6 +1681,7 @@ dependencies = [
  "kira",
  "rfd",
  "serde",
+ "sha2",
  "system-fonts",
  "timestretch",
  "ureq 3.4.2",
