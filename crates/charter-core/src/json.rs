@@ -63,9 +63,15 @@ impl ValidDocument {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Json`] if serialization fails, which the document's types rule out.
+    /// Returns [`Error::TooLarge`] when the JSON is over [`MAX_DOCUMENT_BYTES`], which
+    /// [`ValidDocument::from_json`] would not read back, and [`Error::Json`] if serialization
+    /// fails, which the document's types rule out.
     pub fn to_json(&self) -> Result<Vec<u8>, Error> {
-        Ok(serde_json::to_vec_pretty(&self.0)?)
+        let bytes = serde_json::to_vec_pretty(&self.0)?;
+        if bytes.len() > MAX_DOCUMENT_BYTES {
+            return Err(Error::TooLarge(bytes.len()));
+        }
+        Ok(bytes)
     }
 
     /// The validated raw document, without losing its ownership.
@@ -878,6 +884,17 @@ mod tests {
         assert!(matches!(
             ValidDocument::from_json(&bytes),
             Err(Error::TooLarge(n)) if n == bytes.len()
+        ));
+    }
+
+    #[test]
+    fn a_document_too_large_to_read_back_is_not_written() {
+        let mut document: Document = serde_json::from_value(minimal()).unwrap();
+        document.metadata.title = "t".repeat(MAX_DOCUMENT_BYTES);
+        let document = ValidDocument::new(document).unwrap();
+        assert!(matches!(
+            document.to_json(),
+            Err(Error::TooLarge(n)) if n > MAX_DOCUMENT_BYTES
         ));
     }
 

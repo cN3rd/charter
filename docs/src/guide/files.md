@@ -17,7 +17,9 @@ its folder saves over it.
 
 A save that would lose something stops instead and says why: different audio already at the
 destination, a copy that fails, or another picture under the artwork's name that the song did not
-name. Saves write beside the song and then move over it, so a failed save leaves the old file.
+name. A song whose file would pass 64 MiB, a few hundred thousand notes, stops too, since charter
+opens no larger file. Saves write beside the song and then move over it, so a failed save leaves
+the old file.
 
 Charter keeps what it works out from the audio in a `cache` folder in the song's folder, such as
 the waveform, so the next open shows it at once. Deleting the folder only costs the time to work it

@@ -12,7 +12,7 @@ use crate::unit::{LaneCount, Tick, TimeSignature};
 )]
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    /// Input exceeds the reader's byte limit.
+    /// A document's JSON is over the byte limit charter reads.
     #[error("document is {0} bytes, over the {MAX_DOCUMENT_BYTES}-byte limit")]
     TooLarge(usize),
     /// The file uses a schema newer than this reader supports.
