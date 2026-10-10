@@ -126,9 +126,9 @@ impl Window {
         if self.failure.is_none() {
             // The picture it replaces comes back with an undo.
             self.park_artwork();
-            let step = self.song.as_ref().map_or(0, Song::history_step);
+            let mark = self.song.as_ref().map_or(0, Song::history_mark);
             let mut artwork = Artwork::taken(name, self.artwork_file(), picture);
-            artwork.set_step(step);
+            artwork.set_mark(mark);
             self.artwork.current = Some(artwork);
             // A picture under the same name leaves the revision as it was, so autosave again.
             self.autosave.autosaved = None;
@@ -145,28 +145,28 @@ impl Window {
             return;
         };
         let file = self.artwork_file();
-        let step = self.song.as_ref().map_or(0, Song::history_step);
+        let mark = self.song.as_ref().map_or(0, Song::history_mark);
         let restored_position = self
             .artwork
             .parked
             .iter()
-            .position(|parked| parked.name() == named && parked.step() == step);
-        // Another picture of the same name may belong to the step undo or redo reached.
+            .position(|parked| parked.name() == named && parked.mark() == mark);
+        // Another picture of the same name may belong to the mark undo or redo reached.
         let current = self.artwork.current.as_ref().is_some_and(|artwork| {
             artwork.name() == named
                 && artwork.file() == file.as_deref()
-                && (artwork.step() == step || restored_position.is_none())
+                && (artwork.mark() == mark || restored_position.is_none())
         });
         if current {
             return;
         }
         self.park_artwork();
-        // A picture chosen but not saved, which an undo took away, comes back at its step.
+        // A picture chosen but not saved, which an undo took away, comes back at its mark.
         let parked_after_park = self
             .artwork
             .parked
             .iter()
-            .position(|parked| parked.name() == named && parked.step() == step);
+            .position(|parked| parked.name() == named && parked.mark() == mark);
         if let Some(at) = parked_after_park {
             let mut artwork = self.artwork.parked.swap_remove(at);
             artwork.set_file(file);
@@ -186,7 +186,7 @@ impl Window {
         if artwork.unsaved().is_some() {
             self.artwork
                 .parked
-                .retain(|parked| parked.step() != artwork.step());
+                .retain(|parked| parked.mark() != artwork.mark());
             self.artwork.parked.push(artwork);
         }
     }
@@ -501,6 +501,31 @@ mod tests {
                 .state()
                 .artwork_write_for(Path::new("/songs/Four/four.json")),
             Some((PathBuf::from("/songs/Four/art.png"), b"png".to_vec()))
+        );
+    }
+    #[test]
+    fn a_picture_undone_stays_set_aside_when_a_new_edit_names_its_file() {
+        let mut harness = four_taps_at("/songs/Four/four.json");
+        harness
+            .state_mut()
+            .use_artwork(Path::new("/pictures/art.png"), Some(picture(b"png")));
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.run();
+        let song = harness.state().song.as_ref().unwrap();
+        let metadata = charter_core::Metadata {
+            artwork: Some(charter_core::ResourcePath::new("art.png").unwrap()),
+            ..song.document().document().metadata.clone()
+        };
+        harness
+            .state_mut()
+            .apply(Action::SetMetadata(Box::new(metadata)));
+        harness.run();
+        assert_eq!(
+            harness
+                .state()
+                .artwork_write_for(Path::new("/songs/Four/four.json")),
+            None
         );
     }
     #[test]

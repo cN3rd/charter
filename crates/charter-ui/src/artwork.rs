@@ -13,9 +13,9 @@ pub(crate) struct Artwork {
     name: String,
     /// Where that file is, when the song has been saved: it is read again once this changes.
     file: Option<PathBuf>,
-    /// The step of the song's history that named it, for a picture not yet saved, which an
-    /// undo back to that step brings back.
-    step: usize,
+    /// The mark of the song's history that named it, for a picture not yet saved, which an
+    /// undo or redo back to that mark brings back.
+    mark: u64,
     /// The picture's bytes, once read or chosen.
     bytes: Option<Vec<u8>>,
     /// Whether the bytes are still to be written beside the song.
@@ -58,14 +58,14 @@ impl Artwork {
         self.file.as_deref()
     }
 
-    /// The history step that named this artwork.
-    pub(crate) const fn step(&self) -> usize {
-        self.step
+    /// The history mark that named this artwork.
+    pub(crate) const fn mark(&self) -> u64 {
+        self.mark
     }
 
-    /// Records the history step that named this artwork.
-    pub(crate) const fn set_step(&mut self, step: usize) {
-        self.step = step;
+    /// Records the history mark that named this artwork.
+    pub(crate) const fn set_mark(&mut self, mark: u64) {
+        self.mark = mark;
     }
 
     /// Records the path of this artwork beside the song.
@@ -78,7 +78,7 @@ impl Artwork {
         Self {
             name: name.to_owned(),
             file: file.map(Path::to_path_buf),
-            step: 0,
+            mark: 0,
             bytes: None,
             unsaved: false,
             preview: if file.is_some() {
@@ -94,7 +94,7 @@ impl Artwork {
         Self {
             name,
             file,
-            step: 0,
+            mark: 0,
             bytes: Some(bytes),
             unsaved: true,
             preview: Preview::Decoded(image),
@@ -224,10 +224,10 @@ mod tests {
             Some(file.to_path_buf()),
             picture(b"chosen"),
         );
-        artwork.step = 3;
+        artwork.mark = 3;
         artwork.read(Some(picture(b"old file")));
         assert_eq!(artwork.unsaved(), Some(b"chosen".as_slice()));
-        assert_eq!(artwork.step, 3);
+        assert_eq!(artwork.mark, 3);
         assert_eq!(
             artwork.write_for(path, Some(file)),
             Some((file.to_path_buf(), b"chosen".to_vec()))
