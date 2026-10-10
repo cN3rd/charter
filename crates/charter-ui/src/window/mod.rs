@@ -8,6 +8,7 @@
 //! focused `Window` impl blocks for files, playback, typing actions, clipboard,
 //! artwork, timing, action dispatch, and per-frame UI drawing.
 
+use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -118,6 +119,23 @@ pub enum Request {
     /// Write `bytes`, the song as its file holds it, as a dated copy named after `name` into each
     /// of `folders`, keeping the newest `kept` copies of it there; say what fails with
     /// [`Window::snapshot_failed`].
+    ///
+    /// A request must keep at least one copy:
+    /// ```
+    /// # use std::num::NonZeroU32;
+    /// # use charter_ui::Request;
+    /// let _ = Request::Snapshot {
+    ///     name: String::new(), bytes: Vec::new(), folders: Vec::new(),
+    ///     kept: NonZeroU32::MIN,
+    /// };
+    /// ```
+    /// ```compile_fail
+    /// # use charter_ui::Request;
+    /// let _ = Request::Snapshot {
+    ///     name: String::new(), bytes: Vec::new(), folders: Vec::new(),
+    ///     kept: 0,
+    /// };
+    /// ```
     Snapshot {
         /// Name used for the dated copies.
         name: String,
@@ -125,8 +143,8 @@ pub enum Request {
         bytes: Vec<u8>,
         /// Destinations for the copies.
         folders: Vec<PathBuf>,
-        /// Maximum number of copies to retain per destination.
-        kept: u32,
+        /// Nonzero maximum number of copies to retain per destination.
+        kept: NonZeroU32,
     },
     /// Ask the user for a folder to keep snapshots in, and pass it to
     /// [`Window::use_snapshot_folder`].

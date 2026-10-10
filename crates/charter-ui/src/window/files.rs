@@ -508,7 +508,7 @@ impl Window {
                     name,
                     bytes,
                     folders,
-                    kept: self.settings.snapshots_kept.get(),
+                    kept: self.settings.snapshots_kept.into(),
                 });
                 self.autosave.snapshotted = Some(revision);
             }

@@ -238,6 +238,8 @@ fn picture(bytes: Vec<u8>) -> Option<Picture> {
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroU32;
+
     use charter_core::FileName;
 
     use super::*;
@@ -778,7 +780,12 @@ mod tests {
             PathBuf::from("/snaps/Song"),
             PathBuf::from("/s/Song/autosaves"),
         ];
-        host.snapshot("Song", b"now", (&folders, 2), 1_790_142_012);
+        host.snapshot(
+            "Song",
+            b"now",
+            (&folders, NonZeroU32::new(2).unwrap()),
+            1_790_142_012,
+        );
         let copy = "Song 2026-09-23 05.40.12 UTC.json";
         assert_eq!(host.disk.read(&folders[0].join(copy)).unwrap(), b"now");
         assert_eq!(host.disk.read(&folders[1].join(copy)).unwrap(), b"now");
@@ -805,7 +812,15 @@ mod tests {
             unwritable: vec![PathBuf::from(copy)],
             ..Memory::default()
         });
-        host.snapshot("Song", b"now", (&[PathBuf::from("/snaps/Song")], 20), 0);
+        host.snapshot(
+            "Song",
+            b"now",
+            (
+                &[PathBuf::from("/snaps/Song")],
+                NonZeroU32::new(20).unwrap(),
+            ),
+            0,
+        );
         assert!(
             host.window
                 .message()

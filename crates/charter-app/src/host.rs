@@ -1,5 +1,6 @@
 //! The native host for the editor window: file dialogs, disk I/O, playback and timing search.
 
+use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 
 use charter_core::FileName;
@@ -332,7 +333,7 @@ impl<D: Disk> Host<D> {
         &mut self,
         name: &str,
         bytes: &[u8],
-        (folders, kept): (&[PathBuf], u32),
+        (folders, kept): (&[PathBuf], NonZeroU32),
         now: u64,
     ) {
         let file = format!("{name} {}.json", stamp(now));
@@ -360,7 +361,7 @@ impl<D: Disk> Host<D> {
             copies.sort();
             let extra = copies
                 .len()
-                .saturating_sub(usize::try_from(kept).unwrap_or(usize::MAX));
+                .saturating_sub(usize::try_from(kept.get()).unwrap_or(usize::MAX));
             for old in copies.iter().take(extra) {
                 // A copy left over is only a little disk.
                 drop(self.disk.remove(old));

@@ -1,6 +1,6 @@
 //! What the user chooses about the editor, and the window where they choose it.
 
-use std::num::NonZeroU16;
+use std::num::{NonZeroU16, NonZeroU32};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -246,6 +246,12 @@ pub type SnapshotMinutes = BoundedU32<1, 120, 5>;
 pub type SnapshotsKept = BoundedU32<1, 500, 20>;
 /// Milliseconds of audio before and after the cursor, from 50 to 1000.
 pub type SnippetMs = BoundedU32<50, 1000, 200>;
+
+impl From<SnapshotsKept> for NonZeroU32 {
+    fn from(kept: SnapshotsKept) -> Self {
+        Self::new(kept.get()).unwrap_or(Self::MIN)
+    }
+}
 
 impl Sound {
     /// The note tick sounds offered in settings, in menu order.
