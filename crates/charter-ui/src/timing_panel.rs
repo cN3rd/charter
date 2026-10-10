@@ -370,11 +370,8 @@ fn bpm_row(
     let mut refused = None;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
-        let step = |by: f64| {
-            Bpm::try_from(f64::from(bpm) + by)
-                .ok()
-                .map(|bpm| Action::SetBpmAt(tick, bpm))
-        };
+        let step =
+            |by: f64| Bpm::nearest(f64::from(bpm) + by).map(|bpm| Action::SetBpmAt(tick, bpm));
         if stepper(
             ui,
             "−",

@@ -1381,9 +1381,9 @@ fn retime(song: &mut Song, action: &Action) -> Option<String> {
 fn nudge_bpm(song: &mut Song, by: f64) -> Option<String> {
     let (_, bpm) = song.bpm()?;
     let nudged = f64::from(bpm) + by;
-    match charter_core::Bpm::try_from(nudged) {
-        Ok(new_bpm) => song.set_bpm(new_bpm).err().as_ref().map(refused),
-        Err(_) => Some(format!("{nudged} is not a tempo")),
+    match charter_core::Bpm::nearest(nudged) {
+        Some(new_bpm) => song.set_bpm(new_bpm).err().as_ref().map(refused),
+        None => Some(format!("{nudged} is not a tempo")),
     }
 }
 

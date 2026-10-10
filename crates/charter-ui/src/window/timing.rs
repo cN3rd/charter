@@ -542,6 +542,18 @@ mod tests {
         assert_eq!(bpm_at_cursor(&harness), Some((0, "0.5".to_owned())));
     }
     #[test]
+    fn a_bpm_step_lands_on_the_decimal_a_double_sum_misses() {
+        // 128.2 - 1.0 is 127.19999999999999 as a double.
+        let mut harness = editable_demo();
+        enter_bpm(&mut harness, "128.2", egui::Key::Enter);
+        harness.key_press(egui::Key::F7);
+        harness.run();
+        assert_eq!(bpm_at_cursor(&harness), Some((0, "127.2".to_owned())));
+        enter_bpm(&mut harness, "128.2", egui::Key::Enter);
+        click_in_panel(&mut harness, "Lower the BPM by 1");
+        assert_eq!(bpm_at_cursor(&harness), Some((0, "127.2".to_owned())));
+    }
+    #[test]
     fn saving_opening_and_help_work_while_a_field_has_the_keyboard() {
         let mut harness = editable_four_taps();
         bpm_field(&harness).focus();
