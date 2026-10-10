@@ -75,6 +75,19 @@ pub(crate) fn read(
             ));
             continue;
         };
+        // Keys such as "4" and "04" name one level; reading each again would multiply one
+        // file's tempo list as many times as a hostile track lists it.
+        if track
+            .levels
+            .iter()
+            .any(|read| read.difficulty == difficulty)
+        {
+            report.add(format!(
+                "another {} level, after the first",
+                difficulty.name()
+            ));
+            continue;
+        }
         let (read, title, artist) = read_file(&objects, file, difficulty, &mut notes)?;
         if track.levels.is_empty() {
             track.title = title;
@@ -827,6 +840,31 @@ mod tests {
                 .unwrap()
                 .levels
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_level_listed_again_is_read_once() {
+        let key = "<dict><key>CF$UID</key><integer>2</integer></dict>";
+        let file = "<dict><key>CF$UID</key><integer>3</integer></dict>";
+        let listed = xml("4", "")
+            .replacen(
+                &format!("<array>{key}</array>"),
+                &format!("<array>{}</array>", key.repeat(3)),
+                1,
+            )
+            .replacen(
+                &format!("<array>{file}</array>"),
+                &format!("<array>{}</array>", file.repeat(3)),
+                1,
+            );
+        let mut report = Report::default();
+        let track = read(listed.as_bytes(), None, &mut report).unwrap();
+        assert_eq!(track.levels.len(), 1);
+        let lines = report.into_lines();
+        assert!(
+            lines.iter().any(|line| line.contains("Extreme")),
+            "{lines:?}"
         );
     }
 
