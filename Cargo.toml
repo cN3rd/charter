@@ -54,9 +54,10 @@ timestretch = "0.15"
 # ponytail: blocking, rustls; model weights download once per tracker, with no runtime needed.
 ureq = "3"
 sha2 = "0.10.9"
+# The version and features burn's PyTorch reader already builds, so the binary has one zip.
 # ponytail: FFmpeg release ZIPs use stored or deflated entries; enable another codec only if a
 # release needs one.
-zip = { version = "0.6.6", default-features = false, features = ["deflate"] }
+zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 audioadapter-buffers = "5"
 # ponytail: reads and writes XML and binary property lists, keyed archives' containers; its serde
 # support is off, as nothing here maps plists onto types.

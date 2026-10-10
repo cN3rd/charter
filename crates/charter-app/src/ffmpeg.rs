@@ -496,7 +496,7 @@ mod tests {
         for &(name, bytes) in entries {
             zip.start_file(
                 name,
-                zip::write::FileOptions::default()
+                zip::write::SimpleFileOptions::default()
                     .compression_method(zip::CompressionMethod::Deflated),
             )
             .unwrap();
