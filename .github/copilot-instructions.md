@@ -4,33 +4,20 @@ A multi-game rhythm-game charting editor (cf. ArrowVortex, Moonscraper, Editor o
 StepMania and osu! editors). **Nothing game-specific belongs outside `plugins/`**. A game quirk
 needing a special case in a core crate means the plugin surface is wrong; fix the surface.
 
-Rust Cargo workspace, edition 2024, `resolver = "3"`, MSRV 1.95 (developed on 1.99).
+Rust Cargo workspace, edition 2024, MSRV 1.95.
 
 ## Commands
 
-`just` is the entry point and lists every recipe. Run `just setup` once after cloning (skills
-submodule, Windows target, cargo-xwin).
+`just` lists every recipe; run `just setup` once after cloning. **`just ci`** is the pre-commit
+gate: fmt-check, clippy with `-D warnings`, the tests, the book and its checks, and the packager's
+self-test.
 
-| Recipe | Runs |
-|---|---|
-| `just check` | `cargo check --workspace --all-targets`, the fast loop |
-| `just test [args]` | `--workspace`, or the args (`just test -p charter-core format_chapter`) |
-| `just clippy` | `cargo clippy --workspace --all-targets -- -D warnings` |
-| `just fmt` / `fmt-check` | `cargo fmt --all [--check]` |
-| `just docs` / `docs-serve` / `docs-check` | build / preview / validate the mdbook |
-| `just pack-check` | `packaging/pack.py selftest`; archives are byte-reproducible |
-| **`just ci`** | `fmt-check clippy test docs docs-check pack-check`, the pre-commit gate |
-| `just run [song]` | the editor (`cargo run -p charter-app`) |
-| `just kani` | Kani proofs; excludes the three crates linking burn, which Kani cannot build |
-| `just dist` / `dist-linux` / `dist-windows` | reproducible packages into `dist/` |
+- `just check` is the fast loop; `just test -p charter-core format_chapter` runs a subset.
+- `just run [song]` starts the editor; `just dist` writes reproducible packages into `dist/`.
+- `just kani` runs the Kani proofs, minus the three crates linking burn, which Kani can't build.
+  It needs `cargo install --locked kani-verifier && cargo kani setup` once.
 
 `cargo run -p charter-ui --example mock` draws the static mock of the book's UI draft.
-Kani needs `cargo install --locked kani-verifier && cargo kani setup` once.
-
-Linux builds link with clang and mold and keep debug info out of the binary
-(`.cargo/config.toml`); install both from your package manager. Rebuild after touching
-`charter-app` is ~2s. Hot third-party crates are force-optimised in dev via
-`[profile.dev.package.*]`.
 
 ## Correctness
 
@@ -40,9 +27,8 @@ crates opt in with `[lints] workspace = true`.
 
 - `unsafe_code = "forbid"`. A genuine need goes in a `third-party/` wrapper crate with a reason.
 - Narrow a lint at the call site with **`#[expect(.., reason = "..")]`**, never `#[allow]`, and
-  never by weakening the workspace table. (277 `expect`s, 0 `allow`s.)
+  never by weakening the workspace table.
 - Root `clippy.toml` lets test code unwrap, index, panic and `dbg!`.
-- `overflow-checks = true` in release. `dist` profile adds thin LTO and strips symbols.
 
 ### Tests
 
