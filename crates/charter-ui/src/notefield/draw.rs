@@ -1326,6 +1326,50 @@ mod tests {
     }
 
     #[test]
+    fn a_marker_drag_keeps_its_target_when_a_bookmark_is_inserted_before_it() {
+        let mut song = Song::new(demo::song(), &[&charter_stepmania::Plugin]);
+        let from = Tick::new(30_720);
+        let destination = Tick::new(31_680);
+        song.jump_to(from);
+        let field = field(&song);
+        let origin = pos2(
+            field.columns.ruler_x(),
+            field.view.y(song.timing().time_at(from)),
+        );
+        let gesture = started(
+            &song,
+            &field,
+            (origin, Modifiers::NONE),
+            (Tick::new(0), Tick::new(38_400)),
+            &mut Vec::new(),
+        );
+        assert!(matches!(gesture, Some(Gesture::MoveMarker { .. })));
+
+        song.jump_to(Tick::new(960));
+        song.toggle_bookmark().unwrap();
+        let drop = pos2(origin.x, field.view.y(song.timing().time_at(destination)));
+        let action = let_go(gesture, (Some(drop), false), &field, song.timing(), |pos| {
+            snap_line(&song, field.view, pos)
+        })
+        .unwrap();
+        let Action::MoveMarker { key, to } = action else {
+            panic!("the drag moves a marker");
+        };
+        song.move_marker(&key, to).unwrap();
+
+        let markers = &song.document().document().markers;
+        assert_eq!(
+            markers
+                .iter()
+                .find(|marker| marker.text == "Verse")
+                .map(|marker| marker.tick),
+            Some(destination)
+        );
+        assert!(markers.iter().any(|marker| marker.tick == Tick::new(960)
+            && marker.kind == charter_core::MarkerKind::Bookmark));
+    }
+
+    #[test]
     fn a_drag_above_the_rows_cannot_place_a_hold_but_can_box_the_lanes() {
         let song = Song::new(demo::song(), &[&charter_stepmania::Plugin]);
         let field = field(&song);
@@ -1519,15 +1563,17 @@ mod tests {
             ),
             "{meter:?}"
         );
+        let key = song.document().document().markers[1].key();
         assert!(matches!(
             let_go(
-                Some(Gesture::MoveMarker { index: 1 }),
+                Some(Gesture::MoveMarker { key: key.clone() }),
                 (Some(pos), false),
                 &field,
                 song.timing(),
                 line
             ),
-            Some(Action::MoveMarker { index: 1, to }) if to == Tick::new(960)
+            Some(Action::MoveMarker { key: moved, to })
+                if moved == key && to == Tick::new(960)
         ));
     }
 

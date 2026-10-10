@@ -4,10 +4,10 @@ use super::{
     Rangef, ResolvedTime, Selecting, Song, Tick, TickOffset, Ticks, Timing, Ui, Valid, View, egui,
     nearest_line,
 };
-use charter_core::TimeShift;
+use charter_core::{MarkerKey, TimeShift};
 
 /// A drag across the notefield in progress.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Gesture {
     /// A hold being drawn out of the tap Ctrl placed where the drag began.
     Hold {
@@ -33,8 +33,8 @@ pub(crate) enum Gesture {
     },
     /// The song's marker being dragged to another line.
     MoveMarker {
-        /// Index into the song's markers.
-        index: usize,
+        /// Marker to move.
+        key: MarkerKey,
     },
     /// The cursor's handle, dragged from `y` on screen while the cursor was at `seconds`.
     Scrub {
@@ -70,7 +70,7 @@ impl Gesture {
     /// over. With `keep_time`, as while Shift is held, the notes keep their ticks and only
     /// change lanes.
     pub(super) fn moved_by(
-        self,
+        &self,
         field: &Field,
         to: Tick,
         pos: Pos2,
@@ -86,7 +86,7 @@ impl Gesture {
         };
         let inside = field.columns.lanes;
         let over = field.lane_at(pos.x.clamp(inside.min, inside.max - 0.5))?;
-        let lanes = i32::from(u16::from(over)).saturating_sub(i32::from(u16::from(lane)));
+        let lanes = i32::from(u16::from(over)).saturating_sub(i32::from(u16::from(*lane)));
         let lanes = LaneOffset::new(lanes.clamp(room.0.get(), room.1.get().max(room.0.get())));
         Some((ticks, lanes))
     }
@@ -174,7 +174,10 @@ pub(super) fn handle_at(song: &Song, field: &Field, pos: Pos2) -> Option<Gesture
             .iter()
             .enumerate()
             .map(|(index, marker)| (index, marker.tick));
-        return nearest(ticks, timing, view, pos.y).map(|(index, _)| Gesture::MoveMarker { index });
+        let (index, _) = nearest(ticks, timing, view, pos.y)?;
+        return markers
+            .get(index)
+            .map(|marker| Gesture::MoveMarker { key: marker.key() });
     }
     None
 }
@@ -301,25 +304,30 @@ pub(super) fn pointer(
         };
     }
     if response.dragged()
-        && let (Some(Gesture::Pan { seconds, y }), Some(pos)) = (*gesture, latest)
-        && let Some(to) = panned(field, timing, step, (seconds, y), pos)
+        && let (Some(Gesture::Pan { seconds, y }), Some(pos)) = (gesture.as_ref(), latest)
+        && let Some(to) = panned(field, timing, step, (*seconds, *y), pos)
     {
         actions.push(Action::JumpTo(to));
     }
     if response.dragged()
-        && let (Some(Gesture::Scrub { seconds, y }), Some(pos)) = (*gesture, latest)
+        && let (Some(Gesture::Scrub { seconds, y }), Some(pos)) = (gesture.as_ref(), latest)
         && let Some(step) = step
-        && let Some(later) =
-            TimeShift::from_seconds(f64::from((pos.y - y) / field.view.zoom.points_per_second()))
+        && let Some(later) = TimeShift::from_seconds(f64::from(
+            (pos.y - *y) / field.view.zoom.points_per_second(),
+        ))
     {
-        let to = nearest_line(timing, seconds + later, step);
+        let to = nearest_line(timing, *seconds + later, step);
         actions.push(Action::JumpTo(to));
     }
     if response.dragged()
-        && let (Some(Gesture::Hold { lane, from }), Some(pos)) = (*gesture, latest)
+        && let (Some(Gesture::Hold { lane, from }), Some(pos)) = (gesture.as_ref(), latest)
         && let Some(to) = line(pos)
     {
-        actions.push(Action::Stretch { lane, from, to });
+        actions.push(Action::Stretch {
+            lane: *lane,
+            from: *from,
+            to,
+        });
     }
     if response.drag_stopped() {
         let keep_time = modifiers.shift;
@@ -427,7 +435,7 @@ pub(super) fn let_go(
             Some(Action::MovePointTo(from, field.view.seconds_at(pos.y)))
         }
         Gesture::MoveTiming { from } => line(pos).map(|to| Action::MoveTiming { from, to }),
-        Gesture::MoveMarker { index } => line(pos).map(|to| Action::MoveMarker { index, to }),
+        Gesture::MoveMarker { key } => line(pos).map(|to| Action::MoveMarker { key, to }),
         Gesture::Marquee { how, x, seconds } => {
             field
                 .boxed(timing, (x, seconds), pos)

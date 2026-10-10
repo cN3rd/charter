@@ -30,6 +30,26 @@ pub struct Marker {
     pub text: String,
 }
 
+/// A marker's tick and kind, unique within a valid song.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct MarkerKey {
+    /// Position of the marker on the song's grid.
+    pub tick: Tick,
+    /// Shared or plugin-defined marker category.
+    pub kind: MarkerKind,
+}
+
+impl Marker {
+    /// The tick and kind identifying this marker.
+    #[must_use]
+    pub fn key(&self) -> MarkerKey {
+        MarkerKey {
+            tick: self.tick,
+            kind: self.kind.clone(),
+        }
+    }
+}
+
 /// Ruleset configuration under the ruleset's own unprefixed keys, opaque to the core.
 pub type Settings = BTreeMap<String, Value>;
 

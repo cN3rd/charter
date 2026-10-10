@@ -1252,7 +1252,7 @@ mod tests {
             .markers
             .first()
             .unwrap();
-        let (tick, text) = (first.tick, first.text.clone());
+        let (tick, text, key) = (first.tick, first.text.clone(), first.key());
         assert!(
             harness
                 .query_by_label(&format!("Remove marker {text}"))
@@ -1266,7 +1266,7 @@ mod tests {
             .get_by_label(&format!("Remove marker {text}"))
             .click();
         harness.run();
-        assert_eq!(harness.state().1, [Action::RemoveMarker(0)]);
+        assert_eq!(harness.state().1, [Action::RemoveMarker(key)]);
     }
 
     #[test]

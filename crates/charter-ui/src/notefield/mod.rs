@@ -483,10 +483,10 @@ pub(crate) fn show(
     menu(ui, &response, song, (&field, flip, (first, last)), actions);
     let latest = ui.input(|input| input.pointer.latest_pos().map(|at| flip.back(at)));
     let line = |pos: Pos2| snap_line(song, view, pos);
-    if let Some(Gesture::Marquee { x, seconds, .. }) = *gesture
+    if let Some(Gesture::Marquee { x, seconds, .. }) = gesture.as_ref()
         && let Some(latest) = latest
     {
-        let corner = pos2(x, view.y(seconds));
+        let corner = pos2(*x, view.y(*seconds));
         clipped.rect(
             Rect::from_two_pos(corner, latest),
             0.0,
@@ -495,9 +495,9 @@ pub(crate) fn show(
             StrokeKind::Inside,
         );
     }
-    if let Some(Gesture::Hold { lane, from }) = *gesture
+    if let Some(Gesture::Hold { lane, from }) = gesture.as_ref()
         && let Some(to) = latest.and_then(line)
-        && let Some(rect) = hold_preview_rect(columns, timing, view, lane, from, to)
+        && let Some(rect) = hold_preview_rect(columns, timing, view, *lane, *from, to)
     {
         clipped.rect_filled(rect, 2.0, style::HOLD.gamma_multiply(0.7));
         clipped.rect_stroke(
@@ -507,14 +507,13 @@ pub(crate) fn show(
             StrokeKind::Outside,
         );
     }
-    if let Some(Gesture::MoveTiming { .. } | Gesture::MoveMarker { .. }) = *gesture
+    if let Some(Gesture::MoveTiming { .. } | Gesture::MoveMarker { .. }) = gesture.as_ref()
         && let Some(latest) = latest
     {
-        let free =
-            matches!(*gesture, Some(Gesture::MoveTiming { from }) if anchored(song.timing(), from));
+        let free = matches!(gesture.as_ref(), Some(Gesture::MoveTiming { from }) if anchored(song.timing(), *from));
         drop_guide(&clipped, columns, (song, free), view, latest.y);
     }
-    if let Some(moving @ Gesture::MoveNotes { .. }) = *gesture
+    if let Some(moving @ Gesture::MoveNotes { .. }) = gesture.as_ref()
         && let Some(latest) = latest
         && let Some(by) = line(latest).and_then(|to| {
             let keep_time = ui.input(|input| input.modifiers.shift);
@@ -534,7 +533,7 @@ pub(crate) fn show(
         (hovered, input.modifiers)
     });
     if matches!(
-        *gesture,
+        gesture.as_ref(),
         Some(Gesture::MoveNotes { .. } | Gesture::Pan { .. })
     ) {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
@@ -555,7 +554,7 @@ pub(crate) fn show(
             egui::CursorIcon::ResizeVertical
         };
         if !matches!(
-            *gesture,
+            gesture.as_ref(),
             Some(
                 Gesture::Marquee { .. }
                     | Gesture::Hold { .. }

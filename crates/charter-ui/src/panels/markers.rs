@@ -50,7 +50,7 @@ fn markers_body(ui: &mut Ui, song: &Song, draft: &mut Option<String>, actions: &
         .min_col_width(0.0)
         .spacing([8.0, 6.0])
         .show(ui, |ui| {
-            for (index, marker) in document.markers.iter().enumerate() {
+            for marker in &document.markers {
                 let at = timing.grid_position(marker.tick).to_string();
                 ui.label(RichText::new(at).monospace().color(style::WEAK_TEXT));
                 let kind = match &marker.kind {
@@ -82,7 +82,7 @@ fn markers_body(ui: &mut Ui, song: &Song, draft: &mut Option<String>, actions: &
                         "Remove this marker; Ctrl+Z brings it back",
                     );
                     if remove.clicked() {
-                        actions.push(Action::RemoveMarker(index));
+                        actions.push(Action::RemoveMarker(marker.key()));
                     }
                 }
                 ui.end_row();

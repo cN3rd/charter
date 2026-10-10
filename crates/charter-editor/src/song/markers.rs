@@ -10,14 +10,21 @@
 use super::*;
 
 impl Song {
-    /// Moves the song's marker at `index` onto `to`, among the markers there, as one step.
+    /// Moves the song's marker with `key` onto `to`, among the markers there, as one step.
+    /// Does nothing when the marker is gone.
     ///
     /// # Errors
     ///
     /// Refuses on a read-only song, and when a marker of its kind is already at `to`.
-    pub fn move_marker(&mut self, index: usize, to: Tick) -> Result<(), Refusal> {
+    pub fn move_marker(&mut self, key: &MarkerKey, to: Tick) -> Result<(), Refusal> {
         let markers = &self.document.document().markers;
-        if markers.get(index).is_none_or(|marker| marker.tick == to) {
+        let Some(index) = markers
+            .iter()
+            .position(|marker| marker.tick == key.tick && marker.kind == key.kind)
+        else {
+            return Ok(());
+        };
+        if key.tick == to {
             return Ok(());
         }
         let mut new = markers.clone();
@@ -69,20 +76,22 @@ impl Song {
         self.remark(new)
     }
 
-    /// Removes the song's marker at `index` in its markers, of whatever kind, as one step.
-    /// Does nothing when there is none there.
+    /// Removes the song's marker with `key` as one step. Does nothing when it is gone.
     ///
     /// # Errors
     ///
     /// Refuses on a read-only song.
-    pub fn remove_marker(&mut self, index: usize) -> Result<(), Refusal> {
+    pub fn remove_marker(&mut self, key: &MarkerKey) -> Result<(), Refusal> {
         if self.read_only().is_some() {
             return Err(Refusal::ReadOnly);
         }
         let markers = &self.document.document().markers;
-        if index >= markers.len() {
+        let Some(index) = markers
+            .iter()
+            .position(|marker| marker.tick == key.tick && marker.kind == key.kind)
+        else {
             return Ok(());
-        }
+        };
         let mut new = markers.clone();
         new.remove(index);
         self.remark(new)
@@ -210,9 +219,10 @@ mod tests {
             marker(0, "section", "Intro"),
             marker(480, "bookmark", "b")
         ]));
-        song.remove_marker(0).unwrap();
+        let first = song.document().document().markers[0].key();
+        song.remove_marker(&first).unwrap();
         assert_eq!(markers(&song), json!([marker(480, "bookmark", "b")]));
-        song.remove_marker(5).unwrap();
+        song.remove_marker(&first).unwrap();
         song.undo().unwrap();
         assert_eq!(markers(&song).as_array().unwrap().len(), 2);
     }
@@ -230,8 +240,9 @@ mod tests {
             .document()
             .clone();
         let mut song = Song::new(document, &[]);
+        let key = song.document().document().markers[0].key();
         assert!(matches!(song.set_section("x"), Err(Refusal::ReadOnly)));
-        assert!(matches!(song.remove_marker(0), Err(Refusal::ReadOnly)));
+        assert!(matches!(song.remove_marker(&key), Err(Refusal::ReadOnly)));
     }
 
     #[test]
@@ -280,7 +291,8 @@ mod tests {
             marker(0, "section", "A"),
             marker(480, "section", "B")
         ]));
-        song.move_marker(0, Tick::new(960)).unwrap();
+        let key = song.document().document().markers[0].key();
+        song.move_marker(&key, Tick::new(960)).unwrap();
         assert_eq!(
             markers(&song),
             json!([marker(480, "section", "B"), marker(960, "section", "A")])
@@ -295,8 +307,9 @@ mod tests {
             .document()
             .clone();
         let mut song = Song::new(document, &[]);
+        let key = song.document().document().markers[0].key();
         assert!(matches!(
-            song.move_marker(0, Tick::new(480)),
+            song.move_marker(&key, Tick::new(480)),
             Err(Refusal::ReadOnly)
         ));
         assert!(matches!(
@@ -305,9 +318,13 @@ mod tests {
         ));
     }
     #[test]
-    fn removing_a_marker_past_the_end_changes_nothing() {
+    fn removing_a_marker_no_longer_in_the_song_changes_nothing() {
         let mut song = marked(&json!([marker(0, "section", "A")]));
-        song.remove_marker(usize::MAX).unwrap();
+        let key = MarkerKey {
+            tick: Tick::new(960),
+            kind: MarkerKind::Section,
+        };
+        song.remove_marker(&key).unwrap();
         assert!(!song.can_undo());
         assert!(!song.is_modified());
     }

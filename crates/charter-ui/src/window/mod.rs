@@ -14,7 +14,8 @@ use std::sync::Arc;
 use charter_audio::{Peaks, Spectrum};
 
 use charter_core::{
-    Kind, LaneIndex, LaneOffset, ResolvedTime, RulesetPlugin, Tick, TickOffset, TimeShift,
+    Kind, LaneIndex, LaneOffset, MarkerKey, ResolvedTime, RulesetPlugin, Tick, TickOffset,
+    TimeShift,
 };
 use egui::Ui;
 
@@ -601,8 +602,8 @@ pub(crate) enum Action {
     JumpTo(Tick),
     /// Names the section at the cursor this, starting one there if none does.
     SetSection(String),
-    /// Removes the song's marker at this index.
-    RemoveMarker(usize),
+    /// Removes the song's marker with this key.
+    RemoveMarker(MarkerKey),
     /// Puts the cursor where the open chart's last note ends.
     JumpEnd,
     /// An edit the timing window asks for.
@@ -635,10 +636,10 @@ pub(crate) enum Action {
         /// Tick to which those events move.
         to: Tick,
     },
-    /// Moves the song's marker at `index` to `to`.
+    /// Moves the song's marker with `key` to `to`.
     MoveMarker {
-        /// Index of the marker in the song.
-        index: usize,
+        /// Marker to move.
+        key: MarkerKey,
         /// Tick at which to put the marker.
         to: Tick,
     },

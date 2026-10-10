@@ -32,8 +32,8 @@ mod validate;
 )]
 pub use document::{
     Anchor, Chart, Child, Document, Extensions, FORMAT_VERSION, Layer, LayerColour, LayerView,
-    Marker, Metadata, Object, PathPoint, Plugin, Points, Position, Preview, Ruleset, SampleId,
-    Settings, Shape, Timing, TimingEvent, TimingKind,
+    Marker, MarkerKey, Metadata, Object, PathPoint, Plugin, Points, Position, Preview, Ruleset,
+    SampleId, Settings, Shape, Timing, TimingEvent, TimingKind,
 };
 #[expect(
     clippy::pub_use,

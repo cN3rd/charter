@@ -392,8 +392,8 @@ impl Window {
             return false;
         };
         match action {
-            Action::MoveMarker { index, to } => {
-                self.failure = song.move_marker(*index, *to).err().as_ref().map(refused);
+            Action::MoveMarker { key, to } => {
+                self.failure = song.move_marker(key, *to).err().as_ref().map(refused);
             }
             Action::JumpSection(step) => {
                 if let Some(tick) = song.section_from(*step) {
@@ -407,8 +407,8 @@ impl Window {
             Action::SetSection(text) => {
                 self.failure = song.set_section(text).err().as_ref().map(refused);
             }
-            Action::RemoveMarker(index) => {
-                self.failure = song.remove_marker(*index).err().as_ref().map(refused);
+            Action::RemoveMarker(key) => {
+                self.failure = song.remove_marker(key).err().as_ref().map(refused);
             }
             _ => return false,
         }
