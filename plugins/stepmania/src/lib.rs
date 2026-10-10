@@ -75,7 +75,7 @@ pub enum TimingKind {
     /// Beats and beat unit per measure.
     TimeSignature(TimeSignature),
     /// Hold ticks per beat for scoring.
-    TickCount(u32),
+    TickCount(TickCount),
     /// Hit and miss combo multipliers.
     Combo(Combo),
     /// Scroll speed that eases toward `ratio` over `length`.
@@ -84,6 +84,36 @@ pub enum TimingKind {
     Scroll(Decimal),
     /// Ticks from here whose notes are fake.
     Fake(Ticks),
+}
+
+/// Hold ticks per beat, from 0 to 48.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+pub struct TickCount(u8);
+
+impl TickCount {
+    /// A tick count if it fits StepMania's range.
+    #[must_use]
+    pub const fn new(count: u8) -> Option<Self> {
+        if count <= 48 { Some(Self(count)) } else { None }
+    }
+
+    /// The number of hold ticks per beat.
+    #[must_use]
+    pub const fn get(self) -> u8 {
+        self.0
+    }
+}
+
+#[expect(
+    clippy::missing_trait_methods,
+    reason = "serde's default `deserialize_in_place` is right"
+)]
+impl<'de> Deserialize<'de> for TickCount {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let count = u8::deserialize(deserializer)?;
+        Self::new(count).ok_or_else(|| de::Error::custom("tick count must be from 0 to 48"))
+    }
 }
 
 /// Multipliers applied to successful and missed notes.
@@ -472,7 +502,7 @@ impl Timing {
                 TimingKind::Delay(seconds) => CoreKind::Delay(*seconds),
                 TimingKind::Warp(ticks) => CoreKind::Warp(*ticks),
                 TimingKind::TimeSignature(meter) => CoreKind::TimeSignature(*meter),
-                TimingKind::TickCount(count) => other(TICKCOUNT, (*count).into())?,
+                TimingKind::TickCount(count) => other(TICKCOUNT, count.get().into())?,
                 TimingKind::Combo(combo) => other(COMBO, serde_json::to_value(combo)?)?,
                 TimingKind::Speed(speed) => other(SPEED, serde_json::to_value(speed)?)?,
                 TimingKind::Scroll(ratio) => other(SCROLL, serde_json::to_value(ratio)?)?,
@@ -876,7 +906,7 @@ fn read_other(name: &Key, value: &Value) -> Option<Result<TimingKind, serde_json
         return None;
     }
     Some(match name.name().as_str() {
-        TICKCOUNT => u32::deserialize(value).map(TimingKind::TickCount),
+        TICKCOUNT => TickCount::deserialize(value).map(TimingKind::TickCount),
         COMBO => Combo::deserialize(value).map(TimingKind::Combo),
         SPEED => Speed::deserialize(value).map(TimingKind::Speed),
         SCROLL => Decimal::deserialize(value).map(TimingKind::Scroll),
@@ -1193,7 +1223,7 @@ mod tests {
         assert_eq!(
             kinds[..],
             [
-                &TimingKind::TickCount(4),
+                &TimingKind::TickCount(TickCount::new(4).unwrap()),
                 &TimingKind::Combo(Combo { hit: 2, miss: 1 }),
                 &TimingKind::Speed(Speed {
                     ratio: decimal(1.5),
@@ -1208,6 +1238,31 @@ mod tests {
             ]
         );
         assert_eq!(written(&song)["timing"], value["timing"]);
+    }
+
+    #[test]
+    fn tick_counts_above_48_are_refused_and_boundary_counts_round_trip() {
+        for count in [0, 48] {
+            let value = with_events(&[other(0, "sm.tickcount", json!(count))]);
+            let song = read(&value).unwrap();
+            assert_eq!(written(&song)["timing"], value["timing"]);
+        }
+        for count in [49, 256, 1024] {
+            let value = with_events(&[other(0, "sm.tickcount", json!(count))]);
+            assert!(
+                matches!(
+                    read(&value),
+                    Err(Error::Malformed {
+                        at: Location::Event {
+                            stream: Stream::Song,
+                            index: 0
+                        },
+                        ..
+                    })
+                ),
+                "{count}"
+            );
+        }
     }
 
     #[test]

@@ -141,6 +141,9 @@ first beat on a whole MIDI beat; imported back, the song's grid starts at the au
 | Tap Tap Revenge | `ttr` | `tap`, `hold`, `ttr.shake`, `ttr.slice`, `ttr.mega_tap` | Anchors, tempo, `time_signature` | `difficulty` and `theme`, optional |
 | osu!mania | `osu_mania` | `tap`, `hold` | Anchors, tempo, `time_signature` over 4, `osu_mania.scroll_speed` | `hp`, `od` |
 
+StepMania's `sm.tickcount` accepts 0 through 48 hold ticks per beat. A song with another count
+is refused when read.
+
 Each ruleset fixes lanes its own way:
 
 - StepMania takes the style's column count from its own steps-type table. Routine styles, where
