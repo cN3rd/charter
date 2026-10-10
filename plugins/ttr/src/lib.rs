@@ -22,8 +22,8 @@ use std::collections::BTreeMap;
 use serde_json::Value;
 
 use charter_core::{
-    Anchor, Bpm, Chart as CoreChart, Difficulties, DifficultyPreset, Document, ExportedSong,
-    Extensions, FORMAT_VERSION, FileName, ImportedSong, InvalidValue, Key, Kind, LaneCount,
+    Anchor, Bpm, Chart as CoreChart, CurrentFormat, Difficulties, DifficultyPreset, Document,
+    ExportedSong, Extensions, FileName, ImportedSong, InvalidValue, Key, Kind, LaneCount,
     LaneIndex, Layout, Location, Marker, Metadata, Name, Namespace, NewSong, NoteChange, Object,
     Origin, Position, Ruleset, RulesetPlugin, SettingScope, Settings, Shape, SongFormat,
     SongResource, Stream, TextSetting, Tick, Ticks, TicksPerBeat, TimeSignature, Timing,
@@ -490,7 +490,7 @@ impl Song {
             .map(Chart::to_core)
             .collect::<Result<_, _>>()?;
         let doc = Document {
-            format_version: FORMAT_VERSION,
+            format_version: CurrentFormat,
             ticks_per_beat: self.ticks_per_beat,
             ruleset: Ruleset {
                 id: Namespace::new(ID)?,

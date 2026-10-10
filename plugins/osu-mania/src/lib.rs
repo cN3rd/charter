@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use std::num::NonZeroU16;
 
 use charter_core::{
-    Anchor, Bpm, Chart as CoreChart, Decimal, Document, Extensions, FORMAT_VERSION, InvalidValue,
+    Anchor, Bpm, Chart as CoreChart, CurrentFormat, Decimal, Document, Extensions, InvalidValue,
     Key, Kind, LaneCount, LaneIndex, Layout, Location, Marker, Metadata, Name, Namespace, NewSong,
     Object, Origin, Position, ResourcePath, Ruleset, RulesetPlugin, SampleId, Settings, Shape,
     Stream, Tick, Ticks, TicksPerBeat, TimeSignature, Timing as CoreTiming,
@@ -393,7 +393,7 @@ impl Song {
             .map(Chart::to_core)
             .collect::<Result<_, _>>()?;
         let doc = Document {
-            format_version: FORMAT_VERSION,
+            format_version: CurrentFormat,
             ticks_per_beat: self.ticks_per_beat,
             ruleset: Ruleset {
                 id: Namespace::new(ID)?,

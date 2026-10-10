@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::Value;
 
 use crate::error::InvalidValue;
@@ -14,6 +14,33 @@ use crate::unit::{
 
 /// The format version this crate reads and writes.
 pub const FORMAT_VERSION: u32 = 1;
+
+/// Marker for a document using this crate's current format version.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CurrentFormat;
+
+impl Serialize for CurrentFormat {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_u32(FORMAT_VERSION)
+    }
+}
+
+#[expect(
+    clippy::missing_trait_methods,
+    reason = "serde's default `deserialize_in_place` is right"
+)]
+impl<'de> Deserialize<'de> for CurrentFormat {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let version = u32::deserialize(deserializer)?;
+        if version == FORMAT_VERSION {
+            Ok(Self)
+        } else {
+            Err(de::Error::custom(format_args!(
+                "format version {version} is not the current {FORMAT_VERSION}"
+            )))
+        }
+    }
+}
 
 /// Plugin data keyed by `<namespace>.<name>`, opaque to the core.
 pub type Extensions = BTreeMap<Key, Value>;
@@ -57,8 +84,8 @@ pub type Settings = BTreeMap<String, Value>;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Document {
-    /// Core schema version, checked before reading the rest of the document.
-    pub format_version: u32,
+    /// Core schema version, current in every in-memory document.
+    pub format_version: CurrentFormat,
     #[serde(default, skip_serializing_if = "is_default_ticks_per_beat")]
     /// Grid resolution shared by the song and its charts.
     pub ticks_per_beat: TicksPerBeat,

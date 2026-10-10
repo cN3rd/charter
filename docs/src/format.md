@@ -62,6 +62,9 @@ format_version: u32
 One integer, incremented on **every** change to the core schema. A reader seeing a higher version
 than it knows must refuse rather than guess.
 
+The reader upgrades format 0 timing before building a document. In memory, a `Document` holds
+only the current version and writes that version back as the same JSON number.
+
 The plugin boundary separates closed from open. Everything charter defines is closed: a reader
 rejects any key it does not recognise, because such a key is either from a newer format, which the
 version already reports, or a mistake. Everything a plugin writes sits in an opaque slot,

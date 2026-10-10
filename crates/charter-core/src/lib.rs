@@ -31,9 +31,9 @@ mod validate;
     reason = "the chart model is exported through the flat charter-core format API"
 )]
 pub use document::{
-    Anchor, Chart, Child, Document, Extensions, FORMAT_VERSION, Layer, LayerColour, LayerView,
-    Marker, MarkerKey, Metadata, Object, PathPoint, Plugin, Points, Position, Preview, Ruleset,
-    SampleId, Settings, Shape, Timing, TimingEvent, TimingKind,
+    Anchor, Chart, Child, CurrentFormat, Document, Extensions, FORMAT_VERSION, Layer, LayerColour,
+    LayerView, Marker, MarkerKey, Metadata, Object, PathPoint, Plugin, Points, Position, Preview,
+    Ruleset, SampleId, Settings, Shape, Timing, TimingEvent, TimingKind,
 };
 #[expect(
     clippy::pub_use,

@@ -48,16 +48,12 @@ impl ValidDocument {
         Self::new(serde_json::from_value(document)?)
     }
 
-    /// Checks the version and every rule relating values to each other.
+    /// Checks every rule relating document values to each other.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::UnsupportedVersion`] for a version newer than [`FORMAT_VERSION`], or
-    /// [`Error::Invalid`] naming the first rule `document` breaks and where.
+    /// Returns [`Error::Invalid`] naming the first rule `document` breaks and where.
     pub fn new(document: Document) -> Result<Self, Error> {
-        if document.format_version > FORMAT_VERSION {
-            return Err(Error::UnsupportedVersion(document.format_version));
-        }
         validate(&document)?;
         Ok(Self(document))
     }
@@ -644,9 +640,9 @@ mod tests {
 
     use super::*;
     use crate::document::{
-        Anchor, Chart, Child, Extensions, Layer, LayerColour, LayerView, Marker, Metadata, Object,
-        PathPoint, Points, Position, Preview, Ruleset, SampleId, Settings, Shape, Timing,
-        TimingEvent, TimingKind,
+        Anchor, Chart, Child, CurrentFormat, Extensions, Layer, LayerColour, LayerView, Marker,
+        Metadata, Object, PathPoint, Points, Position, Preview, Ruleset, SampleId, Settings, Shape,
+        Timing, TimingEvent, TimingKind,
     };
     use crate::error::{InvalidValue, Rule, Violation};
     use crate::ident::{Ease, Key, Kind, LayerName, MarkerKind, Namespace};
@@ -736,7 +732,7 @@ mod tests {
             ]
         });
         let document = ValidDocument::from_json(&v0(&timing)).unwrap();
-        assert_eq!(document.document().format_version, FORMAT_VERSION);
+        assert_eq!(document.document().format_version, CurrentFormat);
         let migrated = document.timing();
         let ticks: Vec<Tick> = migrated.anchors.iter().map(|anchor| anchor.tick).collect();
         assert_eq!(ticks, [Tick::new(0), Tick::new(1920)]);
@@ -950,13 +946,15 @@ mod tests {
     }
 
     #[test]
-    fn documents_built_in_code_cannot_claim_a_newer_version() {
-        let mut document: Document = serde_json::from_value(minimal()).unwrap();
-        document.format_version = FORMAT_VERSION + 7;
-        assert!(matches!(
-            ValidDocument::new(document),
-            Err(Error::UnsupportedVersion(v)) if v == FORMAT_VERSION + 7
-        ));
+    fn documents_deserialize_only_at_the_current_format_version() {
+        let mut value = minimal();
+        for version in [0, FORMAT_VERSION + 7] {
+            value["format_version"] = json!(version);
+            assert!(
+                serde_json::from_value::<Document>(value.clone()).is_err(),
+                "{version}"
+            );
+        }
     }
 
     #[test]
@@ -1417,7 +1415,7 @@ mod tests {
             })
             .prop_map(
                 |(resolution, settings, metadata, timing, markers, charts, samples)| Document {
-                    format_version: FORMAT_VERSION,
+                    format_version: CurrentFormat,
                     ticks_per_beat: TicksPerBeat::new(resolution).unwrap(),
                     ruleset: Ruleset {
                         id: Namespace::new("test").unwrap(),
