@@ -241,8 +241,12 @@ pub(super) fn layers(ui: &mut Ui, song: &Song, drafts: &mut SongDrafts, actions:
             });
         }
     }
-    if let Some(index) = drafts.deleting_layer {
-        if let Some(row) = rows.get(index) {
+    if let Some(name) = drafts.deleting_layer.as_ref() {
+        if let Some((index, row)) = rows
+            .iter()
+            .enumerate()
+            .find(|(_, row)| row.name == name.as_str())
+        {
             let modal =
                 egui::Modal::new(egui::Id::new("delete layer notes")).show(ui.ctx(), |modal_ui| {
                     modal_ui.heading(format!("Delete {}?", row.name));
@@ -423,8 +427,78 @@ pub(super) fn layer_menu(
         if row.notes == 0 {
             actions.push(Action::DeleteLayer(index, LayerNotes::Delete));
         } else {
-            drafts.deleting_layer = Some(index);
+            drafts.deleting_layer = song
+                .chart()
+                .and_then(|chart| chart.layers.get(index).map(|layer| layer.name.clone()));
         }
         ui.close();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+
+    use super::*;
+
+    fn editable_layers() -> Harness<'static, (Song, SongDrafts, Vec<Action>)> {
+        let song = Song::new(charter_editor::demo::song(), &[&charter_stepmania::Plugin]);
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(650.0, 900.0))
+            .build_ui_state(
+                |ui, (song, drafts, actions): &mut (Song, SongDrafts, Vec<Action>)| {
+                    super::super::song::song_panel(ui, song, (drafts, None), actions);
+                },
+                (song, SongDrafts::default(), Vec::new()),
+            );
+        harness.run();
+        harness
+    }
+
+    fn ask_to_delete_layer_zero(harness: &mut Harness<'_, (Song, SongDrafts, Vec<Action>)>) {
+        harness.get_by_label("Layer Layer 0").click_secondary();
+        harness.run();
+        harness.get_by_label("Delete").click();
+        harness.run();
+        assert!(harness.query_by_label("Delete Layer 0?").is_some());
+    }
+
+    #[test]
+    fn confirming_a_layer_deletion_after_reordering_targets_the_same_layer() {
+        let mut harness = editable_layers();
+        harness.state_mut().0.add_layer().unwrap();
+        harness.run();
+        ask_to_delete_layer_zero(&mut harness);
+
+        harness.state_mut().0.move_layer(1, 0).unwrap();
+        harness.run();
+        assert!(harness.query_by_label("Delete Layer 0?").is_some());
+        harness.get_by_label("Delete 124 notes").click();
+        harness.run();
+        assert_eq!(
+            harness.state().2,
+            [Action::DeleteLayer(0, LayerNotes::Delete)]
+        );
+    }
+
+    #[test]
+    fn deleting_a_layer_while_its_question_is_open_drops_the_question() {
+        let mut harness = editable_layers();
+        harness.state_mut().0.add_layer().unwrap();
+        harness.state_mut().0.add_layer().unwrap();
+        harness.state_mut().0.move_layer(2, 0).unwrap();
+        harness.run();
+        ask_to_delete_layer_zero(&mut harness);
+
+        harness
+            .state_mut()
+            .0
+            .delete_layer(0, LayerNotes::Delete)
+            .unwrap();
+        harness.run();
+        assert!(harness.state().1.deleting_layer.is_none());
+        assert!(harness.query_by_label("Delete Layer 2?").is_none());
+        assert!(harness.state().2.is_empty());
     }
 }

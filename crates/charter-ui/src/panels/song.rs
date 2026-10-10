@@ -4,6 +4,7 @@ use super::{
     Action, Metadata, ResolvedTime, ResourcePath, SettingScope, Song, Ui, egui, fields, icon,
     style, table,
 };
+use charter_core::LayerName;
 
 /// The song panel's Song and Charts sections. `artwork` is the song's artwork to preview, or why
 /// there is none to show, when the song names some.
@@ -70,7 +71,7 @@ pub(crate) struct SongDrafts {
     /// Name being typed for a layer.
     pub(super) layer_name: Option<(usize, String)>,
     /// Layer whose notes need a deletion decision.
-    pub(super) deleting_layer: Option<usize>,
+    pub(super) deleting_layer: Option<LayerName>,
     /// Title being edited, while its field has the keyboard.
     pub(super) title: Option<String>,
     /// Artist being edited, while its field has the keyboard.
