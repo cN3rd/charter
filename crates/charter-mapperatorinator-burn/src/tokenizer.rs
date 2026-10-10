@@ -4,7 +4,7 @@
 //! state-dict loading, `encode`, `decode` and the encoders of the conditioning tokens a timing
 //! prompt carries.
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use serde::Deserialize;
 use std::collections::HashMap;
 
@@ -161,6 +161,11 @@ impl Tokenizer {
     pub(crate) fn from_json(text: &str) -> Result<Self> {
         let json: TokenizerJson = serde_json::from_str(text)
             .context("tokenizer.json is not a Mapperatorinator tokenizer")?;
+        // A circle size is scaled to the classes and clamped to the last, which needs one.
+        ensure!(
+            json.num_cs_classes > 0,
+            "tokenizer.json has no circle size classes"
+        );
         let mut ranges = Vec::new();
         let mut start = json.offset;
         for r in json
@@ -356,14 +361,19 @@ pub(crate) fn round_half_even(x: f64) -> f64 {
 mod tests {
     use super::*;
 
-    fn tokenizer() -> Tokenizer {
-        Tokenizer::from_json(
-            r#"{"offset": 9, "context_sos": {"timing": 3}, "context_eos": {"timing": 4},
+    const JSON: &str = r#"{"offset": 9, "context_sos": {"timing": 3}, "context_eos": {"timing": 4},
             "event_ranges": [{"type": "t", "min_value": 0, "max_value": 1637}, {"type": "beat", "min_value": 0, "max_value": 0}],
             "input_event_ranges": [{"type": "song_position", "min_value": -1, "max_value": 101}],
-            "num_diff_classes": 24, "num_mapper_classes": 7605, "num_descriptor_classes": 146, "num_cs_classes": 21}"#,
-        )
-        .unwrap()
+            "num_diff_classes": 24, "num_mapper_classes": 7605, "num_descriptor_classes": 146, "num_cs_classes": 21}"#;
+
+    fn tokenizer() -> Tokenizer {
+        Tokenizer::from_json(JSON).unwrap()
+    }
+
+    #[test]
+    fn a_tokenizer_without_circle_size_classes_is_refused() {
+        let none = JSON.replace(r#""num_cs_classes": 21"#, r#""num_cs_classes": 0"#);
+        Tokenizer::from_json(&none).unwrap_err();
     }
 
     #[test]
