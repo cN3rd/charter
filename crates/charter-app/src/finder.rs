@@ -41,8 +41,38 @@ const fn source(tracker: Tracker) -> Source {
     }
 }
 
-/// A song waiting on its model's weights: its audio, resolution, onsets and the model.
-type Waiting = (PathBuf, TicksPerBeat, Option<Vec<Onset>>, Tracker);
+/// A song to time with a model.
+struct Job {
+    /// Song audio.
+    file: PathBuf,
+    /// Chart resolution.
+    ticks_per_beat: TicksPerBeat,
+    /// Already found audio onsets, if any.
+    onsets: Option<Vec<Onset>>,
+    /// Model to use.
+    tracker: Tracker,
+}
+
+/// The one timing job pending or running in the finder.
+#[derive(Default)]
+enum State {
+    /// No job is pending or running.
+    #[default]
+    Idle,
+    /// Waiting for permission to download weights.
+    NeedsWeights(Job),
+    /// Downloading weights for the job.
+    Downloading {
+        /// Job to start after the weights are stored.
+        job: Job,
+        /// Progress and result from the download worker.
+        work: Receiver<Progress>,
+    },
+    /// Waiting for permission to run on the CPU.
+    NeedsCpu(Job),
+    /// Finding the timing on a worker.
+    Finding(Receiver<Progress>),
+}
 
 /// What a thread of the finder has to say.
 enum Progress {
@@ -63,17 +93,18 @@ enum Progress {
 pub(crate) struct Finder {
     /// The data folder the weights are kept in, when the user's is known.
     folder: Option<PathBuf>,
-    /// The song waiting on its model's weights.
-    waiting: Option<Waiting>,
-    /// Receiver for the current download or analysis job, if one is running.
-    work: Option<Receiver<Progress>>,
+    /// The current timing job, if any.
+    state: State,
 }
 
 impl std::fmt::Debug for Finder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Finder")
             .field("folder", &self.folder)
-            .field("busy", &self.work.is_some())
+            .field(
+                "busy",
+                &matches!(&self.state, State::Downloading { .. } | State::Finding(_)),
+            )
             .finish_non_exhaustive()
     }
 }
@@ -108,26 +139,56 @@ impl Finder {
         tracker: Tracker,
         window: &mut Window,
     ) {
-        self.start((file, ticks_per_beat, onsets, tracker), false, window);
+        if matches!(&self.state, State::Downloading { .. } | State::Finding(_)) {
+            window.timing_refused("a timing search is already running");
+            return;
+        }
+        self.start(
+            Job {
+                file,
+                ticks_per_beat,
+                onsets,
+                tracker,
+            },
+            false,
+            window,
+        );
     }
 
     /// Finds the timing waiting on the user's agreement to run on the CPU.
     pub(crate) fn find_on_cpu(&mut self, window: &mut Window) {
-        if let Some(waiting) = self.waiting.take() {
-            self.start(waiting, true, window);
+        match std::mem::take(&mut self.state) {
+            State::NeedsCpu(job) => self.start(job, true, window),
+            state @ (State::Idle
+            | State::NeedsWeights(_)
+            | State::Downloading { .. }
+            | State::Finding(_)) => {
+                self.state = state;
+                window.timing_refused("no CPU run is waiting");
+            }
         }
     }
 
     /// Starts finding the timing `job` asks for, on the CPU when `on_cpu` and otherwise on the
     /// graphics card when its model wants one, or asks the window to let the weights download
     /// first.
-    fn start(&mut self, job: Waiting, on_cpu: bool, window: &mut Window) {
-        let (file, ticks_per_beat, onsets, tracker) = job;
+    fn start(&mut self, job: Job, on_cpu: bool, window: &mut Window) {
+        let Job {
+            file,
+            ticks_per_beat,
+            onsets,
+            tracker,
+        } = job;
         let Some(weights) = self.weights(tracker, window) else {
             return;
         };
         if !weights.exists() {
-            self.waiting = Some((file, ticks_per_beat, onsets, tracker));
+            self.state = State::NeedsWeights(Job {
+                file,
+                ticks_per_beat,
+                onsets,
+                tracker,
+            });
             window.weights_needed();
             return;
         }
@@ -151,17 +212,31 @@ impl Finder {
             };
             drop(send.send(Progress::Found(found)));
         });
-        self.work = Some(receive);
+        self.state = State::Finding(receive);
     }
 
     /// Downloads the waiting song's model's weights, the user having agreed, then finds its
     /// timing.
     pub(crate) fn download(&mut self, window: &mut Window) {
-        let tracker = self
-            .waiting
-            .as_ref()
-            .map_or(Tracker::BeatThis, |waiting| waiting.3);
+        let job = match std::mem::take(&mut self.state) {
+            State::NeedsWeights(job) => job,
+            state @ (State::Idle
+            | State::Downloading { .. }
+            | State::NeedsCpu(_)
+            | State::Finding(_)) => {
+                let why = if matches!(&state, State::Downloading { .. } | State::Finding(_)) {
+                    "a timing search is already running"
+                } else {
+                    "no download is waiting"
+                };
+                self.state = state;
+                window.timing_refused(why);
+                return;
+            }
+        };
+        let tracker = job.tracker;
         let Some(weights) = self.weights(tracker, window) else {
+            self.state = State::NeedsWeights(job);
             return;
         };
         let (send, receive) = std::sync::mpsc::channel();
@@ -169,47 +244,49 @@ impl Finder {
             let done = fetch(&source(tracker), &weights, &send);
             drop(send.send(Progress::Weights(done)));
         });
-        self.work = Some(receive);
+        self.state = State::Downloading { job, work: receive };
     }
 
     /// Passes on what the finder's thread has to say. Says whether it is still at work, so the
     /// window keeps drawing its progress.
     pub(crate) fn update(&mut self, window: &mut Window) -> bool {
-        let Some(work) = &self.work else {
-            return false;
+        let work = match &self.state {
+            State::Downloading { work, .. } | State::Finding(work) => work,
+            State::Idle | State::NeedsWeights(_) | State::NeedsCpu(_) => return false,
         };
         loop {
             match work.try_recv() {
                 Ok(Progress::Downloaded(share)) => window.weights_progress(share),
                 Ok(Progress::Finding(share)) => window.finding_progress(share),
                 Ok(Progress::NoGpu(file, ticks_per_beat)) => {
-                    self.work = None;
-                    self.waiting = Some((file, ticks_per_beat, None, Tracker::Mapperatorinator));
+                    self.state = State::NeedsCpu(Job {
+                        file,
+                        ticks_per_beat,
+                        onsets: None,
+                        tracker: Tracker::Mapperatorinator,
+                    });
                     window.gpu_missing();
                     return false;
                 }
                 Ok(Progress::Weights(Ok(()))) => {
-                    self.work = None;
-                    if let Some((file, ticks_per_beat, onsets, tracker)) = self.waiting.take() {
-                        self.find(file, ticks_per_beat, onsets, tracker, window);
+                    if let State::Downloading { job, .. } = std::mem::take(&mut self.state) {
+                        self.start(job, false, window);
                     }
                     return true;
                 }
                 Ok(Progress::Weights(Err(why))) => {
-                    self.work = None;
-                    self.waiting = None;
+                    self.state = State::Idle;
                     window.timing_found(Err(format!("the beat tracker did not download: {why}")));
                     return false;
                 }
                 Ok(Progress::Found(found)) => {
-                    self.work = None;
+                    self.state = State::Idle;
                     window.timing_found(found);
                     return false;
                 }
                 Err(TryRecvError::Empty) => return true,
                 Err(TryRecvError::Disconnected) => {
-                    self.work = None;
-                    self.waiting = None;
+                    self.state = State::Idle;
                     window.timing_found(Err("the timing finder stopped".into()));
                     return false;
                 }
@@ -447,47 +524,49 @@ mod tests {
         window
     }
 
+    fn job(tracker: Tracker) -> Job {
+        Job {
+            file: PathBuf::from("/songs/a.ogg"),
+            ticks_per_beat: TicksPerBeat::default(),
+            onsets: None,
+            tracker,
+        }
+    }
+
     #[test]
     fn a_stopped_worker_drops_the_request_waiting_on_its_weights() {
         let mut window = window();
+        let (send, receive) = std::sync::mpsc::channel();
         let mut finder = Finder {
-            waiting: Some((
-                PathBuf::from("/songs/a.ogg"),
-                charter_core::TicksPerBeat::default(),
-                None,
-                Tracker::BeatThis,
-            )),
+            state: State::Downloading {
+                job: job(Tracker::BeatThis),
+                work: receive,
+            },
             ..Finder::default()
         };
-        let (send, receive) = std::sync::mpsc::channel();
-        finder.work = Some(receive);
         drop(send);
 
         assert!(!finder.update(&mut window));
-        assert!(finder.waiting.is_none());
+        assert!(matches!(finder.state, State::Idle));
         assert!(window.message().unwrap().contains("timing finder stopped"));
     }
 
     #[test]
     fn a_download_failure_reports_its_cause_and_forgets_the_waiting_song() {
         let mut window = window();
+        let (send, receive) = std::sync::mpsc::channel();
         let mut finder = Finder {
-            waiting: Some((
-                PathBuf::from("/songs/a.ogg"),
-                charter_core::TicksPerBeat::default(),
-                None,
-                Tracker::BeatThis,
-            )),
+            state: State::Downloading {
+                job: job(Tracker::BeatThis),
+                work: receive,
+            },
             ..Finder::default()
         };
-        let (send, receive) = std::sync::mpsc::channel();
-        finder.work = Some(receive);
         send.send(Progress::Weights(Err("server refused the request".into())))
             .unwrap();
 
         assert!(!finder.update(&mut window));
-        assert!(finder.waiting.is_none());
-        assert!(finder.work.is_none());
+        assert!(matches!(finder.state, State::Idle));
         assert!(
             window
                 .message()
@@ -498,11 +577,68 @@ mod tests {
     }
 
     #[test]
-    fn no_graphics_card_asks_first_and_keeps_the_song_for_the_cpu() {
+    fn a_second_download_is_refused_without_replacing_its_worker() {
+        let mut window = window();
+        let (send, receive) = std::sync::mpsc::channel();
+        let mut finder = Finder {
+            state: State::Downloading {
+                job: job(Tracker::BeatThis),
+                work: receive,
+            },
+            ..Finder::default()
+        };
+
+        finder.download(&mut window);
+
+        assert!(window.message().unwrap().contains("already running"));
+        send.send(Progress::Downloaded(0.5)).unwrap();
+        assert!(finder.update(&mut window));
+        assert!(matches!(finder.state, State::Downloading { .. }));
+    }
+
+    #[test]
+    fn a_cpu_run_without_a_waiting_job_is_refused() {
         let mut window = window();
         let mut finder = Finder::default();
+
+        finder.find_on_cpu(&mut window);
+
+        assert!(window.message().unwrap().contains("CPU run"));
+        assert!(!finder.update(&mut window));
+    }
+
+    #[test]
+    fn another_search_is_refused_while_a_worker_is_running() {
+        let mut window = window();
         let (send, receive) = std::sync::mpsc::channel();
-        finder.work = Some(receive);
+        let mut finder = Finder {
+            state: State::Finding(receive),
+            ..Finder::default()
+        };
+
+        finder.find(
+            PathBuf::from("/songs/b.ogg"),
+            TicksPerBeat::default(),
+            None,
+            Tracker::BeatThis,
+            &mut window,
+        );
+
+        assert!(window.message().unwrap().contains("already running"));
+        send.send(Progress::Found(Err("too few beats".into())))
+            .unwrap();
+        assert!(!finder.update(&mut window));
+        assert!(window.message().unwrap().contains("too few beats"));
+    }
+
+    #[test]
+    fn no_graphics_card_asks_first_and_keeps_the_song_for_the_cpu() {
+        let mut window = window();
+        let (send, receive) = std::sync::mpsc::channel();
+        let mut finder = Finder {
+            state: State::Finding(receive),
+            ..Finder::default()
+        };
         send.send(Progress::Finding(0.5)).unwrap();
         send.send(Progress::NoGpu(
             PathBuf::from("/songs/a.ogg"),
@@ -511,57 +647,59 @@ mod tests {
         .unwrap();
 
         assert!(!finder.update(&mut window));
-        assert!(finder.work.is_none());
-        assert_eq!(
-            finder
-                .waiting
-                .as_ref()
-                .map(|waiting| (&waiting.0, waiting.3)),
-            Some((&PathBuf::from("/songs/a.ogg"), Tracker::Mapperatorinator))
-        );
+        assert!(matches!(
+            &finder.state,
+            State::NeedsCpu(Job {
+                file,
+                tracker: Tracker::Mapperatorinator,
+                ..
+            }) if file == Path::new("/songs/a.ogg")
+        ));
         assert!(window.message().is_none());
         finder.find_on_cpu(&mut window);
-        assert!(finder.waiting.is_none());
+        assert!(matches!(finder.state, State::Idle));
     }
 
     #[test]
-    fn a_download_without_a_waiting_song_finishes_without_starting_a_tracker() {
+    fn a_download_without_a_waiting_song_is_refused() {
         let mut window = window();
         let mut finder = Finder::default();
-        let (send, receive) = std::sync::mpsc::channel();
-        finder.work = Some(receive);
-        send.send(Progress::Weights(Ok(()))).unwrap();
 
-        assert!(finder.update(&mut window));
-        assert!(finder.work.is_none());
-        assert!(window.message().is_none());
+        finder.download(&mut window);
+
+        assert!(window.message().unwrap().contains("download"));
+        assert!(matches!(finder.state, State::Idle));
         assert!(!finder.update(&mut window));
     }
 
     #[test]
     fn progress_keeps_the_finder_active_until_the_worker_reports_a_result() {
         let mut window = window();
-        let mut finder = Finder::default();
         let (send, receive) = std::sync::mpsc::channel();
-        finder.work = Some(receive);
+        let mut finder = Finder {
+            state: State::Finding(receive),
+            ..Finder::default()
+        };
 
         assert!(finder.update(&mut window));
-        send.send(Progress::Downloaded(0.42)).unwrap();
+        send.send(Progress::Finding(0.42)).unwrap();
         assert!(finder.update(&mut window));
-        assert!(finder.work.is_some());
+        assert!(matches!(finder.state, State::Finding(_)));
         send.send(Progress::Found(Err("too few beats".into())))
             .unwrap();
         assert!(!finder.update(&mut window));
-        assert!(finder.work.is_none());
+        assert!(matches!(finder.state, State::Idle));
         assert!(window.message().unwrap().contains("too few beats"));
     }
 
     #[test]
     fn found_timing_is_applied_to_the_open_song() {
         let mut window = window();
-        let mut finder = Finder::default();
         let (send, receive) = std::sync::mpsc::channel();
-        finder.work = Some(receive);
+        let mut finder = Finder {
+            state: State::Finding(receive),
+            ..Finder::default()
+        };
         let timing = Timing {
             anchors: vec![charter_core::Anchor {
                 tick: charter_core::Tick::new(0),
@@ -573,7 +711,7 @@ mod tests {
         send.send(Progress::Found(Ok(timing))).unwrap();
 
         assert!(!finder.update(&mut window));
-        assert!(finder.work.is_none());
+        assert!(matches!(finder.state, State::Idle));
         assert!(window.message().unwrap().contains("132 BPM"));
     }
 
@@ -742,7 +880,7 @@ mod tests {
         );
         assert!(!finder.update(&mut window));
         finder.download(&mut window);
-        assert!(finder.work.is_none());
+        assert!(matches!(finder.state, State::Idle));
     }
 
     #[test]

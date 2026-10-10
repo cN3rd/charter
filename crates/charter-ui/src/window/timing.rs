@@ -12,6 +12,10 @@ impl Window {
     pub fn timing_file_failed(&mut self, why: &str) {
         self.failure = Some(format!("Could not read the timing: {why}"));
     }
+    /// Shows why another timing job could not start without ending the current one.
+    pub fn timing_refused(&mut self, why: &str) {
+        self.failure = Some(format!("Finding the timing was refused: {why}"));
+    }
     /// Starts automatic timing, or asks for tracker weights before it can.
     pub(super) fn find_timing(&mut self, tracker: Tracker) {
         let (Some(song), Some(file)) = (&self.song, self.audio_file()) else {
@@ -801,6 +805,33 @@ mod tests {
             .timing_found(Err("the tracker would not load".to_owned()));
         harness.run();
         assert!(harness.query_by_label_contains("would not load").is_some());
+    }
+    #[test]
+    fn refusing_a_second_search_keeps_the_first_one_waiting_for_its_result() {
+        let mut harness = playable();
+        find_from_the_menu(&mut harness);
+        harness.state_mut().take_requests();
+        harness
+            .state_mut()
+            .timing_refused("a timing search is already running");
+
+        assert!(
+            harness
+                .state()
+                .message()
+                .unwrap()
+                .contains("already running")
+        );
+        assert_eq!(harness.state().dialogs.finding, Finding::Running(None));
+
+        let found: charter_core::Timing = serde_json::from_value(serde_json::json!({
+            "anchors": [ { "tick": 0, "seconds": 3.616 } ],
+            "tempo": 132.0,
+            "events": []
+        }))
+        .unwrap();
+        harness.state_mut().timing_found(Ok(found));
+        assert_eq!(anchor_seconds(&harness), [3.616]);
     }
     #[test]
     fn resetting_the_timing_asks_first_then_leaves_120_bpm_from_zero_in_one_step() {
