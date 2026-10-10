@@ -330,7 +330,8 @@ pub(super) fn events(
         };
         let y = view.y(timing.time_at(event.tick));
         painter.hline(columns.timing, y, Stroke::new(2.0, style::TIMING_MARK));
-        for (row, detail) in (0_u8..).zip(point) {
+        // ponytail: the first 256 details only; at 13 points a row the rest are off any screen.
+        for (row, detail) in (0..=u8::MAX).zip(point) {
             let text = match &detail.kind {
                 TimingKind::Stop(pause) => format!("stop {pause} s"),
                 TimingKind::Delay(pause) => format!("delay {pause} s"),
@@ -1201,17 +1202,53 @@ mod tests {
         )
     }
 
-    #[test]
-    fn events_at_one_tick_draw_one_timing_point_with_both_details() {
+    /// The demo song with `events` ahead of its own timing events.
+    fn demo_with_events(events: impl IntoIterator<Item = serde_json::Value>) -> Song {
         let mut document = serde_json::to_value(demo::song().document()).unwrap();
         let timing_events = document["timing"]["events"].as_array_mut().unwrap();
-        timing_events.insert(0, serde_json::json!({"tick": 0, "kind": {"stop": 0.25}}));
-        timing_events.insert(1, serde_json::json!({"tick": 0, "kind": {"delay": 0.125}}));
+        for (at, event) in events.into_iter().enumerate() {
+            timing_events.insert(at, event);
+        }
         let document =
             charter_core::ValidDocument::from_json(&serde_json::to_vec(&document).unwrap())
                 .unwrap();
-        let song = Song::new(document, &[]);
-        let field = field(&song);
+        Song::new(document, &[])
+    }
+
+    #[test]
+    fn events_at_one_tick_draw_one_timing_point_with_both_details() {
+        let song = demo_with_events([
+            serde_json::json!({"tick": 0, "kind": {"stop": 0.25}}),
+            serde_json::json!({"tick": 0, "kind": {"delay": 0.125}}),
+        ]);
+        let labels = event_labels(&song);
+        assert!(
+            labels.iter().any(|label| label == "stop 0.25 s"),
+            "{labels:?}"
+        );
+        assert!(
+            labels.iter().any(|label| label == "delay 0.125 s"),
+            "{labels:?}"
+        );
+    }
+
+    #[test]
+    fn a_timing_point_of_hundreds_of_events_draws_its_first_details() {
+        let event = |n: u16| {
+            let kind = serde_json::json!({"other": {"name": format!("sm.e{n}"), "value": null}});
+            serde_json::json!({"tick": 0, "kind": kind})
+        };
+        let song = demo_with_events((0..300).map(event));
+        let labels = event_labels(&song);
+        assert!(
+            labels.iter().any(|label| label == "sm.e0 null"),
+            "{labels:?}"
+        );
+    }
+
+    /// The text of every label [`events`] draws over the first beat of `song`.
+    fn event_labels(song: &Song) -> Vec<String> {
+        let field = field(song);
         let ctx = egui::Context::default();
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             let area = Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0));
@@ -1225,13 +1262,13 @@ mod tests {
             events(
                 &canvas,
                 &field.columns,
-                &song,
+                song,
                 field.view,
                 Rangef::new(0.0, 600.0),
                 (Tick::new(0), Tick::new(960)),
             );
         });
-        let labels: Vec<_> = output
+        let labels = output
             .shapes
             .iter()
             .filter_map(|shape| {
@@ -1242,14 +1279,7 @@ mod tests {
             })
             .collect();
         output.textures_delta.clear();
-        assert!(
-            labels.iter().any(|label| label == "stop 0.25 s"),
-            "{labels:?}"
-        );
-        assert!(
-            labels.iter().any(|label| label == "delay 0.125 s"),
-            "{labels:?}"
-        );
+        labels
     }
 
     #[test]
