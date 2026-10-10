@@ -321,7 +321,7 @@ impl Window {
             Action::Stretch { lane, from, to } => {
                 self.failure = song.stretch(*lane, *from, *to).err().as_ref().map(refused);
             }
-            Action::Select(Some(note), how) => song.select([*note], *how),
+            Action::Select(Some(note), how) => song.select([note.clone()], *how),
             Action::Select(None, Selecting::Replace) | Action::ClearSelection => {
                 song.clear_selection();
             }

@@ -46,14 +46,13 @@ impl Song {
     /// Refuses when the note's new length would break a rule of the format or of the song's
     /// game.
     pub fn stretch(&mut self, lane: LaneIndex, from: Tick, to: Tick) -> Result<(), Refusal> {
-        let Some((index, old)) = self.starting(from, lane) else {
+        let Some((index, old)) = self.starting_where(from, lane, |object| {
+            matches!(object.kind, Kind::Tap | Kind::Hold)
+        }) else {
             return Ok(());
         };
         if !self.is_editable(old) {
             return Err(Refusal::OnLayer(self.object_layer_name(old)));
-        }
-        if !matches!(old.kind, Kind::Tap | Kind::Hold) {
-            return Ok(());
         }
         let mut new = old.clone();
         (new.kind, new.shape) = match from.ticks_until(to) {
@@ -80,6 +79,16 @@ impl Song {
 
     /// The object of the open chart that starts at `tick` and covers `lane`, and where it is.
     pub(super) fn starting(&self, tick: Tick, lane: LaneIndex) -> Option<(usize, &Object)> {
+        self.starting_where(tick, lane, |_| true)
+    }
+
+    /// The first object starting here that covers `lane` and meets `test`.
+    pub(super) fn starting_where(
+        &self,
+        tick: Tick,
+        lane: LaneIndex,
+        test: impl Fn(&Object) -> bool,
+    ) -> Option<(usize, &Object)> {
         let objects = &self.document.document().charts.get(self.chart)?.objects;
         let from = objects.partition_point(|object| object.tick < tick);
         let to = objects.partition_point(|object| object.tick <= tick);
@@ -90,7 +99,7 @@ impl Song {
                 .position
                 .lanes()
                 .is_some_and(|span| span.overlaps(key));
-            covers.then_some((from.saturating_add(offset), object))
+            (covers && test(object)).then_some((from.saturating_add(offset), object))
         })
     }
 }
@@ -509,11 +518,12 @@ pub(super) fn blocking<'a, T: std::borrow::Borrow<Object>>(
 }
 
 /// The note an object is, when it sits on lanes.
-pub(super) const fn note_at(object: &Object) -> Option<NoteAt> {
+pub(super) fn note_at(object: &Object) -> Option<NoteAt> {
     match object.position {
         Position::Lane { index, .. } => Some(NoteAt {
             tick: object.tick,
             lane: index,
+            kind: object.kind.clone(),
         }),
         Position::Plane { .. } => None,
     }
@@ -702,6 +712,15 @@ mod tests {
     }
 
     #[test]
+    fn stretching_a_tap_leaves_a_locked_shake_on_the_same_spot() {
+        let mut song = stacked_kinds();
+        song.stretch(lane(0), at(0), at(240)).unwrap();
+        let mut shake = object(0, 0, "test.shake");
+        shake["layer"] = json!("Layer 1");
+        assert_eq!(objects(&song), [shake, hold(0, 0, 240)]);
+    }
+
+    #[test]
     fn lengthening_makes_a_selected_tap_a_hold_to_the_next_line_and_a_hold_longer() {
         let mut song = Song::new(
             document(json!([
@@ -711,10 +730,18 @@ mod tests {
             ])),
             EDITABLE,
         );
-        let notes = [0, 1].map(|index| NoteAt {
-            tick: at(0),
-            lane: lane(index),
-        });
+        let notes = [
+            NoteAt {
+                tick: at(0),
+                lane: lane(0),
+                kind: Kind::Tap,
+            },
+            NoteAt {
+                tick: at(0),
+                lane: lane(1),
+                kind: Kind::Hold,
+            },
+        ];
         song.select(notes, Selecting::Replace);
         song.resize_notes(Step::Later).unwrap();
         assert_eq!(
@@ -732,6 +759,27 @@ mod tests {
             objects(&song),
             [hold(0, 0, 240), hold(0, 1, 240), object(0, 2, "tap")]
         );
+    }
+
+    #[test]
+    fn selected_tap_stays_selected_as_a_hold_through_resize_undo_and_redo() {
+        let mut song = Song::new(document(json!([object(0, 0, "tap")])), EDITABLE);
+        let tap = NoteAt {
+            tick: at(0),
+            lane: lane(0),
+            kind: Kind::Tap,
+        };
+        let hold = NoteAt {
+            kind: Kind::Hold,
+            ..tap
+        };
+        song.select([tap.clone()], Selecting::Replace);
+        song.resize_notes(Step::Later).unwrap();
+        assert_eq!(song.selection().next().as_ref(), Some(&hold));
+        song.undo().unwrap();
+        assert_eq!(song.selection().next().as_ref(), Some(&tap));
+        song.redo().unwrap();
+        assert_eq!(song.selection().next().as_ref(), Some(&hold));
     }
 
     #[test]

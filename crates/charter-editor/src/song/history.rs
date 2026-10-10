@@ -251,8 +251,9 @@ impl History {
 }
 
 impl Song {
-    /// Records an edit made through a `Song` method and prunes removed selections.
+    /// Records an edit, following replaced notes and pruning removed selections.
     pub(super) fn record(&mut self, edit: Edit) {
+        self.remap_selection(&edit);
         self.history.record(self.chart, self.cursor, edit);
         self.prune_selection();
     }
@@ -287,7 +288,9 @@ impl Song {
         };
         let layered = layered(&change.edit);
         let active = self.active_names(&layered);
-        self.document = self.edited(change.chart, &change.edit.inverse())?;
+        let inverse = change.edit.inverse();
+        self.document = self.edited(change.chart, &inverse)?;
+        self.remap_selection(&inverse);
         let (chart, cursor) = (change.chart, change.cursor);
         self.history.finish_undo(last);
         self.return_to(chart, cursor);
@@ -310,6 +313,7 @@ impl Song {
         let layered = layered(&change.edit);
         let active = self.active_names(&layered);
         self.document = self.edited(change.chart, &change.edit)?;
+        self.remap_selection(&change.edit);
         let (chart, cursor) = (change.chart, change.cursor);
         self.history.finish_redo();
         self.return_to(chart, cursor);

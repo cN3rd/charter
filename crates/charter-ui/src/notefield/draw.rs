@@ -909,6 +909,7 @@ mod tests {
             [NoteAt {
                 tick: first.tick,
                 lane: index,
+                kind: first.kind.clone(),
             }],
             Selecting::Replace,
         );
@@ -1514,6 +1515,7 @@ mod tests {
             Some(NoteAt {
                 tick: Tick::new(0),
                 lane: LaneIndex::new(3),
+                kind: Kind::Hold,
             })
         );
         assert_eq!(

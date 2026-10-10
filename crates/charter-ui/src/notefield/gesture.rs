@@ -102,9 +102,10 @@ struct MoveRoom {
 
 /// The notes a drag from `note` moves, the selection when `note` is in it and otherwise `note`
 /// alone, and how many lanes they have room to move left, a negative count, and right.
-fn room(chart: Valid<'_, Chart>, song: &Song, note: NoteAt, lanes: u16) -> MoveRoom {
+fn room(chart: Valid<'_, Chart>, song: &Song, note: &NoteAt, lanes: u16) -> MoveRoom {
     let grabbed = |object: &Object| {
         object.tick == note.tick
+            && object.kind == note.kind
             && matches!(object.position, Position::Lane { index, .. } if index == note.lane)
     };
     let selected = chart
@@ -403,7 +404,7 @@ pub(super) fn grab(
     }
     let chart = song.chart()?;
     let note = hit_on_layers(song, field, chart.timing(), origin, visible)?;
-    let room = room(chart, song, note, field.lanes);
+    let room = room(chart, song, &note, field.lanes);
     let gesture = Gesture::MoveNotes {
         tick: line(origin)?,
         lane: field.lane_at(origin.x)?,
@@ -523,6 +524,7 @@ pub(super) fn hit_filtered(
         let note = NoteAt {
             tick: object.tick,
             lane: lane_index,
+            kind: object.kind.clone(),
         };
         over.then_some((note, (pos.y - head).abs()))
     });

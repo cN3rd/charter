@@ -54,14 +54,16 @@ pub enum Toggled {
     Removed,
 }
 
-/// A lane note of the open chart, by the tick it starts on and the first lane it covers, which
-/// no other note starting on that tick shares.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// A lane note of the open chart, by its starting tick, first lane and kind.
+/// Notes with the same tick, first lane and kind remain ambiguous.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct NoteAt {
     /// Where the note starts.
     pub tick: Tick,
     /// First lane the note covers.
     pub lane: LaneIndex,
+    /// Kind of note at this spot.
+    pub kind: Kind,
 }
 
 /// How notes being selected meet the selection there is.
@@ -489,6 +491,23 @@ pub(crate) mod tests {
         json!({ "tick": tick, "position": { "lane": { "index": lane } }, "kind": kind, "shape": "instant", "layer": "Layer 0" })
     }
 
+    pub(crate) fn stacked_kinds() -> Song {
+        let mut document = document(json!([object(0, 0, "test.shake"), object(0, 0, "tap")]))
+            .document()
+            .clone();
+        let shake_layer = LayerName::new("Layer 1").unwrap();
+        document.charts[0].layers.push(Layer {
+            name: shake_layer.clone(),
+            colour: LayerColour::Red,
+            view: LayerView::Shown,
+            locked: false,
+        });
+        document.charts[0].objects[0].layer = Some(shake_layer);
+        let mut song = Song::new(ValidDocument::new(document).unwrap(), EDITABLE);
+        song.set_layer_locked(1, true).unwrap();
+        song
+    }
+
     pub(crate) fn objects(song: &Song) -> Vec<Value> {
         let chart = song.chart().unwrap();
         chart
@@ -506,6 +525,7 @@ pub(crate) mod tests {
         NoteAt {
             tick: at(tick),
             lane: lane(index),
+            kind: Kind::Tap,
         }
     }
 

@@ -12,7 +12,7 @@ use super::*;
 impl Song {
     /// The selected notes, earliest first.
     pub fn selection(&self) -> impl Iterator<Item = NoteAt> + '_ {
-        self.selection.iter().copied()
+        self.selection.iter().cloned()
     }
 
     /// Whether an object of the open chart belongs to the selection.
@@ -23,7 +23,7 @@ impl Song {
 
     /// Meets the selection with those of `notes` that the open chart has.
     pub fn select(&mut self, notes: impl IntoIterator<Item = NoteAt>, how: Selecting) {
-        let found: Vec<_> = notes.into_iter().filter(|note| self.has(*note)).collect();
+        let found: Vec<_> = notes.into_iter().filter(|note| self.has(note)).collect();
         self.meet(found, how);
     }
 
@@ -98,11 +98,25 @@ impl Song {
     }
 
     /// Whether the open chart has the note `note` names.
-    fn has(&self, note: NoteAt) -> bool {
-        self.starting(note.tick, note.lane)
-            .is_some_and(|(_, object)| {
-                super::notes::note_at(object) == Some(note) && self.is_editable(object)
-            })
+    fn has(&self, note: &NoteAt) -> bool {
+        self.starting_where(note.tick, note.lane, |object| {
+            object.kind == note.kind
+                && matches!(object.position, Position::Lane { index, .. } if index == note.lane)
+        })
+        .is_some_and(|(_, object)| self.is_editable(object))
+    }
+
+    /// Keeps a selected note selected when a replacement changes its kind.
+    pub(super) fn remap_selection(&mut self, edit: &Edit) {
+        for op in &edit.0 {
+            if let Op::Replace { old, new, .. } = op
+                && let Some(old) = super::notes::note_at(old)
+                && self.selection.remove(&old)
+                && let Some(new) = super::notes::note_at(new)
+            {
+                self.selection.insert(new);
+            }
+        }
     }
 
     /// Drops the selected notes an edit took away.
@@ -110,7 +124,7 @@ impl Song {
         let selection = std::mem::take(&mut self.selection);
         self.selection = selection
             .into_iter()
-            .filter(|note| self.has(*note))
+            .filter(|note| self.has(note))
             .collect();
     }
 }
@@ -137,6 +151,7 @@ mod tests {
         NoteAt {
             tick: at(tick),
             lane: lane(index),
+            kind: Kind::Tap,
         }
     }
 
@@ -168,7 +183,13 @@ mod tests {
                            "kind": "hold", "shape": { "sustain": { "duration": 480 } } });
         let mut song = Song::new(document(json!([wide])), EDITABLE);
         song.select_between(at(0)..=at(0), lane(3)..=lane(3), Selecting::Replace);
-        assert_eq!(selection(&song), [note_at(0, 2)]);
+        assert_eq!(
+            selection(&song),
+            [NoteAt {
+                kind: Kind::Hold,
+                ..note_at(0, 2)
+            }]
+        );
         let chart = song.chart().unwrap();
         assert!(song.is_selected(&chart.objects[0]));
     }
@@ -184,6 +205,34 @@ mod tests {
         let mut song = four_taps();
         song.select([note_at(960, 0), note_at(240, 0)], Selecting::Replace);
         assert_eq!(selection(&song), []);
+    }
+
+    #[test]
+    fn selecting_a_tap_finds_it_behind_a_locked_shake_on_the_same_spot() {
+        let mut song = stacked_kinds();
+        song.select([note_at(0, 0)], Selecting::Replace);
+        assert_eq!(selection(&song), [note_at(0, 0)]);
+    }
+
+    #[test]
+    fn deleting_a_marquee_selection_leaves_the_locked_kind_on_the_same_spot() {
+        let mut song = stacked_kinds();
+        song.select_between(at(0)..=at(0), lane(0)..=lane(0), Selecting::Replace);
+        song.delete_selection().unwrap();
+        let mut shake = object(0, 0, "test.shake");
+        shake["layer"] = json!("Layer 1");
+        assert_eq!(objects(&song), [shake]);
+    }
+
+    #[test]
+    fn moving_a_marquee_selection_leaves_the_locked_kind_on_the_same_spot() {
+        let mut song = stacked_kinds();
+        song.select_between(at(0)..=at(0), lane(0)..=lane(0), Selecting::Replace);
+        song.move_selection(TickOffset::new(240), LaneOffset::new(0))
+            .unwrap();
+        let mut shake = object(0, 0, "test.shake");
+        shake["layer"] = json!("Layer 1");
+        assert_eq!(objects(&song), [shake, object(240, 0, "tap")]);
     }
 
     #[test]
@@ -244,7 +293,13 @@ mod tests {
         let hold = json!({ "tick": 0, "position": { "lane": { "index": 0, "width": 1 } },
                            "kind": "hold", "shape": { "sustain": { "duration": 480 } } });
         let mut song = Song::new(document(json!([hold, object(960, 3, "tap")])), EDITABLE);
-        song.select([note_at(0, 0)], Selecting::Replace);
+        song.select(
+            [NoteAt {
+                kind: Kind::Hold,
+                ..note_at(0, 0)
+            }],
+            Selecting::Replace,
+        );
         song.move_selection(TickOffset::new(1920), LaneOffset::new(2))
             .unwrap();
         let moved = json!({ "tick": 1920, "position": { "lane": { "index": 2 } },
@@ -262,7 +317,13 @@ mod tests {
                         "kind": "tap", "shape": "instant" }] })
         };
         let mut song = Song::new(document(json!([hold(0, 0)])), EDITABLE);
-        song.select([note_at(0, 0)], Selecting::Replace);
+        song.select(
+            [NoteAt {
+                kind: Kind::Hold,
+                ..note_at(0, 0)
+            }],
+            Selecting::Replace,
+        );
         song.move_selection(TickOffset::new(960), LaneOffset::new(1))
             .unwrap();
         assert_eq!(objects(&song), [hold(960, 1)]);
