@@ -30,9 +30,9 @@ mod tempo;
 #[expect(
     clippy::pub_use,
     clippy::useless_attribute,
-    reason = "TimedSpan stays in charter-editor's existing flat public API"
+    reason = "history marks and timed spans stay in charter-editor's flat public API"
 )]
-pub use tempo::TimedSpan;
+pub use self::{history::HistoryMark, tempo::TimedSpan};
 
 use history::History;
 

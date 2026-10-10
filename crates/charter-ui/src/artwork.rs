@@ -3,6 +3,8 @@
 
 use std::path::{Path, PathBuf};
 
+use charter_editor::HistoryMark;
+
 /// A picture the host read and decoded: the file's bytes, and a preview of them.
 pub type Picture = (Vec<u8>, egui::ColorImage);
 
@@ -15,7 +17,7 @@ pub(crate) struct Artwork {
     file: Option<PathBuf>,
     /// The mark of the song's history that named it, for a picture not yet saved, which an
     /// undo or redo back to that mark brings back.
-    mark: u64,
+    mark: HistoryMark,
     /// The picture's bytes, once read or chosen.
     bytes: Option<Vec<u8>>,
     /// Whether the bytes are still to be written beside the song.
@@ -59,12 +61,12 @@ impl Artwork {
     }
 
     /// The history mark that named this artwork.
-    pub(crate) const fn mark(&self) -> u64 {
+    pub(crate) const fn mark(&self) -> HistoryMark {
         self.mark
     }
 
     /// Records the history mark that named this artwork.
-    pub(crate) const fn set_mark(&mut self, mark: u64) {
+    pub(crate) const fn set_mark(&mut self, mark: HistoryMark) {
         self.mark = mark;
     }
 
@@ -78,7 +80,7 @@ impl Artwork {
         Self {
             name: name.to_owned(),
             file: file.map(Path::to_path_buf),
-            mark: 0,
+            mark: HistoryMark::default(),
             bytes: None,
             unsaved: false,
             preview: if file.is_some() {
@@ -94,7 +96,7 @@ impl Artwork {
         Self {
             name,
             file,
-            mark: 0,
+            mark: HistoryMark::default(),
             bytes: Some(bytes),
             unsaved: true,
             preview: Preview::Decoded(image),
@@ -157,6 +159,7 @@ impl Artwork {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::window::test_support::PLUGINS;
 
     fn picture(bytes: &[u8]) -> Picture {
         (
@@ -219,15 +222,19 @@ mod tests {
     fn a_pending_picture_survives_a_stale_read_until_it_is_saved() {
         let path = Path::new("/songs/song.json");
         let file = Path::new("/songs/cover.png");
+        let mut song = charter_editor::Song::new(charter_editor::demo::song(), PLUGINS);
+        song.add_layer().unwrap();
+        let mark = song.history_mark();
+        assert_ne!(mark, charter_editor::HistoryMark::default());
         let mut artwork = Artwork::taken(
             "cover.png".to_owned(),
             Some(file.to_path_buf()),
             picture(b"chosen"),
         );
-        artwork.mark = 3;
+        artwork.set_mark(mark);
         artwork.read(Some(picture(b"old file")));
         assert_eq!(artwork.unsaved(), Some(b"chosen".as_slice()));
-        assert_eq!(artwork.mark, 3);
+        assert_eq!(artwork.mark(), mark);
         assert_eq!(
             artwork.write_for(path, Some(file)),
             Some((file.to_path_buf(), b"chosen".to_vec()))

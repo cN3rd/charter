@@ -1,6 +1,7 @@
 //! Artwork selection, restoration and save-side bookkeeping.
 
 use super::{Artwork, EmbeddedArtwork, Path, PathBuf, Picture, Request, Song, Window, refused};
+use charter_editor::HistoryMark;
 
 impl Window {
     /// Takes a chosen PNG or JPEG picture as the song's artwork.
@@ -126,7 +127,10 @@ impl Window {
         if self.failure.is_none() {
             // The picture it replaces comes back with an undo.
             self.park_artwork();
-            let mark = self.song.as_ref().map_or(0, Song::history_mark);
+            let mark = self
+                .song
+                .as_ref()
+                .map_or_else(HistoryMark::default, Song::history_mark);
             let mut artwork = Artwork::taken(name, self.artwork_file(), picture);
             artwork.set_mark(mark);
             self.artwork.current = Some(artwork);
@@ -145,7 +149,10 @@ impl Window {
             return;
         };
         let file = self.artwork_file();
-        let mark = self.song.as_ref().map_or(0, Song::history_mark);
+        let mark = self
+            .song
+            .as_ref()
+            .map_or_else(HistoryMark::default, Song::history_mark);
         let restored_position = self
             .artwork
             .parked
