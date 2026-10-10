@@ -18,7 +18,9 @@ use plist::{Dictionary, Uid, Value};
 
 use charter_core::{FileName, InvalidValue};
 
-use crate::exchange::{Change, KEYS, Level, MAX_NOTES, Played, Report, Track, beats_at};
+use crate::exchange::{
+    Change, KEYS, Level, MAX_NOTES, Moment, Played, Report, Track, TrackBpm, TrackKey, beats_at,
+};
 use crate::{Difficulty, Lanes, Song};
 
 /// The MIDI key of a level's lowest note.
@@ -90,7 +92,7 @@ pub(crate) fn read(
             ));
             continue;
         }
-        let (read, title, artist) = read_file(&objects, file, difficulty, &mut notes)?;
+        let (read, title, artist) = read_file(&objects, file, difficulty, &mut notes, report)?;
         if track.levels.is_empty() {
             track.title = title;
             track.artist = artist;
@@ -321,6 +323,55 @@ fn difficulty_of(level: i64) -> Option<Difficulty> {
     Difficulty::ALL.get(index).copied()
 }
 
+/// The finite tempo changes of one keyed file, or its default tempo.
+fn read_tempo(
+    objects: &Objects<'_>,
+    file: &Value,
+    report: &mut Report,
+) -> Result<Vec<Change>, String> {
+    let mut tempo: Vec<Change> = objects
+        .field(file, "tempoChanges")
+        .map(|changes| objects.items(changes))
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|change| {
+            let seconds = number(objects.field(change, "startTime")?)?;
+            let bpm = number(objects.field(change, "tempo")?)?;
+            let result = Change::new(
+                seconds,
+                bpm,
+                charter_core::TimeSignature::default().numerator,
+            );
+            if result.is_none() {
+                report.add("a tempo change that is not a tempo");
+            }
+            result
+        })
+        .collect();
+    if tempo.is_empty() {
+        let bpm = ["exactTempo", "tempo"]
+            .into_iter()
+            .filter_map(|key| objects.field(file, key).and_then(number))
+            .find_map(|value| {
+                let valid = TrackBpm::from_bpm(value);
+                if valid.is_none() {
+                    report.add("a tempo change that is not a tempo");
+                }
+                valid
+            })
+            .unwrap_or(TrackBpm::DEFAULT);
+        let change = Change::new(
+            0.0,
+            bpm.bpm(),
+            charter_core::TimeSignature::default().numerator,
+        )
+        .ok_or("a track has no finite tempo")?;
+        tempo.push(change);
+    }
+    tempo.sort_by(|a, b| a.seconds.seconds().total_cmp(&b.seconds.seconds()));
+    Ok(tempo)
+}
+
 /// The level in the `KBMidiFile` `file`, with the title and artist it names, counting its notes
 /// into `notes`.
 fn read_file(
@@ -328,37 +379,13 @@ fn read_file(
     file: &Value,
     difficulty: Difficulty,
     notes: &mut usize,
+    report: &mut Report,
 ) -> Result<(Level, String, String), String> {
     let text = |key| objects.field(file, key).and_then(Value::as_string);
     let mut title = text("title").unwrap_or_default().to_owned();
     let mut artist = text("copyrightInfo").unwrap_or_default().to_owned();
-    let mut tempo: Vec<Change> = objects
-        .field(file, "tempoChanges")
-        .map(|changes| objects.items(changes))
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|change| {
-            Some(Change {
-                seconds: number(objects.field(change, "startTime")?)?,
-                bpm: number(objects.field(change, "tempo")?)?,
-                meter: charter_core::TimeSignature::default().numerator,
-            })
-        })
-        .collect();
-    if tempo.is_empty() {
-        let bpm = ["exactTempo", "tempo"]
-            .into_iter()
-            .filter_map(|key| objects.field(file, key).and_then(number))
-            .find(|&bpm| bpm > 0.0)
-            .unwrap_or(120.0);
-        tempo.push(Change {
-            seconds: 0.0,
-            bpm,
-            meter: charter_core::TimeSignature::default().numerator,
-        });
-    }
-    tempo.sort_by(|a, b| a.seconds.total_cmp(&b.seconds));
-    let mut open: HashMap<u8, VecDeque<f64>> = HashMap::new();
+    let tempo = read_tempo(objects, file, report)?;
+    let mut open: HashMap<TrackKey, VecDeque<Moment>> = HashMap::new();
     let mut played: Vec<Played> = Vec::new();
     let tracks = objects
         .field(file, "tracks")
@@ -387,10 +414,19 @@ fn read_file(
             let Some(time) = objects.field(event, "time").and_then(number) else {
                 continue;
             };
+            let Some(time) = Moment::from_seconds(time) else {
+                report.add("a note at a moment that is not a time");
+                continue;
+            };
             // Keys repeat each octave: one of Tap Tap Reloaded's tracks plays its level on 96 up.
             let note = integer("note").unwrap_or_default();
-            let key = u8::try_from(note.saturating_sub(LOWEST).rem_euclid(i64::from(KEYS)))
-                .unwrap_or(KEYS);
+            let Some(key) = u8::try_from(note.saturating_sub(LOWEST).rem_euclid(i64::from(KEYS)))
+                .ok()
+                .and_then(TrackKey::new)
+            else {
+                report.add("a note on a key outside its level");
+                continue;
+            };
             match (kind, integer("velocity").unwrap_or_default()) {
                 (Some(NOTE_ON), velocity) if velocity > 0 => {
                     open.entry(key).or_default().push_back(time);
@@ -409,7 +445,7 @@ fn read_file(
         open.into_iter()
             .flat_map(|(key, ons)| ons.into_iter().map(move |on| Played { key, on, off: on })),
     );
-    played.sort_by(|a, b| a.on.total_cmp(&b.on));
+    played.sort_by(|a, b| a.on.seconds().total_cmp(&b.on.seconds()));
     let level = Level {
         difficulty,
         theme: None,
@@ -612,8 +648,8 @@ impl Archive {
                 self.object(
                     &["KBMidiTempoMap"],
                     [
-                        ("startTime", change.seconds.into()),
-                        ("tempo", change.bpm.into()),
+                        ("startTime", change.seconds.seconds().into()),
+                        ("tempo", change.bpm.bpm().into()),
                     ],
                 )
             })
@@ -627,20 +663,20 @@ impl Archive {
             .collect();
         let lines = self.array(lines);
         let lines = self.object(&["KBMidiTrack"], [("events", Value::Uid(lines))]);
-        let mut switches: Vec<(f64, i64, u8)> = level
+        let mut switches: Vec<(Moment, i64, u8)> = level
             .notes
             .iter()
             .flat_map(|note| {
-                let key = note.key.saturating_add(60);
+                let key = note.key.get().saturating_add(60);
                 [(note.on, NOTE_ON, key), (note.off, NOTE_OFF, key)]
             })
             .collect();
         // A note ending where the next on its key starts switches off first.
-        switches.sort_by(|a, b| a.0.total_cmp(&b.0).then(b.1.cmp(&a.1)));
+        switches.sort_by(|a, b| a.0.seconds().total_cmp(&b.0.seconds()).then(b.1.cmp(&a.1)));
         let notes = switches
             .into_iter()
             .map(|(seconds, kind, key)| {
-                self.event(kind, key, seconds, beats_at(tempo, seconds), None)
+                self.event(kind, key, seconds.seconds(), beats_at(tempo, seconds), None)
             })
             .collect();
         let notes = self.array(notes);
@@ -649,7 +685,9 @@ impl Archive {
         let named = self.text(&track.title);
         let performer = self.text(&track.artist);
         let raw = Value::Uid(self.add(Value::Data(Vec::new())));
-        let first = tempo.first().map_or(120.0, |change| change.bpm);
+        let first = tempo
+            .first()
+            .map_or(TrackBpm::DEFAULT.bpm(), |change| change.bpm.bpm());
         self.object(
             &["KBMidiFile"],
             [
@@ -679,7 +717,7 @@ mod tests {
     }
 
     fn track() -> Track {
-        let played = |key, on: f64, off: f64| Played { key, on, off };
+        let played = |key, on: f64, off: f64| Played::new(key, on, off).unwrap();
         Track {
             title: "House Music".to_owned(),
             artist: "Benny Benassi".to_owned(),
@@ -690,11 +728,7 @@ mod tests {
                     difficulty: Difficulty::Easy,
                     theme: None,
                     lanes: Lanes::Three,
-                    tempo: vec![Change {
-                        seconds: 0.0,
-                        bpm: 130.000_13,
-                        meter: four(),
-                    }],
+                    tempo: vec![Change::new(0.0, 130.000_13, four()).unwrap()],
                     notes: vec![played(2, 3.0, 3.115), played(2, 3.115, 3.5)],
                 },
                 Level {
@@ -702,16 +736,8 @@ mod tests {
                     theme: None,
                     lanes: Lanes::Three,
                     tempo: vec![
-                        Change {
-                            seconds: 0.5,
-                            bpm: 100.0,
-                            meter: four(),
-                        },
-                        Change {
-                            seconds: 10.0,
-                            bpm: 150.0,
-                            meter: four(),
-                        },
+                        Change::new(0.5, 100.0, four()).unwrap(),
+                        Change::new(10.0, 150.0, four()).unwrap(),
                     ],
                     notes: vec![played(5, 3.0, 3.1), played(0, 12.0, 13.0)],
                 },
@@ -797,26 +823,14 @@ mod tests {
             panic!("one level: {track:?}");
         };
         assert_eq!(extreme.difficulty, Difficulty::Extreme);
-        assert!((extreme.tempo[0].bpm - 90.0).abs() < f64::EPSILON);
+        assert!((extreme.tempo[0].bpm.bpm() - 90.0).abs() < f64::EPSILON);
         assert_eq!(
             extreme.notes,
             [
-                Played {
-                    key: 2,
-                    on: 1.0,
-                    off: 2.0
-                },
-                Played {
-                    key: 0,
-                    on: 3.0,
-                    off: 3.0
-                },
+                Played::new(2, 1.0, 2.0).unwrap(),
+                Played::new(0, 3.0, 3.0).unwrap(),
                 // Key 70 is the level's eleventh, which no preset plays in three lanes.
-                Played {
-                    key: 10,
-                    on: 4.0,
-                    off: 4.0
-                },
+                Played::new(10, 4.0, 4.0).unwrap(),
             ]
         );
         assert!(report.into_lines().is_empty());
@@ -895,6 +909,65 @@ mod tests {
         assert_eq!(
             read(shared.as_bytes(), None, &mut report).unwrap_err(),
             "the file holds more notes than any chart"
+        );
+    }
+
+    #[test]
+    fn invalid_tempo_and_note_moments_are_not_kept_in_a_track() {
+        let change = |seconds: f64, bpm: f64| {
+            let mut fields = Dictionary::new();
+            fields.insert("startTime".to_owned(), Value::Real(seconds));
+            fields.insert("tempo".to_owned(), Value::Real(bpm));
+            Value::Dictionary(fields)
+        };
+        let event = |kind: i64, time: f64| {
+            let mut fields = Dictionary::new();
+            fields.insert("type".to_owned(), kind.into());
+            fields.insert("note".to_owned(), LOWEST.into());
+            fields.insert("velocity".to_owned(), 100.into());
+            fields.insert("time".to_owned(), Value::Real(time));
+            Value::Dictionary(fields)
+        };
+        let mut notes = Dictionary::new();
+        notes.insert(
+            "events".to_owned(),
+            Value::Array(vec![
+                event(NOTE_ON, f64::NAN),
+                event(NOTE_ON, 1.0),
+                event(NOTE_OFF, 2.0),
+            ]),
+        );
+        let mut file = Dictionary::new();
+        file.insert(
+            "tempoChanges".to_owned(),
+            Value::Array(vec![
+                change(f64::NAN, 120.0),
+                change(0.0, 0.0),
+                change(0.0, f64::INFINITY),
+                change(0.0, 90.0),
+            ]),
+        );
+        file.insert(
+            "tracks".to_owned(),
+            Value::Array(vec![Value::Dictionary(notes)]),
+        );
+        let file = Value::Dictionary(file);
+        let mut report = Report::default();
+        let (level, _, _) =
+            read_file(&Objects(&[]), &file, Difficulty::Easy, &mut 0, &mut report).unwrap();
+        assert_eq!(level.tempo.len(), 1);
+        assert_eq!(level.notes.len(), 1);
+        assert_eq!(level.tempo[0].seconds.seconds(), 0.0);
+        assert_eq!(level.tempo[0].bpm.bpm(), 90.0);
+        assert_eq!(level.notes[0].key.get(), 0);
+        assert_eq!(level.notes[0].on.seconds(), 1.0);
+        assert_eq!(level.notes[0].off.seconds(), 2.0);
+        assert_eq!(
+            report.into_lines(),
+            [
+                "a note at a moment that is not a time",
+                "a tempo change that is not a tempo (3 times)"
+            ]
         );
     }
 

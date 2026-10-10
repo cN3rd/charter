@@ -74,9 +74,9 @@ pub(crate) struct Level {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Change {
     /// Seconds into the audio.
-    pub(crate) seconds: f64,
+    pub(crate) seconds: Moment,
     /// Quarter notes a minute.
-    pub(crate) bpm: f64,
+    pub(crate) bpm: TrackBpm,
     /// Quarter-note beats to a bar from here, which only MIDI holds.
     pub(crate) meter: NonZeroU16,
 }
@@ -85,23 +85,96 @@ pub(crate) struct Change {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Played {
     /// Its key, counted from the level's lowest, below [`KEYS`].
-    pub(crate) key: u8,
+    pub(crate) key: TrackKey,
     /// Seconds into the audio it starts.
-    pub(crate) on: f64,
+    pub(crate) on: Moment,
     /// Seconds into the audio it ends.
-    pub(crate) off: f64,
+    pub(crate) off: Moment,
 }
 
 /// Keys a level has, an octave.
 pub(crate) const KEYS: u8 = 12;
 
+/// A finite moment in seconds from the start of the audio.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+pub(crate) struct Moment(ResolvedTime);
+
+impl Moment {
+    /// The moment at `seconds`, if finite.
+    pub(crate) fn from_seconds(seconds: f64) -> Option<Self> {
+        ResolvedTime::from_seconds(seconds).map(Self)
+    }
+
+    /// Seconds from the start of the audio.
+    pub(crate) const fn seconds(self) -> f64 {
+        self.0.seconds()
+    }
+}
+
+/// A finite, positive tempo in quarter notes per minute.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct TrackBpm(f64);
+
+impl TrackBpm {
+    /// Tempo assumed by a track without a tempo map.
+    pub(crate) const DEFAULT: Self = Self(120.0);
+
+    /// The tempo at `bpm`, if finite and above zero.
+    pub(crate) fn from_bpm(bpm: f64) -> Option<Self> {
+        (bpm.is_finite() && bpm > 0.0).then_some(Self(bpm))
+    }
+
+    /// Quarter notes per minute.
+    pub(crate) const fn bpm(self) -> f64 {
+        self.0
+    }
+}
+
+/// A note's key within one level's octave.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct TrackKey(u8);
+
+impl TrackKey {
+    /// The key if it belongs to a level.
+    pub(crate) const fn new(key: u8) -> Option<Self> {
+        if key < KEYS { Some(Self(key)) } else { None }
+    }
+
+    /// The key's offset from the level's lowest note.
+    pub(crate) const fn get(self) -> u8 {
+        self.0
+    }
+}
+
+impl Change {
+    /// A tempo change at a finite moment with a positive, finite tempo.
+    pub(crate) fn new(seconds: f64, bpm: f64, meter: NonZeroU16) -> Option<Self> {
+        Some(Self {
+            seconds: Moment::from_seconds(seconds)?,
+            bpm: TrackBpm::from_bpm(bpm)?,
+            meter,
+        })
+    }
+}
+
+impl Played {
+    /// A note on a level's key at two finite moments.
+    pub(crate) fn new(key: u8, on: f64, off: f64) -> Option<Self> {
+        Some(Self {
+            key: TrackKey::new(key)?,
+            on: Moment::from_seconds(on)?,
+            off: Moment::from_seconds(off)?,
+        })
+    }
+}
+
 /// The columns of a three-column level's keys 0, 2 and 4.
-const COLUMN_KEYS: [u8; 3] = [0, 2, 4];
+const COLUMN_KEYS: [TrackKey; 3] = [TrackKey(0), TrackKey(2), TrackKey(4)];
 
 impl Preset {
     /// The note `key` plays in a level of `lanes`, held for `held` when it can be, or none when
     /// the level has no such key.
-    fn kind(self, key: u8, lanes: Lanes, held: Option<Ticks>) -> Option<NoteKind> {
+    fn kind(self, key: TrackKey, lanes: Lanes, held: Option<Ticks>) -> Option<NoteKind> {
         let column = |lane: u16, holds: bool| {
             let lane = LaneIndex::new(lane);
             Some(match held.filter(|_| holds) {
@@ -110,10 +183,10 @@ impl Preset {
             })
         };
         if lanes != Lanes::Three {
-            return (u16::from(key) < u16::from(lanes.width()))
-                .then(|| column(key.into(), true))?;
+            return (u16::from(key.get()) < u16::from(lanes.width()))
+                .then(|| column(key.get().into(), true))?;
         }
-        match (key, self) {
+        match (key.get(), self) {
             (0, _) => column(0, true),
             (2, _) => column(1, true),
             (4, _) => column(2, true),
@@ -133,7 +206,7 @@ impl Preset {
     /// The key `kind` is written on in a level of `lanes`, and whether it holds; none, said in
     /// `report`, for a note such a level has no key for. A kind this game plays as another, such
     /// as a slice in Tap Tap Revenge, is written as that one and said so.
-    fn key(self, kind: NoteKind, lanes: Lanes, report: &mut Report) -> Option<(u8, bool)> {
+    fn key(self, kind: NoteKind, lanes: Lanes, report: &mut Report) -> Option<(TrackKey, bool)> {
         let lane = match kind {
             NoteKind::Tap { lane } | NoteKind::Hold { lane, .. } => Some(u16::from(lane)),
             NoteKind::Shake(_) | NoteKind::Slice(_) | NoteKind::MegaTap => None,
@@ -148,6 +221,7 @@ impl Preset {
             }
             return lane
                 .and_then(|lane| u8::try_from(lane).ok())
+                .and_then(TrackKey::new)
                 .map(|key| (key, holds));
         }
         if let Some(lane) = lane {
@@ -176,7 +250,7 @@ impl Preset {
                 self.game()
             ));
         }
-        Some((key, false))
+        Some((TrackKey(key), false))
     }
 
     /// What this game plays key 1, 3 or 5 of a three-column level as, in words.
@@ -269,15 +343,14 @@ pub(crate) fn to_song(
     let end = levels
         .iter()
         .flat_map(|level| &level.notes)
-        .map(|note| note.off.max(note.on))
-        .filter(|end| end.is_finite())
+        .map(|note| note.off.seconds().max(note.on.seconds()))
         .fold(0.0_f64, f64::max);
     for level in &mut levels {
         let first = level.tempo.first().copied();
         let before = level.tempo.len();
         level
             .tempo
-            .retain(|change| change.seconds <= end || Some(*change) == first);
+            .retain(|change| change.seconds.seconds() <= end || Some(*change) == first);
         for _ in level.tempo.len()..before {
             report.add("a tempo change after the last note");
         }
@@ -360,15 +433,12 @@ fn tempo_of(
     let mut sections: Vec<Section> = changes
         .iter()
         .filter_map(|change| {
-            let (Some(start), Some(beat)) = (
-                ResolvedTime::from_seconds(change.seconds),
-                BeatLength::from_bpm(change.bpm),
-            ) else {
+            let Some(beat) = BeatLength::from_bpm(change.bpm.bpm()) else {
                 report.add("a tempo change that is not a tempo");
                 return None;
             };
             Some(Section {
-                start,
+                start: change.seconds.0,
                 beat,
                 meter: change.meter,
             })
@@ -404,13 +474,7 @@ fn notes_of(
     let mut taken: HashSet<(i64, u16, bool)> = HashSet::new();
     let mut notes = Vec::with_capacity(level.notes.len());
     for note in &level.notes {
-        let (Some(on), Some(off)) = (
-            ResolvedTime::from_seconds(note.on),
-            ResolvedTime::from_seconds(note.off),
-        ) else {
-            report.add("a note at a moment that is not a time");
-            continue;
-        };
+        let (on, off) = (note.on.0, note.off.0);
         let tick = nearest(timing, on);
         let held = ((off - on).seconds() > HOLD_SECONDS)
             .then(|| tick.ticks_until(nearest(timing, off)))
@@ -540,14 +604,18 @@ fn changes_of(timing: Valid<'_, Timing>, report: &mut Report) -> Vec<Change> {
     let mut meter = TimeSignature::default().numerator;
     ticks
         .into_iter()
-        .map(|(tick, bpm)| {
+        .filter_map(|(tick, bpm)| {
             let at = i64::from(tick);
             meter = meters.range(..=at).next_back().map_or(meter, |(_, &m)| m);
-            Change {
-                seconds: timing.time_at(tick).seconds(),
-                bpm: bpm.unwrap_or_else(|| timing.tempo_at(tick).bpm()),
+            let change = Change::new(
+                timing.time_at(tick).seconds(),
+                bpm.unwrap_or_else(|| timing.tempo_at(tick).bpm()),
                 meter,
+            );
+            if change.is_none() {
+                report.add("a tempo change that is not a tempo");
             }
+            change
         })
         .collect()
 }
@@ -581,27 +649,32 @@ fn played_of(
                     .map_or(on, seconds);
                 on + (sixteenth - on).clamp(0.0, HOLD_SECONDS / 2.0)
             };
-            Some(Played { key, on, off })
+            let Some(played) = Played::new(key.get(), on, off) else {
+                report.add("a note at a moment that is not a time");
+                return None;
+            };
+            Some(played)
         })
         .collect()
 }
 
 /// The quarter notes from the start of the audio to `seconds` on `tempo`, the tempo before the
 /// first change reaching back to the start.
-pub(crate) fn beats_at(tempo: &[Change], seconds: f64) -> f64 {
+pub(crate) fn beats_at(tempo: &[Change], seconds: Moment) -> f64 {
+    let seconds = seconds.seconds();
     let Some(first) = tempo.first() else {
         return seconds * 2.0;
     };
-    let mut beats = first.seconds * first.bpm / 60.0;
+    let mut beats = first.seconds.seconds() * first.bpm.bpm() / 60.0;
     let mut from = first;
     for change in tempo.iter().skip(1) {
-        if change.seconds > seconds {
+        if change.seconds.seconds() > seconds {
             break;
         }
-        beats += (change.seconds - from.seconds) * from.bpm / 60.0;
+        beats += (change.seconds.seconds() - from.seconds.seconds()) * from.bpm.bpm() / 60.0;
         from = change;
     }
-    beats + (seconds - from.seconds) * from.bpm / 60.0
+    beats + (seconds - from.seconds.seconds()) * from.bpm.bpm() / 60.0
 }
 
 #[cfg(test)]
@@ -620,17 +693,13 @@ mod tests {
             difficulty,
             theme: None,
             lanes: Lanes::Three,
-            tempo: vec![Change {
-                seconds: 0.0,
-                bpm: 120.0,
-                meter: four(),
-            }],
+            tempo: vec![Change::new(0.0, 120.0, four()).unwrap()],
             notes,
         }
     }
 
     fn played(key: u8, on: f64, off: f64) -> Played {
-        Played { key, on, off }
+        Played::new(key, on, off).unwrap()
     }
 
     fn song(levels: Vec<Level>, report: &mut Report) -> Song {
@@ -658,7 +727,7 @@ mod tests {
         let beat = Ticks::new(960);
         let read = |preset: Preset| -> Vec<Option<NoteKind>> {
             (0..7)
-                .map(|key| preset.kind(key, Lanes::Three, beat))
+                .map(|key| preset.kind(TrackKey::new(key).unwrap(), Lanes::Three, beat))
                 .collect()
         };
         let hold = |lane| {
@@ -716,7 +785,10 @@ mod tests {
                     let expected = (key < width).then(|| NoteKind::Tap {
                         lane: LaneIndex::new(key.into()),
                     });
-                    assert_eq!(preset.kind(key, lanes, None), expected);
+                    assert_eq!(
+                        preset.kind(TrackKey::new(key).unwrap(), lanes, None),
+                        expected
+                    );
                 }
             }
         }
@@ -727,15 +799,15 @@ mod tests {
         let mut report = Report::default();
         assert_eq!(
             Preset::Revenge.key(NoteKind::Slice(Side::Right), Lanes::Three, &mut report),
-            Some((3, false))
+            Some((TrackKey(3), false))
         );
         assert_eq!(
             Preset::Tour.key(NoteKind::Shake(Shake::Down), Lanes::Three, &mut report),
-            Some((5, false))
+            Some((TrackKey(5), false))
         );
         assert_eq!(
             Preset::Tour.key(NoteKind::MegaTap, Lanes::Three, &mut report),
-            Some((5, false))
+            Some((TrackKey(5), false))
         );
         let hold = NoteKind::Hold {
             lane: LaneIndex::new(3),
@@ -743,7 +815,7 @@ mod tests {
         };
         assert_eq!(
             Preset::Tour.key(hold, Lanes::Five, &mut report),
-            Some((3, true))
+            Some((TrackKey(3), true))
         );
         assert_eq!(
             Preset::Revenge.key(NoteKind::MegaTap, Lanes::Four, &mut report),
@@ -844,7 +916,6 @@ mod tests {
             played(0, 1.0, 1.1),
             played(0, 1.0, 1.1),
             played(1, 1.0, 1.1),
-            played(2, f64::NAN, 1.1),
         ];
         let levels = vec![
             level(Difficulty::Easy, notes),
@@ -857,7 +928,6 @@ mod tests {
         assert_eq!(
             report.into_lines(),
             [
-                "a note at a moment that is not a time",
                 "a note on a column and tick another note already takes",
                 "a second Easy level",
             ]
@@ -868,7 +938,7 @@ mod tests {
     fn a_level_with_its_own_tempo_keeps_it_and_levels_come_easiest_first() {
         let mut report = Report::default();
         let mut hard = level(Difficulty::Hard, vec![played(0, 1.0, 1.0)]);
-        hard.tempo[0].bpm = 150.0;
+        hard.tempo[0].bpm = TrackBpm::from_bpm(150.0).unwrap();
         let song = song(vec![hard, level(Difficulty::Easy, Vec::new())], &mut report);
         let names: Vec<&str> = song.charts().iter().map(|c| c.name.as_str()).collect();
         assert_eq!(names, ["Easy", "Hard"]);
@@ -895,11 +965,7 @@ mod tests {
     #[test]
     fn a_tempo_change_without_a_representable_beat_is_left_out() {
         let mut report = Report::default();
-        let changes = [Change {
-            seconds: 0.0,
-            bpm: f64::MIN_POSITIVE,
-            meter: four(),
-        }];
+        let changes = [Change::new(0.0, f64::MIN_POSITIVE, four()).unwrap()];
         let tempo = tempo_of(&changes, TicksPerBeat::default(), &mut report).unwrap();
         assert_eq!(tempo.tempo, charter_core::Bpm::try_from(120.0).unwrap());
         assert_eq!(report.into_lines(), ["a tempo change that is not a tempo"]);
@@ -951,13 +1017,13 @@ mod tests {
             (Difficulty::Easy, Lanes::Four)
         );
         assert_eq!(extreme.difficulty, Difficulty::Extreme);
-        let keys: Vec<u8> = extreme.notes.iter().map(|note| note.key).collect();
+        let keys: Vec<u8> = extreme.notes.iter().map(|note| note.key.get()).collect();
         assert_eq!(keys, [0, 2, 5, 1]);
         let hold = extreme.notes[1];
-        assert!((hold.on - 1.0).abs() < 1e-9 && (hold.off - 2.0).abs() < 1e-9);
+        assert!((hold.on.seconds() - 1.0).abs() < 1e-9 && (hold.off.seconds() - 2.0).abs() < 1e-9);
         let tap = extreme.notes[0];
         assert!(
-            (tap.off - tap.on - HOLD_SECONDS / 2.0).abs() < 1e-9,
+            (tap.off.seconds() - tap.on.seconds() - HOLD_SECONDS / 2.0).abs() < 1e-9,
             "a sixteenth at 120 BPM, kept within half the hold threshold"
         );
         assert_eq!(extreme.tempo.len(), 1);
@@ -972,21 +1038,12 @@ mod tests {
 
     #[test]
     fn beats_count_from_the_start_of_the_audio_across_tempo_changes() {
-        let tempo = [
-            Change {
-                seconds: 1.0,
-                bpm: 120.0,
-                meter: four(),
-            },
-            Change {
-                seconds: 3.0,
-                bpm: 60.0,
-                meter: four(),
-            },
-        ];
-        assert!((beats_at(&tempo, 0.0)).abs() < 1e-12);
-        assert!((beats_at(&tempo, 3.0) - 6.0).abs() < 1e-12);
-        assert!((beats_at(&tempo, 5.0) - 8.0).abs() < 1e-12);
-        assert!((beats_at(&[], 1.5) - 3.0).abs() < 1e-12);
+        let change = |seconds, bpm| Change::new(seconds, bpm, four()).unwrap();
+        let moment = |seconds| Moment::from_seconds(seconds).unwrap();
+        let tempo = [change(1.0, 120.0), change(3.0, 60.0)];
+        assert!((beats_at(&tempo, moment(0.0))).abs() < 1e-12);
+        assert!((beats_at(&tempo, moment(3.0)) - 6.0).abs() < 1e-12);
+        assert!((beats_at(&tempo, moment(5.0)) - 8.0).abs() < 1e-12);
+        assert!((beats_at(&[], moment(1.5)) - 3.0).abs() < 1e-12);
     }
 }

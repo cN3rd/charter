@@ -11,7 +11,9 @@ use std::collections::{HashMap, VecDeque};
 use midly::num::{u7, u15, u24, u28};
 use midly::{Format, Header, MetaMessage, MidiMessage, Smf, Timing, TrackEvent, TrackEventKind};
 
-use crate::exchange::{Change, Level, MAX_NOTES, Played, Report, Track, beats_at};
+use crate::exchange::{
+    Change, Level, MAX_NOTES, Moment, Played, Report, Track, TrackKey, beats_at,
+};
 use crate::{Difficulty, Lanes};
 
 /// How a MIDI file lays out a level's keys, from the level's lowest.
@@ -107,11 +109,12 @@ pub(crate) fn read(bytes: &[u8], layout: Layout, report: &mut Report) -> Result<
     let mut beat = DEFAULT_BEAT;
     let mut meter = charter_core::TimeSignature::default().numerator;
     let (mut seconds, mut at) = (0.0, 0_u64);
-    let mut open: HashMap<(usize, u8), VecDeque<f64>> = HashMap::new();
+    let mut open: HashMap<(usize, TrackKey), VecDeque<Moment>> = HashMap::new();
     let mut levels: Vec<Level> = Vec::new();
     for (tick, event) in events(&smf, report)? {
         seconds += beats(tick.saturating_sub(at), per_beat) * f64::from(beat) / 1e6;
         at = tick;
+        let moment = Moment::from_seconds(seconds).ok_or("a MIDI event has a non-finite time")?;
         match event {
             Event::Tempo(micros) => beat = micros,
             Event::Meter(beats, unit) => {
@@ -126,22 +129,19 @@ pub(crate) fn read(bytes: &[u8], layout: Layout, report: &mut Report) -> Result<
                 };
                 let waiting = open.entry((difficulty.index(), key)).or_default();
                 if on {
-                    waiting.push_back(seconds);
+                    waiting.push_back(moment);
                 } else if let Some(start) = waiting.pop_front() {
                     level(&mut levels, difficulty).notes.push(Played {
                         key,
                         on: start,
-                        off: seconds,
+                        off: moment,
                     });
                 }
                 continue;
             }
         }
-        let change = Change {
-            seconds,
-            bpm: 60e6 / f64::from(beat),
-            meter,
-        };
+        let change = Change::new(moment.seconds(), 60e6 / f64::from(beat), meter)
+            .ok_or("a MIDI tempo is out of range")?;
         match tempo.last_mut() {
             Some(last) if tempo_tick == Some(tick) => *last = change,
             _ => tempo.push(change),
@@ -158,19 +158,25 @@ pub(crate) fn read(bytes: &[u8], layout: Layout, report: &mut Report) -> Result<
         let notes = &mut level(&mut levels, difficulty).notes;
         notes.extend(ons.into_iter().map(|on| Played { key, on, off: on }));
     }
-    if tempo.first().is_none_or(|first| first.seconds > 0.0) {
+    if tempo
+        .first()
+        .is_none_or(|first| first.seconds.seconds() > 0.0)
+    {
         tempo.insert(
             0,
-            Change {
-                seconds: 0.0,
-                bpm: 60e6 / f64::from(DEFAULT_BEAT),
-                meter: charter_core::TimeSignature::default().numerator,
-            },
+            Change::new(
+                0.0,
+                60e6 / f64::from(DEFAULT_BEAT),
+                charter_core::TimeSignature::default().numerator,
+            )
+            .ok_or("the default MIDI tempo is out of range")?,
         );
     }
     for level in &mut levels {
         level.tempo.clone_from(&tempo);
-        level.notes.sort_by(|a, b| a.on.total_cmp(&b.on));
+        level
+            .notes
+            .sort_by(|a, b| a.on.seconds().total_cmp(&b.on.seconds()));
     }
     levels.sort_by_key(|level| level.difficulty.index());
     Ok(Track {
@@ -261,7 +267,12 @@ fn beats(ticks: u64, per_beat: f64) -> f64 {
 
 /// The level and track key MIDI key `key` of `layout` plays, or none, saying so in `report` when
 /// it switches on.
-fn level_key(key: u8, layout: Layout, on: bool, report: &mut Report) -> Option<(Difficulty, u8)> {
+fn level_key(
+    key: u8,
+    layout: Layout,
+    on: bool,
+    report: &mut Report,
+) -> Option<(Difficulty, TrackKey)> {
     let above = key.checked_sub(LOWEST);
     let difficulty =
         above.and_then(|above| Difficulty::ALL.get(usize::from(above.div_euclid(OCTAVE))));
@@ -271,7 +282,9 @@ fn level_key(key: u8, layout: Layout, on: bool, report: &mut Report) -> Option<(
         }
         return None;
     };
-    let found = above.and_then(|above| layout.track_key(above % OCTAVE));
+    let found = above
+        .and_then(|above| layout.track_key(above % OCTAVE))
+        .and_then(TrackKey::new);
     if found.is_none() && on {
         report.add(format!(
             "notes on MIDI key {key}, which the layout gives no note in a {} level",
@@ -319,7 +332,7 @@ pub(crate) fn write(track: &Track, layout: Layout, report: &mut Report) -> Vec<u
     }
     let tempo = led_in(tempo);
     let per_beat = f64::from(PER_BEAT);
-    let tick = |seconds: f64| {
+    let tick = |seconds: Moment| {
         let tick = (beats_at(&tempo, seconds) * per_beat).round();
         (tick >= 0.0 && tick < f64::from(u28::max_value().as_int())).then(|| {
             #[expect(
@@ -342,7 +355,7 @@ pub(crate) fn write(track: &Track, layout: Layout, report: &mut Report) -> Vec<u
             clippy::cast_sign_loss,
             reason = "the microseconds a beat takes are clamped to what a MIDI tempo holds"
         )]
-        let micros = (60e6 / change.bpm)
+        let micros = (60e6 / change.bpm.bpm())
             .round()
             .clamp(1.0, f64::from(u24::max_value().as_int())) as u32;
         timing.push((
@@ -415,7 +428,7 @@ fn meta_text(text: &str, most: usize) -> &str {
 fn switches(
     track: &Track,
     layout: Layout,
-    tick: &impl Fn(f64) -> Option<u32>,
+    tick: &impl Fn(Moment) -> Option<u32>,
     report: &mut Report,
 ) -> Vec<(u32, bool, u8)> {
     let mut switches: Vec<(u32, bool, u8)> = Vec::new();
@@ -436,7 +449,7 @@ fn switches(
                 report.add("a note before the audio starts, which a MIDI file cannot hold");
                 continue;
             };
-            let Some(key) = layout.midi_key(note.key) else {
+            let Some(key) = layout.midi_key(note.key.get()) else {
                 report.add("left and right shakes and slices, which Tap Tap Reloaded's layout has no key for");
                 continue;
             };
@@ -454,14 +467,14 @@ fn led_in(tempo: Vec<Change>) -> Vec<Change> {
     let Some(&first) = tempo.first() else {
         return tempo;
     };
-    if first.seconds <= 0.0 {
+    if first.seconds.seconds() <= 0.0 {
         return tempo;
     }
-    let lead = (first.seconds * first.bpm / 60.0).round().max(1.0);
-    let lead = Change {
-        seconds: 0.0,
-        bpm: lead * 60.0 / first.seconds,
-        meter: first.meter,
+    let lead = (first.seconds.seconds() * first.bpm.bpm() / 60.0)
+        .round()
+        .max(1.0);
+    let Some(lead) = Change::new(0.0, lead * 60.0 / first.seconds.seconds(), first.meter) else {
+        return tempo;
     };
     std::iter::once(lead).chain(tempo).collect()
 }
@@ -500,15 +513,11 @@ mod tests {
     }
 
     fn played(key: u8, on: f64, off: f64) -> Played {
-        Played { key, on, off }
+        Played::new(key, on, off).unwrap()
     }
 
     fn change(seconds: f64, bpm: f64) -> Change {
-        Change {
-            seconds,
-            bpm,
-            meter: meter(4),
-        }
+        Change::new(seconds, bpm, meter(4)).unwrap()
     }
 
     #[test]
@@ -559,8 +568,14 @@ mod tests {
             assert_eq!(level.notes.len(), was.notes.len());
             for (note, then) in level.notes.iter().zip(&was.notes) {
                 assert_eq!(note.key, then.key);
-                assert!((note.on - then.on).abs() < 1e-9, "{note:?} {then:?}");
-                assert!((note.off - then.off).abs() < 1e-9, "{note:?} {then:?}");
+                assert!(
+                    (note.on.seconds() - then.on.seconds()).abs() < 1e-9,
+                    "{note:?} {then:?}"
+                );
+                assert!(
+                    (note.off.seconds() - then.off.seconds()).abs() < 1e-9,
+                    "{note:?} {then:?}"
+                );
             }
         }
     }
@@ -607,7 +622,7 @@ mod tests {
             Some(2 * u32::from(PER_BEAT))
         );
         let back = read(&bytes, Layout::Standard, &mut Report::default()).unwrap();
-        assert!((back.levels[0].notes[0].on - 0.75).abs() < 1e-9);
+        assert!((back.levels[0].notes[0].on.seconds() - 0.75).abs() < 1e-9);
     }
 
     /// A MIDI event `delta` ticks after the one before.
@@ -706,16 +721,8 @@ mod tests {
         assert_eq!(
             extreme.tempo,
             [
-                Change {
-                    seconds: 0.0,
-                    bpm: 120.0,
-                    meter: meter(3)
-                },
-                Change {
-                    seconds: 1.0,
-                    bpm: 240.0,
-                    meter: meter(3)
-                },
+                Change::new(0.0, 120.0, meter(3)).unwrap(),
+                Change::new(1.0, 240.0, meter(3)).unwrap(),
             ]
         );
         assert_eq!(
