@@ -137,6 +137,8 @@ impl<'a> Reader<'a> {
             8 => Value::Str(self.string()?),
             9 => {
                 let item = self.u32()?;
+                // Arrays nested to any depth would be read to it, past the end of the stack.
+                ensure!(item != 9, "a GGUF array of arrays is not supported");
                 let n = self.len()?;
                 Value::Array(
                     std::iter::repeat_with(|| self.value(item))
@@ -190,6 +192,7 @@ impl<'a> Gguf<'a> {
                 .unwrap_or(32),
         )
         .unwrap_or(usize::MAX);
+        ensure!(alignment > 0, "the GGUF alignment is 0");
         let start = r.at.div_ceil(alignment).saturating_mul(alignment);
         ensure!(start <= bytes.len(), "the GGUF file ends before its data");
         Ok(Self {
@@ -205,7 +208,7 @@ impl<'a> Gguf<'a> {
             .tensors
             .get(name)
             .with_context(|| format!("the GGUF file has no {name}"))?;
-        let count: usize = info.dims.iter().product();
+        let count = product(&info.dims).with_context(|| format!("{name} is too large"))?;
         let size = byte_size(info.kind, count)?;
         let bytes = self
             .data
@@ -221,11 +224,17 @@ impl<'a> Gguf<'a> {
             _ => info.dims.iter().rev().copied().collect(),
         };
         ensure!(
-            shape.iter().product::<usize>() == count,
+            product(&shape) == Some(count),
             "{name}'s shape {shape:?} does not hold {count} values"
         );
         Ok((values, shape))
     }
+}
+
+/// The number of values `dims` hold, unless it is past any size.
+fn product(dims: &[usize]) -> Option<usize> {
+    dims.iter()
+        .try_fold(1_usize, |count, &dim| count.checked_mul(dim))
 }
 
 /// Weights per block and bytes per block of each ggml type this reads.
@@ -491,5 +500,79 @@ mod tests {
         assert_eq!(g.read("w").unwrap(), (vec![1.5, -2.0], vec![1, 2]));
         assert!(Gguf::parse(&f[..30]).is_err());
         assert!(Gguf::parse(b"GGUF\x02\0\0\0").is_err());
+    }
+
+    /// The start of a version 3 GGUF file of `tensors` tensors and `values` metadata values.
+    #[expect(
+        clippy::little_endian_bytes,
+        reason = "a GGUF file is little-endian by specification"
+    )]
+    fn header(tensors: u64, values: u64) -> Vec<u8> {
+        let mut f = b"GGUF".to_vec();
+        f.extend(3_u32.to_le_bytes());
+        f.extend(tensors.to_le_bytes());
+        f.extend(values.to_le_bytes());
+        f
+    }
+
+    /// `s` as a GGUF string, its length first.
+    #[expect(
+        clippy::little_endian_bytes,
+        reason = "a GGUF file is little-endian by specification"
+    )]
+    fn text(file: &mut Vec<u8>, s: &str) {
+        file.extend(u64::try_from(s.len()).unwrap().to_le_bytes());
+        file.extend(s.as_bytes());
+    }
+
+    #[test]
+    #[expect(
+        clippy::little_endian_bytes,
+        reason = "a GGUF file is little-endian by specification"
+    )]
+    fn an_array_of_arrays_is_refused_rather_than_read_to_any_depth() {
+        let mut f = header(0, 1);
+        text(&mut f, "a");
+        for kind in [9_u32, 9] {
+            f.extend(kind.to_le_bytes());
+        }
+        f.extend(1_u64.to_le_bytes());
+        f.extend(8_u32.to_le_bytes());
+        f.extend(1_u64.to_le_bytes());
+        text(&mut f, "x");
+        f.resize(f.len().div_ceil(32) * 32, 0);
+        assert!(Gguf::parse(&f).is_err());
+    }
+
+    #[test]
+    #[expect(
+        clippy::little_endian_bytes,
+        reason = "a GGUF file is little-endian by specification"
+    )]
+    fn an_alignment_of_zero_is_refused() {
+        let mut f = header(0, 1);
+        text(&mut f, "general.alignment");
+        f.extend(4_u32.to_le_bytes());
+        f.extend(0_u32.to_le_bytes());
+        assert!(Gguf::parse(&f).is_err());
+    }
+
+    #[test]
+    #[expect(
+        clippy::little_endian_bytes,
+        reason = "a GGUF file is little-endian by specification"
+    )]
+    fn dimensions_past_any_size_are_refused() {
+        let huge = 1_u64 << 32;
+        let mut f = header(1, 0);
+        text(&mut f, "w");
+        f.extend(3_u32.to_le_bytes());
+        for _ in 0..3 {
+            f.extend(huge.to_le_bytes());
+        }
+        f.extend(0_u32.to_le_bytes());
+        f.extend(0_u64.to_le_bytes());
+        f.resize(f.len().div_ceil(32) * 32, 0);
+        Gguf::parse(&f).unwrap().read("w").unwrap_err();
     }
 }
