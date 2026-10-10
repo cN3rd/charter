@@ -59,6 +59,8 @@ pub(super) struct Change {
     chart: usize,
     /// Tick to restore with this edit during undo or redo.
     cursor: Tick,
+    /// The song's state after this edit, which no other edit's takes.
+    mark: u64,
     /// Operations recorded as one undo step.
     edit: Edit,
 }
@@ -75,6 +77,8 @@ pub(super) struct History {
     saved: Option<HistoryStep>,
     /// How many times edits, undos and redos have changed the notes view.
     revision: u64,
+    /// The mark the last edit recorded took.
+    marks: u64,
 }
 
 impl History {
@@ -85,6 +89,7 @@ impl History {
             done: HistoryStep::ZERO,
             saved: Some(HistoryStep::ZERO),
             revision: 0,
+            marks: 0,
         }
     }
 
@@ -104,9 +109,11 @@ impl History {
             }
             return;
         }
+        self.marks = self.marks.saturating_add(1);
         self.changes.push(Change {
             chart,
             cursor,
+            mark: self.marks,
             edit,
         });
         self.done = HistoryStep::new(self.changes.len());
@@ -192,6 +199,7 @@ impl History {
             return;
         }
         let merged = steps.len();
+        let mark = steps.last().map_or(0, |change| change.mark);
         let mut drained = self.changes.drain(step..done);
         let first = drained.next();
         let Some(first) = first else {
@@ -204,6 +212,7 @@ impl History {
             Change {
                 chart: first.chart,
                 cursor: first.cursor,
+                mark,
                 edit: Edit(ops),
             },
         );
@@ -220,6 +229,14 @@ impl History {
     /// Number of applied history steps.
     pub(super) const fn step(&self) -> HistoryStep {
         self.done
+    }
+
+    /// The mark of the newest edit in effect, or 0 when none is.
+    fn mark(&self) -> u64 {
+        self.done
+            .previous()
+            .and_then(|last| self.changes.get(last.get()))
+            .map_or(0, |change| change.mark)
     }
 
     /// Whether an edit can be undone.
@@ -383,11 +400,19 @@ impl Song {
         self.history.merge_since(HistoryStep::new(step));
     }
 
-    /// How many steps of the history are done: where undo and redo have left the song, so
-    /// state kept beside it, such as a picture not yet saved, can follow them.
+    /// How many steps of the history are done: where undo and redo have left the song, for
+    /// [`Song::merge_since`].
     #[must_use]
     pub const fn history_step(&self) -> usize {
         self.history.step().get()
+    }
+
+    /// Where undo and redo have left the song, as a mark no other edit's state takes, unlike its
+    /// step, which an edit after an undo takes over. State kept beside the song, such as a
+    /// picture not yet saved, follows it.
+    #[must_use]
+    pub fn history_mark(&self) -> u64 {
+        self.history.mark()
     }
 
     /// Whether there is an edit left to undo.
@@ -477,6 +502,21 @@ mod tests {
             Just(Action::DeleteSelection),
             Just(Action::AddLayer),
         ]
+    }
+
+    #[test]
+    fn an_edit_after_an_undo_takes_a_mark_of_its_own() {
+        let mut song = Song::new(document(json!([])), EDITABLE);
+        song.toggle(at(0), lane(0), Kind::Tap).unwrap();
+        let placed = song.history_mark();
+        song.undo().unwrap();
+        assert_eq!(song.history_mark(), 0);
+        song.redo().unwrap();
+        assert_eq!(song.history_mark(), placed);
+        song.undo().unwrap();
+        song.toggle(at(0), lane(1), Kind::Tap).unwrap();
+        assert_eq!(song.history_step(), 1, "the step is taken over");
+        assert_ne!(song.history_mark(), placed);
     }
 
     #[test]
