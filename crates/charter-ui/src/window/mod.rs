@@ -44,6 +44,20 @@ pub enum Tracker {
     Mapperatorinator,
 }
 
+/// Host platform used to offer the appropriate `FFmpeg` installation help.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FfmpegPlatform {
+    /// A Windows release build can be installed into charter's data folder.
+    Windows,
+    /// A macOS release build can be installed into charter's data folder.
+    MacOs,
+    /// Install through a Linux distribution's package manager.
+    Linux,
+    /// Install `FFmpeg` elsewhere and choose the binary.
+    #[default]
+    Other,
+}
+
 /// An audio interval to repeat, with its start before its end.
 ///
 /// ```
@@ -767,6 +781,10 @@ pub struct Window {
     settings: Settings,
     /// The host's latest `FFmpeg` binary check, for the settings page.
     ffmpeg_status: settings::FfmpegStatus,
+    /// Platform whose installation help the host provided.
+    ffmpeg_platform: FfmpegPlatform,
+    /// Install command found by the host, when on Linux.
+    ffmpeg_install_command: Option<String>,
     /// Whether the settings window is showing.
     settings_open: bool,
     /// The timing window.
@@ -1004,6 +1022,8 @@ struct Dialogs {
     leaving: Leaving,
     /// Whether the window asks whether to reset the timing.
     resetting: bool,
+    /// Whether installation help for a missing `FFmpeg` is open.
+    ffmpeg: bool,
     /// Where finding the timing from the audio has got to.
     finding: Finding,
     /// The audio and resolution the timing last asked for is for, which a song open when it
@@ -1033,6 +1053,7 @@ impl Dialogs {
             after_save: _,
             leaving: _,
             resetting,
+            ffmpeg,
             finding,
             finding_for: _,
             tracker: _,
@@ -1046,6 +1067,7 @@ impl Dialogs {
             || restoring.is_some()
             || offer.is_some()
             || *resetting
+            || *ffmpeg
             || choosing.is_some()
             || matches!(finding, Finding::Asking | Finding::NoGpu)
     }
@@ -1065,6 +1087,16 @@ impl Window {
     #[must_use]
     pub fn with_settings(self, settings: Settings) -> Self {
         Self { settings, ..self }
+    }
+
+    /// This window with the host's platform and its Linux install command, if found.
+    #[must_use]
+    pub fn with_ffmpeg_help(self, platform: FfmpegPlatform, command: Option<String>) -> Self {
+        Self {
+            ffmpeg_platform: platform,
+            ffmpeg_install_command: command,
+            ..self
+        }
     }
 
     /// This window drawing what its own fonts cannot, such as CJK song titles, in `fonts`: each
@@ -1104,6 +1136,16 @@ impl Window {
 
     /// Show whether and where the host found a usable `FFmpeg` binary.
     pub fn ffmpeg_found(&mut self, binary: Option<PathBuf>) {
+        if matches!(&self.ffmpeg_status, settings::FfmpegStatus::Unknown)
+            && binary.is_none()
+            && !self.settings.ffmpeg_offered
+        {
+            self.dialogs.ffmpeg = true;
+            self.settings.ffmpeg_offered = true;
+        }
+        if binary.is_some() {
+            self.dialogs.ffmpeg = false;
+        }
         self.ffmpeg_status = binary.map_or(
             settings::FfmpegStatus::Missing,
             settings::FfmpegStatus::Found,

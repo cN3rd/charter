@@ -371,6 +371,8 @@ pub struct Settings {
     pub keep_pitch: bool,
     /// `FFmpeg` binary to try before looking on the PATH; empty to use the PATH alone.
     pub ffmpeg_path: String,
+    /// Whether the first-startup `FFmpeg` help has already been offered.
+    pub ffmpeg_offered: bool,
     /// How much later than it plays a sound is heard, in milliseconds, as the calibration's flash
     /// set it: the cursor takes it off the playhead to show what is heard.
     pub audio_latency_ms: LatencyMs,
@@ -415,6 +417,7 @@ impl Default for Settings {
             snippet_ms: SnippetMs::default(),
             keep_pitch: true,
             ffmpeg_path: String::new(),
+            ffmpeg_offered: false,
             audio_latency_ms: LatencyMs::default(),
             input_latency_ms: LatencyMs::default(),
         }
@@ -432,6 +435,8 @@ pub(crate) enum Asked {
     ChooseSnapshotFolder,
     /// Ask the host to choose an `FFmpeg` binary.
     ChooseFfmpeg,
+    /// Show installation help for a missing `FFmpeg`.
+    InstallFfmpeg,
 }
 
 /// Where the host found `FFmpeg`, or whether it has checked yet.
@@ -753,6 +758,7 @@ fn header_buttons(ui: &mut egui::Ui, settings: &mut Settings, open: &mut bool) {
             audio_latency_ms: settings.audio_latency_ms,
             input_latency_ms: settings.input_latency_ms,
             recent: std::mem::take(&mut settings.recent),
+            ffmpeg_offered: settings.ffmpeg_offered,
             ..Settings::default()
         };
     }
@@ -987,15 +993,24 @@ fn sounds(
     volume_rows(ui, settings);
     ui.add_space(12.0);
     let caption = ui.label("FFmpeg binary");
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.add(
             egui::TextEdit::singleline(&mut settings.ffmpeg_path)
                 .hint_text("Use ffmpeg on the PATH")
-                .desired_width(250.0),
+                .desired_width(150.0),
         )
         .labelled_by(caption.id);
         if ui.button("Choose FFmpeg").clicked() {
             asked = Some(Asked::ChooseFfmpeg);
+        }
+        if ui
+            .add_enabled(
+                matches!(ffmpeg_status, FfmpegStatus::Missing),
+                egui::Button::new("Install help"),
+            )
+            .clicked()
+        {
+            asked = Some(Asked::InstallFfmpeg);
         }
     });
     match ffmpeg_status {
@@ -1509,6 +1524,7 @@ mod tests {
             snippet_ms: 120_u32.into(),
             keep_pitch: false,
             ffmpeg_path: String::new(),
+            ffmpeg_offered: false,
             audio_latency_ms: 12.0.into(),
             input_latency_ms: 20.0.into(),
         };
@@ -1645,6 +1661,13 @@ mod tests {
         let chosen = Settings::from_kept(r#"{"ffmpeg_path":"/tools/ffmpeg"}"#);
         let stored: Value = serde_json::from_str(&chosen.to_kept()).unwrap();
         assert_eq!(stored["ffmpeg_path"], "/tools/ffmpeg");
+    }
+
+    #[test]
+    fn having_offered_ffmpeg_help_is_remembered_between_runs() {
+        let offered = Settings::from_kept(r#"{"ffmpeg_offered":true}"#);
+        let stored: Value = serde_json::from_str(&offered.to_kept()).unwrap();
+        assert_eq!(stored["ffmpeg_offered"], true);
     }
 
     #[test]
@@ -1968,6 +1991,28 @@ mod tests {
         assert!((harness.state().0.zoom.percent() - 100.0).abs() < f32::EPSILON);
         assert!((harness.state().0.audio_latency_ms.ms() - 12.0).abs() < f64::EPSILON);
         assert!((harness.state().0.input_latency_ms.ms() + 8.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn restoring_defaults_does_not_repeat_the_first_startup_ffmpeg_offer() {
+        let mut harness = Harness::builder().build_ui_state(
+            |ui, (settings, open): &mut (Settings, bool)| {
+                show(ui.ctx(), settings, open, None, &FfmpegStatus::default());
+            },
+            (
+                Settings {
+                    ffmpeg_path: "/tools/ffmpeg".into(),
+                    ffmpeg_offered: true,
+                    ..Settings::default()
+                },
+                true,
+            ),
+        );
+        harness.run();
+        harness.get_by_label("Restore defaults").click();
+        harness.run();
+        assert!(harness.state().0.ffmpeg_offered);
+        assert!(harness.state().0.ffmpeg_path.is_empty());
     }
 
     #[test]

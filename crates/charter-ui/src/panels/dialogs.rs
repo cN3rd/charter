@@ -39,6 +39,15 @@ pub(crate) enum DownloadWeights {
     Cancel,
 }
 
+/// Answer to help installing `FFmpeg`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FfmpegAnswer {
+    /// Copy the package manager's exact install command.
+    CopyCommand,
+    /// Dismiss the help.
+    Later,
+}
+
 /// Whether to run the tracker on the CPU.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RunOnCpu {
@@ -182,6 +191,51 @@ pub(crate) fn ask_to_download_weights(ui: &Ui, tracker: crate::Tracker) -> Optio
         });
     });
     answer
+}
+
+/// Offer a system package command on Linux, or explain how to choose a binary elsewhere.
+pub(crate) fn ask_to_install_ffmpeg(
+    ui: &Ui,
+    platform: crate::FfmpegPlatform,
+    command: Option<&str>,
+) -> Option<FfmpegAnswer> {
+    let mut answer = None;
+    let modal = egui::Modal::new(egui::Id::new("install ffmpeg")).show(ui.ctx(), |ui| {
+        ui.set_max_width(420.0);
+        ui.label(
+            RichText::new("Install ffmpeg?")
+                .family(style::titles(ui))
+                .size(15.0),
+        );
+        ui.add_space(4.0);
+        match platform {
+            crate::FfmpegPlatform::Linux => {
+                ui.label("Install ffmpeg with your system's package manager.");
+                if let Some(command) = command {
+                    ui.label(RichText::new(command).monospace());
+                }
+            }
+            crate::FfmpegPlatform::Windows
+            | crate::FfmpegPlatform::MacOs
+            | crate::FfmpegPlatform::Other => {
+                ui.label("Install ffmpeg on your computer.");
+            }
+        }
+        ui.label("If ffmpeg is elsewhere, set its path in Settings > Sounds.");
+        ui.add_space(14.0);
+        ui.horizontal(|ui| {
+            if platform == crate::FfmpegPlatform::Linux
+                && command.is_some()
+                && ui.add(style::primary("Copy command")).clicked()
+            {
+                answer = Some(FfmpegAnswer::CopyCommand);
+            }
+            if ui.button("Not now").clicked() {
+                answer = Some(FfmpegAnswer::Later);
+            }
+        });
+    });
+    answer.or_else(|| modal.should_close().then_some(FfmpegAnswer::Later))
 }
 
 /// Asks whether to find the timing on the CPU when there is no graphics card.
@@ -397,5 +451,25 @@ mod tests {
             harness.run();
             assert_eq!(harness.state(), &(1, Some(expected)), "{button}");
         }
+    }
+
+    #[test]
+    fn linux_ffmpeg_help_offers_a_command_to_copy() {
+        let mut harness = Harness::builder().build_ui_state(
+            |ui, answer: &mut Option<FfmpegAnswer>| {
+                *answer = ask_to_install_ffmpeg(
+                    ui,
+                    crate::FfmpegPlatform::Linux,
+                    Some("sudo apt install ffmpeg"),
+                )
+                .or(*answer);
+            },
+            None,
+        );
+        harness.run();
+        assert!(harness.query_by_label("sudo apt install ffmpeg").is_some());
+        harness.get_by_label("Copy command").click();
+        harness.run();
+        assert_eq!(harness.state(), &Some(FfmpegAnswer::CopyCommand));
     }
 }

@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use charter_ui::Window;
+use charter_ui::{FfmpegPlatform, Window};
 
 /// The binary the host last checked for the window's current `FFmpeg` setting.
 #[derive(Debug, Default)]
@@ -73,6 +73,48 @@ fn resolve_ffmpeg(
         .into_iter()
         .map(|folder| folder.join(executable))
         .find(|path| exists(path) && runs(path))
+}
+
+/// Install command for the first Linux package manager available on the PATH.
+fn package_manager(available: impl Fn(&str) -> bool) -> Option<&'static str> {
+    [
+        ("apt", "sudo apt install ffmpeg"),
+        ("dnf", "sudo dnf install ffmpeg"),
+        ("pacman", "sudo pacman -S ffmpeg"),
+        ("zypper", "sudo zypper install ffmpeg"),
+        ("apk", "sudo apk add ffmpeg"),
+        ("xbps-install", "sudo xbps-install -S ffmpeg"),
+        ("emerge", "sudo emerge --ask media-video/ffmpeg"),
+    ]
+    .into_iter()
+    .find_map(|(tool, command)| available(tool).then_some(command))
+}
+
+/// Only Linux offers an install command for a package manager on the PATH.
+fn install_command(platform: FfmpegPlatform, available: impl Fn(&str) -> bool) -> Option<String> {
+    (platform == FfmpegPlatform::Linux)
+        .then(|| package_manager(available))
+        .flatten()
+        .map(str::to_owned)
+}
+
+/// Tell the window its host platform and, on Linux, an available install command.
+pub(crate) fn native_help() -> (FfmpegPlatform, Option<String>) {
+    let platform = if cfg!(target_os = "windows") {
+        FfmpegPlatform::Windows
+    } else if cfg!(target_os = "macos") {
+        FfmpegPlatform::MacOs
+    } else if cfg!(target_os = "linux") {
+        FfmpegPlatform::Linux
+    } else {
+        FfmpegPlatform::Other
+    };
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let folders: Vec<_> = std::env::split_paths(&path).collect();
+    let command = install_command(platform, |tool| {
+        folders.iter().any(|folder| folder.join(tool).is_file())
+    });
+    (platform, command)
 }
 
 #[cfg(test)]
@@ -146,5 +188,44 @@ mod tests {
             Some(PathBuf::from("/tools/ffmpeg"))
         }));
         assert_eq!(ffmpeg.binary, Some(PathBuf::from("/tools/ffmpeg")));
+    }
+
+    #[test]
+    fn available_linux_package_managers_give_their_install_commands() {
+        for (available, expected) in [
+            (&["apt"][..], Some("sudo apt install ffmpeg")),
+            (&["dnf"][..], Some("sudo dnf install ffmpeg")),
+            (&["pacman"][..], Some("sudo pacman -S ffmpeg")),
+            (&["zypper"][..], Some("sudo zypper install ffmpeg")),
+            (&["apk"][..], Some("sudo apk add ffmpeg")),
+            (&["xbps-install"][..], Some("sudo xbps-install -S ffmpeg")),
+            (
+                &["emerge"][..],
+                Some("sudo emerge --ask media-video/ffmpeg"),
+            ),
+            (&["dnf", "apt"][..], Some("sudo apt install ffmpeg")),
+            (&["other-tool"][..], None),
+        ] {
+            assert_eq!(
+                package_manager(|tool| available.contains(&tool)),
+                expected,
+                "{available:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn linux_package_commands_are_not_offered_on_other_platforms() {
+        for platform in [
+            charter_ui::FfmpegPlatform::Windows,
+            charter_ui::FfmpegPlatform::MacOs,
+            charter_ui::FfmpegPlatform::Other,
+        ] {
+            assert_eq!(install_command(platform, |_| true), None, "{platform:?}");
+        }
+        assert_eq!(
+            install_command(charter_ui::FfmpegPlatform::Linux, |tool| tool == "apt"),
+            Some("sudo apt install ffmpeg".to_owned())
+        );
     }
 }

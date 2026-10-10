@@ -10,7 +10,8 @@ status: draft
 
 Edit > Settings…, or Ctrl+Comma, opens the settings window. Changes take effect at once. Whatever
 you pick is remembered between runs, and Restore defaults, beside the close button, puts
-everything back except the latency calibration and the list of recent songs.
+everything back except the latency calibration, the list of recent songs and whether ffmpeg
+installation help was already offered.
 
 The window is modeless. Opening it does not disable chart editing; lane keys can still change
 notes behind it when no text field has the keyboard.
@@ -48,7 +49,13 @@ notes behind it when no text field has the keyboard.
 | Alternate speed | The speed R switches to in the timing window, from 10% to 400%, 60% to start. |
 | Snippet length | How much Q and W play, from 50 to 1000 ms, 200 ms to start. |
 | Volumes | The music, the note ticks, the metronome, and the clicks between beats as a share of the metronome's, each from 0% to 100%. |
-| FFmpeg binary | Path to the ffmpeg executable used when exporting Tap Tap Revenge audio. Leave empty to use the `PATH`, or use Choose FFmpeg to select it. Charter shows the binary it found, or that none runs. |
+| FFmpeg binary | Path to the ffmpeg executable used when exporting Tap Tap Revenge audio. Leave empty to use the `PATH`, or use Choose FFmpeg to select it. Charter shows the binary it found, or that none runs. Install help appears if none runs. |
+
+When no ffmpeg runs at first start, charter offers installation help once. The Install help
+button beside the path remains available whenever ffmpeg is missing. On Linux the dialog shows
+a command for an installed package manager and can copy it; otherwise it asks you to install
+ffmpeg with your system's package manager. If you install ffmpeg outside the `PATH`, enter its
+binary's path here or choose it.
 
 ## Autosave
 

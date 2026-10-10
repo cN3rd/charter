@@ -27,6 +27,20 @@ impl Window {
     }
     /// Draws modal questions and answers their choices.
     pub(super) fn dialogs(&mut self, ui: &Ui) {
+        if self.dialogs.ffmpeg
+            && let Some(answer) = panels::ask_to_install_ffmpeg(
+                ui,
+                self.ffmpeg_platform,
+                self.ffmpeg_install_command.as_deref(),
+            )
+        {
+            self.dialogs.ffmpeg = false;
+            if answer == panels::FfmpegAnswer::CopyCommand
+                && let Some(command) = &self.ffmpeg_install_command
+            {
+                ui.ctx().copy_text(command.clone());
+            }
+        }
         if let Some(draft) = &mut self.dialogs.new_song {
             match new_song::show(ui, self.plugins, draft, self.no_drops) {
                 Some(new_song::Answer::Create { plugin, song }) => {
@@ -351,6 +365,11 @@ impl Window {
         if asked == Some(settings::Asked::ChooseFfmpeg) {
             self.requests.push(Request::ChooseFfmpeg);
         }
+        if asked == Some(settings::Asked::InstallFfmpeg)
+            && matches!(&self.ffmpeg_status, settings::FfmpegStatus::Missing)
+        {
+            self.dialogs.ffmpeg = true;
+        }
         if asked == Some(settings::Asked::Calibrate) {
             self.calibration.set_open(true);
         }
@@ -577,6 +596,94 @@ mod tests {
                 .query_by_label("FFmpeg not found at the configured path or on the PATH.")
                 .is_some()
         );
+    }
+
+    #[test]
+    fn missing_ffmpeg_is_offered_once_even_when_the_user_declines() {
+        let mut first = Window::new(PLUGINS).with_ffmpeg_help(
+            FfmpegPlatform::Linux,
+            Some("sudo apt install ffmpeg".into()),
+        );
+        first.ffmpeg_found(None);
+        let mut harness = window(first);
+        assert!(harness.query_by_label("Install ffmpeg?").is_some());
+        harness.get_by_label("Not now").click();
+        harness.run();
+        assert!(harness.query_by_label("Install ffmpeg?").is_none());
+
+        let kept = harness.state().settings().to_kept();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&kept).unwrap()["ffmpeg_offered"],
+            true
+        );
+        let mut next = Window::new(PLUGINS)
+            .with_settings(Settings::from_kept(&kept))
+            .with_ffmpeg_help(
+                FfmpegPlatform::Linux,
+                Some("sudo apt install ffmpeg".into()),
+            );
+        next.ffmpeg_found(None);
+        let next_harness = window(next);
+        assert!(next_harness.query_by_label("Install ffmpeg?").is_none());
+    }
+
+    #[test]
+    fn settings_offer_ffmpeg_help_again_only_while_no_binary_runs() {
+        let settings = Settings {
+            ffmpeg_offered: true,
+            ..Settings::default()
+        };
+        let mut app = Window::new(PLUGINS)
+            .with_settings(settings)
+            .with_ffmpeg_help(
+                FfmpegPlatform::Linux,
+                Some("sudo apt install ffmpeg".into()),
+            );
+        app.ffmpeg_found(None);
+        let mut harness = window(app);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Comma);
+        harness.run();
+        harness.get_by_label("Sounds").click();
+        harness.run();
+        harness.get_by_label("Install help").scroll_to_me();
+        harness.run();
+        harness.get_by_label("Install help").click();
+        harness.run();
+        assert!(harness.query_by_label("Install ffmpeg?").is_some());
+        harness.get_by_label("Not now").click();
+        harness.run();
+
+        harness
+            .state_mut()
+            .ffmpeg_found(Some("/usr/bin/ffmpeg".into()));
+        harness.run();
+        harness.get_by_label("Install help").click();
+        harness.run();
+        assert!(harness.query_by_label("Install ffmpeg?").is_none());
+    }
+
+    #[test]
+    fn linux_install_command_button_copies_the_exact_command() {
+        let mut app = Window::new(PLUGINS).with_ffmpeg_help(
+            FfmpegPlatform::Linux,
+            Some("sudo apt install ffmpeg".into()),
+        );
+        app.ffmpeg_found(None);
+        let mut harness = window(app);
+        let at = harness.get_by_label("Copy command").rect().center();
+        harness.hover_at(at);
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+            harness.step();
+        }
+        assert!(harness.output().platform_output.commands.iter().any(|command| {
+            matches!(command, egui::OutputCommand::CopyText(text) if text == "sudo apt install ffmpeg")
+        }));
     }
 
     #[test]

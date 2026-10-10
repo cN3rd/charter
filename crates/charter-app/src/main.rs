@@ -115,7 +115,10 @@ fn main() -> eframe::Result {
             let settings = creation
                 .storage
                 .map_or_else(Settings::default, kept_settings);
-            let window = Window::new(PLUGINS).with_settings(settings);
+            let (platform, command) = ffmpeg::native_help();
+            let window = Window::new(PLUGINS)
+                .with_settings(settings)
+                .with_ffmpeg_help(platform, command);
             let window = match eframe::storage_dir(APP) {
                 Some(folder) => window.with_data_folder(folder),
                 None => window,
