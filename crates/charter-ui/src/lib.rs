@@ -111,7 +111,10 @@ pub use flip::Direction;
     clippy::useless_attribute,
     reason = "persisted UI settings are part of charter-ui's flat host API"
 )]
-pub use settings::{Settings, Sound};
+pub use settings::{
+    AlternateRate, AutosaveSeconds, InterfaceScale, LatencyMs, Settings, SnapshotMinutes,
+    SnapshotsKept, SnippetMs, Sound, ZoomPercent,
+};
 use window::{Action, Note};
 #[expect(
     clippy::pub_use,

@@ -124,7 +124,7 @@ impl Window {
     pub fn ui(&mut self, ui: &mut Ui) {
         style::apply(ui.ctx(), &self.fallback_fonts);
         self.frame_time = ui.input(|input| input.time);
-        let scale = self.settings.scale();
+        let scale = self.settings.scale.factor();
         if (ui.ctx().zoom_factor() - scale).abs() > f32::EPSILON {
             ui.ctx().set_zoom_factor(scale);
         }
@@ -526,7 +526,7 @@ mod tests {
     #[test]
     fn the_interface_size_setting_scales_the_whole_window() {
         let settings = Settings {
-            scale: 1.5,
+            scale: 1.5.into(),
             ..Settings::default()
         };
         let harness = window(Window::new(PLUGINS).with_settings(settings));

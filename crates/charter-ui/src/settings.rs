@@ -9,9 +9,10 @@ use charter_audio::{Gain, Kit, Volumes};
 use charter_editor::SNAPS;
 
 use crate::flip::Direction;
-use crate::notefield::GRIDS;
+use crate::notefield::{GRIDS, Zoom};
 use crate::panels::ordinal;
 use crate::style::{ACCENT_FILL, PANEL, TEXT, WEAK_TEXT, glyph, icon, quiet_icon, switch, titles};
+use crate::window::Rate;
 use egui::RichText;
 
 /// A sound the editor can make while a song plays.
@@ -37,23 +38,214 @@ pub enum Sound {
 
 /// A latency calibration value, in milliseconds.
 #[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct LatencyMs(
-    /// Milliseconds, positive when the event arrives late.
-    pub f64,
-);
+#[serde(from = "f64", into = "f64")]
+pub struct LatencyMs(f64);
 
 impl LatencyMs {
+    /// Smallest latency, in milliseconds.
+    pub(crate) const MIN: f64 = -500.0;
+    /// Largest latency, in milliseconds.
+    pub(crate) const MAX: f64 = 500.0;
+
     /// This latency in milliseconds.
+    #[must_use]
     pub const fn ms(self) -> f64 {
         self.0
     }
 
     /// This latency as seconds at `rate`.
+    #[must_use]
     pub fn seconds_at(self, rate: f64) -> f64 {
         self.0 * rate / 1000.0
     }
 }
+
+impl From<f64> for LatencyMs {
+    fn from(ms: f64) -> Self {
+        if ms.is_finite() {
+            Self(ms.clamp(Self::MIN, Self::MAX))
+        } else {
+            Self::default()
+        }
+    }
+}
+
+impl From<LatencyMs> for f64 {
+    fn from(latency: LatencyMs) -> Self {
+        latency.ms()
+    }
+}
+
+/// A notefield zoom as a percentage of its usual size.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(from = "f32", into = "f32")]
+pub struct ZoomPercent(f32);
+
+impl ZoomPercent {
+    /// Smallest zoom percentage shared with the notefield.
+    pub(crate) const MIN: f32 = Zoom::PERCENT_RANGE.0;
+    /// Largest zoom percentage shared with the notefield.
+    pub(crate) const MAX: f32 = Zoom::PERCENT_RANGE.1;
+
+    /// Zoom as a percentage.
+    #[must_use]
+    pub const fn percent(self) -> f32 {
+        self.0
+    }
+}
+
+impl Default for ZoomPercent {
+    fn default() -> Self {
+        Self(100.0)
+    }
+}
+
+impl From<f32> for ZoomPercent {
+    fn from(percent: f32) -> Self {
+        if percent.is_finite() {
+            Self(percent.clamp(Self::MIN, Self::MAX))
+        } else {
+            Self::default()
+        }
+    }
+}
+
+impl From<ZoomPercent> for f32 {
+    fn from(zoom: ZoomPercent) -> Self {
+        zoom.percent()
+    }
+}
+
+/// The size of the editor window's interface, as a factor.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(from = "f32", into = "f32")]
+pub struct InterfaceScale(f32);
+
+impl InterfaceScale {
+    /// Smallest interface size the window can draw.
+    const MIN: f32 = 0.5;
+    /// Largest interface size the window can draw.
+    const MAX: f32 = 3.0;
+
+    /// Interface size as a factor.
+    #[must_use]
+    pub const fn factor(self) -> f32 {
+        self.0
+    }
+}
+
+impl Default for InterfaceScale {
+    fn default() -> Self {
+        Self(1.0)
+    }
+}
+
+impl From<f32> for InterfaceScale {
+    fn from(factor: f32) -> Self {
+        if factor.is_finite() {
+            Self(factor.clamp(Self::MIN, Self::MAX))
+        } else {
+            Self::default()
+        }
+    }
+}
+
+impl From<InterfaceScale> for f32 {
+    fn from(scale: InterfaceScale) -> Self {
+        scale.factor()
+    }
+}
+
+/// The alternate playback speed, as a factor of normal speed.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(from = "f64", into = "f64")]
+pub struct AlternateRate(f64);
+
+impl AlternateRate {
+    /// Slowest playback speed shared with the window.
+    pub(crate) const MIN: f64 = Rate::SLOWEST;
+    /// Fastest playback speed shared with the window.
+    pub(crate) const MAX: f64 = Rate::FASTEST;
+
+    /// Playback speed as a factor.
+    #[must_use]
+    pub const fn factor(self) -> f64 {
+        self.0
+    }
+}
+
+impl Default for AlternateRate {
+    fn default() -> Self {
+        Self(0.6)
+    }
+}
+
+impl From<f64> for AlternateRate {
+    fn from(factor: f64) -> Self {
+        if factor.is_finite() {
+            Self(factor.clamp(Self::MIN, Self::MAX))
+        } else {
+            Self::default()
+        }
+    }
+}
+
+impl From<AlternateRate> for f64 {
+    fn from(rate: AlternateRate) -> Self {
+        rate.factor()
+    }
+}
+
+/// An integer setting kept between `MIN` and `MAX`, starting at `START`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "i128", into = "u32")]
+pub struct BoundedU32<const MIN: u32, const MAX: u32, const START: u32>(u32);
+
+impl<const MIN: u32, const MAX: u32, const START: u32> BoundedU32<MIN, MAX, START> {
+    /// The lower bound.
+    pub const MIN: u32 = MIN;
+    /// The upper bound.
+    pub const MAX: u32 = MAX;
+
+    /// The bounded number.
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
+impl<const MIN: u32, const MAX: u32, const START: u32> Default for BoundedU32<MIN, MAX, START> {
+    fn default() -> Self {
+        Self::from(START)
+    }
+}
+
+impl<const MIN: u32, const MAX: u32, const START: u32> From<u32> for BoundedU32<MIN, MAX, START> {
+    fn from(value: u32) -> Self {
+        Self(value.clamp(MIN, MAX))
+    }
+}
+
+impl<const MIN: u32, const MAX: u32, const START: u32> From<i128> for BoundedU32<MIN, MAX, START> {
+    fn from(value: i128) -> Self {
+        let value = u32::try_from(value).unwrap_or(if value < 0 { MIN } else { MAX });
+        Self::from(value)
+    }
+}
+
+impl<const MIN: u32, const MAX: u32, const START: u32> From<BoundedU32<MIN, MAX, START>> for u32 {
+    fn from(value: BoundedU32<MIN, MAX, START>) -> Self {
+        value.get()
+    }
+}
+
+/// Seconds between autosaves, from 5 to 600.
+pub type AutosaveSeconds = BoundedU32<5, 600, 30>;
+/// Minutes between snapshots, from 1 to 120.
+pub type SnapshotMinutes = BoundedU32<1, 120, 5>;
+/// Copies of a song to keep per folder, from 1 to 500.
+pub type SnapshotsKept = BoundedU32<1, 500, 20>;
+/// Milliseconds of audio before and after the cursor, from 50 to 1000.
+pub type SnippetMs = BoundedU32<50, 1000, 200>;
 
 impl Sound {
     /// The note tick sounds offered in settings, in menu order.
@@ -109,9 +301,9 @@ pub struct Settings {
     /// than on their beats.
     pub notes_keep_time: bool,
     /// How close the notefield opens, as a percentage of its usual zoom.
-    pub zoom: f32,
+    pub zoom: ZoomPercent,
     /// How large the whole window draws, as a factor.
-    pub scale: f32,
+    pub scale: InterfaceScale,
     /// Which way the notefield runs.
     pub direction: Direction,
     /// Whether a tick sounds as each note passes the now line during playback.
@@ -131,7 +323,7 @@ pub struct Settings {
     /// Whether unsaved changes are kept where the next run finds them.
     pub autosave: bool,
     /// How long unsaved changes wait before they are autosaved, in seconds.
-    pub autosave_seconds: u32,
+    pub autosave_seconds: AutosaveSeconds,
     /// Whether a timestamped copy of a changed song is kept in the snapshot folder.
     pub snapshots_in_folder: bool,
     /// Where those copies go, each song in a folder of its own; none for `snapshots` in charter's
@@ -141,9 +333,9 @@ pub struct Settings {
     /// once it has been saved.
     pub snapshots_beside_song: bool,
     /// How often a changed song is copied, in minutes.
-    pub snapshot_minutes: u32,
+    pub snapshot_minutes: SnapshotMinutes,
     /// How many copies of a song each folder keeps, the oldest going first.
-    pub snapshots_kept: u32,
+    pub snapshots_kept: SnapshotsKept,
     /// The songs opened or saved last, the latest first.
     pub recent: Vec<std::path::PathBuf>,
     /// Whether the song panel shows beside the notefield.
@@ -164,9 +356,9 @@ pub struct Settings {
     /// beats.
     pub metronome_grid: bool,
     /// The alternate playback speed, as a factor, that R switches to in the timing window.
-    pub rate_b: f64,
+    pub rate_b: AlternateRate,
     /// How much audio Q and W play before and after the cursor, in milliseconds.
-    pub snippet_ms: u32,
+    pub snippet_ms: SnippetMs,
     /// Whether audio played slower or faster than its speed keeps its pitch, from a tenth to
     /// twice its speed.
     pub keep_pitch: bool,
@@ -186,8 +378,8 @@ impl Default for Settings {
             auto_jump: true,
             snap: NonZeroU16::new(16).unwrap_or(NonZeroU16::MIN),
             notes_keep_time: true,
-            zoom: 100.0,
-            scale: 1.0,
+            zoom: ZoomPercent::default(),
+            scale: InterfaceScale::default(),
             direction: Direction::Up,
             note_ticks: false,
             tick_sound: Sound::Click,
@@ -196,12 +388,12 @@ impl Default for Settings {
             metronome_sound: Kit::default(),
             volumes: Volumes::default(),
             autosave: true,
-            autosave_seconds: 30,
+            autosave_seconds: AutosaveSeconds::default(),
             snapshots_in_folder: false,
             snapshot_folder: None,
             snapshots_beside_song: false,
-            snapshot_minutes: 5,
-            snapshots_kept: 20,
+            snapshot_minutes: SnapshotMinutes::default(),
+            snapshots_kept: SnapshotsKept::default(),
             recent: Vec::new(),
             song_panel: true,
             waveform: true,
@@ -210,11 +402,11 @@ impl Default for Settings {
             colour_notes_by_layer: false,
             grid: BEATS,
             metronome_grid: false,
-            rate_b: 0.6,
-            snippet_ms: 200,
+            rate_b: AlternateRate::default(),
+            snippet_ms: SnippetMs::default(),
             keep_pitch: true,
-            audio_latency_ms: LatencyMs(0.0),
-            input_latency_ms: LatencyMs(0.0),
+            audio_latency_ms: LatencyMs::default(),
+            input_latency_ms: LatencyMs::default(),
         }
     }
 }
@@ -280,16 +472,6 @@ fn on_or_sound<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<bool
     })
 }
 
-/// The shortest and longest waits between snapshots, in minutes, and the most copies kept.
-const SNAPSHOT_MINUTES: (u32, u32) = (1, 120);
-/// Allowed range of snapshot copies kept per song.
-const SNAPSHOTS_KEPT: (u32, u32) = (1, 500);
-
-/// The shortest and longest autosave waits, in seconds.
-const AUTOSAVE_SECONDS: (u32, u32) = (5, 600);
-/// The fewest and most milliseconds Q and W play.
-const SNIPPET_MS: (u32, u32) = (50, 1000);
-
 /// The interface sizes on offer, as factors.
 /// Interface size factors offered in display settings.
 const SCALES: [f32; 6] = [0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
@@ -347,46 +529,21 @@ impl Settings {
         serde_json::from_value(Value::Object(taken)).unwrap_or_default()
     }
 
-    /// How long a changed song waits between snapshots, in seconds, kept to a range; none when
-    /// neither snapshot is on.
+    /// How long a changed song waits between snapshots, in seconds; none when snapshots are off.
     pub(crate) fn snapshot_after(&self) -> Option<f64> {
-        (self.snapshots_in_folder || self.snapshots_beside_song).then(|| {
-            f64::from(
-                self.snapshot_minutes
-                    .clamp(SNAPSHOT_MINUTES.0, SNAPSHOT_MINUTES.1),
-            ) * 60.0
-        })
+        (self.snapshots_in_folder || self.snapshots_beside_song)
+            .then(|| f64::from(self.snapshot_minutes.get()) * 60.0)
     }
 
-    /// How many snapshots of a song each folder keeps, kept to a range.
-    pub(crate) fn snapshots_kept(&self) -> u32 {
-        self.snapshots_kept
-            .clamp(SNAPSHOTS_KEPT.0, SNAPSHOTS_KEPT.1)
-    }
-
-    /// How long unsaved changes wait before they are autosaved, in seconds, kept to a range
-    /// that neither writes constantly nor risks much; none when autosave is off.
+    /// How long unsaved changes wait before they are autosaved; none when autosave is off.
     pub(crate) fn autosave_after(&self) -> Option<f64> {
-        self.autosave.then(|| {
-            f64::from(
-                self.autosave_seconds
-                    .clamp(AUTOSAVE_SECONDS.0, AUTOSAVE_SECONDS.1),
-            )
-        })
+        self.autosave
+            .then(|| f64::from(self.autosave_seconds.get()))
     }
 
-    /// How much audio Q and W play, in seconds, kept to a range.
+    /// How much audio Q and W play, in seconds.
     pub(crate) fn snippet_seconds(&self) -> f64 {
-        f64::from(self.snippet_ms.clamp(SNIPPET_MS.0, SNIPPET_MS.1)) / 1000.0
-    }
-
-    /// The interface size, kept to what the window can draw.
-    pub(crate) const fn scale(&self) -> f32 {
-        if self.scale.is_finite() {
-            self.scale.clamp(0.5, 3.0)
-        } else {
-            1.0
-        }
+        f64::from(self.snippet_ms.get()) / 1000.0
     }
 }
 
@@ -685,8 +842,12 @@ fn editing(ui: &mut egui::Ui, settings: &mut Settings) {
         "Default zoom",
         "How close the notefield opens.",
         |ui, caption| {
-            let zoom = egui::Slider::new(&mut settings.zoom, 25.0..=400.0).suffix("%");
-            ui.add(zoom).labelled_by(caption);
+            let mut percent = settings.zoom.percent();
+            let zoom =
+                egui::Slider::new(&mut percent, ZoomPercent::MIN..=ZoomPercent::MAX).suffix("%");
+            if ui.add(zoom).labelled_by(caption).changed() {
+                settings.zoom = percent.into();
+            }
         },
     );
 }
@@ -699,10 +860,10 @@ fn display(ui: &mut egui::Ui, settings: &mut Settings) {
         "How large the whole window draws.",
         |ui, caption| {
             egui::ComboBox::from_id_salt("scale")
-                .selected_text(percent(settings.scale))
+                .selected_text(percent(settings.scale.factor()))
                 .show_ui(ui, |ui| {
                     for scale in SCALES {
-                        ui.selectable_value(&mut settings.scale, scale, percent(scale));
+                        ui.selectable_value(&mut settings.scale, scale.into(), percent(scale));
                     }
                 })
                 .response
@@ -874,12 +1035,15 @@ fn latency(ui: &mut egui::Ui, settings: &Settings, asked: &mut Option<Asked>) {
 fn playback_speed(ui: &mut egui::Ui, settings: &mut Settings) {
     let speed_about = "The speed R switches to in the timing window, to hear flams slowed down.";
     row(ui, "Alternate speed", speed_about, |ui, caption| {
-        let mut percent = settings.rate_b * 100.0;
-        let slider = egui::Slider::new(&mut percent, 25.0..=100.0)
-            .suffix("%")
-            .fixed_decimals(0);
+        let mut percent = settings.rate_b.factor() * 100.0;
+        let slider = egui::Slider::new(
+            &mut percent,
+            (AlternateRate::MIN * 100.0)..=(AlternateRate::MAX * 100.0),
+        )
+        .suffix("%")
+        .fixed_decimals(0);
         if ui.add(slider).labelled_by(caption).changed() {
-            settings.rate_b = percent / 100.0;
+            settings.rate_b = (percent / 100.0).into();
         }
     });
 }
@@ -888,10 +1052,13 @@ fn playback_speed(ui: &mut egui::Ui, settings: &mut Settings) {
 fn snippet_length(ui: &mut egui::Ui, settings: &mut Settings) {
     let about = "How much Q and W play before and after the cursor.";
     row(ui, "Snippet length", about, |ui, caption| {
-        let slider = egui::Slider::new(&mut settings.snippet_ms, SNIPPET_MS.0..=SNIPPET_MS.1)
+        let mut ms = settings.snippet_ms.get();
+        let slider = egui::Slider::new(&mut ms, SnippetMs::MIN..=SnippetMs::MAX)
             .suffix(" ms")
             .step_by(10.0);
-        ui.add(slider).labelled_by(caption);
+        if ui.add(slider).labelled_by(caption).changed() {
+            settings.snippet_ms = ms.into();
+        }
     });
 }
 
@@ -957,10 +1124,17 @@ fn autosave(
         "Wait before saving",
         "How long changes sit before they are kept.",
         |ui, caption| {
-            let wait = egui::DragValue::new(&mut settings.autosave_seconds)
-                .range(AUTOSAVE_SECONDS.0..=AUTOSAVE_SECONDS.1)
+            let mut seconds = settings.autosave_seconds.get();
+            let wait = egui::DragValue::new(&mut seconds)
+                .range(AutosaveSeconds::MIN..=AutosaveSeconds::MAX)
                 .suffix(" s");
-            ui.add_enabled(settings.autosave, wait).labelled_by(caption);
+            if ui
+                .add_enabled(settings.autosave, wait)
+                .labelled_by(caption)
+                .changed()
+            {
+                settings.autosave_seconds = seconds.into();
+            }
         },
     );
     if let Some(folder) = data_folder {
@@ -1025,10 +1199,13 @@ fn snapshots(
         "Snapshot every",
         "A song unchanged since its last copy is not copied again.",
         |ui, caption| {
-            let every = egui::DragValue::new(&mut settings.snapshot_minutes)
-                .range(SNAPSHOT_MINUTES.0..=SNAPSHOT_MINUTES.1)
+            let mut minutes = settings.snapshot_minutes.get();
+            let every = egui::DragValue::new(&mut minutes)
+                .range(SnapshotMinutes::MIN..=SnapshotMinutes::MAX)
                 .suffix(" min");
-            ui.add_enabled(on, every).labelled_by(caption);
+            if ui.add_enabled(on, every).labelled_by(caption).changed() {
+                settings.snapshot_minutes = minutes.into();
+            }
         },
     );
     row(
@@ -1036,9 +1213,12 @@ fn snapshots(
         "Snapshots kept",
         "Each folder keeps this many of a song, the oldest going first.",
         |ui, caption| {
-            let kept = egui::DragValue::new(&mut settings.snapshots_kept)
-                .range(SNAPSHOTS_KEPT.0..=SNAPSHOTS_KEPT.1);
-            ui.add_enabled(on, kept).labelled_by(caption);
+            let mut kept = settings.snapshots_kept.get();
+            let control =
+                egui::DragValue::new(&mut kept).range(SnapshotsKept::MIN..=SnapshotsKept::MAX);
+            if ui.add_enabled(on, control).labelled_by(caption).changed() {
+                settings.snapshots_kept = kept.into();
+            }
         },
     );
     asked
@@ -1150,8 +1330,8 @@ mod tests {
         assert!(settings.auto_jump);
         assert!(settings.notes_keep_time);
         assert_eq!(settings.snap.get(), 16);
-        assert!((settings.zoom - 100.0).abs() < f32::EPSILON);
-        assert!((settings.scale - 1.0).abs() < f32::EPSILON);
+        assert!((settings.zoom.percent() - 100.0).abs() < f32::EPSILON);
+        assert!((settings.scale.factor() - 1.0).abs() < f32::EPSILON);
     }
 
     #[test]
@@ -1168,8 +1348,8 @@ mod tests {
 
     #[test]
     fn an_autosave_wait_out_of_range_is_kept_within_it() {
-        let settings = |seconds| Settings {
-            autosave_seconds: seconds,
+        let settings = |seconds: u32| Settings {
+            autosave_seconds: AutosaveSeconds::from(seconds),
             ..Settings::default()
         };
         assert_eq!(settings(0).autosave_after(), Some(5.0));
@@ -1178,12 +1358,13 @@ mod tests {
 
     #[test]
     fn a_stored_interface_size_is_kept_to_what_the_window_can_draw() {
-        let size = |scale| {
+        let size = |scale: f32| {
             Settings {
-                scale,
+                scale: scale.into(),
                 ..Settings::default()
             }
-            .scale()
+            .scale
+            .factor()
         };
         assert!((size(f32::INFINITY) - 1.0).abs() < f32::EPSILON);
         assert!((size(0.1) - 0.5).abs() < f32::EPSILON);
@@ -1228,8 +1409,8 @@ mod tests {
             auto_jump: false,
             snap: NonZeroU16::new(24).unwrap(),
             notes_keep_time: false,
-            zoom: 150.0,
-            scale: 1.25,
+            zoom: 150.0.into(),
+            scale: 1.25.into(),
             direction: Direction::Right,
             note_ticks: true,
             tick_sound: Sound::Clap,
@@ -1241,12 +1422,12 @@ mod tests {
                 ..Volumes::default()
             },
             autosave: false,
-            autosave_seconds: 90,
+            autosave_seconds: 90_u32.into(),
             snapshots_in_folder: true,
             snapshot_folder: Some("/snapshots".into()),
             snapshots_beside_song: true,
-            snapshot_minutes: 10,
-            snapshots_kept: 5,
+            snapshot_minutes: 10_u32.into(),
+            snapshots_kept: 5_u32.into(),
             recent: vec!["/songs/a.json".into()],
             song_panel: false,
             waveform: false,
@@ -1255,11 +1436,11 @@ mod tests {
             colour_notes_by_layer: true,
             grid: NonZeroU16::new(24).unwrap(),
             metronome_grid: true,
-            rate_b: 0.5,
-            snippet_ms: 120,
+            rate_b: 0.5.into(),
+            snippet_ms: 120_u32.into(),
             keep_pitch: false,
-            audio_latency_ms: LatencyMs(12.0),
-            input_latency_ms: LatencyMs(20.0),
+            audio_latency_ms: 12.0.into(),
+            input_latency_ms: 20.0.into(),
         };
         let stored = serde_json::to_string(&settings).unwrap();
         assert_eq!(serde_json::from_str::<Settings>(&stored).unwrap(), settings);
@@ -1280,8 +1461,8 @@ mod tests {
     fn latency_newtypes_keep_the_old_settings_json_shape() {
         let kept = r#"{ "audio_latency_ms": 12.5, "input_latency_ms": -8.25 }"#;
         let settings = Settings::from_kept(kept);
-        assert_eq!(settings.audio_latency_ms, LatencyMs(12.5));
-        assert_eq!(settings.input_latency_ms, LatencyMs(-8.25));
+        assert_eq!(settings.audio_latency_ms, LatencyMs::from(12.5));
+        assert_eq!(settings.input_latency_ms, LatencyMs::from(-8.25));
 
         let stored: Value = serde_json::from_str(&settings.to_kept()).unwrap();
         assert_eq!(stored["audio_latency_ms"], 12.5);
@@ -1289,11 +1470,89 @@ mod tests {
     }
 
     #[test]
+    fn stored_numbers_are_bounded_as_they_are_read() {
+        let kept = r#"{
+            "audio_latency_ms": 1000000000,
+            "input_latency_ms": -1000000000,
+            "zoom": 1000000000,
+            "scale": -5,
+            "rate_b": -5,
+            "autosave_seconds": 1000000000,
+            "snapshot_minutes": 0,
+            "snapshots_kept": 0,
+            "snippet_ms": 0
+        }"#;
+        for settings in [
+            Settings::from_kept(kept),
+            serde_json::from_str::<Settings>(kept).unwrap(),
+        ] {
+            let stored = serde_json::to_value(settings).unwrap();
+            assert_eq!(stored["audio_latency_ms"], 500.0);
+            assert_eq!(stored["input_latency_ms"], -500.0);
+            assert_eq!(stored["zoom"], 1250.0);
+            assert_eq!(stored["scale"], 0.5);
+            assert_eq!(stored["rate_b"], 0.1);
+            assert_eq!(stored["autosave_seconds"], 600);
+            assert_eq!(stored["snapshot_minutes"], 1);
+            assert_eq!(stored["snapshots_kept"], 1);
+            assert_eq!(stored["snippet_ms"], 50);
+        }
+
+        let opposite = r#"{
+            "zoom": -5, "rate_b": 1000000000, "autosave_seconds": -5,
+            "snapshot_minutes": 1000000000, "snapshots_kept": -5,
+            "snippet_ms": 1000000000
+        }"#;
+        let settings = Settings::from_kept(opposite);
+        let stored = serde_json::to_value(settings).unwrap();
+        assert_eq!(stored["zoom"], 12.5);
+        assert_eq!(stored["rate_b"], 4.0);
+        assert_eq!(stored["autosave_seconds"], 5);
+        assert_eq!(stored["snapshot_minutes"], 120);
+        assert_eq!(stored["snapshots_kept"], 1);
+        assert_eq!(stored["snippet_ms"], 1000);
+        let direct = serde_json::from_str::<Settings>(opposite).unwrap();
+        assert_eq!(serde_json::to_value(direct).unwrap(), stored);
+    }
+
+    #[test]
+    fn large_saved_integer_settings_reach_their_upper_bounds() {
+        let kept = r#"{
+            "autosave_seconds": 18446744073709551615,
+            "snapshot_minutes": 18446744073709551615,
+            "snapshots_kept": 18446744073709551615,
+            "snippet_ms": 18446744073709551615
+        }"#;
+        let settings = Settings::from_kept(kept);
+        let stored = serde_json::to_value(settings).unwrap();
+        assert_eq!(stored["autosave_seconds"], 600);
+        assert_eq!(stored["snapshot_minutes"], 120);
+        assert_eq!(stored["snapshots_kept"], 500);
+        assert_eq!(stored["snippet_ms"], 1000);
+        let direct = serde_json::from_str::<Settings>(kept).unwrap();
+        assert_eq!(serde_json::to_value(direct).unwrap(), stored);
+    }
+
+    #[test]
+    fn nonfinite_numeric_choices_take_their_defaults() {
+        let settings = Settings {
+            zoom: f32::NAN.into(),
+            scale: f32::INFINITY.into(),
+            rate_b: f64::NEG_INFINITY.into(),
+            ..Settings::default()
+        };
+        let stored = serde_json::to_value(settings).unwrap();
+        assert_eq!(stored["zoom"], 100.0);
+        assert_eq!(stored["scale"], 1.0);
+        assert_eq!(stored["rate_b"], 0.6);
+    }
+
+    #[test]
     fn only_settings_changed_from_the_defaults_are_kept() {
         assert_eq!(Settings::default().to_kept(), "{}");
         let changed = Settings {
             metronome: true,
-            zoom: 150.0,
+            zoom: 150.0.into(),
             ..Settings::default()
         };
         let kept = changed.to_kept();
@@ -1310,7 +1569,9 @@ mod tests {
         let settings = Settings::from_kept(kept);
         assert!(settings.metronome);
         assert_eq!(settings.tick_sound, Settings::default().tick_sound);
-        assert!((settings.zoom - Settings::default().zoom).abs() < f32::EPSILON);
+        assert!(
+            (settings.zoom.percent() - Settings::default().zoom.percent()).abs() < f32::EPSILON
+        );
         assert_eq!(Settings::from_kept("not json"), Settings::default());
     }
 
@@ -1370,7 +1631,7 @@ mod tests {
         let mixed = Settings::from_kept(r#"{"sixteenths":true,"zoom":"bad","auto_jump":false}"#);
         assert_eq!(mixed.grid.get(), 16);
         assert!(!mixed.auto_jump);
-        assert!((mixed.zoom - 100.0).abs() < f32::EPSILON);
+        assert!((mixed.zoom.percent() - 100.0).abs() < f32::EPSILON);
         assert_eq!(Settings::from_kept("[]"), Settings::default());
     }
 
@@ -1383,14 +1644,14 @@ mod tests {
             (3.0, 3.0),
         ] {
             let settings = Settings {
-                scale: value,
+                scale: value.into(),
                 ..Settings::default()
             };
-            assert!((settings.scale() - expected).abs() < f32::EPSILON);
+            assert!((settings.scale.factor() - expected).abs() < f32::EPSILON);
         }
-        for (seconds, expected) in [(4, 5.0), (5, 5.0), (600, 600.0), (601, 600.0)] {
+        for (seconds, expected) in [(4_u32, 5.0), (5, 5.0), (600, 600.0), (601, 600.0)] {
             let settings = Settings {
-                autosave_seconds: seconds,
+                autosave_seconds: seconds.into(),
                 ..Settings::default()
             };
             assert_eq!(settings.autosave_after(), Some(expected));
@@ -1440,7 +1701,7 @@ mod tests {
         harness.run();
         harness.get_by_label("125%").click();
         harness.run();
-        assert!((harness.state().0.scale - 1.25).abs() < f32::EPSILON);
+        assert!((harness.state().0.scale.factor() - 1.25).abs() < f32::EPSILON);
         harness.get_by_label("Notefield").click();
         harness.run();
         harness
@@ -1577,9 +1838,9 @@ mod tests {
             },
             (
                 Settings {
-                    zoom: 175.0,
-                    audio_latency_ms: LatencyMs(12.0),
-                    input_latency_ms: LatencyMs(-8.0),
+                    zoom: 175.0.into(),
+                    audio_latency_ms: 12.0.into(),
+                    input_latency_ms: (-8.0).into(),
                     ..Settings::default()
                 },
                 true,
@@ -1588,16 +1849,16 @@ mod tests {
         harness.run();
         harness.get_by_label("Restore defaults").click();
         harness.run();
-        assert!((harness.state().0.zoom - 100.0).abs() < f32::EPSILON);
+        assert!((harness.state().0.zoom.percent() - 100.0).abs() < f32::EPSILON);
         assert!((harness.state().0.audio_latency_ms.ms() - 12.0).abs() < f64::EPSILON);
         assert!((harness.state().0.input_latency_ms.ms() + 8.0).abs() < f64::EPSILON);
     }
 
     #[test]
     fn the_snippet_length_is_kept_between_a_twentieth_and_a_second() {
-        let length = |snippet_ms| {
+        let length = |snippet_ms: u32| {
             Settings {
-                snippet_ms,
+                snippet_ms: SnippetMs::from(snippet_ms),
                 ..Settings::default()
             }
             .snippet_seconds()
@@ -1612,19 +1873,19 @@ mod tests {
         let mut harness = settings_window();
         harness.get_by_label("Default zoom").click();
         harness.run();
-        assert!((harness.state().0.zoom - 100.0).abs() > 1.0);
+        assert!((harness.state().0.zoom.percent() - 100.0).abs() > 1.0);
 
         page(&mut harness, "Sounds");
         harness.get_by_label("Alternate speed").scroll_to_me();
         harness.run();
         harness.get_by_label("Alternate speed").click();
         harness.run();
-        assert!((harness.state().0.rate_b - 0.6).abs() > 0.01);
+        assert!((harness.state().0.rate_b.factor() - 0.6).abs() > 0.01);
         harness.get_by_label("Snippet length").scroll_to_me();
         harness.run();
         harness.get_by_label("Snippet length").click();
         harness.run();
-        assert_ne!(harness.state().0.snippet_ms, 200);
+        assert_ne!(harness.state().0.snippet_ms.get(), 200);
         harness.state_mut().0.volumes.subdivision = Gain::from(0.0);
         harness.run();
         for label in [
@@ -1670,7 +1931,7 @@ mod tests {
             .click();
         harness.run();
         assert_eq!(harness.state().0.autosave_after(), None);
-        assert_eq!(harness.state().0.autosave_seconds, 12);
+        assert_eq!(harness.state().0.autosave_seconds.get(), 12);
     }
 
     proptest! {

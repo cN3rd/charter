@@ -246,7 +246,7 @@ impl Window {
             self.set_rate(usual);
         } else {
             self.playback.usual_rate = Some(self.playback.rate);
-            self.set_rate(Rate::of(self.settings.rate_b));
+            self.set_rate(Rate::of(self.settings.rate_b.factor()));
         }
     }
     /// Starts playback at the cursor, or pauses if already playing.
@@ -345,8 +345,8 @@ mod tests {
         let mut app = Window::new(PLUGINS).with_settings(Settings {
             metronome: true,
             tuned_lanes: true,
-            zoom: 150.0,
-            input_latency_ms: crate::settings::LatencyMs(25.0),
+            zoom: 150.0.into(),
+            input_latency_ms: 25.0.into(),
             ..Settings::default()
         });
         app.open(Path::new("/songs/four.json"), &four_taps());
@@ -356,7 +356,7 @@ mod tests {
         harness.get_by_label("Restore defaults").click();
         harness.run();
         let calibrated = Settings {
-            input_latency_ms: crate::settings::LatencyMs(25.0),
+            input_latency_ms: 25.0.into(),
             recent: vec![PathBuf::from("/songs/four.json")],
             ..Settings::default()
         };
@@ -476,7 +476,7 @@ mod tests {
     #[test]
     fn a_lane_key_while_playing_places_the_input_latency_before_the_cursor() {
         let mut harness = playable_with(Settings {
-            input_latency_ms: crate::settings::LatencyMs(250.0),
+            input_latency_ms: 250.0.into(),
             ..Settings::default()
         });
         space(&mut harness);
@@ -654,7 +654,7 @@ mod tests {
     #[test]
     fn the_snippet_plays_as_long_as_the_settings_say() {
         let mut harness = playable_with(Settings {
-            snippet_ms: 400,
+            snippet_ms: 400_u32.into(),
             ..Settings::default()
         });
         harness.key_press(egui::Key::PageDown);
@@ -1032,7 +1032,7 @@ mod tests {
     #[test]
     fn the_cursor_shows_what_is_heard_by_the_calibrated_latency() {
         let mut harness = playable_with(Settings {
-            audio_latency_ms: crate::settings::LatencyMs(250.0),
+            audio_latency_ms: 250.0.into(),
             ..Settings::default()
         });
         space(&mut harness);
@@ -1044,7 +1044,7 @@ mod tests {
     #[test]
     fn the_cursor_scales_calibrated_latency_to_slowed_audio_time() {
         let mut harness = playable_with(Settings {
-            audio_latency_ms: crate::settings::LatencyMs(250.0),
+            audio_latency_ms: 250.0.into(),
             ..Settings::default()
         });
         harness.state_mut().set_rate(Rate::of(0.5));

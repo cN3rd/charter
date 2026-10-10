@@ -59,15 +59,22 @@ pub(crate) struct Zoom(f32);
 impl Default for Zoom {
     /// Where a song opens: a 16th stream at 150 BPM sits about 25 points apart.
     fn default() -> Self {
-        Self(240.0)
+        Self(Self::USUAL)
     }
 }
 
 impl Zoom {
+    /// Usual scale in points per second.
+    const USUAL: f32 = 240.0;
     /// Highest permitted scale, in points per second.
-    const CLOSEST: f32 = 3000.0;
+    pub(crate) const CLOSEST: f32 = 3000.0;
     /// Lowest permitted scale, in points per second.
-    const FARTHEST: f32 = 30.0;
+    pub(crate) const FARTHEST: f32 = 30.0;
+    /// Lowest and highest zoom percentages offered as a setting.
+    pub(crate) const PERCENT_RANGE: (f32, f32) = (
+        Self::FARTHEST / Self::USUAL * 100.0,
+        Self::CLOSEST / Self::USUAL * 100.0,
+    );
     /// How much one zoom step scales by.
     pub(crate) const STEP: f32 = 1.25;
 
@@ -78,7 +85,7 @@ impl Zoom {
 
     /// How close the zoom is, against where a song opens.
     pub(crate) fn percent(self) -> f32 {
-        self.0 / Self::default().0 * 100.0
+        self.0 / Self::USUAL * 100.0
     }
 
     /// This zoom scaled by `factor`, as far as it goes either way.

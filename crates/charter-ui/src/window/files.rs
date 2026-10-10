@@ -508,7 +508,7 @@ impl Window {
                     name,
                     bytes,
                     folders,
-                    kept: self.settings.snapshots_kept(),
+                    kept: self.settings.snapshots_kept.get(),
                 });
                 self.autosave.snapshotted = Some(revision);
             }
@@ -566,7 +566,7 @@ impl Window {
                 // A song opened is not copied until it changes.
                 self.autosave.snapshotted = self.song.as_ref().map(Song::revision);
                 self.autosave.snapshot_due = None;
-                self.zoom = Zoom::default().by(self.settings.zoom / 100.0);
+                self.zoom = Zoom::default().by(self.settings.zoom.percent() / 100.0);
                 self.failure = note;
                 self.typing.placed = false;
                 self.typing.holding.clear();
@@ -1305,7 +1305,7 @@ mod tests {
     fn a_song_opens_on_the_snap_and_zoom_the_settings_choose() {
         let settings = Settings {
             snap: NonZeroU16::new(32).unwrap(),
-            zoom: 200.0,
+            zoom: 200.0.into(),
             ..Settings::default()
         };
         let mut app = Window::new(PLUGINS).with_settings(settings);
@@ -1344,7 +1344,7 @@ mod tests {
             .with_settings(Settings {
                 snapshots_in_folder: true,
                 snapshots_beside_song: true,
-                snapshot_minutes: 2,
+                snapshot_minutes: 2_u32.into(),
                 ..Settings::default()
             })
             .with_data_folder(PathBuf::from("/data"));
@@ -1424,7 +1424,7 @@ mod tests {
         let mut harness = four_taps_with(Settings {
             snapshots_in_folder: true,
             snapshots_beside_song: false,
-            snapshot_minutes: 1,
+            snapshot_minutes: 1_u32.into(),
             ..Settings::default()
         });
         harness.key_press(egui::Key::Num4);
@@ -1448,7 +1448,7 @@ mod tests {
         let mut harness = four_taps_with(Settings {
             snapshots_in_folder: false,
             snapshots_beside_song: true,
-            snapshot_minutes: 1,
+            snapshot_minutes: 1_u32.into(),
             ..Settings::default()
         });
         harness.key_press(egui::Key::Num4);
@@ -1513,7 +1513,7 @@ mod tests {
     #[test]
     fn unsaved_changes_wait_as_long_as_the_settings_say_before_they_are_autosaved() {
         let mut harness = four_taps_with(Settings {
-            autosave_seconds: 10,
+            autosave_seconds: 10_u32.into(),
             ..Settings::default()
         });
         at_time(&mut harness, 0.0);

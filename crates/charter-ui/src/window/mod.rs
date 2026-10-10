@@ -300,9 +300,9 @@ impl Default for Rate {
 
 impl Rate {
     /// Lowest allowed playback speed as a factor of the audio's own speed.
-    const SLOWEST: f64 = 0.1;
+    pub(crate) const SLOWEST: f64 = 0.1;
     /// Highest allowed playback speed as a factor of the audio's own speed.
-    const FASTEST: f64 = 4.0;
+    pub(crate) const FASTEST: f64 = 4.0;
 
     /// This rate changed by `step`, to the nearest percent, and kept between a tenth and four
     /// times the audio's speed, as ArrowVortex allows.

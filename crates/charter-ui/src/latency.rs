@@ -207,29 +207,29 @@ pub(crate) fn show(
             ui.add_space(10.0);
             ui.label(RichText::new("Audio").strong());
             ui.weak("Move the audio latency until the flash lands on each click you hear.");
+            let mut audio_ms = settings.audio_latency_ms.ms();
             ui.horizontal(|ui| {
-                let lit = elapsed.is_some_and(|elapsed| {
-                    flashing(elapsed, settings.audio_latency_ms.ms(), &clicks)
-                });
+                let lit = elapsed.is_some_and(|elapsed| flashing(elapsed, audio_ms, &clicks));
                 let (rect, _) =
                     ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
                 let colour = if lit { style::ACCENT } else { style::WAVE_BG };
                 ui.painter().circle_filled(rect.center(), 8.0, colour);
                 let caption = ui.label("Audio latency").id;
                 if ui.button("−").clicked() {
-                    settings.audio_latency_ms.0 -= 5.0;
+                    audio_ms -= 5.0;
                 }
                 ui.add(
-                    egui::DragValue::new(&mut settings.audio_latency_ms.0)
+                    egui::DragValue::new(&mut audio_ms)
                         .speed(1.0)
-                        .range(-500.0..=500.0)
+                        .range(crate::settings::LatencyMs::MIN..=crate::settings::LatencyMs::MAX)
                         .suffix(" ms"),
                 )
                 .labelled_by(caption);
                 if ui.button("+").clicked() {
-                    settings.audio_latency_ms.0 += 5.0;
+                    audio_ms += 5.0;
                 }
             });
+            settings.audio_latency_ms = audio_ms.into();
 
             ui.add_space(10.0);
             ui.label(RichText::new("Input").strong());
@@ -258,7 +258,7 @@ pub(crate) fn show(
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(format!("Taps land {ms:+.0} ms late")).strong());
                         if ui.button("Keep it").clicked() {
-                            settings.input_latency_ms = crate::settings::LatencyMs(ms);
+                            settings.input_latency_ms = ms.into();
                             calibration.started = None;
                             calibration.taps.clear();
                         }
@@ -416,8 +416,8 @@ mod tests {
                     ..Calibration::default()
                 },
                 Settings {
-                    audio_latency_ms: crate::settings::LatencyMs(20.0),
-                    input_latency_ms: crate::settings::LatencyMs(8.0),
+                    audio_latency_ms: 20.0.into(),
+                    input_latency_ms: 8.0.into(),
                     ..Settings::default()
                 },
                 10.0,

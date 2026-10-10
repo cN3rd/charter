@@ -695,7 +695,34 @@ mod tests {
         }
         let mut storage = Kept::default();
         eframe::Storage::set_string(&mut storage, SETTINGS, r#"{ "zoom": 150.0 }"#.to_owned());
-        assert!((kept_settings(&storage).zoom - 150.0).abs() < f32::EPSILON);
+        assert!((kept_settings(&storage).zoom.percent() - 150.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn settings_an_older_version_kept_whole_bound_numeric_choices() {
+        #[derive(serde::Serialize)]
+        struct Old {
+            zoom: f32,
+            rate_b: f64,
+            snapshots_kept: u32,
+        }
+        let mut storage = Kept::default();
+        eframe::set_value(
+            &mut storage,
+            OLD_SETTINGS,
+            &Old {
+                zoom: 1_000_000_000.0,
+                rate_b: -5.0,
+                snapshots_kept: 0,
+            },
+        );
+        let settings = kept_settings(&storage);
+        let zoom: f32 = settings.zoom.into();
+        let rate: f64 = settings.rate_b.into();
+        let kept: u32 = settings.snapshots_kept.into();
+        assert_eq!(zoom, 1250.0);
+        assert_eq!(rate, 0.1);
+        assert_eq!(kept, 1);
     }
 
     #[test]
@@ -1360,7 +1387,7 @@ mod tests {
         );
         eframe::Storage::set_string(&mut storage, SETTINGS, r#"{"zoom":175.0}"#.to_owned());
         let settings = kept_settings(&storage);
-        assert!((settings.zoom - 175.0).abs() < f32::EPSILON);
+        assert!((settings.zoom.percent() - 175.0).abs() < f32::EPSILON);
         assert!(!settings.note_ticks);
     }
 
@@ -1368,7 +1395,7 @@ mod tests {
     fn saving_settings_keeps_only_changes_for_the_next_run() {
         let mut host = host(Memory::default());
         host.window = Window::new(&[]).with_settings(Settings {
-            zoom: 175.0,
+            zoom: 175.0.into(),
             ..Settings::default()
         });
         let mut storage = Kept::default();
@@ -1377,6 +1404,6 @@ mod tests {
             eframe::Storage::get_string(&storage, SETTINGS).as_deref(),
             Some(r#"{"zoom":175.0}"#)
         );
-        assert!((kept_settings(&storage).zoom - 175.0).abs() < f32::EPSILON);
+        assert!((kept_settings(&storage).zoom.percent() - 175.0).abs() < f32::EPSILON);
     }
 }
