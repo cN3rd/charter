@@ -149,6 +149,8 @@ pub enum Request {
     /// Ask the user for a folder to keep snapshots in, and pass it to
     /// [`Window::use_snapshot_folder`].
     ChooseSnapshotFolder,
+    /// Ask the user to choose an `FFmpeg` binary, and pass it to [`Window::use_ffmpeg_path`].
+    ChooseFfmpeg,
     /// Keep `bytes`, the song's unsaved changes, where the next run finds them, in place of any
     /// kept before. The host passes them to [`Window::recover`] when it starts, and says through
     /// [`Window::autosave_failed`] if they could not be kept.
@@ -763,6 +765,8 @@ pub struct Window {
     saving: Option<Saving>,
     /// The user's editor choices, kept by the host between runs.
     settings: Settings,
+    /// The host's latest `FFmpeg` binary check, for the settings page.
+    ffmpeg_status: settings::FfmpegStatus,
     /// Whether the settings window is showing.
     settings_open: bool,
     /// The timing window.
@@ -1091,6 +1095,19 @@ impl Window {
     #[must_use]
     pub const fn settings(&self) -> &Settings {
         &self.settings
+    }
+
+    /// Set the `FFmpeg` binary chosen in the host's file dialog.
+    pub fn use_ffmpeg_path(&mut self, path: &Path) {
+        self.settings.ffmpeg_path = path.to_string_lossy().into_owned();
+    }
+
+    /// Show whether and where the host found a usable `FFmpeg` binary.
+    pub fn ffmpeg_found(&mut self, binary: Option<PathBuf>) {
+        self.ffmpeg_status = binary.map_or(
+            settings::FfmpegStatus::Missing,
+            settings::FfmpegStatus::Found,
+        );
     }
 
     /// A window with no song open, which checks songs against `plugins`.

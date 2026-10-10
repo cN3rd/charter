@@ -4,6 +4,9 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
+/// Failure when neither the chosen `FFmpeg` nor the system one can run.
+const MISSING_FFMPEG: &str = "ffmpeg was found neither at the configured path nor on the PATH";
+
 /// The source and destination of a file operation.
 #[derive(Clone, Copy)]
 pub(crate) struct Transfer<'a> {
@@ -56,7 +59,7 @@ pub(crate) trait Disk {
     ///
     /// # Errors
     /// Whatever keeps the audio from being encoded, such as no encoder being installed.
-    fn encode_aac(&self, transfer: Transfer<'_>) -> io::Result<()>;
+    fn encode_aac(&self, ffmpeg: Option<&Path>, transfer: Transfer<'_>) -> io::Result<()>;
 }
 
 /// The computer's own files.
@@ -107,26 +110,18 @@ impl Disk for Real {
         Ok(files)
     }
 
-    fn encode_aac(&self, transfer: Transfer<'_>) -> io::Result<()> {
+    fn encode_aac(&self, ffmpeg: Option<&Path>, transfer: Transfer<'_>) -> io::Result<()> {
+        let ffmpeg =
+            ffmpeg.ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, MISSING_FFMPEG))?;
         // ponytail: blocks the window for the seconds a song takes to encode; run it on a thread
         // with progress if long songs make that felt.
-        let encoded = std::process::Command::new("ffmpeg")
-            .args(["-nostdin", "-v", "error", "-y", "-i"])
-            .arg(transfer.from)
-            // The ipod muxer marks the file M4A, as the game's own audio.m4a files are.
-            .args(["-vn", "-c:a", "aac", "-b:a", "256k", "-f", "ipod"])
-            .arg(transfer.to)
-            .output()
-            .map_err(|error| {
-                if error.kind() == io::ErrorKind::NotFound {
-                    io::Error::new(
-                        io::ErrorKind::NotFound,
-                        "ffmpeg converts the audio, and it is not installed or not on the PATH",
-                    )
-                } else {
-                    error
-                }
-            })?;
+        let encoded = encode_command(ffmpeg, transfer).output().map_err(|error| {
+            if error.kind() == io::ErrorKind::NotFound {
+                io::Error::new(io::ErrorKind::NotFound, MISSING_FFMPEG)
+            } else {
+                error
+            }
+        })?;
         if encoded.status.success() {
             Ok(())
         } else {
@@ -136,6 +131,18 @@ impl Disk for Real {
             )))
         }
     }
+}
+
+/// The `FFmpeg` invocation used for AAC audio in a game's export.
+fn encode_command(ffmpeg: &Path, transfer: Transfer<'_>) -> std::process::Command {
+    let mut command = std::process::Command::new(ffmpeg);
+    command
+        .args(["-nostdin", "-v", "error", "-y", "-i"])
+        .arg(transfer.from)
+        // The ipod muxer marks the file M4A, as the game's own audio.m4a files are.
+        .args(["-vn", "-c:a", "aac", "-b:a", "256k", "-f", "ipod"])
+        .arg(transfer.to);
+    command
 }
 
 /// Writes `bytes` beside `path`, then moves them over the file at `path`, so a failed write never
@@ -232,16 +239,23 @@ pub(crate) fn copy_over(disk: &impl Disk, transfer: Transfer<'_>) -> io::Result<
 /// # Errors
 ///
 /// The audio cannot be encoded, or the result cannot be moved; the destination is as it was.
-pub(crate) fn encode_over(disk: &impl Disk, transfer: Transfer<'_>) -> io::Result<()> {
+pub(crate) fn encode_over(
+    disk: &impl Disk,
+    ffmpeg: Option<&Path>,
+    transfer: Transfer<'_>,
+) -> io::Result<()> {
     if let Some(folder) = transfer.to.parent() {
         disk.make_folder(folder)?;
     }
     let beside = partial_path(transfer.to);
     let encoded = disk
-        .encode_aac(Transfer {
-            from: transfer.from,
-            to: &beside,
-        })
+        .encode_aac(
+            ffmpeg,
+            Transfer {
+                from: transfer.from,
+                to: &beside,
+            },
+        )
         .and_then(|()| {
             disk.rename(Transfer {
                 from: &beside,
@@ -278,6 +292,8 @@ pub(crate) mod memory {
         pub(crate) partial_copy_fail: bool,
         /// Whether no audio encoder is installed.
         pub(crate) no_encoder: bool,
+        /// Binary the host passed to the encoder, if any.
+        pub(crate) encoded_with: RefCell<Option<PathBuf>>,
     }
 
     fn missing(path: &Path) -> io::Error {
@@ -381,13 +397,11 @@ pub(crate) mod memory {
         }
 
         /// Writes `aac:` and the source's bytes, standing in for an encoder.
-        fn encode_aac(&self, transfer: Transfer<'_>) -> io::Result<()> {
+        fn encode_aac(&self, ffmpeg: Option<&Path>, transfer: Transfer<'_>) -> io::Result<()> {
             if self.no_encoder {
-                return Err(io::Error::new(
-                    io::ErrorKind::NotFound,
-                    "ffmpeg is not installed",
-                ));
+                return Err(io::Error::new(io::ErrorKind::NotFound, MISSING_FFMPEG));
             }
+            *self.encoded_with.borrow_mut() = ffmpeg.map(Path::to_path_buf);
             let mut encoded = b"aac:".to_vec();
             encoded.extend(self.read(transfer.from)?);
             self.write(transfer.to, &encoded)
@@ -621,5 +635,24 @@ mod tests {
         );
         assert_eq!(disk.get("/s/audio.ogg"), None);
         assert_eq!(disk.get("/s/audio.ogg.partial"), None);
+    }
+
+    #[test]
+    fn an_audio_export_runs_the_selected_ffmpeg_binary() {
+        let command = encode_command(
+            Path::new("/tools/ffmpeg"),
+            Transfer {
+                from: Path::new("/songs/song.ogg"),
+                to: Path::new("/out/audio.m4a.partial"),
+            },
+        );
+        assert_eq!(command.get_program(), "/tools/ffmpeg");
+        let arguments: Vec<_> = command.get_args().collect();
+        assert_eq!(arguments[0], "-nostdin");
+        assert_eq!(arguments[5], "/songs/song.ogg");
+        assert_eq!(
+            arguments.last().copied(),
+            Some(std::ffi::OsStr::new("/out/audio.m4a.partial"))
+        );
     }
 }

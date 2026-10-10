@@ -9,6 +9,7 @@
 use std::path::{Path, PathBuf};
 
 mod disk;
+mod ffmpeg;
 mod finder;
 mod host;
 mod player;
@@ -18,6 +19,7 @@ mod stretch;
 use charter_core::RulesetPlugin;
 use charter_ui::{Picture, Settings, Window};
 
+use crate::ffmpeg::Ffmpeg;
 use crate::host::Host;
 #[cfg(test)]
 use crate::{finder::Finder, player::Player};
@@ -129,6 +131,7 @@ fn main() -> eframe::Result {
                 recovery: eframe::storage_dir(APP).map(|folder| folder.join("recovery.json")),
                 player: player::Player::default(),
                 finder: finder::Finder::new(eframe::storage_dir(APP)),
+                ffmpeg: Ffmpeg::default(),
                 disk: disk::Real,
             };
             if let Some(path) = song_argument(std::env::args_os()) {
@@ -258,6 +261,7 @@ mod tests {
             recovery: Some(PathBuf::from("/data/recovery.json")),
             player: Player::default(),
             finder: Finder::default(),
+            ffmpeg: Ffmpeg::default(),
             disk,
         }
     }
@@ -1307,10 +1311,37 @@ mod tests {
         }]);
         assert_eq!(
             host.window.message(),
-            Some("/out/audio.m4a was not written: ffmpeg is not installed")
+            Some(
+                "/out/audio.m4a was not written: ffmpeg was found neither at the configured path \
+                 nor on the PATH"
+            )
         );
         assert!(!host.disk.exists(Path::new("/out/audio.m4a.partial")));
         assert!(host.disk.exists(Path::new("/out/taptrack.ttr2_track")));
+    }
+
+    #[test]
+    fn a_track_export_passes_the_resolved_binary_to_the_audio_encoder() {
+        let mut host = host(Memory::with(&[("/songs/song.ogg", b"vorbis")]));
+        host.ffmpeg.binary = Some("/tools/ffmpeg".into());
+        host.handle_requests(vec![Request::WriteExport {
+            path: PathBuf::from("/out/taptrack.ttr2_track"),
+            bytes: b"bplist00".to_vec(),
+            beside: Vec::new(),
+            copies: Vec::new(),
+            encodes: vec![(
+                PathBuf::from("/songs/song.ogg"),
+                PathBuf::from("/out/audio.m4a"),
+            )],
+        }]);
+        assert_eq!(
+            host.disk.encoded_with.borrow().as_deref(),
+            Some(Path::new("/tools/ffmpeg"))
+        );
+        assert_eq!(
+            host.disk.get("/out/audio.m4a").as_deref(),
+            Some(&b"aac:vorbis"[..])
+        );
     }
 
     #[test]

@@ -81,9 +81,8 @@ binary names the folder it was built in.
 A song's audio, artwork and chart files are the user's, beside the song, and never packaged.
 
 ffmpeg is not packaged either. Exporting a Tap Tap Revenge track converts audio that is not AAC
-with the `ffmpeg` found on the `PATH`, since no encoder for AAC or MP3 in Rust is mature and the
-ones in C are LGPL or worse. Without ffmpeg everything else still exports, and the export says
-the audio was not written.
+with the binary chosen under Settings > Sounds, falling back to `ffmpeg` on the `PATH`. Without
+ffmpeg everything else still exports, and the export says the audio was not written.
 
 The Beat This! weights, `final0.ckpt` at 81 MB, and Mapperatorinator's, 416 MB, are left out on
 purpose: they are needed only by [automatic timing](./autotiming.md). The first time Timing ›

@@ -369,6 +369,8 @@ pub struct Settings {
     /// Whether audio played slower or faster than its speed keeps its pitch, from a tenth to
     /// twice its speed.
     pub keep_pitch: bool,
+    /// `FFmpeg` binary to try before looking on the PATH; empty to use the PATH alone.
+    pub ffmpeg_path: String,
     /// How much later than it plays a sound is heard, in milliseconds, as the calibration's flash
     /// set it: the cursor takes it off the playhead to show what is heard.
     pub audio_latency_ms: LatencyMs,
@@ -412,6 +414,7 @@ impl Default for Settings {
             rate_b: AlternateRate::default(),
             snippet_ms: SnippetMs::default(),
             keep_pitch: true,
+            ffmpeg_path: String::new(),
             audio_latency_ms: LatencyMs::default(),
             input_latency_ms: LatencyMs::default(),
         }
@@ -427,6 +430,20 @@ pub(crate) enum Asked {
     Calibrate,
     /// Ask the user for a folder to keep snapshots in.
     ChooseSnapshotFolder,
+    /// Ask the host to choose an `FFmpeg` binary.
+    ChooseFfmpeg,
+}
+
+/// Where the host found `FFmpeg`, or whether it has checked yet.
+#[derive(Debug, Default)]
+pub(crate) enum FfmpegStatus {
+    /// The host has not checked yet.
+    #[default]
+    Unknown,
+    /// No usable `FFmpeg` was found.
+    Missing,
+    /// A binary whose version check passed.
+    Found(std::path::PathBuf),
 }
 
 /// The grid of beats alone.
@@ -614,6 +631,7 @@ pub(crate) fn show(
     settings: &mut Settings,
     open: &mut bool,
     data_folder: Option<&std::path::Path>,
+    ffmpeg_status: &FfmpegStatus,
 ) -> Option<Asked> {
     let page_id = egui::Id::new("settings page");
     let mut page: Page = ctx.data(|data| data.get_temp(page_id)).unwrap_or_default();
@@ -690,7 +708,9 @@ pub(crate) fn show(
                                 .show(ui, |ui| match shown_page {
                                     Page::Editing => editing(ui, settings),
                                     Page::Display => display(ui, settings),
-                                    Page::Sounds => *asked_preview = sounds(ui, settings),
+                                    Page::Sounds => {
+                                        *asked_preview = sounds(ui, settings, ffmpeg_status);
+                                    }
                                     Page::Autosave => {
                                         *asked_preview = autosave(ui, settings, data_folder);
                                     }
@@ -952,7 +972,11 @@ fn note_ticks(ui: &mut egui::Ui, settings: &mut Settings) {
 }
 
 /// The sounds page. Says which metronome to preview, when its button was pressed.
-fn sounds(ui: &mut egui::Ui, settings: &mut Settings) -> Option<Asked> {
+fn sounds(
+    ui: &mut egui::Ui,
+    settings: &mut Settings,
+    ffmpeg_status: &FfmpegStatus,
+) -> Option<Asked> {
     note_ticks(ui, settings);
     sound_switches(ui, settings);
     let mut asked = None;
@@ -961,6 +985,30 @@ fn sounds(ui: &mut egui::Ui, settings: &mut Settings) -> Option<Asked> {
     playback_speed(ui, settings);
     snippet_length(ui, settings);
     volume_rows(ui, settings);
+    ui.add_space(12.0);
+    let caption = ui.label("FFmpeg binary");
+    ui.horizontal(|ui| {
+        ui.add(
+            egui::TextEdit::singleline(&mut settings.ffmpeg_path)
+                .hint_text("Use ffmpeg on the PATH")
+                .desired_width(250.0),
+        )
+        .labelled_by(caption.id);
+        if ui.button("Choose FFmpeg").clicked() {
+            asked = Some(Asked::ChooseFfmpeg);
+        }
+    });
+    match ffmpeg_status {
+        FfmpegStatus::Unknown => {
+            ui.weak("Checking for FFmpeg.");
+        }
+        FfmpegStatus::Missing => {
+            ui.weak("FFmpeg not found at the configured path or on the PATH.");
+        }
+        FfmpegStatus::Found(path) => {
+            ui.weak(format!("Found: {}", path.display()));
+        }
+    }
     asked
 }
 
@@ -1260,7 +1308,7 @@ mod tests {
             .with_size(egui::vec2(1000.0, 700.0))
             .build_ui_state(
                 |ui, (settings, open): &mut (Settings, bool)| {
-                    show(ui.ctx(), settings, open, None);
+                    show(ui.ctx(), settings, open, None, &FfmpegStatus::default());
                 },
                 (Settings::default(), true),
             );
@@ -1312,7 +1360,7 @@ mod tests {
             .with_size(egui::vec2(400.0, 300.0))
             .build_ui_state(
                 |ui, (settings, open): &mut (Settings, bool)| {
-                    show(ui.ctx(), settings, open, None);
+                    show(ui.ctx(), settings, open, None, &FfmpegStatus::default());
                 },
                 (Settings::default(), true),
             );
@@ -1460,6 +1508,7 @@ mod tests {
             rate_b: 0.5.into(),
             snippet_ms: 120_u32.into(),
             keep_pitch: false,
+            ffmpeg_path: String::new(),
             audio_latency_ms: 12.0.into(),
             input_latency_ms: 20.0.into(),
         };
@@ -1585,6 +1634,20 @@ mod tests {
     }
 
     #[test]
+    fn an_ffmpeg_path_is_empty_by_default_and_kept_when_chosen() {
+        let defaults = Settings::default().to_kept();
+        assert!(
+            serde_json::from_str::<Value>(&defaults)
+                .unwrap()
+                .get("ffmpeg_path")
+                .is_none()
+        );
+        let chosen = Settings::from_kept(r#"{"ffmpeg_path":"/tools/ffmpeg"}"#);
+        let stored: Value = serde_json::from_str(&chosen.to_kept()).unwrap();
+        assert_eq!(stored["ffmpeg_path"], "/tools/ffmpeg");
+    }
+
+    #[test]
     fn a_kept_setting_that_no_longer_reads_takes_its_default_and_leaves_the_rest() {
         let kept = r#"{ "metronome": true, "tick_sound": "trombone", "zoom": "wide" }"#;
         let settings = Settings::from_kept(kept);
@@ -1682,7 +1745,7 @@ mod tests {
     fn settings_window() -> Harness<'static, (Settings, bool)> {
         let mut harness = Harness::builder().build_ui_state(
             |ui, (settings, open): &mut (Settings, bool)| {
-                show(ui.ctx(), settings, open, None);
+                show(ui.ctx(), settings, open, None, &FfmpegStatus::default());
             },
             (Settings::default(), true),
         );
@@ -1795,6 +1858,37 @@ mod tests {
     }
 
     #[test]
+    fn the_ffmpeg_binary_path_can_be_typed_in_settings() {
+        let mut harness = settings_window();
+        page(&mut harness, "Sounds");
+        harness.get_by_label("FFmpeg binary").scroll_to_me();
+        harness.run();
+        let path = harness.get_by_role_and_label(Role::TextInput, "FFmpeg binary");
+        path.focus();
+        path.type_text("/tools/ffmpeg");
+        harness.run();
+        assert_eq!(harness.state().0.ffmpeg_path, "/tools/ffmpeg");
+    }
+
+    #[test]
+    fn choosing_an_ffmpeg_binary_asks_the_host_for_a_file() {
+        let mut harness = Harness::builder().build_ui_state(
+            |ui, (settings, open, asked): &mut (Settings, bool, Option<Asked>)| {
+                *asked = show(ui.ctx(), settings, open, None, &FfmpegStatus::default()).or(*asked);
+            },
+            (Settings::default(), true, None),
+        );
+        harness.run();
+        harness.get_by_label("Sounds").click();
+        harness.run();
+        harness.get_by_label("Choose FFmpeg").scroll_to_me();
+        harness.run();
+        harness.get_by_label("Choose FFmpeg").click();
+        harness.run();
+        assert_eq!(harness.state().2, Some(Asked::ChooseFfmpeg));
+    }
+
+    #[test]
     fn snapshots_show_the_chosen_folder_and_default_restores_the_data_folder() {
         let mut harness = Harness::builder().build_ui_state(
             |ui, (settings, open, asked): &mut (Settings, bool, Option<Asked>)| {
@@ -1803,6 +1897,7 @@ mod tests {
                     settings,
                     open,
                     Some(std::path::Path::new("/data/charter")),
+                    &FfmpegStatus::default(),
                 );
             },
             (Settings::default(), true, None),
@@ -1828,7 +1923,7 @@ mod tests {
     fn sound_preview_and_calibration_buttons_ask_for_their_distinct_actions() {
         let mut harness = Harness::builder().build_ui_state(
             |ui, (settings, open, asked): &mut (Settings, bool, Option<Asked>)| {
-                *asked = show(ui.ctx(), settings, open, None).or(*asked);
+                *asked = show(ui.ctx(), settings, open, None, &FfmpegStatus::default()).or(*asked);
             },
             (Settings::default(), true, None),
         );
@@ -1855,7 +1950,7 @@ mod tests {
     fn restoring_defaults_keeps_the_two_calibrations() {
         let mut harness = Harness::builder().build_ui_state(
             |ui, (settings, open): &mut (Settings, bool)| {
-                show(ui.ctx(), settings, open, None);
+                show(ui.ctx(), settings, open, None, &FfmpegStatus::default());
             },
             (
                 Settings {

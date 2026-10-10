@@ -343,9 +343,13 @@ impl Window {
             &mut self.settings,
             &mut self.settings_open,
             self.autosave.data_folder.as_deref(),
+            &self.ffmpeg_status,
         );
         if asked == Some(settings::Asked::ChooseSnapshotFolder) {
             self.requests.push(Request::ChooseSnapshotFolder);
+        }
+        if asked == Some(settings::Asked::ChooseFfmpeg) {
+            self.requests.push(Request::ChooseFfmpeg);
         }
         if asked == Some(settings::Asked::Calibrate) {
             self.calibration.set_open(true);
@@ -533,6 +537,48 @@ mod tests {
         harness.run();
         assert!(harness.query_all_by_label("Settings").next().is_none());
     }
+
+    #[test]
+    fn choosing_ffmpeg_from_settings_keeps_the_hosts_selected_path() {
+        let mut harness = editable_demo();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Comma);
+        harness.run();
+        harness.get_by_label("Sounds").click();
+        harness.run();
+        harness.get_by_label("Choose FFmpeg").scroll_to_me();
+        harness.run();
+        harness.get_by_label("Choose FFmpeg").click();
+        harness.run();
+        assert_eq!(harness.state_mut().take_requests(), [Request::ChooseFfmpeg]);
+        harness
+            .state_mut()
+            .use_ffmpeg_path(std::path::Path::new("/tools/ffmpeg"));
+        harness.run();
+        assert_eq!(harness.state().settings().ffmpeg_path, "/tools/ffmpeg");
+    }
+
+    #[test]
+    fn settings_show_where_the_host_found_ffmpeg_or_that_it_is_missing() {
+        let mut harness = window(Window::new(PLUGINS));
+        harness
+            .state_mut()
+            .ffmpeg_found(Some("/tools/ffmpeg".into()));
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Comma);
+        harness.run();
+        harness.get_by_label("Sounds").click();
+        harness.run();
+        harness.get_by_label("FFmpeg binary").scroll_to_me();
+        harness.run();
+        assert!(harness.query_by_label("Found: /tools/ffmpeg").is_some());
+        harness.state_mut().ffmpeg_found(None);
+        harness.run();
+        assert!(
+            harness
+                .query_by_label("FFmpeg not found at the configured path or on the PATH.")
+                .is_some()
+        );
+    }
+
     #[test]
     fn the_interface_size_setting_scales_the_whole_window() {
         let settings = Settings {

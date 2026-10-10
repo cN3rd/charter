@@ -7,6 +7,7 @@ use charter_core::FileName;
 use charter_ui::{Request, Saved, Window};
 
 use crate::disk::Disk;
+use crate::ffmpeg::{self, Ffmpeg};
 use crate::finder::Finder;
 use crate::player::Player;
 use crate::report::chain;
@@ -22,6 +23,8 @@ pub(crate) struct Host<D: Disk> {
     pub(crate) player: Player,
     /// Finds timing from the audio, and downloads the beat tracker it needs.
     pub(crate) finder: Finder,
+    /// `FFmpeg` checked for the settings page and audio export.
+    pub(crate) ffmpeg: Ffmpeg,
     /// File operations, replaceable with in-memory storage in tests.
     pub(crate) disk: D,
 }
@@ -42,7 +45,13 @@ impl<D: Disk + 'static> eframe::App for Host<D> {
         if self.player.update(&mut self.window) | self.finder.update(&mut self.window) {
             ui.ctx().request_repaint();
         }
+        if self.ffmpeg.refresh(&mut self.window, ffmpeg::installed) {
+            ui.ctx().request_repaint();
+        }
         self.window.ui(ui);
+        if self.ffmpeg.refresh(&mut self.window, ffmpeg::installed) {
+            ui.ctx().request_repaint();
+        }
         let requests = self.window.take_requests();
         self.handle_requests(requests);
     }
@@ -74,6 +83,11 @@ impl<D: Disk> Host<D> {
                     Request::ChooseSnapshotFolder => {
                         if let Some(folder) = rfd::FileDialog::new().pick_folder() {
                             self.window.use_snapshot_folder(&folder);
+                        }
+                    }
+                    Request::ChooseFfmpeg => {
+                        if let Some(path) = rfd::FileDialog::new().pick_file() {
+                            self.window.use_ffmpeg_path(&path);
                         }
                     }
                     Request::ChooseTimingFile => {
@@ -163,31 +177,7 @@ impl<D: Disk> Host<D> {
                 beside,
                 copies,
                 encodes,
-            } => {
-                let disk = &self.disk;
-                if let Some(folder) = path.parent()
-                    && let Err(error) = disk.make_folder(folder)
-                {
-                    return self
-                        .window
-                        .export_failed(folder, &chain(&error).to_string());
-                }
-                let written =
-                    std::iter::once((&path, &bytes))
-                        .chain(beside.iter().map(|(place, made)| (place, made)))
-                        .map(|(place, made)| (place, disk::write_whole(disk, place, made)))
-                        .chain(copies.iter().map(|(from, to)| {
-                            (to, disk::copy_over(disk, disk::Transfer { from, to }))
-                        }))
-                        .chain(encodes.iter().map(|(from, to)| {
-                            (to, disk::encode_over(disk, disk::Transfer { from, to }))
-                        }));
-                for (place, result) in written {
-                    if let Err(error) = result {
-                        self.window.export_failed(place, &chain(&error).to_string());
-                    }
-                }
-            }
+            } => self.write_export(&path, &bytes, &beside, &copies, &encodes),
             Request::Autosave { bytes } => self.autosave(&bytes),
             Request::CopyAudio { from, to } => {
                 let transfer = disk::Transfer {
@@ -243,6 +233,7 @@ impl<D: Disk> Host<D> {
             Request::SaveAs { .. }
             | Request::Open
             | Request::ChooseSnapshotFolder
+            | Request::ChooseFfmpeg
             | Request::ChooseTimingFile
             | Request::ChooseImport { .. }
             | Request::ChooseExport { .. }
@@ -257,6 +248,50 @@ impl<D: Disk> Host<D> {
             | Request::Pause
             | Request::Seek(_)
             | Request::Rate(_) => {}
+        }
+    }
+
+    /// Write a game's export files, reporting each file that could not be written.
+    fn write_export(
+        &mut self,
+        path: &Path,
+        bytes: &[u8],
+        beside: &[(PathBuf, Vec<u8>)],
+        copies: &[(PathBuf, PathBuf)],
+        encodes: &[(PathBuf, PathBuf)],
+    ) {
+        let disk = &self.disk;
+        if let Some(folder) = path.parent()
+            && let Err(error) = disk.make_folder(folder)
+        {
+            return self
+                .window
+                .export_failed(folder, &chain(&error).to_string());
+        }
+        let ffmpeg = self.ffmpeg.binary.as_deref();
+        let written = std::iter::once((path, bytes))
+            .chain(
+                beside
+                    .iter()
+                    .map(|(place, made)| (place.as_path(), made.as_slice())),
+            )
+            .map(|(place, made)| (place, disk::write_whole(disk, place, made)))
+            .chain(copies.iter().map(|(from, to)| {
+                (
+                    to.as_path(),
+                    disk::copy_over(disk, disk::Transfer { from, to }),
+                )
+            }))
+            .chain(encodes.iter().map(|(from, to)| {
+                (
+                    to.as_path(),
+                    disk::encode_over(disk, ffmpeg, disk::Transfer { from, to }),
+                )
+            }));
+        for (place, result) in written {
+            if let Err(error) = result {
+                self.window.export_failed(place, &chain(&error).to_string());
+            }
         }
     }
 

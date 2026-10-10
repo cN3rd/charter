@@ -54,8 +54,8 @@ an empty folder such as `Anthem.track`, enter it in the save dialog and choose
 - `taptrack.ttr2_track`, the levels;
 - `info.plist`, the title, artist, genre, levels, their lanes and themes, and the song's length;
 - `audio.m4a`, the audio as AAC. Audio already in AAC is copied; any other is converted with
-  [ffmpeg](https://ffmpeg.org), which must be installed and on the `PATH`. Without it the rest still
-  exports, and a message says the audio was not written;
+  [ffmpeg](https://ffmpeg.org), at the path chosen under Settings > Sounds or on the `PATH`.
+  Without it the rest still exports, and a message says the audio was not written;
 - `artwork.png` and `artwork@2x.png`, when the artwork is a PNG.
 
 The selected filename is ignored for a track: choosing `Anthem.ttr2_track` still writes

@@ -393,6 +393,7 @@ impl Player {
             | Request::OpenPath { .. }
             | Request::Snapshot { .. }
             | Request::ChooseSnapshotFolder
+            | Request::ChooseFfmpeg
             | Request::Autosave { .. }
             | Request::DropAutosave
             | Request::CopyAudio { .. }

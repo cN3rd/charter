@@ -19,8 +19,8 @@ everything it includes.
 
 Some features need more:
 
-- [ffmpeg](https://ffmpeg.org) on the `PATH`, to convert audio when exporting a Tap Tap Revenge
-  track.
+- [ffmpeg](https://ffmpeg.org), to convert audio when exporting a Tap Tap Revenge track. Charter
+  checks the binary set under Settings > Sounds first, then the `PATH`.
 - A graphics card, for finding timing with Mapperatorinator. Without one it runs on the processor,
   much more slowly.
 

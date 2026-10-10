@@ -48,6 +48,7 @@ notes behind it when no text field has the keyboard.
 | Alternate speed | The speed R switches to in the timing window, from 10% to 400%, 60% to start. |
 | Snippet length | How much Q and W play, from 50 to 1000 ms, 200 ms to start. |
 | Volumes | The music, the note ticks, the metronome, and the clicks between beats as a share of the metronome's, each from 0% to 100%. |
+| FFmpeg binary | Path to the ffmpeg executable used when exporting Tap Tap Revenge audio. Leave empty to use the `PATH`, or use Choose FFmpeg to select it. Charter shows the binary it found, or that none runs. |
 
 ## Autosave
 
