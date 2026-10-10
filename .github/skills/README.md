@@ -40,8 +40,7 @@ MIT, license retained in the skill directory. Upstream keeps it as `skills/git/c
 refresh it by copying that file here as `SKILL.md` and updating the commit above.
 
 Splits a working tree into single-concern, dependency-ordered commits, staging hunks
-non-interactively with `git apply --cached`. Invoke with `/commit`. Two rules tighten it here:
-
-- Step 5 is mandatory. With the rest stashed, every staged state passes
-  `cargo clippy --workspace --all-targets` and `cargo test --workspace` before it is committed.
-- Commit before `git stash pop`, so a conflicting pop can never leak into the commit.
+non-interactively with `git apply --cached`. Invoke with `/commit`. Charter's local rules for it,
+and the mistakes it has caused here, are in its `PITFALLS.md`, which a line atop `SKILL.md`
+links: running step 5 always, committing before `git stash pop`, scopes, and stash conflicts.
+After a refresh, put that line back.

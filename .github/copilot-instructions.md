@@ -98,10 +98,12 @@ with user-visible changes, and `docs/src/packaging.md` with packaging changes.
 
 ## Tooling
 
-`.github/skills/README.md` lists every skill and its local rules: `/rust-skills` (a submodule,
-fetched by `just setup`), `/test-driven-development` before writing production code, `/commit` to
-split work into atomic commits. `.github/lsp.json` registers rust-analyzer for code intelligence.
-Rules for one area sit in `.github/instructions/` and load with the files they cover.
+`.github/skills/README.md` lists every skill and where it comes from: `/rust-skills` (a
+submodule, fetched by `just setup`), `/test-driven-development` before writing production code,
+`/commit` to split work into atomic commits. A skill's `PITFALLS.md` holds charter's local rules
+for it; when a skill leads you wrong, append a trigger, wrong, right entry there.
+`.github/lsp.json` registers rust-analyzer for code intelligence. Rules for one area sit in
+`.github/instructions/` and load with the files they cover.
 
 CI (`.github/workflows/ci.yml`) runs the `just ci` pieces, Kani, and packages both platforms on
 push, publishing a `ci-<run>` prerelease and the book to GitHub Pages.

@@ -6,6 +6,8 @@ disable-model-invocation: true
 
 # Atomic commits
 
+Read [PITFALLS.md](PITFALLS.md) first: charter's local rules for this skill and the mistakes it has caused here. Where it and a step below disagree, PITFALLS.md wins.
+
 Turn an uncommitted working tree into a sequence of small commits where each commit has exactly one concern, builds on its predecessors, and reads like the rest of the repo's history. Never mix a refactor with a behavior change in one commit, even when they touch the same file.
 
 ## Workflow
