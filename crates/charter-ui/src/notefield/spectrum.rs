@@ -35,6 +35,12 @@ impl Tiles {
     ) -> Option<egui::TextureId> {
         let mut made = self.made.borrow_mut();
         let level_at = usize::try_from(level).ok()?;
+        // Past the track there is no tile, and no room is made for one: a long stop puts the
+        // view's time far past the end.
+        let frames_a_tile = TILE.checked_mul(1_usize.checked_shl(level)?)?;
+        if index >= self.spectrum.frames().len().div_ceil(frames_a_tile) {
+            return None;
+        }
         if made.len() <= level_at {
             made.resize_with(level_at.saturating_add(1), Vec::new);
         }

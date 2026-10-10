@@ -1655,6 +1655,15 @@ mod tests {
     }
 
     #[test]
+    fn a_tile_far_past_the_track_makes_no_room_for_itself() {
+        let track = Track::from_frames(1000, vec![[0.5, 0.5]; 60]);
+        let tiles = Tiles::new(std::sync::Arc::new(Spectrum::of(&track)));
+        let ctx = egui::Context::default();
+        assert_eq!(tiles.tile(&ctx, 0, 1_000_000), None);
+        assert!(tiles.made.borrow().iter().all(|level| level.len() <= 1));
+    }
+
+    #[test]
     fn horizontal_fields_keep_the_timeline_and_lane_hits_in_their_turned_positions() {
         let song = song();
         let area = Rect::from_min_size(pos2(10.0, 20.0), vec2(700.0, 400.0));
