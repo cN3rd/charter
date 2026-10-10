@@ -35,6 +35,61 @@ impl Bpm {
     }
 }
 
+/// Duration of one quarter-note beat in seconds, finite and above zero.
+///
+/// ```
+/// # use charter_core::BeatLength;
+/// let beat: BeatLength = BeatLength::from_bpm(120.0).unwrap();
+/// assert_eq!(beat.seconds(), 0.5);
+/// ```
+///
+/// A signed shift is not a beat length:
+///
+/// ```compile_fail
+/// # use charter_core::{BeatLength, TimeShift};
+/// let beat: BeatLength = TimeShift::from_seconds(0.5).unwrap();
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+pub struct BeatLength(f64);
+
+impl BeatLength {
+    /// A beat of `seconds`, if positive and finite.
+    #[must_use]
+    pub fn from_seconds(seconds: f64) -> Option<Self> {
+        (seconds.is_finite() && seconds > 0.0).then_some(Self(seconds))
+    }
+
+    /// A beat at `bpm` quarter notes per minute, if its length is representable.
+    #[must_use]
+    pub fn from_bpm(bpm: f64) -> Option<Self> {
+        Self::from_seconds(60.0 / bpm)
+    }
+
+    /// A beat of `millis` milliseconds, if its length is representable.
+    #[must_use]
+    pub fn from_millis(millis: f64) -> Option<Self> {
+        Self::from_seconds(millis / 1000.0)
+    }
+
+    /// The beat length in seconds.
+    #[must_use]
+    pub const fn seconds(self) -> f64 {
+        self.0
+    }
+
+    /// Quarter notes per minute at this beat length.
+    #[must_use]
+    pub fn bpm(self) -> f64 {
+        60.0 / self.0
+    }
+}
+
+impl From<Bpm> for BeatLength {
+    fn from(bpm: Bpm) -> Self {
+        Self(60.0 / f64::from(bpm))
+    }
+}
+
 decimal!(
     /// A length of time in seconds: a decimal above 0.
     ///
@@ -812,6 +867,28 @@ mod tests {
         assert_eq!(second - first, shift);
         assert_eq!(first + shift, second);
         assert_eq!(second - shift, first);
+    }
+
+    #[test]
+    fn beat_lengths_convert_seconds_bpm_and_milliseconds() {
+        let half = BeatLength::from_seconds(0.5).unwrap();
+        assert_eq!(BeatLength::from_bpm(120.0), Some(half));
+        assert_eq!(BeatLength::from_millis(500.0), Some(half));
+        assert_eq!(BeatLength::from(Bpm::try_from(120.0).unwrap()), half);
+        assert_eq!(half.seconds(), 0.5);
+        assert_eq!(half.bpm(), 120.0);
+        assert_eq!(BeatLength::from_millis(300.0).unwrap().bpm(), 200.0);
+    }
+
+    #[test]
+    fn beat_lengths_refuse_invalid_or_unrepresentable_values() {
+        for bad in [0.0, -0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert_eq!(BeatLength::from_seconds(bad), None);
+            assert_eq!(BeatLength::from_bpm(bad), None);
+            assert_eq!(BeatLength::from_millis(bad), None);
+        }
+        assert_eq!(BeatLength::from_bpm(f64::MIN_POSITIVE), None);
+        assert_eq!(BeatLength::from_millis(f64::from_bits(1)), None);
     }
 
     #[test]

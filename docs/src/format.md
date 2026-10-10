@@ -708,8 +708,9 @@ which six places hold as `175.000000` and write back as the same beat length. On
 come back, such as `300.5`, keeps its original in `ext`.
 
 Audio calculations use finite floats, but chart files store integer millionths. `ResolvedTime` is
-a moment in the audio, and `TimeShift` is the signed span between moments. Neither is stored in a
-chart file. Raw audio positions are checked before entering editing commands or playback requests.
+a moment in the audio, `TimeShift` is the signed span between moments, and `BeatLength` is the
+positive duration of one beat. None is stored in a chart file. Raw audio positions are checked
+before entering editing commands or playback requests.
 
 `tempo` must be positive. Negative BPM is a StepMania time-skipping gimmick predating explicit warps,
 and charter has `warp` for that. Zero BPM would stop position advancing while time ran on, an
@@ -736,6 +737,7 @@ shown.
 | `TicksPerBeat` | `NonZeroU16` | The resolution of the time base | Gives the length of an Nth note when it is whole |
 | `TimeSignature` | Two `NonZeroU16` | A meter | Tells whether its measure is a whole number of ticks |
 | `Bpm` | `i64` millionths above 0 | Quarter notes per minute | Resolves `Ticks` at a `TicksPerBeat` to seconds |
+| `BeatLength` | Finite `f64` above 0 | Duration of one quarter-note beat, never stored | Converts from BPM or milliseconds; gives seconds or BPM |
 | `Seconds` | `i64` millionths above 0 | A length of time | Moves a `ResolvedTime` later |
 | `AudioTime` | `i64` millionths, 0 or more | A point in the audio file, from its start | Converts to a `ResolvedTime` |
 | `Origin` | `i64` millionths | The audio time of tick 0, negative before the file starts | Converts to a `ResolvedTime` |
