@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 
 use charter_audio::{Onset, Track};
-use charter_core::{Section, TicksPerBeat, Timing};
+use charter_core::{BeatLength, ResolvedTime, Section, TicksPerBeat, Timing};
 use charter_ui::{Tracker, Window};
 
 use crate::report::chain;
@@ -302,11 +302,11 @@ fn sections(points: &[charter_mapperatorinator_burn::TimingPoint]) -> Result<Vec
                 reason = "microsecond offsets of a song are far inside f64's exact range"
             )]
             let seconds = point.offset_us as f64 / 1e6;
-            Ok(Section {
-                seconds,
-                beat_seconds: point.ms_per_beat / 1000.0,
-                meter,
-            })
+            let start = ResolvedTime::from_seconds(seconds)
+                .ok_or_else(|| format!("the model found a time of {} us", point.offset_us))?;
+            let beat = BeatLength::from_millis(point.ms_per_beat)
+                .ok_or_else(|| format!("the model found a beat of {} ms", point.ms_per_beat))?;
+            Ok(Section { start, beat, meter })
         })
         .collect()
 }
@@ -661,11 +661,25 @@ mod tests {
         };
         let found = sections(&[point(4_000, 600.0, 4), point(2_382_000, 300.0, 7)]).unwrap();
         assert_eq!(found.len(), 2);
-        assert!((found[0].seconds - 0.004).abs() < 1e-12);
-        assert!((found[1].beat_seconds - 0.3).abs() < 1e-12);
+        assert!((found[0].start.seconds() - 0.004).abs() < 1e-12);
+        assert!((found[1].beat.seconds() - 0.3).abs() < 1e-12);
         assert_eq!(found[1].meter.get(), 7);
         for meter in [0, -1, 70_000] {
             sections(&[point(0, 500.0, meter)]).unwrap_err();
+        }
+    }
+
+    #[test]
+    fn the_models_invalid_beat_lengths_are_refused() {
+        use charter_mapperatorinator_burn::TimingPoint;
+        for ms_per_beat in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::from_bits(1)] {
+            let error = sections(&[TimingPoint {
+                offset_us: 0,
+                ms_per_beat,
+                meter: 4,
+            }])
+            .unwrap_err();
+            assert!(error.contains("beat"), "{ms_per_beat}: {error}");
         }
     }
 

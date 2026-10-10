@@ -13,7 +13,7 @@ use std::time::Instant;
 
 use charter_autotiming::estimate;
 use charter_beatthis_burn::Tracker;
-use charter_core::{Section, TicksPerBeat};
+use charter_core::{BeatLength, ResolvedTime, Section, TicksPerBeat};
 
 #[expect(
     clippy::print_stdout,
@@ -66,8 +66,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for fitted in &found.fitted {
         println!(
             "{:8.3} s  {:8.3} BPM  {}/4  {:4} beats  {}  rms {:.1} ms",
-            fitted.section.seconds,
-            60.0 / fitted.section.beat_seconds,
+            fitted.section.start.seconds(),
+            fitted.section.beat.bpm(),
             fitted.section.meter,
             fitted.beats,
             if fitted.snapped { "snapped" } else { "free   " },
@@ -80,7 +80,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let reds = red_lines(&std::fs::read_to_string(map)?);
     println!("the map's {} red lines", reds.len());
     for red in reds.iter().take(12) {
-        println!("{:8.3} s  {:8.3} BPM", red.seconds, 60.0 / red.beat_seconds);
+        println!("{:8.3} s  {:8.3} BPM", red.start.seconds(), red.beat.bpm());
     }
     let mut against: Vec<f64> = beats_of(&reds, track.seconds())
         .into_iter()
@@ -180,9 +180,12 @@ fn red_lines(text: &str) -> Vec<Section> {
                 fields.first()?.trim().parse::<f64>().ok()?,
                 fields.get(1)?.trim().parse::<f64>().ok()?,
             );
-            (uninherited && length > 0.0).then(|| Section {
-                seconds: time / 1000.0,
-                beat_seconds: length / 1000.0,
+            if !uninherited {
+                return None;
+            }
+            Some(Section {
+                start: ResolvedTime::from_seconds(time / 1000.0)?,
+                beat: BeatLength::from_millis(length)?,
                 meter: fields
                     .get(2)
                     .and_then(|m| m.trim().parse().ok())
@@ -198,11 +201,11 @@ fn beats_of(sections: &[Section], end: f64) -> Vec<f64> {
     for (at, section) in sections.iter().enumerate() {
         let until = sections
             .get(at.saturating_add(1))
-            .map_or(end, |next| next.seconds);
-        let mut beat = section.seconds;
+            .map_or(end, |next| next.start.seconds());
+        let mut beat = section.start.seconds();
         while beat < until {
             beats.push(beat);
-            beat += section.beat_seconds;
+            beat += section.beat.seconds();
         }
     }
     beats
@@ -212,7 +215,7 @@ fn beats_of(sections: &[Section], end: f64) -> Vec<f64> {
 /// half-beat and double-beat grids, since a tempo's octave is a charting convention.
 fn distance(sections: &[Section], seconds: f64) -> f64 {
     let at = sections
-        .partition_point(|section| section.seconds <= seconds)
+        .partition_point(|section| section.start.seconds() <= seconds)
         .max(1)
         .saturating_sub(1);
     let Some(section) = sections.get(at) else {
@@ -221,8 +224,8 @@ fn distance(sections: &[Section], seconds: f64) -> f64 {
     [0.5, 1.0, 2.0]
         .into_iter()
         .map(|scale| {
-            let period = section.beat_seconds * scale;
-            let phase = (seconds - section.seconds) / period;
+            let period = section.beat.seconds() * scale;
+            let phase = (seconds - section.start.seconds()) / period;
             (phase - phase.round()) * period
         })
         .min_by(|a, b| a.abs().total_cmp(&b.abs()))

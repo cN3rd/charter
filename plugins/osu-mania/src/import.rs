@@ -9,8 +9,8 @@
 use std::num::NonZeroU16;
 
 use charter_core::{
-    Decimal, Extensions, ImportedTiming, Key, Name, Namespace, Section, SectionError, Tick, Timing,
-    TimingEvent, TimingKind, ValidDocument, sectioned,
+    BeatLength, Decimal, Extensions, ImportedTiming, Key, Name, Namespace, ResolvedTime, Section,
+    SectionError, Tick, Timing, TimingEvent, TimingKind, ValidDocument, sectioned,
 };
 
 use crate::{ID, SCROLL_SPEED};
@@ -81,12 +81,18 @@ pub(crate) fn import(text: &str, into: &ValidDocument) -> Result<ImportedTiming,
     reds.sort_by(|a, b| a.point.time.total_cmp(&b.point.time));
     let sections: Vec<Section> = reds
         .iter()
-        .map(|red| Section {
-            seconds: red.point.time / 1000.0,
-            beat_seconds: red.point.beat_length / 1000.0,
-            meter: red.point.meter,
+        .map(|red| {
+            let start = ResolvedTime::from_seconds(red.point.time / 1000.0)
+                .ok_or_else(|| line_out_of_range(red.line, "timing point start"))?;
+            let beat = BeatLength::from_millis(red.point.beat_length)
+                .ok_or_else(|| line_out_of_range(red.line, "timing point beat length"))?;
+            Ok(Section {
+                start,
+                beat,
+                meter: red.point.meter,
+            })
         })
-        .collect();
+        .collect::<Result<_, ImportError>>()?;
     let made = sectioned(&sections, into.document().ticks_per_beat).map_err(|why| match why {
         SectionError::Empty => ImportError::NoTempo,
         SectionError::OutOfRange(what) => ImportError::OutOfRange(what),
@@ -104,8 +110,8 @@ pub(crate) fn import(text: &str, into: &ValidDocument) -> Result<ImportedTiming,
         .map(|&(tick, section)| {
             let red = Placed {
                 tick: i64::from(tick),
-                at: section.seconds * 1000.0,
-                beat_length: section.beat_seconds * 1000.0,
+                at: section.start.seconds() * 1000.0,
+                beat_length: section.beat.seconds() * 1000.0,
             };
             (red, section.meter)
         })

@@ -12,8 +12,9 @@ use std::collections::{BTreeMap, HashSet};
 use std::num::NonZeroU16;
 
 use charter_core::{
-    LaneIndex, Metadata, Position, ResolvedTime, ResourcePath, Section, SectionError, Stream, Tick,
-    Ticks, TicksPerBeat, TimeSignature, Timing, TimingKind, Valid, ValidDocument, sectioned,
+    BeatLength, LaneIndex, Metadata, Position, ResolvedTime, ResourcePath, Section, SectionError,
+    Stream, Tick, Ticks, TicksPerBeat, TimeSignature, Timing, TimingKind, Valid, ValidDocument,
+    sectioned,
 };
 
 use crate::{Chart, Difficulty, Lanes, Note, NoteKind, Shake, Side, Song, Tempo, read_tempo};
@@ -358,23 +359,25 @@ fn tempo_of(
 ) -> Result<Tempo, String> {
     let mut sections: Vec<Section> = changes
         .iter()
-        .filter(|change| {
-            let usable = change.seconds.is_finite() && change.bpm.is_finite() && change.bpm > 0.0;
-            if !usable {
+        .filter_map(|change| {
+            let (Some(start), Some(beat)) = (
+                ResolvedTime::from_seconds(change.seconds),
+                BeatLength::from_bpm(change.bpm),
+            ) else {
                 report.add("a tempo change that is not a tempo");
-            }
-            usable
-        })
-        .map(|change| Section {
-            seconds: change.seconds,
-            beat_seconds: 60.0 / change.bpm,
-            meter: change.meter,
+                return None;
+            };
+            Some(Section {
+                start,
+                beat,
+                meter: change.meter,
+            })
         })
         .collect();
     if sections.is_empty() {
         sections.push(Section {
-            seconds: 0.0,
-            beat_seconds: 0.5,
+            start: ResolvedTime::from_seconds(0.0).ok_or("default tempo has no start")?,
+            beat: BeatLength::from_seconds(0.5).ok_or("default tempo has no beat")?,
             meter: TimeSignature::default().numerator,
         });
     }
@@ -887,6 +890,19 @@ mod tests {
             song.tempo().tempo,
             charter_core::Bpm::try_from(120.0).unwrap()
         );
+    }
+
+    #[test]
+    fn a_tempo_change_without_a_representable_beat_is_left_out() {
+        let mut report = Report::default();
+        let changes = [Change {
+            seconds: 0.0,
+            bpm: f64::MIN_POSITIVE,
+            meter: four(),
+        }];
+        let tempo = tempo_of(&changes, TicksPerBeat::default(), &mut report).unwrap();
+        assert_eq!(tempo.tempo, charter_core::Bpm::try_from(120.0).unwrap());
+        assert_eq!(report.into_lines(), ["a tempo change that is not a tempo"]);
     }
 
     #[test]

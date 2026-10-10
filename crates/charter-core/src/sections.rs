@@ -1,22 +1,22 @@
 //! Timing from sections: stretches of constant tempo each starting at a moment of the audio, as
 //! osu!'s red lines are written and as a tempo map estimated from a song's beats comes out. The
 //! first section's start is tick 0, and each later one sits where the section before puts its
-//! start, a beat every `beat_seconds`, rounded to the nearest tick, so every section starts at
-//! its own moment and keeps its own tempo.
+//! start, one beat at a time, rounded to the nearest tick. Every section starts at its own moment
+//! and keeps its own tempo.
 
 use std::num::NonZeroU16;
 
 use crate::document::{Anchor, Extensions, Timing, TimingEvent, TimingKind};
-use crate::unit::{Bpm, Origin, Tick, TicksPerBeat, TimeSignature};
+use crate::unit::{BeatLength, Bpm, Origin, ResolvedTime, Tick, TicksPerBeat, TimeSignature};
 
-/// A stretch of constant tempo from `seconds` into the audio, a beat every `beat_seconds`,
+/// A stretch of constant tempo from `start` into the audio, a beat of `beat` seconds,
 /// `meter` beats to a bar starting on its first beat.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Section {
     /// Starting moment in the audio.
-    pub seconds: f64,
+    pub start: ResolvedTime,
     /// Duration of one beat in seconds.
-    pub beat_seconds: f64,
+    pub beat: BeatLength,
     /// Beats per bar from this section's start.
     pub meter: NonZeroU16,
 }
@@ -60,7 +60,7 @@ pub fn sectioned(
 ) -> Result<Sectioned, SectionError> {
     let per_beat = f64::from(u16::from(ticks_per_beat));
     let mut sorted = sections.to_vec();
-    sorted.sort_by(|a, b| a.seconds.total_cmp(&b.seconds));
+    sorted.sort_by(|a, b| a.start.seconds().total_cmp(&b.start.seconds()));
     let mut kept: Vec<(i64, Section)> = Vec::new();
     let mut merged = 0_usize;
     for section in sorted {
@@ -68,7 +68,9 @@ pub fn sectioned(
             kept.push((0, section));
             continue;
         };
-        let distance = ((section.seconds - last.seconds) / last.beat_seconds * per_beat).round();
+        let distance = ((section.start.seconds() - last.start.seconds()) / last.beat.seconds()
+            * per_beat)
+            .round();
         if !distance.is_finite()
             || distance < i64_bound_to_f64(i64::MIN)
             || distance >= i64_bound_to_f64(i64::MAX)
@@ -91,19 +93,19 @@ pub fn sectioned(
         kept.push((next_tick, section));
     }
     let first = kept.first().ok_or(SectionError::Empty)?.1;
-    let mut tempo = bpm(first.beat_seconds)?;
+    let mut tempo = bpm(first.beat)?;
     let mut anchors = Vec::with_capacity(kept.len());
     let mut events = Vec::new();
     let four = NonZeroU16::new(4).unwrap_or(NonZeroU16::MIN);
     let (mut measure_from, mut meter) = (0, four);
     let resolution_ticks = i64::from(ticks_per_beat.get());
     for &(tick, section) in &kept {
-        tempo = bpm(section.beat_seconds)?;
+        tempo = bpm(section.beat)?;
         anchors.push(Anchor {
             tick: tick_of(tick)?,
-            seconds: micro(section.seconds)
+            seconds: micro(section.start.seconds())
                 .and_then(|seconds| Origin::try_from(seconds).ok())
-                .ok_or_else(|| out_of_range(format!("{} s", section.seconds)))?,
+                .ok_or_else(|| out_of_range(format!("{} s", section.start.seconds())))?,
         });
         let measure = std::num::NonZeroI64::from(meter)
             .get()
@@ -136,11 +138,11 @@ pub fn sectioned(
     })
 }
 
-/// The tempo of a beat `beat_seconds` long, to six places.
-fn bpm(beat_seconds: f64) -> Result<Bpm, SectionError> {
-    micro(60.0 / beat_seconds)
+/// The tempo of `beat`, to six places.
+fn bpm(beat: BeatLength) -> Result<Bpm, SectionError> {
+    micro(beat.bpm())
         .and_then(|bpm| Bpm::try_from(bpm).ok())
-        .ok_or_else(|| out_of_range(format!("a beat of {beat_seconds} s is no tempo")))
+        .ok_or_else(|| out_of_range(format!("a beat of {} s is no tempo", beat.seconds())))
 }
 
 #[expect(
@@ -192,8 +194,8 @@ mod tests {
 
     fn section(seconds: f64, bpm: f64, meter: u16) -> Section {
         Section {
-            seconds,
-            beat_seconds: 60.0 / bpm,
+            start: ResolvedTime::from_seconds(seconds).unwrap(),
+            beat: BeatLength::from_bpm(bpm).unwrap(),
             meter: NonZeroU16::new(meter).unwrap(),
         }
     }
@@ -211,6 +213,19 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    #[test]
+    fn a_section_pairs_an_audio_moment_with_a_positive_beat_length() {
+        let section = Section {
+            start: ResolvedTime::from_seconds(-0.5).unwrap(),
+            beat: BeatLength::from_millis(500.0).unwrap(),
+            meter: NonZeroU16::new(4).unwrap(),
+        };
+        let made = sectioned(&[section], TicksPerBeat::default()).unwrap();
+        assert_eq!(made.kept, [(Tick::new(0), section)]);
+        assert_eq!(anchors(&made), [(0, -0.5)]);
+        assert_eq!(made.timing.tempo, Bpm::try_from(120.0).unwrap());
     }
 
     #[test]
@@ -263,7 +278,7 @@ mod tests {
             sectioned(&[], TicksPerBeat::default()),
             Err(SectionError::Empty)
         );
-        sectioned(&[section(0.0, 0.0, 4)], TicksPerBeat::default()).unwrap_err();
+        sectioned(&[section(0.0, 1e-9, 4)], TicksPerBeat::default()).unwrap_err();
     }
 
     #[test]

@@ -13,7 +13,9 @@
 use std::num::NonZeroU16;
 
 use charter_audio::Onset;
-use charter_core::{Section, SectionError, TicksPerBeat, Timing, sectioned};
+use charter_core::{
+    BeatLength, ResolvedTime, Section, SectionError, TicksPerBeat, Timing, sectioned,
+};
 
 /// How far from a beat, in seconds, an onset is looked for to learn the tracker's lag.
 const LAG: f64 = 0.080;
@@ -370,10 +372,12 @@ fn fit(stretch: &[Beat]) -> Option<Fitted> {
         |(snapped_start, snapped_period)| (snapped_start, snapped_period, true),
     );
     let bar = stretch.iter().find(|beat| beat.downbeat).unwrap_or(first);
+    let start = ResolvedTime::from_seconds(grid(start, final_period, bar))?;
+    let beat = BeatLength::from_seconds(final_period)?;
     Some(Fitted {
         section: Section {
-            seconds: grid(start, final_period, bar),
-            beat_seconds: final_period,
+            start,
+            beat,
             meter: meter(stretch),
         },
         beats: usize::try_from(last.index.saturating_sub(first.index).saturating_add(1))
@@ -557,11 +561,24 @@ mod tests {
         let bpms: Vec<f64> = found
             .fitted
             .iter()
-            .map(|fitted| (60.0 / fitted.section.beat_seconds * 1000.0).round() / 1000.0)
+            .map(|fitted| (fitted.section.beat.bpm() * 1000.0).round() / 1000.0)
             .collect();
         assert_eq!(bpms, [120.0, 150.0]);
         let starts = seconds_of(&found.timing);
         assert!((starts[1] - change).abs() < 1e-3, "{starts:?}");
+    }
+
+    #[test]
+    fn a_fitted_period_that_rounds_to_no_tempo_is_skipped() {
+        let stretch: Vec<Beat> = (0..MIN_BEATS)
+            .map(|index| Beat {
+                seconds: beat_float(index) * 1e6,
+                weight: 1.0,
+                index: i64::try_from(index).unwrap(),
+                downbeat: index == 0,
+            })
+            .collect();
+        assert_eq!(fit(&stretch), None);
     }
 
     #[test]
