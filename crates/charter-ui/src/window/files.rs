@@ -348,7 +348,7 @@ impl Window {
         }
     }
     /// Restores or discards the autosave offered at startup.
-    pub(super) fn answer_restore(&mut self, restore: bool) {
+    pub(super) fn answer_restore(&mut self, restore: panels::Restore) {
         let Some(Restoring {
             path,
             audio,
@@ -358,18 +358,19 @@ impl Window {
         else {
             return;
         };
-        if restore {
-            song.mark_unsaved();
-            self.artwork.restored = artwork;
-            self.after_asking(Discard::Open {
-                path,
-                song,
-                restored: true,
-                audio,
-                note: None,
-            });
-        } else {
-            self.drop_autosave();
+        match restore {
+            panels::Restore::Restore => {
+                song.mark_unsaved();
+                self.artwork.restored = artwork;
+                self.after_asking(Discard::Open {
+                    path,
+                    song,
+                    restored: true,
+                    audio,
+                    note: None,
+                });
+            }
+            panels::Restore::Discard => self.drop_autosave(),
         }
     }
     /// Title the host should show for the window.
@@ -597,17 +598,17 @@ impl Window {
         }
     }
     /// Applies the answer to the unsaved-changes question.
-    pub(super) fn answer(&mut self, answer: panels::Answer) {
+    pub(super) fn answer(&mut self, answer: panels::SaveChanges) {
         let Some(discard) = self.dialogs.discard.take() else {
             return;
         };
         match answer {
-            panels::Answer::Save => {
+            panels::SaveChanges::Save => {
                 self.dialogs.after_save = Some(discard);
                 self.saving = Some(Saving::InPlace);
             }
-            panels::Answer::DontSave => self.carry_on(discard),
-            panels::Answer::Cancel => {}
+            panels::SaveChanges::DontSave => self.carry_on(discard),
+            panels::SaveChanges::Cancel => {}
         }
     }
 }
@@ -1095,6 +1096,23 @@ mod tests {
         harness.get_by_label("Don't save").click();
         harness.run();
         assert_eq!(lanes_at(&harness, 0), [0, 3]);
+    }
+
+    #[test]
+    fn discarding_recovered_changes_keeps_the_open_song() {
+        let (_, bytes) = autosaved_four_taps();
+        let mut harness = editable_four_taps();
+        harness.key_press(egui::Key::Num2);
+        harness.run();
+        assert_eq!(lanes_at(&harness, 0), [0, 1]);
+
+        harness.state_mut().recover(&bytes);
+        harness.run();
+        harness.get_by_label("Discard").click();
+        harness.run();
+
+        assert_eq!(lanes_at(&harness, 0), [0, 1]);
+        assert_eq!(harness.state_mut().take_requests(), [Request::DropAutosave]);
     }
 
     #[test]
@@ -1816,7 +1834,7 @@ mod tests {
         harness.get_by_label("Create").click();
         harness.run();
         assert!(asks_to_save(&harness));
-        harness.state_mut().answer(panels::Answer::Cancel);
+        harness.state_mut().answer(panels::SaveChanges::Cancel);
         harness.run();
 
         assert!(dialog_open(&harness));

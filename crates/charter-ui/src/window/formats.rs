@@ -210,8 +210,13 @@ impl Window {
         let Some(chosen) = self.dialogs.choosing.take() else {
             return;
         };
-        if answer && let Some(choice) = chosen.formats.get(chosen.chosen) {
-            self.finish(choice.clone(), chosen.file);
+        match answer {
+            panels::ChooseFormat::Choose => {
+                if let Some(choice) = chosen.formats.get(chosen.chosen) {
+                    self.finish(choice.clone(), chosen.file);
+                }
+            }
+            panels::ChooseFormat::Cancel => {}
         }
     }
 

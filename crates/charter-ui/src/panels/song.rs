@@ -603,63 +603,6 @@ mod tests {
         assert!(harness.query_by_label("Selection").is_none());
     }
 
-    fn answer_dialog(dialog: fn(&Ui) -> Option<bool>, button: &str, expected: bool) {
-        let mut harness = Harness::builder().build_ui_state(
-            move |ui, result: &mut Option<bool>| *result = dialog(ui).or(*result),
-            None,
-        );
-        harness.run();
-        assert_eq!(harness.state(), &None);
-        harness.get_by_label(button).click();
-        harness.run();
-        assert_eq!(harness.state(), &Some(expected), "{button}");
-    }
-
-    /// A yes/no dialog and the labels of its affirmative and negative buttons.
-    type Confirmation = (fn(&Ui) -> Option<bool>, &'static str, &'static str);
-
-    #[test]
-    fn each_confirmation_button_returns_the_answer_it_names() {
-        let dialogs: [Confirmation; 5] = [
-            (|ui: &Ui| ask_to_restore(ui, "Demo"), "Restore", "Discard"),
-            (
-                |ui: &Ui| offer_tags(ui, Some("New title"), Some("Artist")),
-                "Import",
-                "Keep mine",
-            ),
-            (
-                |ui: &Ui| ask_to_download_weights(ui, crate::Tracker::BeatThis),
-                "Download",
-                "Cancel",
-            ),
-            (ask_to_reset_timing, "Reset", "Cancel"),
-            (ask_to_run_on_cpu, "Run on the CPU", "Cancel"),
-        ];
-        for (dialog, yes, no) in dialogs {
-            answer_dialog(dialog, yes, true);
-            answer_dialog(dialog, no, false);
-        }
-    }
-
-    #[test]
-    fn saving_changes_distinguishes_save_discard_and_cancel() {
-        for (button, answer) in [
-            ("Save", Answer::Save),
-            ("Don't save", Answer::DontSave),
-            ("Cancel", Answer::Cancel),
-        ] {
-            let mut harness = Harness::builder().build_ui_state(
-                |ui, result: &mut Option<Answer>| *result = ask_to_save(ui, "Demo").or(*result),
-                None,
-            );
-            harness.run();
-            assert_eq!(harness.state(), &None);
-            harness.get_by_label(button).click();
-            harness.run();
-            assert_eq!(harness.state(), &Some(answer), "{button}");
-        }
-    }
-
     fn editable_panel() -> Harness<'static, (Song, SongDrafts, Vec<Action>, Option<String>)> {
         let mut value = serde_json::to_value(charter_editor::demo::song().document()).unwrap();
         value["metadata"]["preview"] =

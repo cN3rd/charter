@@ -38,12 +38,21 @@ impl Window {
             }
         }
         if let Some(offered) = &self.dialogs.offer
-            && let Some(take) =
+            && let Some(answer) =
                 panels::offer_tags(ui, offered.title.as_deref(), offered.artist.as_deref())
         {
             let taken = self.dialogs.offer.take();
-            if let (true, Some(taken)) = (take, taken) {
-                self.take_tags(taken.draft, taken.title.as_deref(), taken.artist.as_deref());
+            match answer {
+                panels::OfferTags::Import => {
+                    if let Some(taken) = taken {
+                        self.take_tags(
+                            taken.draft,
+                            taken.title.as_deref(),
+                            taken.artist.as_deref(),
+                        );
+                    }
+                }
+                panels::OfferTags::KeepMine => {}
             }
         }
         if let Some(Restoring { path, song, .. }) = &self.dialogs.restoring
@@ -358,21 +367,23 @@ impl Window {
         if self.dialogs.finding == Finding::Asking
             && let Some(download) = panels::ask_to_download_weights(ui, self.dialogs.tracker)
         {
-            if download {
-                self.requests.push(Request::DownloadWeights);
-                self.dialogs.finding = Finding::Downloading(0.0);
-            } else {
-                self.dialogs.finding = Finding::Idle;
+            match download {
+                panels::DownloadWeights::Download => {
+                    self.requests.push(Request::DownloadWeights);
+                    self.dialogs.finding = Finding::Downloading(0.0);
+                }
+                panels::DownloadWeights::Cancel => self.dialogs.finding = Finding::Idle,
             }
         }
         if self.dialogs.finding == Finding::NoGpu
             && let Some(on_cpu) = panels::ask_to_run_on_cpu(ui)
         {
-            if on_cpu {
-                self.requests.push(Request::FindTimingOnCpu);
-                self.dialogs.finding = Finding::Running(None);
-            } else {
-                self.dialogs.finding = Finding::Idle;
+            match on_cpu {
+                panels::RunOnCpu::Run => {
+                    self.requests.push(Request::FindTimingOnCpu);
+                    self.dialogs.finding = Finding::Running(None);
+                }
+                panels::RunOnCpu::Cancel => self.dialogs.finding = Finding::Idle,
             }
         }
         self.choose_format(ui);
@@ -380,8 +391,9 @@ impl Window {
             && let Some(answer) = panels::ask_to_reset_timing(ui)
         {
             self.dialogs.resetting = false;
-            if answer {
-                actions.push(Action::ResetTiming);
+            match answer {
+                panels::ResetTiming::Reset => actions.push(Action::ResetTiming),
+                panels::ResetTiming::Cancel => {}
             }
         }
         if let Some(settings::Asked::Preview(preview_kit)) = asked {

@@ -3,7 +3,7 @@ use super::{Align, Layout, RichText, Ui, egui, fields, icon, style};
 
 /// What to do with unsaved changes that are about to be lost.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Answer {
+pub(crate) enum SaveChanges {
     /// Save the changes before leaving.
     Save,
     /// Leave without saving the changes.
@@ -12,9 +12,63 @@ pub(crate) enum Answer {
     Cancel,
 }
 
+/// Which song metadata to keep.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum OfferTags {
+    /// Import the tags.
+    Import,
+    /// Keep the song's own values.
+    KeepMine,
+}
+
+/// What to do with unsaved changes from an earlier run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Restore {
+    /// Restore the changes.
+    Restore,
+    /// Discard the changes.
+    Discard,
+}
+
+/// Whether to download the tracker's weights.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DownloadWeights {
+    /// Download the weights.
+    Download,
+    /// Cancel the request.
+    Cancel,
+}
+
+/// Whether to run the tracker on the CPU.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RunOnCpu {
+    /// Run on the CPU.
+    Run,
+    /// Cancel the request.
+    Cancel,
+}
+
+/// Whether to use the selected file format.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ChooseFormat {
+    /// Use the selected format.
+    Choose,
+    /// Cancel the import or export.
+    Cancel,
+}
+
+/// Whether to reset the open chart's timing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ResetTiming {
+    /// Reset the timing.
+    Reset,
+    /// Keep the timing.
+    Cancel,
+}
+
 /// Asks whether to save the changes to the song in `name` before they are lost. Escape or a
 /// click outside cancels.
-pub(crate) fn ask_to_save(ui: &Ui, name: &str) -> Option<Answer> {
+pub(crate) fn ask_to_save(ui: &Ui, name: &str) -> Option<SaveChanges> {
     let mut answer = None;
     let modal = egui::Modal::new(egui::Id::new("save changes")).show(ui.ctx(), |ui| {
         ui.set_max_width(380.0);
@@ -28,22 +82,22 @@ pub(crate) fn ask_to_save(ui: &Ui, name: &str) -> Option<Answer> {
         ui.add_space(14.0);
         ui.horizontal(|ui| {
             if ui.add(style::primary("Save")).clicked() {
-                answer = Some(Answer::Save);
+                answer = Some(SaveChanges::Save);
             }
             if ui.button("Don't save").clicked() {
-                answer = Some(Answer::DontSave);
+                answer = Some(SaveChanges::DontSave);
             }
             if ui.button("Cancel").clicked() {
-                answer = Some(Answer::Cancel);
+                answer = Some(SaveChanges::Cancel);
             }
         });
     });
-    answer.or_else(|| modal.should_close().then_some(Answer::Cancel))
+    answer.or_else(|| modal.should_close().then_some(SaveChanges::Cancel))
 }
 
-/// Asks whether to take the title and artist an audio file's tags carry over the song's own:
-/// true to take them. Only an answer closes it.
-pub(crate) fn offer_tags(ui: &Ui, title: Option<&str>, artist: Option<&str>) -> Option<bool> {
+/// Asks whether to take the title and artist an audio file's tags carry over the song's own.
+/// Only an answer closes it.
+pub(crate) fn offer_tags(ui: &Ui, title: Option<&str>, artist: Option<&str>) -> Option<OfferTags> {
     let mut answer = None;
     egui::Modal::new(egui::Id::new("offer tags")).show(ui.ctx(), |ui| {
         ui.set_max_width(380.0);
@@ -62,19 +116,19 @@ pub(crate) fn offer_tags(ui: &Ui, title: Option<&str>, artist: Option<&str>) -> 
         ui.add_space(14.0);
         ui.horizontal(|ui| {
             if ui.add(style::primary("Import")).clicked() {
-                answer = Some(true);
+                answer = Some(OfferTags::Import);
             }
             if ui.button("Keep mine").clicked() {
-                answer = Some(false);
+                answer = Some(OfferTags::KeepMine);
             }
         });
     });
     answer
 }
 
-/// Asks whether to restore the unsaved changes to the song in `name` that an earlier run kept:
-/// true to restore them, false to throw them away. Only an answer closes it.
-pub(crate) fn ask_to_restore(ui: &Ui, name: &str) -> Option<bool> {
+/// Asks whether to restore the unsaved changes to the song in `name` that an earlier run kept.
+/// Only an answer closes it.
+pub(crate) fn ask_to_restore(ui: &Ui, name: &str) -> Option<Restore> {
     let mut answer = None;
     egui::Modal::new(egui::Id::new("restore changes")).show(ui.ctx(), |ui| {
         ui.set_max_width(380.0);
@@ -85,18 +139,18 @@ pub(crate) fn ask_to_restore(ui: &Ui, name: &str) -> Option<bool> {
         ui.add_space(14.0);
         ui.horizontal(|ui| {
             if ui.add(style::primary("Restore")).clicked() {
-                answer = Some(true);
+                answer = Some(Restore::Restore);
             }
             if ui.button("Discard").clicked() {
-                answer = Some(false);
+                answer = Some(Restore::Discard);
             }
         });
     });
     answer
 }
 
-/// Whether to download the beat tracker's weights, which the user answers: true for Download.
-pub(crate) fn ask_to_download_weights(ui: &Ui, tracker: crate::Tracker) -> Option<bool> {
+/// Asks whether to download the beat tracker's weights.
+pub(crate) fn ask_to_download_weights(ui: &Ui, tracker: crate::Tracker) -> Option<DownloadWeights> {
     let mut answer = None;
     egui::Modal::new(egui::Id::new("download weights")).show(ui.ctx(), |ui| {
         ui.set_max_width(420.0);
@@ -120,19 +174,18 @@ pub(crate) fn ask_to_download_weights(ui: &Ui, tracker: crate::Tracker) -> Optio
         ui.add_space(14.0);
         ui.horizontal(|ui| {
             if ui.add(style::primary("Download")).clicked() {
-                answer = Some(true);
+                answer = Some(DownloadWeights::Download);
             }
             if ui.button("Cancel").clicked() {
-                answer = Some(false);
+                answer = Some(DownloadWeights::Cancel);
             }
         });
     });
     answer
 }
 
-/// Whether to find the timing on the CPU, there being no graphics card, which the user answers:
-/// true for Run on the CPU.
-pub(crate) fn ask_to_run_on_cpu(ui: &Ui) -> Option<bool> {
+/// Asks whether to find the timing on the CPU when there is no graphics card.
+pub(crate) fn ask_to_run_on_cpu(ui: &Ui) -> Option<RunOnCpu> {
     let mut answer = None;
     egui::Modal::new(egui::Id::new("run on cpu")).show(ui.ctx(), |ui| {
         ui.set_max_width(420.0);
@@ -147,24 +200,24 @@ pub(crate) fn ask_to_run_on_cpu(ui: &Ui) -> Option<bool> {
         ui.add_space(14.0);
         ui.horizontal(|ui| {
             if ui.add(style::primary("Run on the CPU")).clicked() {
-                answer = Some(true);
+                answer = Some(RunOnCpu::Run);
             }
             if ui.button("Cancel").clicked() {
-                answer = Some(false);
+                answer = Some(RunOnCpu::Cancel);
             }
         });
     });
     answer
 }
 
-/// Which of `names` a file is, for formats that share its extension: the index the user picks
-/// with `verb`, such as Import, or false for Cancel. `chosen` is the pick so far.
+/// Asks which of `names` a file is, for formats that share its extension.
+/// `chosen` is the pick so far.
 pub(crate) fn choose_format(
     ui: &Ui,
     verb: &str,
     names: &[String],
     chosen: &mut usize,
-) -> Option<bool> {
+) -> Option<ChooseFormat> {
     let mut answer = None;
     egui::Modal::new(egui::Id::new("choose format")).show(ui.ctx(), |ui| {
         ui.set_max_width(420.0);
@@ -179,18 +232,18 @@ pub(crate) fn choose_format(
         ui.add_space(14.0);
         ui.horizontal(|ui| {
             if ui.add(style::primary(verb)).clicked() {
-                answer = Some(true);
+                answer = Some(ChooseFormat::Choose);
             }
             if ui.button("Cancel").clicked() {
-                answer = Some(false);
+                answer = Some(ChooseFormat::Cancel);
             }
         });
     });
     answer
 }
 
-/// Whether to reset the open chart's timing, which the user answers: true for Reset.
-pub(crate) fn ask_to_reset_timing(ui: &Ui) -> Option<bool> {
+/// Asks whether to reset the open chart's timing.
+pub(crate) fn ask_to_reset_timing(ui: &Ui) -> Option<ResetTiming> {
     let mut answer = None;
     egui::Modal::new(egui::Id::new("reset timing")).show(ui.ctx(), |ui| {
         ui.set_max_width(400.0);
@@ -205,10 +258,10 @@ pub(crate) fn ask_to_reset_timing(ui: &Ui) -> Option<bool> {
         ui.add_space(14.0);
         ui.horizontal(|ui| {
             if ui.add(style::primary("Reset")).clicked() {
-                answer = Some(true);
+                answer = Some(ResetTiming::Reset);
             }
             if ui.button("Cancel").clicked() {
-                answer = Some(false);
+                answer = Some(ResetTiming::Cancel);
             }
         });
     });
@@ -257,4 +310,92 @@ pub(crate) fn read_only(ui: &mut Ui, why: &str) {
         ui.label(format!("Read only: {why}"));
     });
     ui.add_space(4.0);
+}
+
+#[cfg(test)]
+mod tests {
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+
+    use super::*;
+
+    fn answer<T: Copy + std::fmt::Debug + PartialEq + 'static>(
+        dialog: fn(&Ui) -> Option<T>,
+        button: &str,
+        expected: T,
+    ) {
+        let mut harness = Harness::builder().build_ui_state(
+            move |ui, result: &mut Option<T>| *result = dialog(ui).or(*result),
+            None,
+        );
+        harness.run();
+        assert_eq!(harness.state(), &None);
+        harness.get_by_label(button).click();
+        harness.run();
+        assert_eq!(harness.state(), &Some(expected), "{button}");
+    }
+
+    #[test]
+    fn every_question_returns_the_choice_named_by_its_button() {
+        answer(|ui| ask_to_restore(ui, "Demo"), "Restore", Restore::Restore);
+        answer(|ui| ask_to_restore(ui, "Demo"), "Discard", Restore::Discard);
+        answer(
+            |ui| offer_tags(ui, Some("Title"), Some("Artist")),
+            "Import",
+            OfferTags::Import,
+        );
+        answer(
+            |ui| offer_tags(ui, Some("Title"), Some("Artist")),
+            "Keep mine",
+            OfferTags::KeepMine,
+        );
+        answer(
+            |ui| ask_to_download_weights(ui, crate::Tracker::BeatThis),
+            "Download",
+            DownloadWeights::Download,
+        );
+        answer(
+            |ui| ask_to_download_weights(ui, crate::Tracker::BeatThis),
+            "Cancel",
+            DownloadWeights::Cancel,
+        );
+        answer(ask_to_run_on_cpu, "Run on the CPU", RunOnCpu::Run);
+        answer(ask_to_run_on_cpu, "Cancel", RunOnCpu::Cancel);
+        answer(ask_to_reset_timing, "Reset", ResetTiming::Reset);
+        answer(ask_to_reset_timing, "Cancel", ResetTiming::Cancel);
+        answer(|ui| ask_to_save(ui, "Demo"), "Save", SaveChanges::Save);
+        answer(
+            |ui| ask_to_save(ui, "Demo"),
+            "Don't save",
+            SaveChanges::DontSave,
+        );
+        answer(|ui| ask_to_save(ui, "Demo"), "Cancel", SaveChanges::Cancel);
+    }
+
+    #[test]
+    fn choosing_a_format_reports_choose_or_cancel_and_keeps_the_selection() {
+        for (button, expected) in [
+            ("Import", ChooseFormat::Choose),
+            ("Cancel", ChooseFormat::Cancel),
+        ] {
+            let mut harness = Harness::builder().build_ui_state(
+                |ui, (chosen, answer): &mut (usize, Option<ChooseFormat>)| {
+                    *answer = choose_format(
+                        ui,
+                        "Import",
+                        &["First".to_owned(), "Second".to_owned()],
+                        chosen,
+                    )
+                    .or(*answer);
+                },
+                (0, None),
+            );
+            harness.run();
+            harness.get_by_label("Second").click();
+            harness.run();
+            harness.get_by_label(button).click();
+            harness.run();
+            assert_eq!(harness.state(), &(1, Some(expected)), "{button}");
+        }
+    }
 }
