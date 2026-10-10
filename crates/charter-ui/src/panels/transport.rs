@@ -1,6 +1,6 @@
 use super::{
-    Action, Align, LayerIndex, Layout, NonZeroU16, Rate, RichText, Song, Tick, Ui, Zoom, egui,
-    icon, style,
+    Action, Align, LayerIndex, Layout, NoteValue, Rate, RichText, Song, Tick, Ui, Zoom, egui, icon,
+    style,
 };
 
 /// Draws the playback and editing controls, sending their choices as `actions`.
@@ -8,7 +8,7 @@ use super::{
 pub(crate) fn transport_bar(
     ui: &mut Ui,
     song: Option<&Song>,
-    (zoom, rate, playing, panel, grid): (Zoom, Rate, bool, bool, NonZeroU16),
+    (zoom, rate, playing, panel, grid): (Zoom, Rate, bool, bool, NoteValue),
     (metronome, (ticks, tuned), volumes): (bool, (bool, bool), charter_audio::Volumes),
     actions: &mut Vec<Action>,
 ) {
@@ -313,7 +313,7 @@ pub(crate) fn status_bar(
 }
 
 /// A snap's name, such as `16th` or `32nd`.
-pub(crate) fn ordinal(n: NonZeroU16) -> String {
+pub(crate) fn ordinal(n: NoteValue) -> String {
     let n = n.get();
     let suffix = match (n % 10, n % 100) {
         (_, 11..=13) => "th",

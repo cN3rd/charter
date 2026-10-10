@@ -1304,7 +1304,7 @@ mod tests {
     #[test]
     fn a_song_opens_on_the_snap_and_zoom_the_settings_choose() {
         let settings = Settings {
-            snap: NonZeroU16::new(32).unwrap(),
+            snap: NoteValue::new(32).unwrap(),
             zoom: 200.0.into(),
             ..Settings::default()
         };

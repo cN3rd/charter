@@ -1,6 +1,6 @@
 use super::{
     Canvas, Columns, FontId, Kind, LaneCount, LaneIndex, LaneOffset, MOST_BEATS, MarkerKind,
-    Measure, NonZeroU16, Object, Peaks, Position, Rangef, Rect, Shape, Song, Stroke, StrokeKind,
+    Measure, NoteValue, Object, Peaks, Position, Rangef, Rect, Shape, Song, Stroke, StrokeKind,
     Tick, TickOffset, Ticks, TicksPerBeat, Timing, TimingKind, Valid, View, Visuals, egui,
     nearest_line, pos2, style, vec2,
 };
@@ -186,7 +186,15 @@ pub(super) fn waveform(
 
 /// The grids the notefield draws, by the note value of their finest lines: beats alone, then
 /// finer lines between the beats.
-pub(crate) const GRIDS: [u16; 7] = [4, 8, 12, 16, 24, 32, 48];
+pub(crate) const GRIDS: [NoteValue; 7] = [
+    NoteValue::QUARTER,
+    NoteValue::new(8).unwrap(),
+    NoteValue::new(12).unwrap(),
+    NoteValue::new(16).unwrap(),
+    NoteValue::new(24).unwrap(),
+    NoteValue::new(32).unwrap(),
+    NoteValue::new(48).unwrap(),
+];
 
 /// A line of the grid inside a measure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -203,9 +211,9 @@ pub(super) enum Line {
 pub(super) fn lines_in(
     measure: &Measure,
     resolution: TicksPerBeat,
-    grid: NonZeroU16,
+    grid: NoteValue,
 ) -> Vec<(Tick, Line)> {
-    let beat = resolution.note_length(QUARTER);
+    let beat = resolution.note_length(NoteValue::QUARTER);
     let step = resolution.note_length(grid).or(beat);
     let (Some(beat), Some(step), Some(end)) =
         (beat, step, measure.start.checked_add(measure.length))
@@ -244,7 +252,7 @@ pub(super) fn lines_in(
 pub(super) fn grid(
     painter: &Canvas,
     columns: &Columns,
-    (song, finest): (&Song, NonZeroU16),
+    (song, finest): (&Song, NoteValue),
     view: View,
     rows: Rangef,
 ) {
@@ -252,7 +260,7 @@ pub(super) fn grid(
     let resolution = song.document().document().ticks_per_beat;
     let ruler = painter.clipped(Rect::from_x_y_ranges(columns.ruler, rows));
     let first = timing.latest_tick_by(view.seconds_at(rows.min));
-    let finer = finest > QUARTER;
+    let finer = finest > NoteValue::QUARTER;
     for measure in timing.measures_from(first) {
         let y = view.y(timing.time_at(measure.start));
         if y > rows.max {
@@ -278,9 +286,6 @@ pub(super) fn grid(
         }
     }
 }
-
-/// Note spacing of one quarter note, used to distinguish beat lines from finer grid lines.
-const QUARTER: NonZeroU16 = NonZeroU16::new(4).unwrap();
 
 /// Sections, bookmarks and plugin markers as lines across the time axis, named in the ruler.
 pub(super) fn markers(
@@ -681,8 +686,8 @@ mod tests {
         }
     }
 
-    fn grid_of(n: u16) -> NonZeroU16 {
-        NonZeroU16::new(n).unwrap()
+    fn grid_of(n: u16) -> NoteValue {
+        NoteValue::new(n).unwrap()
     }
 
     #[test]

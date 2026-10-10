@@ -5,12 +5,11 @@
 //! `crate::notefield`, while drawing, gestures, context menus, spectrum tiles and wheel math live
 //! in focused submodules.
 
-use std::num::NonZeroU16;
-
 use charter_audio::{Peaks, Spectrum};
 use charter_core::{
-    Chart, Kind, LaneCount, LaneIndex, LaneOffset, MarkerKind, Measure, Object, Position,
-    ResolvedTime, Shape, Tick, TickOffset, Ticks, TicksPerBeat, Timing, TimingKind, Valid,
+    Chart, Kind, LaneCount, LaneIndex, LaneOffset, MarkerKind, Measure, NoteValue, Object,
+    Position, ResolvedTime, Shape, Tick, TickOffset, Ticks, TicksPerBeat, Timing, TimingKind,
+    Valid,
 };
 use charter_editor::{NoteAt, Selecting, Song, Step};
 use egui::{self, FontId, Pos2, Rangef, Rect, Sense, Stroke, StrokeKind, Ui, Visuals, pos2, vec2};
@@ -593,7 +592,7 @@ pub(crate) struct Shown<'a> {
     /// What the strip beside the lanes shows of the song's audio, if anything.
     pub strip: Option<Strip<'a>>,
     /// The note value of the grid's finest lines: 4 draws beats alone, 16 sixteenths.
-    pub grid: NonZeroU16,
+    pub grid: NoteValue,
     /// Tint whole notes by layer instead of marking their leading edge.
     pub colour_notes_by_layer: bool,
 }

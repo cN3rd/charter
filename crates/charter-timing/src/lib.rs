@@ -19,8 +19,6 @@ mod panel;
 mod pointer;
 pub mod rows;
 
-use std::num::NonZeroU16;
-
 use charter_audio::{Onset, Peaks};
 use charter_core::{Bpm, ResolvedTime, Tick, TimeShift, Timing, Valid};
 use charter_editor::{Pin, Refusal, Song};

@@ -1,11 +1,12 @@
 //! What the user chooses about the editor, and the window where they choose it.
 
-use std::num::{NonZeroU16, NonZeroU32};
+use std::num::NonZeroU32;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use charter_audio::{Gain, Kit, Volumes};
+use charter_core::NoteValue;
 use charter_editor::SNAPS;
 
 use crate::flip::Direction;
@@ -302,7 +303,7 @@ pub struct Settings {
     /// Whether the cursor moves on a snap once the lane keys that placed a note are up.
     pub auto_jump: bool,
     /// The snap a song opens on, where its resolution holds it.
-    pub snap: NonZeroU16,
+    pub snap: NoteValue,
     /// Whether a BPM set on a timing point keeps the notes it times where they sound, rather
     /// than on their beats.
     pub notes_keep_time: bool,
@@ -357,7 +358,7 @@ pub struct Settings {
     /// The note value of the notefield grid's finest lines, one of [`GRIDS`]: 4 draws the beats
     /// alone. Older versions kept a sixteenths switch here.
     #[serde(alias = "sixteenths", deserialize_with = "grid_or_switch")]
-    pub grid: NonZeroU16,
+    pub grid: NoteValue,
     /// Whether the metronome clicks on every line of the timing window's grid, not only on the
     /// beats.
     pub metronome_grid: bool,
@@ -382,7 +383,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             auto_jump: true,
-            snap: NonZeroU16::new(16).unwrap_or(NonZeroU16::MIN),
+            snap: NoteValue::new(16).unwrap_or(NoteValue::QUARTER),
             notes_keep_time: true,
             zoom: ZoomPercent::default(),
             scale: InterfaceScale::default(),
@@ -429,13 +430,13 @@ pub(crate) enum Asked {
 }
 
 /// The grid of beats alone.
-const BEATS: NonZeroU16 = NonZeroU16::new(4).unwrap();
+const BEATS: NoteValue = NoteValue::QUARTER;
 
 /// The grid, read from a note value or, as older versions kept it, a sixteenths switch. A value
 /// the notefield does not offer draws the beats alone.
 fn grid_or_switch<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
-) -> Result<NonZeroU16, D::Error> {
+) -> Result<NoteValue, D::Error> {
     #[derive(Deserialize)]
     #[serde(untagged)]
     enum Kept {
@@ -447,15 +448,13 @@ fn grid_or_switch<'de, D: serde::Deserializer<'de>>(
         Kept::Sixteenths(true) => 16,
         Kept::Sixteenths(false) => 4,
     };
-    Ok(GRIDS
-        .contains(&grid)
-        .then(|| NonZeroU16::new(grid))
-        .flatten()
+    Ok(NoteValue::new(grid)
+        .filter(|value| GRIDS.contains(value))
         .unwrap_or(BEATS))
 }
 
 /// A grid's name in the settings and the toolbar.
-pub(crate) fn grid_name(grid: NonZeroU16) -> String {
+pub(crate) fn grid_name(grid: NoteValue) -> String {
     if grid == BEATS {
         "Beats".to_owned()
     } else {
@@ -834,7 +833,7 @@ fn editing(ui: &mut egui::Ui, settings: &mut Settings) {
             egui::ComboBox::from_id_salt("snap")
                 .selected_text(format!("{} snap", ordinal(settings.snap)))
                 .show_ui(ui, |ui| {
-                    for snap in SNAPS.into_iter().filter_map(NonZeroU16::new) {
+                    for snap in SNAPS {
                         let text = format!("{} snap", ordinal(snap));
                         ui.selectable_value(&mut settings.snap, snap, text);
                     }
@@ -1231,11 +1230,11 @@ fn snapshots(
 }
 
 /// A drop-down of the grids the notefield draws.
-pub(crate) fn grid_choice(ui: &mut egui::Ui, grid: &mut NonZeroU16, id: &str) -> egui::Response {
+pub(crate) fn grid_choice(ui: &mut egui::Ui, grid: &mut NoteValue, id: &str) -> egui::Response {
     egui::ComboBox::from_id_salt(id)
         .selected_text(grid_name(*grid))
         .show_ui(ui, |ui| {
-            for choice in GRIDS.into_iter().filter_map(NonZeroU16::new) {
+            for choice in GRIDS {
                 ui.selectable_value(grid, choice, grid_name(choice));
             }
         })
@@ -1410,10 +1409,26 @@ mod tests {
     }
 
     #[test]
+    fn snap_and_grid_note_values_keep_their_numeric_settings() {
+        let settings = Settings {
+            snap: NoteValue::new(24).unwrap(),
+            grid: NoteValue::new(16).unwrap(),
+            ..Settings::default()
+        };
+        let stored: Value = serde_json::from_str(&settings.to_kept()).unwrap();
+        assert_eq!(stored, serde_json::json!({ "snap": 24, "grid": 16 }));
+        let restored = Settings::from_kept(r#"{ "snap": 24, "grid": 16 }"#);
+        assert_eq!(
+            (restored.snap, restored.grid),
+            (settings.snap, settings.grid)
+        );
+    }
+
+    #[test]
     fn stored_settings_come_back_and_missing_ones_take_their_defaults() {
         let settings = Settings {
             auto_jump: false,
-            snap: NonZeroU16::new(24).unwrap(),
+            snap: NoteValue::new(24).unwrap(),
             notes_keep_time: false,
             zoom: 150.0.into(),
             scale: 1.25.into(),
@@ -1440,7 +1455,7 @@ mod tests {
             frequencies: true,
             minimap: false,
             colour_notes_by_layer: true,
-            grid: NonZeroU16::new(24).unwrap(),
+            grid: NoteValue::new(24).unwrap(),
             metronome_grid: true,
             rate_b: 0.5.into(),
             snippet_ms: 120_u32.into(),

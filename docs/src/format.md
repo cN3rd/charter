@@ -735,7 +735,8 @@ shown.
 | `Tick` | `i32` | A musical position | Adds `Ticks` or a checked `TickOffset`; finds the offset to another tick; steps to a grid line |
 | `Ticks` | `NonZeroU32` | A length in ticks | |
 | `TickOffset` | `i64` | A signed shift in ticks, never stored | Moves a `Tick` if the result fits |
-| `TicksPerBeat` | `NonZeroU16` | The resolution of the time base | Gives the length of an Nth note when it is whole |
+| `TicksPerBeat` | `NonZeroU16` | The resolution of the time base | Gives the length of a `NoteValue` when it is whole |
+| `NoteValue` | `NonZeroU16` | Divisions of a whole note (4 quarter, 16 sixteenth) | Converts to and from whole subdivisions of a quarter-note beat |
 | `TimeSignature` | Two `NonZeroU16` | A meter | Tells whether its measure is a whole number of ticks |
 | `Bpm` | `i64` millionths above 0 | Quarter notes per minute | Resolves `Ticks` at a `TicksPerBeat` to seconds |
 | `BeatLength` | Finite `f64` above 0 | Duration of one quarter-note beat, never stored | Converts from BPM or milliseconds; gives seconds or BPM |

@@ -441,8 +441,8 @@ mod tests {
         assert!(filter.right() <= 400.0, "{filter:?}");
     }
 
-    fn note(n: u16) -> NonZeroU16 {
-        NonZeroU16::new(n).unwrap()
+    fn note(n: u16) -> NoteValue {
+        NoteValue::new(n).unwrap()
     }
 
     #[test]
@@ -1248,7 +1248,7 @@ mod tests {
                             Rate::default(),
                             false,
                             true,
-                            NonZeroU16::new(4).unwrap(),
+                            NoteValue::QUARTER,
                         ),
                         (false, (false, false), charter_audio::Volumes::default()),
                         actions,

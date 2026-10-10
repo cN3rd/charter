@@ -445,7 +445,7 @@ mod tests {
     }
     #[test]
     fn the_grid_draws_every_snap_line() {
-        let n = |value: u16| NonZeroU16::new(value).unwrap();
+        let n = |value: u16| NoteValue::new(value).unwrap();
         assert_eq!(shown_grid(n(4), n(16)), n(16));
         assert_eq!(shown_grid(n(16), n(4)), n(16));
         assert_eq!(shown_grid(n(48), n(12)), n(48));

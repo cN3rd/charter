@@ -15,7 +15,7 @@ use std::sync::Arc;
 use charter_audio::{Peaks, Spectrum};
 
 use charter_core::{
-    FileName, Kind, LaneIndex, LaneOffset, MarkerKey, ResolvedTime, RulesetPlugin, Tick,
+    FileName, Kind, LaneIndex, LaneOffset, MarkerKey, NoteValue, ResolvedTime, RulesetPlugin, Tick,
     TickOffset, TimeShift,
 };
 use egui::Ui;
@@ -734,7 +734,7 @@ pub(crate) enum Action {
     /// Asks where to write the open song in another program's format.
     ExportSong,
     /// Draws the notefield's grid down to this note value.
-    SetGrid(std::num::NonZeroU16),
+    SetGrid(NoteValue),
 }
 
 /// The editor window's state.
@@ -1270,7 +1270,7 @@ fn pattern(song: &mut Song, steps: &[u16], per_beat: u16, lane: LaneIndex) -> Op
         .chart()
         .and_then(|chart| chart.lanes)
         .map_or(0, u16::from);
-    let note_value = per_beat.checked_mul(4).and_then(std::num::NonZeroU16::new);
+    let note_value = NoteValue::from_per_beat(per_beat);
     let resolution = song.document().document().ticks_per_beat;
     let Some(gap) = note_value.and_then(|value| resolution.note_length(value)) else {
         return Some(format!(
@@ -1308,11 +1308,8 @@ fn pattern(song: &mut Song, steps: &[u16], per_beat: u16, lane: LaneIndex) -> Op
 /// The notefield grid's finest lines for the chosen `grid` at `snap`: the coarsest lines holding
 /// both the grid's and the snap's, so the cursor never steps onto a line the grid leaves out and
 /// the grid keeps every line it was chosen for. Past 192nds, the snap's alone.
-fn shown_grid(grid: std::num::NonZeroU16, snap: std::num::NonZeroU16) -> std::num::NonZeroU16 {
-    let (a, b) = (
-        std::num::NonZeroU32::from(grid).get(),
-        std::num::NonZeroU32::from(snap).get(),
-    );
+fn shown_grid(grid: NoteValue, snap: NoteValue) -> NoteValue {
+    let (a, b) = (u32::from(grid.get()), u32::from(snap.get()));
     let (mut x, mut y) = (a, b);
     while y != 0 {
         (x, y) = (y, x.rem_euclid(y));
@@ -1321,7 +1318,7 @@ fn shown_grid(grid: std::num::NonZeroU16, snap: std::num::NonZeroU16) -> std::nu
     u16::try_from(both)
         .ok()
         .filter(|both| *both <= 192)
-        .and_then(std::num::NonZeroU16::new)
+        .and_then(NoteValue::new)
         .unwrap_or(snap)
 }
 
@@ -1505,7 +1502,6 @@ fn refused(refusal: &Refusal) -> String {
 
 #[cfg(test)]
 pub(crate) mod test_support {
-    pub(crate) use std::num::NonZeroU16;
     pub(crate) use std::path::{Path, PathBuf};
     pub(crate) use std::sync::Arc;
 
@@ -2585,7 +2581,6 @@ mod tests {
 #[cfg(kani)]
 mod proofs {
     use super::*;
-    use std::num::NonZeroU16;
 
     #[kani::proof]
     #[kani::unwind(34)]
@@ -2593,8 +2588,8 @@ mod proofs {
         let a: u16 = u16::from(kani::any::<u8>());
         let b: u16 = u16::from(kani::any::<u8>());
         kani::assume(a > 0 && a <= 192 && b > 0 && b <= 192);
-        let grid = NonZeroU16::new(a).expect("positive");
-        let snap = NonZeroU16::new(b).expect("positive");
+        let grid = NoteValue::new(a).expect("positive");
+        let snap = NoteValue::new(b).expect("positive");
         let shown = shown_grid(grid, snap).get();
         if shown != b {
             assert!(shown <= 192);

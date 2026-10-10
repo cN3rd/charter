@@ -4,15 +4,27 @@
 //! downbeat, so a measure of 7/8 at quarters ends on a short step rather than carrying the grid
 //! into the next measure.
 
+#[cfg(kani)]
 use std::num::NonZeroU16;
 
-use charter_core::{Measure, ResolvedTime, Tick, Ticks, TicksPerBeat, Timing, Valid};
+use charter_core::{Measure, NoteValue, ResolvedTime, Tick, Ticks, TicksPerBeat, Timing, Valid};
 
 /// The resolutions offered, as the fraction of a whole note between lines: keys 1 to 0.
-pub const RESOLUTIONS: [u16; 10] = [1, 2, 3, 4, 6, 8, 12, 16, 24, 32];
+pub const RESOLUTIONS: [NoteValue; 10] = [
+    NoteValue::new(1).unwrap(),
+    NoteValue::new(2).unwrap(),
+    NoteValue::new(3).unwrap(),
+    NoteValue::QUARTER,
+    NoteValue::new(6).unwrap(),
+    NoteValue::new(8).unwrap(),
+    NoteValue::new(12).unwrap(),
+    NoteValue::new(16).unwrap(),
+    NoteValue::new(24).unwrap(),
+    NoteValue::new(32).unwrap(),
+];
 
 /// The resolution the window opens at: beats, since most songs are mapped on beats first.
-pub const DEFAULT: u16 = 4;
+pub const DEFAULT: NoteValue = NoteValue::QUARTER;
 
 /// A kind of line, drawn so that each is told apart by its shape as well as its colour.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -32,13 +44,13 @@ pub enum Line {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Grid {
     /// Number of divisions in a whole note.
-    pub resolution: NonZeroU16,
+    pub resolution: NoteValue,
 }
 
 impl Default for Grid {
     fn default() -> Self {
         Self {
-            resolution: NonZeroU16::new(DEFAULT).unwrap_or(NonZeroU16::MIN),
+            resolution: DEFAULT,
         }
     }
 }
@@ -192,7 +204,7 @@ mod tests {
 
     fn grid(resolution: u16) -> Grid {
         Grid {
-            resolution: NonZeroU16::new(resolution).unwrap(),
+            resolution: NoteValue::new(resolution).unwrap(),
         }
     }
 
@@ -294,7 +306,7 @@ mod tests {
             let timing = document.timing();
             let at = tick(bar.saturating_mul(i32::from(numerator)).saturating_mul(480));
             let measure = timing.measures_from(at).next().unwrap();
-            let lines = grid(resolution).lines(&measure, timing.ticks_per_beat());
+            let lines = grid(resolution.get()).lines(&measure, timing.ticks_per_beat());
             prop_assert_eq!(lines.first(), Some(&(measure.start, Line::Downbeat)));
             let end = measure.start.checked_add(measure.length).unwrap();
             prop_assert!(lines.iter().all(|(line, _)| *line >= measure.start && *line < end));
@@ -336,7 +348,9 @@ mod proofs {
     #[kani::proof]
     fn triplet_lines_are_exactly_the_resolutions_divisible_by_three() {
         let resolution: NonZeroU16 = kani::any();
-        let grid = Grid { resolution };
+        let grid = Grid {
+            resolution: NoteValue::new(resolution.get()).expect("nonzero resolution"),
+        };
         assert_eq!(grid.triplet(), resolution.get() % 3 == 0);
     }
 }

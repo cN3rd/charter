@@ -6,14 +6,13 @@
 //! history, cursor movement and metadata.
 
 use std::collections::BTreeSet;
-use std::num::NonZeroU16;
 use std::ops::RangeInclusive;
 
 use charter_core::{
     Anchor, Bpm, Chart, Error, Extensions, Kind, LaneCount, LaneIndex, LaneOffset, LaneSpan, Layer,
-    LayerColour, LayerName, LayerView, Marker, MarkerKey, MarkerKind, Metadata, Object, Position,
-    ResourcePath, RulesetPlugin, SettingScope, Shape, Tick, TickOffset, Ticks, TicksPerBeat,
-    Timing, TimingKind, Valid, ValidDocument,
+    LayerColour, LayerName, LayerView, Marker, MarkerKey, MarkerKind, Metadata, NoteValue, Object,
+    Position, ResourcePath, RulesetPlugin, SettingScope, Shape, Tick, TickOffset, Ticks,
+    TicksPerBeat, Timing, TimingKind, Valid, ValidDocument,
 };
 
 use crate::edit::{Edit, Op};
@@ -166,10 +165,21 @@ pub enum KeepNotes {
 }
 
 /// The snaps in ArrowVortex's menu, coarsest first.
-pub const SNAPS: [u16; 10] = [4, 8, 12, 16, 24, 32, 48, 64, 96, 192];
+pub const SNAPS: [NoteValue; 10] = [
+    NoteValue::QUARTER,
+    NoteValue::new(8).unwrap(),
+    NoteValue::new(12).unwrap(),
+    NoteValue::new(16).unwrap(),
+    NoteValue::new(24).unwrap(),
+    NoteValue::new(32).unwrap(),
+    NoteValue::new(48).unwrap(),
+    NoteValue::new(64).unwrap(),
+    NoteValue::new(96).unwrap(),
+    NoteValue::new(192).unwrap(),
+];
 
 /// The snap a song opens on, when its resolution holds it.
-const DEFAULT_SNAP: u16 = 16;
+const DEFAULT_SNAP: NoteValue = NoteValue::new(16).unwrap();
 
 /// A song open in the editor.
 #[derive(Debug)]
@@ -183,7 +193,7 @@ pub struct Song {
     /// Tick where edits and playback start.
     cursor: Tick,
     /// Notes per whole note at the current snap resolution.
-    snap: NonZeroU16,
+    snap: NoteValue,
     /// What a BPM set on a timing point keeps of the notes it times.
     keep: KeepNotes,
     /// Undo and redo state for edits made to the document.
@@ -328,7 +338,7 @@ impl Song {
             document,
             chart: 0,
             cursor: Tick::new(0),
-            snap: NonZeroU16::MIN,
+            snap: DEFAULT_SNAP,
             keep: KeepNotes::InTime,
             history: History::new(),
             selection: BTreeSet::new(),
@@ -336,9 +346,9 @@ impl Song {
         };
         let snap = song
             .snaps()
-            .find(|snap| snap.get() == DEFAULT_SNAP)
+            .find(|snap| *snap == DEFAULT_SNAP)
             .or_else(|| song.snaps().next())
-            .unwrap_or(NonZeroU16::MIN);
+            .unwrap_or(NoteValue::QUARTER);
         song.snap = snap;
         song
     }
@@ -395,8 +405,8 @@ pub(crate) mod tests {
 
     use super::*;
 
-    pub(crate) fn note(n: u16) -> NonZeroU16 {
-        NonZeroU16::new(n).unwrap()
+    pub(crate) fn note(n: u16) -> NoteValue {
+        NoteValue::new(n).unwrap()
     }
 
     pub(crate) fn at(tick: i32) -> Tick {

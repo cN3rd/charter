@@ -571,7 +571,7 @@ mod tests {
     fn dragging_a_beat_emits_one_move_and_focuses_its_destination() {
         let mut harness = timing_harness();
         harness.state_mut().window.grid = Grid {
-            resolution: NonZeroU16::new(8).unwrap(),
+            resolution: charter_core::NoteValue::new(8).unwrap(),
         };
         harness.run();
         let from = row_point(&harness, 960);
@@ -758,7 +758,7 @@ mod tests {
     fn dragging_one_of_several_selected_anchors_moves_the_whole_run() {
         let mut harness = timing_harness();
         harness.state_mut().window.grid = Grid {
-            resolution: NonZeroU16::new(8).unwrap(),
+            resolution: charter_core::NoteValue::new(8).unwrap(),
         };
         harness.run();
         let first = row_point(&harness, 0);

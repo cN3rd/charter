@@ -454,6 +454,62 @@ impl LaneSpan {
     }
 }
 
+/// Divisions of a whole note: 4 is a quarter, 12 an eighth-note triplet, 16 a sixteenth.
+///
+/// ```
+/// # use charter_core::{NoteValue, Ticks, TicksPerBeat};
+/// let sixteenth = NoteValue::new(16).unwrap();
+/// assert_eq!(TicksPerBeat::new(960).unwrap().note_length(sixteenth), Ticks::new(240));
+/// ```
+///
+/// A meter's beat count is not a note value:
+///
+/// ```compile_fail
+/// # use charter_core::{TicksPerBeat, TimeSignature};
+/// let beats = TimeSignature::default().numerator;
+/// let _ = TicksPerBeat::new(960).unwrap().note_length(beats);
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct NoteValue(NonZeroU16);
+
+impl NoteValue {
+    /// A quarter note, one of four divisions of a whole note.
+    pub const QUARTER: Self = Self(NonZeroU16::MIN.saturating_add(3));
+
+    /// `divisions` of a whole note, if it is not zero.
+    #[must_use]
+    pub const fn new(divisions: u16) -> Option<Self> {
+        match NonZeroU16::new(divisions) {
+            Some(divisions) => Some(Self(divisions)),
+            None => None,
+        }
+    }
+
+    /// Number of divisions of a whole note.
+    #[must_use]
+    pub const fn get(self) -> u16 {
+        self.0.get()
+    }
+
+    /// Divisions of a quarter-note beat, if they are whole.
+    #[must_use]
+    pub const fn per_beat(self) -> Option<NonZeroU16> {
+        let divisions = self.get();
+        if divisions.is_multiple_of(4) {
+            NonZeroU16::new(divisions.div_euclid(4))
+        } else {
+            None
+        }
+    }
+
+    /// A note value for `per_beat` divisions of a quarter-note beat, if nonzero and it fits.
+    #[must_use]
+    pub fn from_per_beat(per_beat: u16) -> Option<Self> {
+        per_beat.checked_mul(4).and_then(Self::new)
+    }
+}
+
 /// Ticks per beat: the resolution of a document's time base.
 ///
 /// ```
@@ -696,11 +752,11 @@ impl TicksPerBeat {
 
     /// How long an `n`th note lasts: `4 / n` beats, if that is a whole number of ticks.
     #[must_use]
-    pub fn note_length(self, n: NonZeroU16) -> Option<Ticks> {
+    pub fn note_length(self, value: NoteValue) -> Option<Ticks> {
         let quarters = 4_u32.saturating_mul(NonZeroU32::from(self.0).get());
-        let n = NonZeroU32::from(n).get();
-        if quarters.is_multiple_of(n) {
-            Ticks::new(quarters.div_euclid(n))
+        let divisions = u32::from(value.get());
+        if quarters.is_multiple_of(divisions) {
+            Ticks::new(quarters.div_euclid(divisions))
         } else {
             None
         }
@@ -870,7 +926,7 @@ mod tests {
         let note = |resolution: u16, n: u16| {
             TicksPerBeat::new(resolution)
                 .unwrap()
-                .note_length(NonZeroU16::new(n).unwrap())
+                .note_length(NoteValue::new(n).unwrap())
         };
         assert_eq!(note(960, 4), Ticks::new(960));
         assert_eq!(note(960, 12), Ticks::new(320));
@@ -878,6 +934,49 @@ mod tests {
         assert_eq!(note(48, 64), Ticks::new(3));
         assert_eq!(note(960, 7), None);
         assert_eq!(note(1, 8), None);
+    }
+
+    #[test]
+    fn note_values_count_divisions_of_a_whole_and_a_quarter() {
+        assert_eq!(NoteValue::new(0), None);
+        assert_eq!(NoteValue::new(16).unwrap().get(), 16);
+        for (value, per_beat) in [
+            (4, Some(1)),
+            (12, Some(3)),
+            (16, Some(4)),
+            (1, None),
+            (3, None),
+            (5, None),
+        ] {
+            assert_eq!(
+                NoteValue::new(value)
+                    .unwrap()
+                    .per_beat()
+                    .map(NonZeroU16::get),
+                per_beat
+            );
+        }
+    }
+
+    #[test]
+    fn beat_spacings_convert_to_note_values_without_wrapping() {
+        assert_eq!(NoteValue::from_per_beat(1), NoteValue::new(4));
+        assert_eq!(NoteValue::from_per_beat(3), NoteValue::new(12));
+        assert_eq!(NoteValue::from_per_beat(4), NoteValue::new(16));
+        assert_eq!(NoteValue::from_per_beat(0), None);
+        assert_eq!(NoteValue::from_per_beat(16_384), None);
+        assert_eq!(NoteValue::from_per_beat(u16::MAX), None);
+    }
+
+    #[test]
+    fn note_values_store_as_plain_nonzero_numbers() {
+        let sixteenth = NoteValue::new(16).unwrap();
+        assert_eq!(serde_json::to_value(sixteenth).unwrap(), json!(16));
+        assert_eq!(
+            serde_json::from_value::<NoteValue>(json!(16)).unwrap(),
+            sixteenth
+        );
+        serde_json::from_value::<NoteValue>(json!(0)).unwrap_err();
     }
 
     #[test]
@@ -1033,7 +1132,10 @@ mod tests {
     #[test]
     fn the_largest_resolution_and_meter_do_not_overflow() {
         let resolution = TicksPerBeat::new(u16::MAX).unwrap();
-        assert_eq!(resolution.note_length(NonZeroU16::MIN), Ticks::new(262_140));
+        assert_eq!(
+            resolution.note_length(NoteValue::new(1).unwrap()),
+            Ticks::new(262_140)
+        );
         let meter = TimeSignature {
             numerator: NonZeroU16::MAX,
             denominator: NonZeroU16::MIN,
@@ -1122,7 +1224,7 @@ mod proofs {
     #[kani::proof]
     fn a_quarter_note_has_exactly_the_resolution_in_ticks() {
         let resolution = TicksPerBeat(kani::any());
-        let length = resolution.note_length(NonZeroU16::new(4).unwrap());
+        let length = resolution.note_length(NoteValue::QUARTER);
         assert!(length.map(u32::from) == Some(u32::from(resolution.0.get())));
     }
 

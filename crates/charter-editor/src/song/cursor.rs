@@ -18,7 +18,7 @@ impl Song {
 
     /// Current snap resolution in notes per whole note.
     #[must_use]
-    pub const fn snap(&self) -> NonZeroU16 {
+    pub const fn snap(&self) -> NoteValue {
         self.snap
     }
 }
@@ -81,7 +81,7 @@ impl Song {
 
     /// Snaps to `snap` if it is one of [`SNAPS`] and a whole number of ticks at the song's
     /// resolution, and otherwise keeps the snap there is.
-    pub fn set_snap(&mut self, snap: NonZeroU16) {
+    pub fn set_snap(&mut self, snap: NoteValue) {
         if self.snaps().any(|held| held == snap) {
             self.snap = snap;
         }
@@ -94,15 +94,14 @@ impl Song {
     }
 
     /// The snaps whose notes are a whole number of ticks at this song's resolution.
-    pub(super) fn snaps(&self) -> impl Iterator<Item = NonZeroU16> + '_ {
+    pub(super) fn snaps(&self) -> impl Iterator<Item = NoteValue> + '_ {
         SNAPS
             .into_iter()
-            .filter_map(NonZeroU16::new)
             .filter(|snap| self.length_of(*snap).is_some())
     }
 
     /// Whole ticks in a note at `snap`, if the song's resolution supports it.
-    pub(super) fn length_of(&self, snap: NonZeroU16) -> Option<Ticks> {
+    pub(super) fn length_of(&self, snap: NoteValue) -> Option<Ticks> {
         self.document.document().ticks_per_beat.note_length(snap)
     }
 }
@@ -229,8 +228,8 @@ mod proofs {
         let index: usize = kani::any();
         let resolution: std::num::NonZeroU16 = kani::any();
         kani::assume(index < SNAPS.len() - 1);
-        let first = NonZeroU16::new(SNAPS[index]).expect("snap is nonzero");
-        let next = NonZeroU16::new(SNAPS[index + 1]).expect("snap is nonzero");
+        let first = SNAPS[index];
+        let next = SNAPS[index + 1];
         assert!(first < next);
         let resolution = TicksPerBeat::new(resolution.get()).expect("nonzero resolution");
         if let Some(length) = resolution.note_length(first) {

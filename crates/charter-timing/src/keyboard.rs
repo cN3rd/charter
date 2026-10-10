@@ -5,8 +5,8 @@ use egui::{Key, Modifiers};
 use crate::pointer::Gesture;
 
 use super::{
-    Bpm, Command, Edit, Frame, Grid, LastNudge, Layout, NUDGE_MERGE, NonZeroU16, RESOLUTIONS, ROW,
-    Tick, TimingWindow, audition_from, style,
+    Bpm, Command, Edit, Frame, Grid, LastNudge, Layout, NUDGE_MERGE, RESOLUTIONS, ROW, Tick,
+    TimingWindow, audition_from, style,
 };
 
 /// What a key asks of the timing window.
@@ -366,10 +366,7 @@ pub(crate) fn act(
             }
         }
         Intent::Grid(at) => {
-            if let Some(resolution) = RESOLUTIONS
-                .get(at)
-                .and_then(|value| NonZeroU16::new(*value))
-            {
+            if let Some(&resolution) = RESOLUTIONS.get(at) {
                 window.grid = Grid { resolution };
             }
         }

@@ -79,14 +79,12 @@ pub(crate) fn toolbar(
         ui.separator();
         let caption = ui.weak("Grid");
         egui::ComboBox::from_id_salt("timing grid")
-            .selected_text(format!("1/{}", window.grid.resolution))
+            .selected_text(format!("1/{}", window.grid.resolution.get()))
             .show_ui(ui, |ui| {
                 for (key, resolution) in (1..).zip(RESOLUTIONS) {
                     let shortcut = if key == 10 { 0 } else { key };
-                    let text = format!("1/{resolution}   {shortcut}");
-                    if let Some(chosen) = std::num::NonZeroU16::new(resolution) {
-                        ui.selectable_value(&mut window.grid, Grid { resolution: chosen }, text);
-                    }
+                    let text = format!("1/{}   {shortcut}", resolution.get());
+                    ui.selectable_value(&mut window.grid, Grid { resolution }, text);
                 }
             })
             .response

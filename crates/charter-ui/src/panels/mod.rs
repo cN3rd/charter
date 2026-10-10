@@ -5,10 +5,9 @@
 //! layers, markers, shared text entries, transport/status controls, empty-state notices and
 //! modal dialogs. Re-exports preserve the existing `crate::panels::...` paths.
 
-use std::num::NonZeroU16;
-
 use charter_core::{
-    LayerColour, LayerView, MarkerKind, Metadata, ResolvedTime, ResourcePath, SettingScope, Tick,
+    LayerColour, LayerView, MarkerKind, Metadata, NoteValue, ResolvedTime, ResourcePath,
+    SettingScope, Tick,
 };
 use charter_editor::{ChartIndex, LayerIndex, LayerNotes, Song, Step};
 use egui::{self, Align, Layout, RichText, Ui};
