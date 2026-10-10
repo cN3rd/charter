@@ -1,3 +1,6 @@
 target
 docs/book
 dist
+# Model weights download at runtime; a committed copy would stay in every clone.
+*.ckpt
+*.gguf
