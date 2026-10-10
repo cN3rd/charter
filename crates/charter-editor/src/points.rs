@@ -1,7 +1,7 @@
 //! Timing points: every tick of a timing that holds events or an anchor, a tempo anchor and a meter at one tick
 //! making one point, as osu! lists them. The song panel edits the point in effect at the cursor.
 
-use charter_core::{Bpm, Extensions, Tick, TimeSignature, TimingEvent, TimingKind};
+use charter_core::{Bpm, Extensions, ResolvedTime, Tick, TimeSignature, TimingEvent, TimingKind};
 
 use crate::song::{Refusal, Song};
 
@@ -26,21 +26,21 @@ impl Song {
             .or_else(|| ticks.first().copied())
     }
 
-    /// Moves the tempo point on `tick` to `seconds` into the audio, keeping its beat, as one
-    /// step. The first point starts the song's grid, so it takes every point along, as the
-    /// offset does; any other moves alone and the tempos on either side follow.
+    /// Moves the tempo point on `tick` to `at`, keeping its beat, as one step. The first point
+    /// starts the song's grid, so it takes every point along, as the offset does; any other moves
+    /// alone and the tempos on either side follow.
     ///
     /// # Errors
     ///
     /// Refuses on a read-only song, and when the point would reach or pass a neighbour's moment.
-    pub fn move_point_to(&mut self, tick: Tick, seconds: f64) -> Result<(), Refusal> {
+    pub fn move_point_to(&mut self, tick: Tick, at: ResolvedTime) -> Result<(), Refusal> {
         if self.timing().anchors.first().map(|anchor| anchor.tick) != Some(tick) {
-            return self.sync(tick, seconds);
+            return self.sync(tick, at);
         }
-        let later = seconds - self.timing().time_at(tick).seconds();
-        let start = self.timing().time_at(Tick::new(0)).seconds() + later;
-        let offset =
-            charter_core::Origin::nearest(start).map_err(|_invalid_offset| Refusal::NotWhole)?;
+        let later = at - self.timing().time_at(tick);
+        let start = self.timing().time_at(Tick::new(0)) + later;
+        let offset = charter_core::Origin::nearest(start.seconds())
+            .map_err(|_invalid_offset| Refusal::NotWhole)?;
         self.set_offset(offset)
     }
 
@@ -262,20 +262,28 @@ mod tests {
     }
 
     fn moments(song: &Song) -> Vec<f64> {
-        song.anchors().iter().map(|pin| pin.seconds).collect()
+        song.anchors()
+            .iter()
+            .map(|pin| pin.seconds.seconds())
+            .collect()
     }
 
     #[test]
     fn a_tempo_point_moves_alone_but_the_first_moves_the_whole_grid() {
         let mut song = timed(&json!([bpm_event(0, 120.0), bpm_event(1920, 120.0)]), None);
-        song.move_point_to(Tick::new(1920), 1.25).unwrap();
+        song.move_point_to(Tick::new(1920), ResolvedTime::from_seconds(1.25).unwrap())
+            .unwrap();
         assert_eq!(moments(&song), [0.0, 1.25]);
-        song.move_point_to(Tick::new(0), 0.5).unwrap();
+        song.move_point_to(Tick::new(0), ResolvedTime::from_seconds(0.5).unwrap())
+            .unwrap();
         assert_eq!(moments(&song), [0.5, 1.75]);
         song.undo().unwrap();
         song.undo().unwrap();
         assert_eq!(moments(&song), [0.0, 1.0]);
-        assert!(song.move_point_to(Tick::new(1920), -1.0).is_err());
+        assert!(
+            song.move_point_to(Tick::new(1920), ResolvedTime::from_seconds(-1.0).unwrap())
+                .is_err()
+        );
     }
 
     #[test]

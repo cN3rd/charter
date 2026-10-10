@@ -138,8 +138,8 @@ impl Window {
         }
     }
     /// Plays from `from` with the metronome on to hear a timing edit.
-    pub(super) fn audition(&mut self, from: f64) {
-        self.start(from, Mode::Audition);
+    pub(super) fn audition(&mut self, from: ResolvedTime) {
+        self.start(from.seconds(), Mode::Audition);
     }
     /// Plays the settings' snippet of audio before the cursor, or after it, then pauses, leaving the
     /// cursor where it is so the same moment can be heard again.
@@ -1260,7 +1260,9 @@ mod tests {
     #[test]
     fn a_sound_change_during_an_audition_keeps_its_metronome() {
         let mut harness = playable();
-        harness.state_mut().apply(Action::Audition(0.0));
+        harness
+            .state_mut()
+            .apply(Action::Audition(ResolvedTime::from_seconds(0.0).unwrap()));
         harness.state_mut().take_requests();
         harness.state_mut().settings.note_ticks = true;
         harness.run();

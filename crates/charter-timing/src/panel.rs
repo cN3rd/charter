@@ -1,7 +1,7 @@
 //! The toolbar, inspector, issue list and status line of the timing window: the numbers behind
 //! what the rows show, each one that can be edited editable in place.
 
-use charter_core::{Bpm, Tick};
+use charter_core::{Bpm, ResolvedTime, Tick};
 use charter_style as style;
 use egui::{RichText, Ui};
 
@@ -267,11 +267,11 @@ fn anchor(
             .strong(),
     );
     let bpm = frame.bpm_at(pin.tick);
-    let delta = accuracy::nearest_onset(frame.onsets, window.sensitivity, pin.seconds)
-        .map(|onset| (pin.seconds - onset) * 1000.0);
+    let delta = accuracy::nearest_onset(frame.onsets, window.sensitivity, pin.seconds.seconds())
+        .map(|onset| (pin.seconds.seconds() - onset) * 1000.0);
     compact(ui, "anchor", |ui| {
         let caption = ui.weak("t");
-        let text = format!("{:.4}", pin.seconds);
+        let text = format!("{:.4}", pin.seconds.seconds());
         if editable {
             let field = style::text_field(
                 ui,
@@ -282,14 +282,18 @@ fn anchor(
             );
             window.drafts.focus_seconds = false;
             if let Some(typed) = field {
-                match typed.parse::<f64>() {
-                    Ok(seconds) if seconds.is_finite() => {
+                match typed
+                    .parse::<f64>()
+                    .ok()
+                    .and_then(ResolvedTime::from_seconds)
+                {
+                    Some(seconds) => {
                         commands.push(Command::Edit(Edit::Sync {
                             tick: pin.tick,
                             seconds,
                         }));
                     }
-                    _ => window.status = Some(format!("{typed} is not a time in seconds")),
+                    None => window.status = Some(format!("{typed} is not a time in seconds")),
                 }
             }
         } else {
@@ -535,7 +539,7 @@ mod tests {
             harness.state().commands,
             [Command::Edit(Edit::Sync {
                 tick: Tick::new(960),
-                seconds: 0.625
+                seconds: ResolvedTime::from_seconds(0.625).unwrap()
             })]
         );
         harness.state_mut().commands.clear();

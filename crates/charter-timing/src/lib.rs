@@ -22,7 +22,7 @@ pub mod rows;
 use std::num::NonZeroU16;
 
 use charter_audio::{Onset, Peaks};
-use charter_core::{Bpm, ResolvedTime, Tick, Timing, Valid};
+use charter_core::{Bpm, ResolvedTime, Tick, TimeShift, Timing, Valid};
 use charter_editor::{Pin, Refusal, Song};
 use charter_style as style;
 use egui::Pos2;
@@ -40,8 +40,8 @@ pub enum Command {
     Edit(Edit),
     /// Put the cursor on the tick and play from there, unless the song is playing already.
     PlayFrom(Tick),
-    /// Play from this many seconds into the audio with the metronome on, to hear an edit.
-    Audition(f64),
+    /// Play from this audio moment with the metronome on, to hear an edit.
+    Audition(ResolvedTime),
     /// Play, or pause.
     TogglePlay,
     /// Loop the ticks from the first to the second with the metronome, or stop looping them
@@ -63,12 +63,12 @@ pub enum Command {
 /// An edit the timing window makes to a song's timing.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Edit {
-    /// Makes the beat on `tick` fall `seconds` into the audio, anchoring it there.
+    /// Makes the beat on `tick` fall at this audio moment, anchoring it there.
     Sync {
         /// Beat to pin.
         tick: Tick,
-        /// Position in the audio, in seconds.
-        seconds: f64,
+        /// Moment in the audio.
+        seconds: ResolvedTime,
     },
     /// Sets the tempo starting at this anchor, accounting for stops, delays and warps.
     SetBpmAt {
@@ -81,12 +81,12 @@ pub enum Edit {
     Unsync(Vec<Tick>),
     /// Moves each anchor on a first tick to the beat on its second, keeping their moments.
     MoveAnchors(Vec<(Tick, Tick)>),
-    /// Moves the anchors on the ticks `by` seconds, merged into the step before when `merge`.
+    /// Moves the anchors on the ticks by an audio span, merged into the step before when `merge`.
     Nudge {
         /// Anchors to shift in the audio.
         ticks: Vec<Tick>,
-        /// Signed shift in seconds.
-        by: f64,
+        /// Signed audio span.
+        by: TimeShift,
         /// Whether to join the preceding nudge in undo history.
         merge: bool,
     },
@@ -492,6 +492,9 @@ impl TimingWindow {
         if ticks.is_empty() {
             return;
         }
+        let Some(by) = TimeShift::from_seconds(by) else {
+            return;
+        };
         let merge = self
             .last_nudge
             .as_ref()
@@ -536,13 +539,20 @@ impl TimingWindow {
             ));
             return;
         }
-        commands.push(Command::Edit(Edit::Sync { tick, seconds }));
+        commands.push(Command::Edit(Edit::Sync { tick, seconds: at }));
         self.focus_on(tick);
         self.status = None;
-        if self.audition {
-            commands.push(Command::Audition(seconds - lead(frame, tick)));
+        if self.audition
+            && let Some(from) = audition_from(frame, at, tick)
+        {
+            commands.push(Command::Audition(from));
         }
     }
+}
+
+/// Audio moment a beat before `tick`, when it can be represented.
+fn audition_from(frame: &Frame<'_>, at: ResolvedTime, tick: Tick) -> Option<ResolvedTime> {
+    ResolvedTime::from_seconds(at.seconds() - lead(frame, tick))
 }
 
 /// How long before `tick` an audition starts: a beat there, kept between 150 and 600 ms.
@@ -867,6 +877,7 @@ mod tests {
     #[test]
     fn nudges_merge_for_the_same_selection_until_a_refusal_resets_them() {
         let mut harness = timing_harness();
+        let by = TimeShift::from_seconds(0.001).unwrap();
         let at = row_point(&harness, 960);
         click(&mut harness, at, Modifiers::NONE);
         harness.key_press(Key::ArrowRight);
@@ -878,19 +889,19 @@ mod tests {
             [
                 Command::Edit(Edit::Nudge {
                     ticks: vec![Tick::new(960)],
-                    by: 0.001,
+                    by,
                     merge: false
                 }),
                 Command::Edit(Edit::Nudge {
                     ticks: vec![Tick::new(960)],
-                    by: 0.001,
+                    by,
                     merge: true
                 })
             ]
         );
         let edit = Edit::Nudge {
             ticks: vec![Tick::new(960)],
-            by: 0.001,
+            by,
             merge: true,
         };
         let state = harness.state_mut();
@@ -905,7 +916,7 @@ mod tests {
             harness.state().commands.last(),
             Some(&Command::Edit(Edit::Nudge {
                 ticks: vec![Tick::new(960)],
-                by: 0.001,
+                by,
                 merge: false
             }))
         );

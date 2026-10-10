@@ -8,7 +8,7 @@
 use std::ops::RangeInclusive;
 
 use charter_audio::Onset;
-use charter_core::{Bpm, Tick, Timing, TimingKind, Valid};
+use charter_core::{Bpm, ResolvedTime, Tick, Timing, TimingKind, Valid};
 use charter_editor::{Pin, TimedSpan};
 
 use crate::grid::Grid;
@@ -219,7 +219,10 @@ pub fn fit(
     }
     let ticks_per_beat = timing.ticks_per_beat();
     let with_tail = last == last_pin;
-    let mut points: Vec<(Tick, f64)> = pins.iter().map(|pin| (pin.tick, pin.seconds)).collect();
+    let mut points: Vec<_> = pins
+        .iter()
+        .map(|pin| (pin.tick, pin.seconds.seconds()))
+        .collect();
     // The tempo after the last anchor fits as the moment of a point past it, where its onsets
     // end, so it is a moment like the others.
     if with_tail {
@@ -236,7 +239,10 @@ pub fn fit(
             .min(i64::from(i32::MAX));
         let far = Tick::new(i32::try_from(far).ok()?);
         let span = TimedSpan::between(timing, pin.tick, far)?;
-        points.push((far, pin.seconds + span.at_bpm(tail, ticks_per_beat)));
+        points.push((
+            far,
+            pin.seconds.seconds() + span.at_bpm(tail, ticks_per_beat),
+        ));
     }
     // Every point by index: the anchors, then one past the last when fitting the tail.
     let free: Vec<usize> = (first..=last)
@@ -302,18 +308,24 @@ pub fn fit(
         tail
     };
     Some(Fitted {
-        pins: pins
-            .iter()
-            .zip(fitted)
-            .map(|(pin, (_, seconds))| Pin {
-                tick: pin.tick,
-                seconds,
-            })
-            .collect(),
+        pins: resolved_pins(pins, fitted)?,
         tail,
         before_ms: before * 1000.0,
         after_ms: after * 1000.0,
     })
+}
+
+/// Keeps fitted moments only when they can be carried as audio times.
+fn resolved_pins(pins: &[Pin], fitted: Vec<(Tick, f64)>) -> Option<Vec<Pin>> {
+    pins.iter()
+        .zip(fitted)
+        .map(|(pin, (_, seconds))| {
+            Some(Pin {
+                tick: pin.tick,
+                seconds: ResolvedTime::from_seconds(seconds)?,
+            })
+        })
+        .collect()
 }
 
 /// The root mean square of how far `rows` miss with the free moments at `values`, in seconds.
@@ -538,8 +550,8 @@ pub fn issues(
         }
     }
     for pin in pins {
-        if let Some(onset) = nearest_onset(onsets, sensitivity, pin.seconds) {
-            let ms = (pin.seconds - onset) * 1000.0;
+        if let Some(onset) = nearest_onset(onsets, sensitivity, pin.seconds.seconds()) {
+            let ms = (pin.seconds.seconds() - onset) * 1000.0;
             if ms.abs() > ANCHOR_WARNING_MS {
                 found.push(Issue::Anchor { tick: pin.tick, ms });
             }
@@ -593,9 +605,19 @@ mod tests {
             .iter()
             .map(|anchor| Pin {
                 tick: anchor.tick,
-                seconds: timing.time_at(anchor.tick).seconds(),
+                seconds: timing.time_at(anchor.tick),
             })
             .collect()
+    }
+
+    #[test]
+    fn a_non_finite_fit_cannot_become_an_anchor() {
+        let document = song(0.0, &json!([bpm(0, 120.0)]));
+        let pins = pins_of(&document);
+        assert_eq!(
+            resolved_pins(&pins, vec![(Tick::new(0), f64::INFINITY)]),
+            None
+        );
     }
 
     #[test]
@@ -685,7 +707,7 @@ mod tests {
         let tail = Bpm::try_from(120.0).unwrap();
         let fitted = fit(timing, (&pins, tail), 1..=1, &found, false).unwrap();
         assert!(
-            (fitted.pins[1].seconds - 2.1).abs() < 0.01,
+            (fitted.pins[1].seconds.seconds() - 2.1).abs() < 0.01,
             "{:?}",
             fitted.pins
         );
@@ -726,7 +748,11 @@ mod tests {
         )
         .unwrap();
         assert!(fitted.before_ms.abs() < 1e-6, "{}", fitted.before_ms);
-        assert!(fitted.pins[0].seconds.abs() < 1e-6, "{:?}", fitted.pins);
+        assert!(
+            fitted.pins[0].seconds.seconds().abs() < 1e-6,
+            "{:?}",
+            fitted.pins
+        );
     }
 
     #[test]
@@ -756,7 +782,11 @@ mod tests {
         )
         .unwrap();
         assert!(fitted.before_ms.abs() < 1e-6, "{}", fitted.before_ms);
-        assert!(fitted.pins[0].seconds.abs() < 1e-6, "{:?}", fitted.pins);
+        assert!(
+            fitted.pins[0].seconds.seconds().abs() < 1e-6,
+            "{:?}",
+            fitted.pins
+        );
     }
 
     #[test]

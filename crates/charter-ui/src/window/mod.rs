@@ -576,9 +576,8 @@ pub(crate) enum Action {
         /// Replacement text, or none to remove the setting.
         value: Option<String>,
     },
-    /// Moves the tempo point on the tick to this many seconds into the audio, the first one
-    /// taking the whole grid along.
-    MovePointTo(Tick, f64),
+    /// Moves the tempo point on the tick to this audio moment, the first one taking the grid along.
+    MovePointTo(Tick, ResolvedTime),
     /// Gives the timing point on the tick this meter.
     SetMeterAt(Tick, charter_core::TimeSignature),
     /// Removes the timing point on the tick.
@@ -607,8 +606,8 @@ pub(crate) enum Action {
     JumpEnd,
     /// An edit the timing window asks for.
     Timing(charter_timing::Edit),
-    /// Play from this many seconds into the audio with the metronome on, to hear an edit.
-    Audition(f64),
+    /// Play from this audio moment with the metronome on, to hear an edit.
+    Audition(ResolvedTime),
     /// Play the settings' snippet of audio before the cursor, or after it, leaving the cursor be.
     PlaySnippet(Step),
     /// Ask whether to reset the open chart's timing.
@@ -2138,7 +2137,10 @@ pub(crate) mod test_support {
 
     pub(crate) fn anchor_seconds(harness: &Harness<'_, Window>) -> Vec<f64> {
         let song = harness.state().song.as_ref().unwrap();
-        song.anchors().iter().map(|pin| pin.seconds).collect()
+        song.anchors()
+            .iter()
+            .map(|pin| pin.seconds.seconds())
+            .collect()
     }
 
     #[expect(
@@ -2277,7 +2279,10 @@ pub(crate) mod test_support {
 
     pub(crate) fn moments(harness: &Harness<'_, Window>) -> Vec<f64> {
         let song = harness.state().song.as_ref().unwrap();
-        song.anchors().iter().map(|pin| pin.seconds).collect()
+        song.anchors()
+            .iter()
+            .map(|pin| pin.seconds.seconds())
+            .collect()
     }
 
     pub(crate) fn peaks() -> Arc<charter_audio::Peaks> {

@@ -3,7 +3,7 @@
 //! fields of the point in effect at the cursor, which the list highlights. Clicking a point in
 //! the list moves the cursor to it.
 
-use charter_core::{Bpm, Origin, Tick, TimeSignature, Timing, TimingKind, Valid};
+use charter_core::{Bpm, Origin, ResolvedTime, Tick, TimeSignature, Timing, TimingKind, Valid};
 use charter_editor::Song;
 use egui::{RichText, Ui};
 
@@ -295,6 +295,7 @@ fn point_fields(
         if editable && anchored {
             let to = |typed: &str| {
                 moment(typed)
+                    .and_then(ResolvedTime::from_seconds)
                     .map(|at| Action::MovePointTo(tick, at))
                     .ok_or_else(|| format!("{typed} is not a time, such as 00:26.100"))
             };

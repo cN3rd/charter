@@ -6,7 +6,7 @@ use crate::pointer::Gesture;
 
 use super::{
     Bpm, Command, Edit, Frame, Grid, LastNudge, Layout, NUDGE_MERGE, NonZeroU16, RESOLUTIONS, ROW,
-    Tick, TimingWindow, lead, style,
+    Tick, TimingWindow, audition_from, style,
 };
 
 /// What a key asks of the timing window.
@@ -287,8 +287,9 @@ pub(crate) fn act(
                 .focus
                 .and_then(index)
                 .and_then(|at| frame.pins.get(at))
+                && let Some(from) = audition_from(frame, pin.seconds, pin.tick)
             {
-                commands.push(Command::Audition(pin.seconds - lead(frame, pin.tick)));
+                commands.push(Command::Audition(from));
             }
         }
         Intent::Escape => {
@@ -530,7 +531,12 @@ mod tests {
         click(&mut harness, at, Modifiers::NONE);
         harness.key_press(Key::Enter);
         harness.step();
-        assert_eq!(harness.state().commands, [Command::Audition(0.0)]);
+        assert_eq!(
+            harness.state().commands,
+            [Command::Audition(
+                charter_core::ResolvedTime::from_seconds(0.0).unwrap()
+            )]
+        );
     }
 
     #[test]
@@ -547,17 +553,17 @@ mod tests {
             [
                 Command::Edit(Edit::Nudge {
                     ticks: vec![Tick::new(960)],
-                    by: 0.001,
+                    by: charter_core::TimeShift::from_seconds(0.001).unwrap(),
                     merge: false
                 }),
                 Command::Edit(Edit::Nudge {
                     ticks: vec![Tick::new(960)],
-                    by: 0.001,
+                    by: charter_core::TimeShift::from_seconds(0.001).unwrap(),
                     merge: false
                 }),
                 Command::Edit(Edit::Nudge {
                     ticks: vec![Tick::new(0), Tick::new(960)],
-                    by: 0.001,
+                    by: charter_core::TimeShift::from_seconds(0.001).unwrap(),
                     merge: false
                 })
             ]

@@ -3,18 +3,18 @@
 //! and only the tempo after the last one is set. Every edit here is a new set of pins, from
 //! which the tempo is rebuilt, so no edit can leave the pins out of order.
 
-use charter_core::{Anchor, Bpm, Origin, Tick, Timing, ValidDocument};
+use charter_core::{Anchor, Bpm, Origin, ResolvedTime, Tick, TimeShift, Timing, ValidDocument};
 
 use crate::edit::{Edit, Op};
 use crate::song::{Refusal, Song};
 
-/// An anchor: the beat on `tick` pinned `seconds` into the audio.
+/// An anchor: the beat on `tick` pinned to a moment in the audio.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Pin {
     /// Beat fixed to the audio.
     pub tick: Tick,
     /// Moment in the audio, measured from its start.
-    pub seconds: f64,
+    pub seconds: ResolvedTime,
 }
 
 /// How far apart two moments have to be to count as two: a microsecond, the finest time the
@@ -30,7 +30,7 @@ impl Song {
             .iter()
             .map(|anchor| Pin {
                 tick: anchor.tick,
-                seconds: charter_core::ResolvedTime::from(anchor.seconds).seconds(),
+                seconds: ResolvedTime::from(anchor.seconds),
             })
             .collect()
     }
@@ -41,7 +41,7 @@ impl Song {
         self.timing().tempo
     }
 
-    /// Makes the beat on `tick` fall `seconds` into the audio, as one step, anchoring it there
+    /// Makes the beat on `tick` fall at `at` in the audio, as one step, anchoring it there
     /// if it was not. The anchors on either side keep their moments, the tempos between follow,
     /// and a beat after the last anchor keeps the tempo after it. Does nothing when the beat is
     /// already an anchor there.
@@ -50,14 +50,14 @@ impl Song {
     ///
     /// Refuses on a read-only song, and with [`Refusal::Crosses`] when the beat would reach or
     /// pass a neighbouring anchor's moment.
-    pub fn sync(&mut self, tick: Tick, seconds: f64) -> Result<(), Refusal> {
+    pub fn sync(&mut self, tick: Tick, at: ResolvedTime) -> Result<(), Refusal> {
         let mut pins = self.anchors();
         match pins.iter_mut().find(|pin| pin.tick == tick) {
-            Some(pin) if (pin.seconds - seconds).abs() <= APART => return Ok(()),
-            Some(pin) => pin.seconds = seconds,
+            Some(pin) if (pin.seconds - at).seconds().abs() <= APART => return Ok(()),
+            Some(pin) => pin.seconds = at,
             None => {
-                let at = pins.partition_point(|pin| pin.tick < tick);
-                pins.insert(at, Pin { tick, seconds });
+                let index = pins.partition_point(|pin| pin.tick < tick);
+                pins.insert(index, Pin { tick, seconds: at });
             }
         }
         self.repin(&pins, self.tail_bpm(), false)
@@ -98,22 +98,27 @@ impl Song {
         self.repin(&pins, self.tail_bpm(), false)
     }
 
-    /// Moves the anchors on `ticks` `by` seconds later in the audio, keeping their beats, as one
-    /// step, or as part of the step before when `merge`, so a run of nudges undoes at once.
-    /// Nothing moves unless every anchor can.
+    /// Moves the anchors on `ticks` by the audio span `by`, keeping their beats, as one step, or
+    /// as part of the step before when `merge`, so a run of nudges undoes at once. Nothing moves
+    /// unless every anchor can.
     ///
     /// # Errors
     ///
     /// Refuses on a read-only song, and with [`Refusal::Crosses`] when an anchor would reach or
     /// pass one that stays.
-    pub fn nudge_anchors(&mut self, ticks: &[Tick], by: f64, merge: bool) -> Result<(), Refusal> {
+    pub fn nudge_anchors(
+        &mut self,
+        ticks: &[Tick],
+        by: TimeShift,
+        merge: bool,
+    ) -> Result<(), Refusal> {
         let mut pins = self.anchors();
         let mut moved = false;
         for pin in pins.iter_mut().filter(|pin| ticks.contains(&pin.tick)) {
-            pin.seconds += by;
+            pin.seconds = pin.seconds + by;
             moved = true;
         }
-        if !moved || by == 0.0 {
+        if !moved || by.seconds() == 0.0 {
             return Ok(());
         }
         self.repin(&pins, self.tail_bpm(), merge)
@@ -287,8 +292,10 @@ impl Song {
             .map(|pin| {
                 Ok(Anchor {
                     tick: pin.tick,
-                    seconds: Origin::try_from(micro(pin.seconds).ok_or(Refusal::NotWhole)?)
-                        .map_err(|_invalid_origin| Refusal::NotWhole)?,
+                    seconds: Origin::try_from(
+                        micro(pin.seconds.seconds()).ok_or(Refusal::NotWhole)?,
+                    )
+                    .map_err(|_invalid_origin| Refusal::NotWhole)?,
                 })
             })
             .collect::<Result<Vec<_>, Refusal>>()?;
@@ -326,7 +333,7 @@ fn in_order(pins: &[Pin], key: impl Fn(&Pin) -> i64) -> Result<(), Refusal> {
 fn in_order_in_time(pins: &[Pin]) -> Result<(), Refusal> {
     for pair in pins.windows(2) {
         if let [a, b] = pair
-            && b.seconds - a.seconds <= APART
+            && (b.seconds - a.seconds).seconds() <= APART
         {
             return Err(Refusal::Crosses(b.tick));
         }
@@ -342,7 +349,7 @@ fn micro(seconds: f64) -> Option<f64> {
 
 #[cfg(test)]
 mod tests {
-    use charter_core::TimingKind;
+    use charter_core::{ResolvedTime, TimeShift, TimingKind};
     use serde_json::{Value, json};
 
     use super::*;
@@ -350,6 +357,14 @@ mod tests {
 
     fn at(tick: i32) -> Tick {
         Tick::new(tick)
+    }
+
+    fn moment(seconds: f64) -> ResolvedTime {
+        ResolvedTime::from_seconds(seconds).unwrap()
+    }
+
+    fn shift(seconds: f64) -> TimeShift {
+        TimeShift::from_seconds(seconds).unwrap()
     }
 
     fn offset(song: &Song) -> f64 {
@@ -360,7 +375,8 @@ mod tests {
     fn a_beat_synced_later_slows_the_tempo_before_it_and_hurries_the_one_after() {
         let events = json!([bpm_event(0, 120.0), bpm_event(3840, 120.0)]);
         let mut song = timed(&events, None);
-        song.sync(at(1920), 1.25).unwrap();
+        song.sync(at(1920), ResolvedTime::from_seconds(1.25).unwrap())
+            .unwrap();
         let synced = json!([
             bpm_event(0, 96.0),
             bpm_event(1920, 160.0),
@@ -375,7 +391,7 @@ mod tests {
     #[test]
     fn the_last_anchor_keeps_its_tempo_after_it() {
         let mut song = timed(&json!([bpm_event(0, 120.0)]), None);
-        song.sync(at(1920), 1.25).unwrap();
+        song.sync(at(1920), moment(1.25)).unwrap();
         let synced = json!([bpm_event(0, 96.0), bpm_event(1920, 120.0)]);
         assert_eq!(song_events(&song), synced);
     }
@@ -383,7 +399,7 @@ mod tests {
     #[test]
     fn the_first_anchor_moves_the_offset_and_the_next_stays_put() {
         let mut song = timed(&json!([bpm_event(0, 120.0), bpm_event(3840, 120.0)]), None);
-        song.sync(at(0), 0.5).unwrap();
+        song.sync(at(0), moment(0.5)).unwrap();
         assert!((offset(&song) - 0.5).abs() < 1e-9);
         let synced = json!([bpm_event(0, 160.0), bpm_event(3840, 120.0)]);
         assert_eq!(song_events(&song), synced);
@@ -393,17 +409,20 @@ mod tests {
     fn a_beat_cannot_pass_a_neighbouring_anchor() {
         let events = json!([bpm_event(0, 120.0), bpm_event(3840, 120.0)]);
         let mut song = timed(&events, None);
-        assert!(matches!(song.sync(at(1920), 2.5), Err(Refusal::Crosses(_))));
+        assert!(matches!(
+            song.sync(at(1920), moment(2.5)),
+            Err(Refusal::Crosses(_))
+        ));
         assert_eq!(song_events(&song), events);
     }
 
     #[test]
     fn a_beat_synced_where_it_is_becomes_an_anchor_without_retiming() {
         let mut song = timed(&json!([bpm_event(0, 120.0)]), None);
-        song.sync(at(1920), 1.0).unwrap();
+        song.sync(at(1920), moment(1.0)).unwrap();
         let anchored = json!([bpm_event(0, 120.0), bpm_event(1920, 120.0)]);
         assert_eq!(song_events(&song), anchored);
-        song.sync(at(1920), 1.0).unwrap();
+        song.sync(at(1920), moment(1.0)).unwrap();
         song.undo().unwrap();
         assert!(!song.can_undo());
     }
@@ -415,7 +434,7 @@ mod tests {
             None,
         );
         let next = song.timing().time_at(at(1920)).seconds();
-        song.sync(at(480), 0.5).unwrap();
+        song.sync(at(480), moment(0.5)).unwrap();
         assert!((song.timing().time_at(at(480)).seconds() - 0.5).abs() < 1e-6);
         assert!((song.timing().time_at(at(1920)).seconds() - next).abs() < 1e-6);
     }
@@ -472,11 +491,11 @@ mod tests {
         let mut song = timed(&events, None);
         let before = song.anchors();
         assert!(matches!(
-            song.nudge_anchors(&[at(1920)], 1.0, false),
+            song.nudge_anchors(&[at(1920)], shift(1.0), false),
             Err(Refusal::Crosses(_))
         ));
         assert!(matches!(
-            song.nudge_anchors(&[at(1920)], -1.0, false),
+            song.nudge_anchors(&[at(1920)], shift(-1.0), false),
             Err(Refusal::Crosses(_))
         ));
         assert_eq!(song.anchors(), before);
@@ -550,7 +569,7 @@ mod tests {
         let song = timed(&json!([bpm_event(0, 120.0), bpm_event(1920, 60.0)]), None);
         let pins = song.anchors();
         assert_eq!(pins.len(), 2);
-        assert!((pins[1].seconds - 1.0).abs() < 1e-9);
+        assert_eq!(pins[1].seconds, ResolvedTime::from_seconds(1.0).unwrap());
         assert_eq!(song.tail_bpm(), Bpm::try_from(60.0).unwrap());
     }
 
@@ -566,7 +585,7 @@ mod tests {
     #[test]
     fn a_nudge_leaves_the_tempo_of_segments_whose_ends_stay_exactly_as_it_was() {
         let mut song = timed(&four(), None);
-        song.nudge_anchors(&[at(1920)], 0.01, false).unwrap();
+        song.nudge_anchors(&[at(1920)], shift(0.01), false).unwrap();
         let events = song_events(&song);
         assert_eq!(events[2], bpm_event(3840, 133.333_333));
         assert_eq!(events[3], bpm_event(5760, 97.5));
@@ -580,12 +599,16 @@ mod tests {
     #[test]
     fn a_selection_nudged_into_a_neighbour_moves_nothing_and_says_which() {
         let mut song = timed(&four(), None);
-        let far = song.nudge_anchors(&[at(1920), at(3840)], 5.0, false);
+        let far = song.nudge_anchors(&[at(1920), at(3840)], shift(5.0), false);
         assert!(matches!(far, Err(Refusal::Crosses(tick)) if tick == at(5760)));
         assert_eq!(song_events(&song), four());
-        song.nudge_anchors(&[at(1920), at(3840)], 0.05, false)
+        song.nudge_anchors(&[at(1920), at(3840)], shift(0.05), false)
             .unwrap();
-        let seconds: Vec<f64> = song.anchors().iter().map(|pin| pin.seconds).collect();
+        let seconds: Vec<f64> = song
+            .anchors()
+            .iter()
+            .map(|pin| pin.seconds.seconds())
+            .collect();
         for (got, want) in seconds.iter().zip([0.0, 1.05, 1.85, 2.7]) {
             assert!((got - want).abs() < 1e-6, "{seconds:?}");
         }
@@ -595,11 +618,12 @@ mod tests {
     fn twenty_nudges_merged_undo_as_one_step() {
         let mut song = timed(&four(), None);
         let before = song.anchors()[1].seconds;
-        song.nudge_anchors(&[at(1920)], 0.001, false).unwrap();
+        song.nudge_anchors(&[at(1920)], shift(0.001), false)
+            .unwrap();
         for _ in 1..20 {
-            song.nudge_anchors(&[at(1920)], 0.001, true).unwrap();
+            song.nudge_anchors(&[at(1920)], shift(0.001), true).unwrap();
         }
-        assert!((song.anchors()[1].seconds - before - 0.02).abs() < 1e-6);
+        assert!(((song.anchors()[1].seconds - before).seconds() - 0.02).abs() < 1e-6);
         song.undo().unwrap();
         assert_eq!(song_events(&song), four());
         assert!(!song.can_undo());
@@ -639,13 +663,17 @@ mod tests {
             bpm_event(3840, 60.0)
         ]);
         let mut song = timed(&events, None);
-        let times: Vec<f64> = song.anchors().iter().map(|pin| pin.seconds).collect();
+        let times: Vec<f64> = song
+            .anchors()
+            .iter()
+            .map(|pin| pin.seconds.seconds())
+            .collect();
         song.scale_tempo(&[at(1920)], true).unwrap();
         let pins = song.anchors();
         let ticks: Vec<Tick> = pins.iter().map(|pin| pin.tick).collect();
         assert_eq!(ticks, [at(0), at(1920), at(5760)]);
         for (pin, was) in pins.iter().zip(times) {
-            assert!((pin.seconds - was).abs() < 1e-6);
+            assert!((pin.seconds.seconds() - was).abs() < 1e-6);
         }
         assert_eq!(song_events(&song)[1], bpm_event(1920, 120.0));
         let moved = song.timing().events.iter().any(|event| {
@@ -662,11 +690,11 @@ mod tests {
         let pins = [
             Pin {
                 tick: at(0),
-                seconds: 1.0,
+                seconds: moment(1.0),
             },
             Pin {
                 tick: at(3840),
-                seconds: 3.0,
+                seconds: moment(3.0),
             },
         ];
         song.repin(&pins, Bpm::try_from(120.0).unwrap(), false)
@@ -674,14 +702,8 @@ mod tests {
         assert_eq!(song_events(&song)[0], bpm_event(0, 120.0));
         let timing = song.timing();
         assert!((timing.time_at(at(1920)).seconds() - 2.0).abs() < 1e-9);
-        assert_eq!(
-            timing.latest_tick_by(charter_core::ResolvedTime::from_seconds(4.0).unwrap()),
-            at(5760)
-        );
-        assert_eq!(
-            timing.latest_tick_by(charter_core::ResolvedTime::from_seconds(0.0).unwrap()),
-            at(-1920)
-        );
+        assert_eq!(timing.latest_tick_by(moment(4.0)), at(5760));
+        assert_eq!(timing.latest_tick_by(moment(0.0)), at(-1920));
     }
 
     #[test]
@@ -706,11 +728,11 @@ mod proofs {
         let pins = [
             Pin {
                 tick: first,
-                seconds: 0.0,
+                seconds: ResolvedTime::from_seconds(0.0).unwrap(),
             },
             Pin {
                 tick: second,
-                seconds: 1.0,
+                seconds: ResolvedTime::from_seconds(1.0).unwrap(),
             },
         ];
         let result = in_order(&pins, |pin| i64::from(pin.tick));

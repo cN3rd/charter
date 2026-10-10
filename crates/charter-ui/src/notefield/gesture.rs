@@ -421,10 +421,9 @@ pub(super) fn let_go(
         Gesture::Hold { lane, from } => line(pos).map(|to| Action::Stretch { lane, from, to }),
         // A tempo point is a moment of the audio, so it goes where it is dropped; a point of
         // meters and stops alone is a beat, so it goes to the line there.
-        Gesture::MoveTiming { from } if anchored(timing, from) => Some(Action::MovePointTo(
-            from,
-            field.view.seconds_at(pos.y).seconds(),
-        )),
+        Gesture::MoveTiming { from } if anchored(timing, from) => {
+            Some(Action::MovePointTo(from, field.view.seconds_at(pos.y)))
+        }
         Gesture::MoveTiming { from } => line(pos).map(|to| Action::MoveTiming { from, to }),
         Gesture::MoveMarker { index } => line(pos).map(|to| Action::MoveMarker { index, to }),
         Gesture::Marquee { how, x, seconds } => {

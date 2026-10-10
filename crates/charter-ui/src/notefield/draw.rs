@@ -1495,7 +1495,7 @@ mod tests {
         assert!(matches!(
             anchor,
             Some(Action::MovePointTo(from, seconds))
-                if from == Tick::new(0) && (seconds - 98.0 / 240.0).abs() < 1e-6
+                if from == Tick::new(0) && (seconds.seconds() - 98.0 / 240.0).abs() < 1e-6
         ));
         let meter = let_go(
             Some(Gesture::MoveTiming {

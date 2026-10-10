@@ -707,9 +707,9 @@ a JSON number, and the beat lengths are rounded already: osu!'s `342.85714285714
 which six places hold as `175.000000` and write back as the same beat length. One that does not
 come back, such as `300.5`, keeps its original in `ext`.
 
-Resolved times are the only floats: `ResolvedTime` seconds computed from the timing map and never
-stored. Every input is a bounded integer, so every resolved time is finite and no rule has to check
-it.
+Audio calculations use finite floats, but chart files store integer millionths. `ResolvedTime` is
+a moment in the audio, and `TimeShift` is the signed span between moments. Neither is stored in a
+chart file. Raw audio positions are checked before entering editing commands.
 
 `tempo` must be positive. Negative BPM is a StepMania time-skipping gimmick predating explicit warps,
 and charter has `warp` for that. Zero BPM would stop position advancing while time ran on, an
@@ -740,6 +740,7 @@ shown.
 | `AudioTime` | `i64` millionths, 0 or more | A point in the audio file, from its start | Converts to a `ResolvedTime` |
 | `Origin` | `i64` millionths | The audio time of tick 0, negative before the file starts | Converts to a `ResolvedTime` |
 | `ResolvedTime` | `f64` | An audio time resolved from a timing map, never stored | Compares; gives seconds for an audio API or a display |
+| `TimeShift` | `f64` | A signed span between audio moments, never stored | Moves a `ResolvedTime` earlier or later |
 | `LaneIndex` | `u16` | A lane, counting from 0 | Gives its number to a view |
 | `LaneCount` | `NonZeroU16` | A number of lanes | Names its last and middle lanes; gives its number to a view |
 | `LaneSpan` | Two `u32` | The lanes a lane position covers | Tells whether it fits a chart or overlaps another span |

@@ -4,7 +4,9 @@ use crate::keyboard::nudge_notches;
 use crate::rows::{GRAB, Ghost, Reach, Row};
 use charter_core::ResolvedTime;
 
-use super::{Command, Edit, FINE, Frame, Pos2, Tick, TimingWindow, accuracy, lead, rows};
+use super::{
+    Command, Edit, FINE, Frame, Pos2, Tick, TimeShift, TimingWindow, accuracy, audition_from, rows,
+};
 
 /// What a press or drag in the rows is doing, as the specification's state machine has it.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -201,7 +203,7 @@ pub(crate) fn row_input(
                     .pins
                     .iter()
                     .find(|pin| pin.tick == tick)
-                    .map_or(seconds, |pin| pin.seconds);
+                    .map_or(seconds, |pin| pin.seconds.seconds());
                 Gesture::DragAudio {
                     tick,
                     from: at,
@@ -257,7 +259,11 @@ pub(crate) fn row_input(
         && let Some(pos) = pointer
     {
         match anchor.and_then(|tick| frame.pins.iter().find(|pin| pin.tick == tick)) {
-            Some(pin) => commands.push(Command::Audition(pin.seconds - lead(frame, pin.tick))),
+            Some(pin) => {
+                if let Some(from) = audition_from(frame, pin.seconds, pin.tick) {
+                    commands.push(Command::Audition(from));
+                }
+            }
             None => commands.push(Command::PlayFrom(row.tick_at(&frame.bars, pos.x))),
         }
     }
@@ -392,22 +398,22 @@ pub(crate) fn clamp_audio(
             .pins
             .iter()
             .find(|pin| pin.tick == at)
-            .map(|pin| pin.seconds)
+            .map(|pin| pin.seconds.seconds())
     };
     let (Some(first_at), Some(last_at)) = (seconds(first), seconds(last)) else {
         return to;
     };
     let mut delta = to - from;
     if let Some(before) = frame.pins.iter().rev().find(|pin| pin.tick < first)
-        && first_at + delta < before.seconds + MARGIN
+        && first_at + delta < before.seconds.seconds() + MARGIN
     {
-        delta = before.seconds + MARGIN - first_at;
+        delta = before.seconds.seconds() + MARGIN - first_at;
         window.pulse = Some((before.tick, frame.now));
     }
     if let Some(after) = frame.pins.iter().find(|pin| pin.tick > last)
-        && last_at + delta > after.seconds - MARGIN
+        && last_at + delta > after.seconds.seconds() - MARGIN
     {
-        delta = after.seconds - MARGIN - last_at;
+        delta = after.seconds.seconds() - MARGIN - last_at;
         window.pulse = Some((after.tick, frame.now));
     }
     from + delta
@@ -437,11 +443,13 @@ pub(crate) fn release(
         }
         Gesture::DragAudio { tick, from, to, .. } if (to - from).abs() > 1e-7 => {
             let ticks = moving(window, tick);
-            commands.push(Command::Edit(Edit::Nudge {
-                ticks,
-                by: to - from,
-                merge: false,
-            }));
+            if let Some(by) = TimeShift::from_seconds(to - from) {
+                commands.push(Command::Edit(Edit::Nudge {
+                    ticks,
+                    by,
+                    merge: false,
+                }));
+            }
         }
         Gesture::Band { origin, .. } => {
             let tick_of =
@@ -474,7 +482,9 @@ pub(crate) fn menu(
         if ui.button("Play from a beat before").clicked()
             && let Some(pin) = frame.pins.iter().find(|pin| pin.tick == tick)
         {
-            commands.push(Command::Audition(pin.seconds - lead(frame, tick)));
+            if let Some(from) = audition_from(frame, pin.seconds, tick) {
+                commands.push(Command::Audition(from));
+            }
             ui.close();
         }
         if ui.button("Fit tempo").clicked() {
@@ -558,8 +568,8 @@ mod tests {
             panic!("expected sync and audition: {:?}", harness.state().commands);
         };
         assert_eq!(*tick, Tick::new(2880));
-        assert!((seconds - 1.5).abs() < 1e-4);
-        assert!((from - 1.0).abs() < 1e-4);
+        assert!((seconds.seconds() - 1.5).abs() < 1e-4);
+        assert!((from.seconds() - 1.0).abs() < 1e-4);
         assert_eq!(harness.state().window.gesture, pointer::Gesture::Idle);
     }
 
@@ -594,7 +604,7 @@ mod tests {
             panic!("expected audio nudge: {:?}", harness.state().commands);
         };
         assert_eq!(ticks, &[Tick::new(960)]);
-        assert!((by - 0.125).abs() < 1e-4);
+        assert!((by.seconds() - 0.125).abs() < 1e-4);
         assert!(!merge);
         assert_eq!(harness.state().window.focus, Some(Tick::new(960)));
     }
@@ -666,7 +676,7 @@ mod tests {
         else {
             panic!("expected sync: {:?}", snapped.state().commands);
         };
-        assert!((seconds - 1.512).abs() < 1e-9);
+        assert!((seconds.seconds() - 1.512).abs() < 1e-9);
 
         let mut plain = timing_harness();
         plain.state_mut().onsets = vec![Onset {
@@ -686,7 +696,7 @@ mod tests {
         else {
             panic!("expected sync: {:?}", plain.state().commands);
         };
-        assert!((plain_seconds - 1.5).abs() < 1e-4);
+        assert!((plain_seconds.seconds() - 1.5).abs() < 1e-4);
     }
 
     #[test]
@@ -717,7 +727,7 @@ mod tests {
             panic!("expected constrained nudge: {:?}", harness.state().commands);
         };
         assert_eq!(ticks, &[Tick::new(960)]);
-        assert!((by - 0.499).abs() < 1e-5);
+        assert!((by.seconds() - 0.499).abs() < 1e-5);
         assert!(!merge);
         assert!(matches!(
             harness.state().window.pulse,
@@ -859,7 +869,10 @@ mod tests {
     fn middle_click_auditions_an_anchor_but_plays_from_empty_audio() {
         let mut harness = timing_harness();
         for (tick, expected) in [
-            (960, Command::Audition(0.0)),
+            (
+                960,
+                Command::Audition(ResolvedTime::from_seconds(0.0).unwrap()),
+            ),
             (2880, Command::PlayFrom(Tick::new(2880))),
         ] {
             let at = row_point(&harness, tick);
@@ -893,7 +906,10 @@ mod tests {
         harness.step();
         harness.get_by_label("Play from a beat before").click();
         harness.step();
-        assert_eq!(harness.state().commands, [Command::Audition(0.0)]);
+        assert_eq!(
+            harness.state().commands,
+            [Command::Audition(ResolvedTime::from_seconds(0.0).unwrap())]
+        );
     }
 
     #[test]
