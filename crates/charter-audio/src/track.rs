@@ -6,11 +6,56 @@ use std::sync::Arc;
 
 use crate::{Mono, cast};
 use symphonia::core::codecs::audio::AudioDecoderOptions;
+use symphonia::core::codecs::audio::well_known::{CODEC_ID_AAC, CODEC_ID_MP3};
 use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, TrackType};
 use symphonia::core::io::{MediaSourceStream, MediaSourceStreamOptions};
 use symphonia::core::meta::MetadataOptions;
 use symphonia_wrap as symphonia;
+
+/// The codec of an audio stream, for deciding whether an export can keep its encoded frames.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AudioCodec {
+    /// Advanced Audio Coding.
+    Aac,
+    /// MPEG Layer III.
+    Mp3,
+    /// A codec other than AAC or MP3.
+    Other,
+}
+
+/// Probes the audio in `bytes` without decoding it, using `extension` only as a format hint.
+/// Returns none when no audio track can be recognised.
+#[must_use]
+pub fn audio_codec(bytes: Vec<u8>, extension: Option<&str>) -> Option<AudioCodec> {
+    let source = MediaSourceStream::new(
+        Box::new(Cursor::new(bytes)),
+        MediaSourceStreamOptions::default(),
+    );
+    let mut hint = Hint::new();
+    if let Some(extension) = extension {
+        hint.with_extension(extension);
+    }
+    let format = symphonia::default::get_probe()
+        .probe(
+            &hint,
+            source,
+            FormatOptions::default(),
+            MetadataOptions::default(),
+        )
+        .ok()?;
+    let codec = format
+        .default_track(TrackType::Audio)?
+        .codec_params
+        .as_ref()?
+        .audio()?
+        .codec;
+    Some(match codec {
+        CODEC_ID_AAC => AudioCodec::Aac,
+        CODEC_ID_MP3 => AudioCodec::Mp3,
+        _ => AudioCodec::Other,
+    })
+}
 
 /// Audio decoded to stereo frames of `f32` samples, left then right.
 #[derive(Clone, Debug, PartialEq)]
@@ -307,6 +352,40 @@ mod tests {
     fn a_file_named_without_an_extension_still_decodes() {
         let track = Track::decode(wav(8000, 1, &[0, 0]), None).unwrap();
         assert_eq!(track.frames().len(), 2);
+    }
+
+    #[test]
+    fn an_adts_header_identifies_aac_without_decoding_audio() {
+        // Two AAC-LC stereo frame headers at 44.1 kHz with empty payloads.
+        let header = [0xff, 0xf1, 0x50, 0x80, 0x00, 0xff, 0xfc];
+        assert_eq!(
+            audio_codec([header, header].concat(), Some("aac")),
+            Some(AudioCodec::Aac)
+        );
+    }
+
+    #[test]
+    fn an_mpeg_frame_identifies_mp3_even_with_the_wrong_extension() {
+        // Two MPEG-1 Layer III 128 kbps frames at 44.1 kHz.
+        let mut frame = vec![0xff, 0xfb, 0x90, 0x64];
+        frame.resize(417, 0);
+        assert_eq!(
+            audio_codec([frame.clone(), frame].concat(), Some("m4a")),
+            Some(AudioCodec::Mp3)
+        );
+    }
+
+    #[test]
+    fn a_wav_named_mp3_is_still_recognised_as_other_audio() {
+        assert_eq!(
+            audio_codec(wav(8000, 1, &[0, 0]), Some("mp3")),
+            Some(AudioCodec::Other)
+        );
+    }
+
+    #[test]
+    fn unrecognised_bytes_have_no_audio_codec() {
+        assert_eq!(audio_codec(b"not audio".to_vec(), Some("aac")), None);
     }
 
     #[test]

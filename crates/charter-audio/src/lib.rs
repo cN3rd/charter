@@ -124,6 +124,6 @@ pub use tags::{Artwork, Tags, tags};
 #[expect(
     clippy::pub_use,
     clippy::useless_attribute,
-    reason = "decoded tracks and errors are part of the flat audio API"
+    reason = "codec probes, decoded tracks and errors are part of the flat audio API"
 )]
-pub use track::{DecodeError, SampleRate, Track};
+pub use track::{AudioCodec, DecodeError, SampleRate, Track, audio_codec};
