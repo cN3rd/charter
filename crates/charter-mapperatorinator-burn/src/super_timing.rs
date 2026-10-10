@@ -27,7 +27,7 @@ pub(crate) enum BeatKind {
 
 impl BeatKind {
     /// The kind of beat an event of type `kind` is, if it is one.
-    fn of(kind: &str) -> Option<Self> {
+    pub(crate) fn of(kind: &str) -> Option<Self> {
         match kind {
             BEAT => Some(Self::Beat),
             MEASURE => Some(Self::Measure),
@@ -46,16 +46,17 @@ impl BeatKind {
     }
 }
 
-/// `get_groups` with the type after its time shift: each type event with the time of the time
-/// shift before it since the last type event, or 0.
-fn groups(events: &[Event]) -> Vec<(&str, i64)> {
+/// `get_groups` with the beat kind after its time shift, or 0 without one.
+fn groups(events: &[Event]) -> Vec<(BeatKind, i64)> {
     let mut out = Vec::new();
     let mut time = 0_i64;
     for e in events {
         if e.kind == TIME_SHIFT {
             time = i64::from(e.value);
         } else if TYPE_EVENTS.contains(&e.kind.as_str()) {
-            out.push((e.kind.as_str(), time));
+            if let Some(kind) = BeatKind::of(e.kind.as_str()) {
+                out.push((kind, time));
+            }
             time = 0;
         }
     }
@@ -158,9 +159,6 @@ pub(crate) fn fuse(
             if time < 0 || time >= n {
                 continue;
             }
-            let Some(kind) = BeatKind::of(kind) else {
-                continue;
-            };
             match kind {
                 BeatKind::Beat => {
                     beats_hist[unsigned(time)] += 1.0;
@@ -547,6 +545,30 @@ mod tests {
                 })
                 .collect(),
         )
+    }
+
+    #[test]
+    fn grouping_keeps_beat_kinds_and_resets_time_after_other_events() {
+        let events = [
+            Event::new(TIME_SHIFT, 100),
+            Event::new(BEAT, 0),
+            Event::new(TIME_SHIFT, 200),
+            Event::new("circle", 0),
+            Event::new(BEAT, 0),
+            Event::new(TIME_SHIFT, 300),
+            Event::new(MEASURE, 0),
+            Event::new(TIME_SHIFT, 400),
+            Event::new(TIMING_POINT, 0),
+        ];
+        assert_eq!(
+            groups(&events),
+            [
+                (BeatKind::Beat, 100),
+                (BeatKind::Beat, 0),
+                (BeatKind::Measure, 300),
+                (BeatKind::TimingPoint, 400),
+            ]
+        );
     }
 
     #[test]

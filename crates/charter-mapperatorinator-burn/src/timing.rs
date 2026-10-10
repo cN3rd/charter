@@ -224,11 +224,8 @@ impl TimingBuilder {
     pub(crate) fn generate_timing(&self, events: &[Event]) -> Vec<TimingPoint> {
         let mut markers: Vec<Marker> = Vec::new();
         for i in 1..events.len() {
-            let kind = match events[i].kind.as_str() {
-                "beat" => BeatKind::Beat,
-                "measure" => BeatKind::Measure,
-                "timing_point" => BeatKind::TimingPoint,
-                _ => continue,
+            let Some(kind) = BeatKind::of(events[i].kind.as_str()) else {
+                continue;
             };
             if events[i - 1].kind == TIME_SHIFT {
                 markers.push(Marker {
