@@ -211,8 +211,8 @@ fn scroll_speeds(
         .into_iter()
         .map(|(tick, _, ratio, line)| {
             let ratio = micro(ratio)
-                .and_then(|ratio| Decimal::try_from(ratio).ok())
-                .filter(|_| ratio > 0.0)
+                .filter(|rounded| *rounded > 0.0)
+                .and_then(|rounded| Decimal::try_from(rounded).ok())
                 .ok_or_else(|| {
                     if line == 0 {
                         ImportError::OutOfRange("scroll speed is out of range".into())
@@ -719,6 +719,12 @@ mod tests {
         );
         let speed = import("0,500\n1,-1e-300", &song(ID)).unwrap_err();
         assert_eq!(speed.to_string(), "line 2: scroll speed is out of range");
+    }
+
+    #[test]
+    fn a_green_point_whose_speed_rounds_to_nothing_is_refused() {
+        let stopped = import("0,500\n1,-1e9", &song(ID)).unwrap_err();
+        assert_eq!(stopped.to_string(), "line 2: scroll speed is out of range");
     }
 
     proptest! {
