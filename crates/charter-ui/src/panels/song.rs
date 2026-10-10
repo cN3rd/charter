@@ -1006,7 +1006,7 @@ mod tests {
         song.add_layer().unwrap();
         let mut harness = Harness::builder().build_ui_state(
             |ui, (song, actions): &mut (Song, Vec<Action>)| {
-                status_bar(ui, Some(song), ("Ready", false), actions);
+                status_bar(ui, Some(song), ("Ready", false), None, actions);
             },
             (song, Vec::new()),
         );
@@ -1028,7 +1028,7 @@ mod tests {
         let song = Song::new(charter_editor::demo::song(), &[&charter_stepmania::Plugin]);
         let mut harness = Harness::builder().build_ui_state(
             |ui, (song, actions): &mut (Song, Vec<Action>)| {
-                status_bar(ui, Some(song), ("Ready", false), actions);
+                status_bar(ui, Some(song), ("Ready", false), None, actions);
             },
             (song, Vec::new()),
         );
@@ -1351,7 +1351,7 @@ mod tests {
     fn status_distinguishes_no_song_playback_and_read_only_charts() {
         let plugin: &dyn RulesetPlugin = &charter_stepmania::Plugin;
         let mut empty = Harness::builder().build_ui_state(
-            |ui, (): &mut ()| status_bar(ui, None, ("", false), &mut Vec::new()),
+            |ui, (): &mut ()| status_bar(ui, None, ("", false), None, &mut Vec::new()),
             (),
         );
         empty.run();
@@ -1365,7 +1365,13 @@ mod tests {
                 Song::open(&charter_editor::demo::song().to_json().unwrap(), plugins).unwrap();
             let mut harness = Harness::builder().build_ui_state(
                 move |ui, song: &mut Song| {
-                    status_bar(ui, Some(song), ("Audio ready", playing), &mut Vec::new());
+                    status_bar(
+                        ui,
+                        Some(song),
+                        ("Audio ready", playing),
+                        None,
+                        &mut Vec::new(),
+                    );
                 },
                 song,
             );

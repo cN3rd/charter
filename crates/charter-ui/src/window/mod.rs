@@ -165,6 +165,8 @@ pub enum Request {
     ChooseSnapshotFolder,
     /// Ask the user to choose an `FFmpeg` binary, and pass it to [`Window::use_ffmpeg_path`].
     ChooseFfmpeg,
+    /// Install a verified `FFmpeg` release after the user agrees.
+    InstallFfmpeg,
     /// Keep `bytes`, the song's unsaved changes, where the next run finds them, in place of any
     /// kept before. The host passes them to [`Window::recover`] when it starts, and says through
     /// [`Window::autosave_failed`] if they could not be kept.
@@ -1150,6 +1152,25 @@ impl Window {
             settings::FfmpegStatus::Missing,
             settings::FfmpegStatus::Found,
         );
+    }
+
+    /// Show the share of an `FFmpeg` release downloaded by the host.
+    pub fn ffmpeg_progress(&mut self, share: f32) {
+        self.ffmpeg_status = settings::FfmpegStatus::Downloading(share.clamp(0.0, 1.0));
+    }
+
+    /// Show why the host could not install `FFmpeg` and allow the help to be reopened.
+    pub fn ffmpeg_failed(&mut self, why: &str) {
+        self.dialogs.ffmpeg = false;
+        self.ffmpeg_status = settings::FfmpegStatus::Missing;
+        self.failure = Some(format!("ffmpeg did not install: {why}"));
+    }
+
+    /// Set the installed release as the chosen path, pending the host's version check.
+    pub fn ffmpeg_installed(&mut self, path: &Path) {
+        self.dialogs.ffmpeg = false;
+        self.use_ffmpeg_path(path);
+        self.ffmpeg_status = settings::FfmpegStatus::Unknown;
     }
 
     /// A window with no song open, which checks songs against `plugins`.

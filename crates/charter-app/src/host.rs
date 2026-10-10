@@ -42,7 +42,10 @@ const ARTWORK: [&str; 7] = ["png", "jpg", "jpeg", "ogg", "mp3", "wav", "flac"];
 )]
 impl<D: Disk + 'static> eframe::App for Host<D> {
     fn ui(&mut self, ui: &mut eframe::egui::Ui, _frame: &mut eframe::Frame) {
-        if self.player.update(&mut self.window) | self.finder.update(&mut self.window) {
+        if self.player.update(&mut self.window)
+            | self.finder.update(&mut self.window)
+            | self.ffmpeg.update(&mut self.window)
+        {
             ui.ctx().request_repaint();
         }
         if self.ffmpeg.refresh(&mut self.window, ffmpeg::installed) {
@@ -63,6 +66,10 @@ impl<D: Disk + 'static> eframe::App for Host<D> {
 
 impl<D: Disk> Host<D> {
     /// Handles UI requests and any requests they enqueue in turn.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one host dispatcher handles dialogs, playback and the two download workers"
+    )]
     pub(crate) fn handle_requests(&mut self, mut requests: Vec<Request>) {
         while !requests.is_empty() {
             for request in requests {
@@ -142,6 +149,9 @@ impl<D: Disk> Host<D> {
                             .find(file, ticks_per_beat, onsets, tracker, &mut self.window);
                     }
                     Request::DownloadWeights => self.finder.download(&mut self.window),
+                    Request::InstallFfmpeg => self
+                        .ffmpeg
+                        .start(&mut self.window, ffmpeg::native_platform()),
                     Request::FindTimingOnCpu => self.finder.find_on_cpu(&mut self.window),
                     Request::Play { .. }
                     | Request::Preview { .. }
@@ -241,6 +251,7 @@ impl<D: Disk> Host<D> {
             | Request::ChooseArtwork
             | Request::FindTiming { .. }
             | Request::DownloadWeights
+            | Request::InstallFfmpeg
             | Request::FindTimingOnCpu
             | Request::Play { .. }
             | Request::Preview { .. }

@@ -28,3 +28,4 @@ sha2.workspace = true
 system-fonts.workspace = true
 timestretch.workspace = true
 ureq.workspace = true
+zip.workspace = true

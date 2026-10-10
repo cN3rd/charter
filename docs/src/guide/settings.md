@@ -52,10 +52,13 @@ notes behind it when no text field has the keyboard.
 | FFmpeg binary | Path to the ffmpeg executable used when exporting Tap Tap Revenge audio. Leave empty to use the `PATH`, or use Choose FFmpeg to select it. Charter shows the binary it found, or that none runs. Install help appears if none runs. |
 
 When no ffmpeg runs at first start, charter offers installation help once. The Install help
-button beside the path remains available whenever ffmpeg is missing. On Linux the dialog shows
-a command for an installed package manager and can copy it; otherwise it asks you to install
-ffmpeg with your system's package manager. If you install ffmpeg outside the `PATH`, enter its
-binary's path here or choose it.
+button beside the path remains available whenever ffmpeg is missing. On Windows, charter can
+download a release build from gyan.dev; on macOS, from ffmpeg.martin-riedl.de. It checks the
+published SHA-256 checksum before keeping just the executable in its data folder. It shows
+download progress and reports failures without changing your path. On Linux the dialog shows a
+command for a package manager it finds on the `PATH` and can copy it. If none is found, install
+ffmpeg with your system's package manager. On other systems, install ffmpeg yourself. If it
+lives outside the `PATH`, enter or choose its binary path here.
 
 ## Autosave
 

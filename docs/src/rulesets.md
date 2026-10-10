@@ -108,7 +108,8 @@ its selected filename, and an `info.plist` beside it with the title, artist, gen
 columns and themes and how long the audio lasts. The audio goes in as `audio.m4a`, AAC in an M4A
 file as the game's own tracks have it, with PNG artwork as `artwork.png` and `artwork@2x.png`.
 Audio already in AAC is copied; any other is converted with ffmpeg, at the path chosen under
-Settings > Sounds or on the `PATH`. The export says when neither runs. The host does not create a
+Settings > Sounds or on the `PATH`. The export says when neither runs; Settings offers installation
+help, including verified downloads on Windows and macOS. The host does not create a
 named `.track` folder and can replace files under the fixed export names, so the user must choose
 a file inside a separate, empty track folder. Imported back with that `info.plist`, the supported
 game data returns,

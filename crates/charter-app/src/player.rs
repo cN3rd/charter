@@ -408,6 +408,7 @@ impl Player {
             | Request::ReadTags { .. }
             | Request::FindTiming { .. }
             | Request::DownloadWeights
+            | Request::InstallFfmpeg
             | Request::FindTimingOnCpu => {}
         }
     }

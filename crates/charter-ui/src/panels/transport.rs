@@ -255,12 +255,13 @@ pub(crate) fn status_bar(
     ui: &mut Ui,
     song: Option<&Song>,
     (audio, playing): (&str, bool),
+    empty_status: Option<&str>,
     actions: &mut Vec<Action>,
 ) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 10.0;
         let Some(song) = song else {
-            ui.weak("No song open");
+            ui.weak(empty_status.unwrap_or("No song open"));
             return;
         };
         let (colour, state) = if playing {

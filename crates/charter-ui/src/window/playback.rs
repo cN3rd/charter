@@ -85,6 +85,9 @@ impl Window {
         reason = "the audio-analysis status shows an ellipsis while running"
     )]
     pub(super) fn audio_state(&self) -> String {
+        if let crate::settings::FfmpegStatus::Downloading(share) = &self.ffmpeg_status {
+            return format!("Downloading ffmpeg, {:.0}%", share * 100.0);
+        }
         match self.dialogs.finding {
             Finding::Downloading(share) => {
                 let name = match self.dialogs.tracker {

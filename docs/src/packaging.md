@@ -83,8 +83,12 @@ A song's audio, artwork and chart files are the user's, beside the song, and nev
 ffmpeg is not packaged either. Exporting a Tap Tap Revenge track converts audio that is not AAC
 with the binary chosen under Settings > Sounds, falling back to `ffmpeg` on the `PATH`. Without
 ffmpeg everything else still exports, and the export says the audio was not written. If neither
-binary runs, charter offers installation help; on Linux it suggests an available system package
-manager's install command.
+binary runs, charter offers installation help. On Windows it can download Gyan's release
+essentials from gyan.dev into `<data>/ffmpeg/ffmpeg.exe`. On macOS it can download Martin Riedl's
+release from ffmpeg.martin-riedl.de into `<data>/ffmpeg/ffmpeg`, with its executable bit set.
+Each archive is checked against its published SHA-256 checksum before the binary is installed.
+These downloads happen only after the user agrees; the archives and binaries are not part of a
+charter package. On Linux the helper suggests an available system package manager's command.
 
 The Beat This! weights, `final0.ckpt` at 81 MB, and Mapperatorinator's, 416 MB, are left out on
 purpose: they are needed only by [automatic timing](./autotiming.md). The first time Timing ›

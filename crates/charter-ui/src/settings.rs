@@ -447,6 +447,8 @@ pub(crate) enum FfmpegStatus {
     Unknown,
     /// No usable `FFmpeg` was found.
     Missing,
+    /// A release download is this share of the way done.
+    Downloading(f32),
     /// A binary whose version check passed.
     Found(std::path::PathBuf),
 }
@@ -1019,6 +1021,9 @@ fn sounds(
         }
         FfmpegStatus::Missing => {
             ui.weak("FFmpeg not found at the configured path or on the PATH.");
+        }
+        FfmpegStatus::Downloading(share) => {
+            ui.weak(format!("Downloading ffmpeg, {:.0}%", share * 100.0));
         }
         FfmpegStatus::Found(path) => {
             ui.weak(format!("Found: {}", path.display()));

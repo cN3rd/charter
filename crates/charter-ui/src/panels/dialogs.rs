@@ -44,6 +44,8 @@ pub(crate) enum DownloadWeights {
 pub(crate) enum FfmpegAnswer {
     /// Copy the package manager's exact install command.
     CopyCommand,
+    /// Download a release build into charter's data folder.
+    Download,
     /// Dismiss the help.
     Later,
 }
@@ -209,21 +211,40 @@ pub(crate) fn ask_to_install_ffmpeg(
         );
         ui.add_space(4.0);
         match platform {
+            crate::FfmpegPlatform::Windows => {
+                ui.label(
+                    "Download ffmpeg from gyan.dev (about 115 MB) into charter's data folder? \
+                     Nothing about your songs is sent.",
+                );
+            }
+            crate::FfmpegPlatform::MacOs => {
+                ui.label(
+                    "Download ffmpeg from ffmpeg.martin-riedl.de into charter's data folder? \
+                     Nothing about your songs is sent.",
+                );
+            }
             crate::FfmpegPlatform::Linux => {
                 ui.label("Install ffmpeg with your system's package manager.");
                 if let Some(command) = command {
                     ui.label(RichText::new(command).monospace());
                 }
             }
-            crate::FfmpegPlatform::Windows
-            | crate::FfmpegPlatform::MacOs
-            | crate::FfmpegPlatform::Other => {
-                ui.label("Install ffmpeg on your computer.");
+            crate::FfmpegPlatform::Other => {
+                ui.label("Install ffmpeg and set its path in Settings > Sounds.");
             }
         }
-        ui.label("If ffmpeg is elsewhere, set its path in Settings > Sounds.");
+        if platform != crate::FfmpegPlatform::Other {
+            ui.label("If ffmpeg is elsewhere, set its path in Settings > Sounds.");
+        }
         ui.add_space(14.0);
         ui.horizontal(|ui| {
+            if matches!(
+                platform,
+                crate::FfmpegPlatform::Windows | crate::FfmpegPlatform::MacOs
+            ) && ui.add(style::primary("Download")).clicked()
+            {
+                answer = Some(FfmpegAnswer::Download);
+            }
             if platform == crate::FfmpegPlatform::Linux
                 && command.is_some()
                 && ui.add(style::primary("Copy command")).clicked()
@@ -471,5 +492,45 @@ mod tests {
         harness.get_by_label("Copy command").click();
         harness.run();
         assert_eq!(harness.state(), &Some(FfmpegAnswer::CopyCommand));
+    }
+
+    #[test]
+    fn windows_and_mac_help_offer_their_respective_release_downloads() {
+        for (platform, provider) in [
+            (crate::FfmpegPlatform::Windows, "gyan.dev"),
+            (crate::FfmpegPlatform::MacOs, "ffmpeg.martin-riedl.de"),
+        ] {
+            let mut harness = Harness::builder().build_ui_state(
+                move |ui, answer: &mut Option<FfmpegAnswer>| {
+                    *answer = ask_to_install_ffmpeg(ui, platform, None).or(*answer);
+                },
+                None,
+            );
+            harness.run();
+            assert!(
+                harness.query_by_label_contains(provider).is_some(),
+                "{platform:?}"
+            );
+            harness.get_by_label("Download").click();
+            harness.run();
+            assert_eq!(harness.state(), &Some(FfmpegAnswer::Download));
+        }
+    }
+
+    #[test]
+    fn unsupported_platform_help_requires_manual_install_and_setting_the_path() {
+        let mut harness = Harness::builder().build_ui_state(
+            |ui, answer: &mut Option<FfmpegAnswer>| {
+                *answer = ask_to_install_ffmpeg(ui, crate::FfmpegPlatform::Other, None).or(*answer);
+            },
+            None,
+        );
+        harness.run();
+        assert!(
+            harness
+                .query_by_label("Install ffmpeg and set its path in Settings > Sounds.")
+                .is_some()
+        );
+        assert!(harness.query_by_label("Download").is_none());
     }
 }

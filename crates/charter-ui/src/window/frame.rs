@@ -40,6 +40,12 @@ impl Window {
             {
                 ui.ctx().copy_text(command.clone());
             }
+            if answer == panels::FfmpegAnswer::Download
+                && matches!(&self.ffmpeg_status, settings::FfmpegStatus::Missing)
+            {
+                self.requests.push(Request::InstallFfmpeg);
+                self.ffmpeg_progress(0.0);
+            }
         }
         if let Some(draft) = &mut self.dialogs.new_song {
             match new_song::show(ui, self.plugins, draft, self.no_drops) {
@@ -211,6 +217,8 @@ impl Window {
                     ui,
                     self.song.as_ref(),
                     (&audio_state, self.playback.playing.is_some()),
+                    matches!(&self.ffmpeg_status, settings::FfmpegStatus::Downloading(_))
+                        .then_some(audio_state.as_str()),
                     &mut actions,
                 );
             });
@@ -684,6 +692,65 @@ mod tests {
         assert!(harness.output().platform_output.commands.iter().any(|command| {
             matches!(command, egui::OutputCommand::CopyText(text) if text == "sudo apt install ffmpeg")
         }));
+    }
+
+    #[test]
+    fn ffmpeg_download_progress_is_visible_without_an_open_song() {
+        let mut app = Window::new(PLUGINS).with_ffmpeg_help(FfmpegPlatform::Windows, None);
+        app.ffmpeg_found(None);
+        let mut harness = window(app);
+        harness.get_by_label("Download").click();
+        harness.run();
+        assert_eq!(
+            harness.state_mut().take_requests(),
+            [Request::InstallFfmpeg]
+        );
+        harness.state_mut().ffmpeg_progress(0.42);
+        harness.run();
+        assert!(harness.query_by_label("Downloading ffmpeg, 42%").is_some());
+    }
+
+    #[test]
+    fn an_ffmpeg_download_failure_is_shown_and_install_help_can_be_retried() {
+        let mut app = Window::new(PLUGINS).with_ffmpeg_help(FfmpegPlatform::Windows, None);
+        app.ffmpeg_found(None);
+        let mut harness = window(app);
+        harness.get_by_label("Download").click();
+        harness.run();
+        harness.state_mut().ffmpeg_progress(0.8);
+        harness.state_mut().ffmpeg_failed("checksum mismatch");
+        harness.run();
+        assert!(
+            harness
+                .query_by_label_contains("ffmpeg did not install: checksum mismatch")
+                .is_some()
+        );
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Comma);
+        harness.run();
+        harness.get_by_label("Sounds").click();
+        harness.run();
+        harness.get_by_label("Install help").scroll_to_me();
+        harness.run();
+        harness.get_by_label("Install help").click();
+        harness.run();
+        assert!(harness.query_by_label("Install ffmpeg?").is_some());
+    }
+
+    #[test]
+    fn a_downloaded_binary_becomes_the_configured_path() {
+        let mut app = Window::new(PLUGINS).with_ffmpeg_help(FfmpegPlatform::MacOs, None);
+        app.ffmpeg_found(None);
+        let mut harness = window(app);
+        harness.state_mut().ffmpeg_progress(1.0);
+        harness
+            .state_mut()
+            .ffmpeg_installed(std::path::Path::new("/data/ffmpeg/ffmpeg"));
+        harness.run();
+        assert_eq!(
+            harness.state().settings().ffmpeg_path,
+            "/data/ffmpeg/ffmpeg"
+        );
+        assert!(harness.query_by_label("Downloading ffmpeg, 100%").is_none());
     }
 
     #[test]

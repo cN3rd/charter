@@ -21,7 +21,8 @@ Some features need more:
 
 - [ffmpeg](https://ffmpeg.org), to convert audio when exporting a Tap Tap Revenge track. Charter
   checks the binary set under Settings > Sounds first, then the `PATH`. If neither runs, charter
-  offers installation help at first start; on Linux it can copy your package manager's command.
+  offers help at first start: a verified release download on Windows or macOS, or a package
+  manager command to copy on Linux. You can open the help again from Settings.
 - A graphics card, for finding timing with Mapperatorinator. Without one it runs on the processor,
   much more slowly.
 
