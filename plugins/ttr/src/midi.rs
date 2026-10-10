@@ -351,7 +351,10 @@ pub(crate) fn write(track: &Track, layout: Layout, report: &mut Report) -> Vec<u
         ));
         if meter != Some(change.meter) {
             meter = Some(change.meter);
-            let beats = u8::try_from(change.meter.get()).unwrap_or(u8::MAX);
+            let beats = u8::try_from(change.meter.get()).unwrap_or_else(|_| {
+                report.add("a meter of more than 255 beats, which MIDI holds as 255");
+                u8::MAX
+            });
             let signature = MetaMessage::TimeSignature(beats, 2, 24, 8);
             timing.push((at, TrackEventKind::Meta(signature)));
         }

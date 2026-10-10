@@ -1017,6 +1017,11 @@ fn track_folder(
     if audio_seconds.is_none() {
         report.add("how long the audio lasts, which info.plist holds, as the audio has not loaded");
     }
+    let common = charter_core::TimeSignature::default().numerator;
+    let tempo = track.levels.iter().flat_map(|level| &level.tempo);
+    if tempo.into_iter().any(|change| change.meter != common) {
+        report.add("the meter, which a .ttr2_track does not hold");
+    }
     let beside = BTreeMap::from([(
         "info.plist".to_owned(),
         track::info(song, track, audio_seconds),
@@ -2289,6 +2294,23 @@ mod tests {
             imported.document.document().metadata.audio.as_str(),
             "audio.m4a"
         );
+    }
+
+    #[test]
+    fn a_meter_a_format_cannot_hold_is_reported() {
+        let with_meter = |beats: u16| {
+            let mut value = serde_json::to_value(exchangeable().document()).unwrap();
+            value["timing"]["events"] =
+                json!([{ "tick": 0, "kind": { "time_signature": [beats, 4] } }]);
+            ValidDocument::from_json(&serde_json::to_vec(&value).unwrap()).unwrap()
+        };
+        let meter = |left_out: &[String]| left_out.iter().any(|line| line.contains("meter"));
+        let track = Plugin.export_song(TRACK, &with_meter(3), None).unwrap();
+        assert!(meter(&track.left_out), "{:?}", track.left_out);
+        let common = Plugin.export_song(MIDI, &with_meter(3), None).unwrap();
+        assert!(!meter(&common.left_out), "{:?}", common.left_out);
+        let wide = Plugin.export_song(MIDI, &with_meter(300), None).unwrap();
+        assert!(meter(&wide.left_out), "{:?}", wide.left_out);
     }
 }
 
