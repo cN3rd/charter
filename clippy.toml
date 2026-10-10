@@ -6,3 +6,6 @@ allow-panic-in-tests = true
 allow-dbg-in-tests = true
 # Game and tool names that doc_markdown would otherwise want in backticks.
 doc-valid-idents = ["StepMania", "ArrowVortex", "..",]
+# Audio times are floats underneath: their sums cannot overflow and panic, as integers can. The
+# names are the paths other crates see.
+arithmetic-side-effects-allowed = ["charter_core::ResolvedTime", "charter_core::TimeShift"]

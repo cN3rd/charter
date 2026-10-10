@@ -1089,10 +1089,6 @@ fn placing_at(song: &Song, input_latency: Option<f64>) -> Tick {
             let Some(delay) = TimeShift::from_seconds(input_latency) else {
                 return song.cursor();
             };
-            #[expect(
-                clippy::arithmetic_side_effects,
-                reason = "input latency moves a floating audio moment"
-            )]
             let now = timing.time_at(song.cursor()) - delay;
             notefield::nearest_line(timing, now, step)
         }
@@ -1119,10 +1115,6 @@ fn grow(
         .ticks_per_beat
         .note_length(song.snap())?;
     let to = notefield::nearest_line(song.timing(), now, step);
-    #[expect(
-        clippy::arithmetic_side_effects,
-        reason = "signed float audio distances determine when a held note grows"
-    )]
     let long = |lane: LaneIndex| {
         pressed.iter().any(|&(held, since)| {
             held == lane

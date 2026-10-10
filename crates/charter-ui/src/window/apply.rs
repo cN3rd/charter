@@ -270,10 +270,6 @@ impl Window {
             Action::LaneUp(lane) => {
                 if self.playback.playing.is_some() {
                     // Where the key came up is where the hold ends.
-                    #[expect(
-                        clippy::arithmetic_side_effects,
-                        reason = "input latency moves a floating audio moment"
-                    )]
                     let now = TimeShift::from_seconds(input_latency)
                         .map(|latency| song.timing().time_at(song.cursor()) - latency);
                     let held: Vec<_> = self

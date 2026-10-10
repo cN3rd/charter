@@ -44,18 +44,10 @@ impl Window {
         ) else {
             return;
         };
-        #[expect(
-            clippy::arithmetic_side_effects,
-            reason = "audio latency moves a floating audio moment"
-        )]
         let heard = seconds - latency;
         let Some(input_latency) = TimeShift::from_seconds(self.input_latency()) else {
             return;
         };
-        #[expect(
-            clippy::arithmetic_side_effects,
-            reason = "input latency moves a floating audio moment"
-        )]
         let tapped = heard - input_latency;
         if let Some(song) = &mut self.song {
             let tick = song.timing().latest_tick_by(heard);

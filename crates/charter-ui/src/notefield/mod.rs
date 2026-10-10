@@ -137,10 +137,6 @@ pub(crate) fn nearest_line(timing: Valid<'_, Timing>, at: ResolvedTime, step: Ti
         .and_then(|next| next.previous_on(step))
         .unwrap_or(latest);
     let above = below.next_on(step).unwrap_or(below);
-    #[expect(
-        clippy::arithmetic_side_effects,
-        reason = "signed float audio distances choose the closer grid line"
-    )]
     let off = |line: Tick| (timing.time_at(line) - at).seconds().abs();
     if off(above) < off(below) {
         above

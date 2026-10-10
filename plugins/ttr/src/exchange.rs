@@ -409,10 +409,6 @@ fn notes_of(
             continue;
         };
         let tick = nearest(timing, on);
-        #[expect(
-            clippy::arithmetic_side_effects,
-            reason = "signed float audio distances determine whether a note is held"
-        )]
         let held = ((off - on).seconds() > HOLD_SECONDS)
             .then(|| tick.ticks_until(nearest(timing, off)))
             .flatten();
@@ -448,10 +444,6 @@ fn notes_of(
 fn nearest(timing: Valid<'_, Timing>, at: ResolvedTime) -> Tick {
     let before = timing.latest_tick_by(at);
     let after = Ticks::new(1).and_then(|one| before.checked_add(one));
-    #[expect(
-        clippy::arithmetic_side_effects,
-        reason = "signed float audio distances choose the closer tick"
-    )]
     let off = |tick: Tick| (timing.time_at(tick) - at).seconds().abs();
     match after {
         Some(after) if off(after) < off(before) => after,

@@ -105,19 +105,11 @@ impl Grid {
         let tick = timing.latest_tick_by(at);
         let (below, above) = self.around(timing, tick)?;
         let (at_below, at_above) = (timing.time_at(below), timing.time_at(above));
-        #[expect(
-            clippy::arithmetic_side_effects,
-            reason = "signed float audio distances choose the closer grid line"
-        )]
         let line = if (at_above - at).seconds().abs() < (at - at_below).seconds().abs() {
             above
         } else {
             below
         };
-        #[expect(
-            clippy::arithmetic_side_effects,
-            reason = "two finite grid times measure the length of a step"
-        )]
         let step_seconds = (at_above - at_below).seconds();
         Some(Near {
             line,

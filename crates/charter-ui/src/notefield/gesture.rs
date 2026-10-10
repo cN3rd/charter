@@ -204,10 +204,6 @@ pub(super) fn panned(
 ) -> Option<Tick> {
     let earlier =
         TimeShift::from_seconds(f64::from((pos.y - y) / field.view.zoom.points_per_second()))?;
-    #[expect(
-        clippy::arithmetic_side_effects,
-        reason = "a finite pointer movement shifts the audio position"
-    )]
     let at = seconds - earlier;
     Some(match step {
         Some(step) => nearest_line(timing, at, step),
@@ -314,10 +310,6 @@ pub(super) fn pointer(
         && let Some(later) =
             TimeShift::from_seconds(f64::from((pos.y - y) / field.view.zoom.points_per_second()))
     {
-        #[expect(
-            clippy::arithmetic_side_effects,
-            reason = "a finite pointer movement shifts the audio position"
-        )]
         let to = nearest_line(timing, seconds + later, step);
         actions.push(Action::JumpTo(to));
     }
