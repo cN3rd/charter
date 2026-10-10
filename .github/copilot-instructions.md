@@ -17,8 +17,6 @@ self-test.
 - `just kani` runs the Kani proofs, minus the three crates linking burn, which Kani can't build.
   It needs `cargo install --locked kani-verifier && cargo kani setup` once.
 
-`cargo run -p charter-ui --example mock` draws the static mock of the book's UI draft.
-
 ## Correctness
 
 Lints enforce, not review. Root `Cargo.toml` holds `[workspace.lints]` (clippy `pedantic`,
@@ -65,14 +63,14 @@ floats, and one proof mixing division, multiplication and rounding never finishe
 | `crates/charter-editor` | editing a song without drawing it: cursor, snaps, plugin-checked note edits, selection, undo, unsaved changes, demo song. `song/` is one file per concern |
 | `crates/charter-audio` | DSP: decode via `symphonia-wrap`, waveform peaks, onsets, spectrum, resampling, tags, metronome clicks. No device |
 | `crates/charter-autotiming` | DSP: tempo map from beats and onsets, as constant-tempo sections; back end of automatic timing, fed by any tracker |
-| `crates/charter-beatthis-burn` | DSP: beats and downbeats via the Beat This! network in burn on CPU (`final0.ckpt`); parity fixtures from `fixtures/make.py` |
-| `crates/charter-mapperatorinator-burn` | DSP: osu! timing points via a port of Mapperatorinator's super timing, the V32 model in burn on wgpu, or flex on CPU; nothing past it depends on burn. Weights on Hugging Face, read its README |
+| `crates/charter-beatthis-burn` | DSP: beats and downbeats via the Beat This! network in burn on CPU |
+| `crates/charter-mapperatorinator-burn` | DSP: osu! timing points via a port of Mapperatorinator's super timing, the V32 model in burn on wgpu, or flex on CPU; nothing past it depends on burn |
 | `crates/charter-style` | shared look: colour tokens, Inter and Phosphor fonts, widgets |
-| `crates/charter-timing` | the timing window in egui: audio a measure per row, anchors pinning beats to audio; returns edits as commands. State in `lib.rs`, I/O in `draw/pointer/keyboard.rs` |
-| `crates/charter-ui` | the editor window in egui: notefield, panels, keys, settings, minimap, recovery; hosts the timing window; asks its host for files and dialogs. `window/`, `panels/`, `notefield/` are one file per concern, each `impl Window` block beside the state it owns |
+| `crates/charter-timing` | the timing window in egui: audio a measure per row, anchors pinning beats to audio; returns edits as commands |
+| `crates/charter-ui` | the editor window in egui: notefield, panels, keys, settings, minimap, recovery; hosts the timing window; asks its host for files and dialogs |
 | `crates/charter-app` | thin binary: registers plugins, serves file/dialog requests (`std::fs`, rfd), plays audio (kira), time-stretch, settings in eframe storage, crash reports (`report.rs`, color-eyre). File I/O behind a `Disk` trait, so it is tested in memory |
-| `plugins/{stepmania,ttr,osu-mania}` | ruleset plugins: typed game models over `charter-core` with a `Plugin` the editor validates through. `ttr` reads/writes `.ttr2_track` and EOF MIDI through one `exchange.rs` model; `osu-mania` imports osu! `[TimingPoints]`, pasted or from a `.osu` |
-| `third-party/symphonia-wrap` | build-time facade over `symphonia`, `dylib` + `rlib`. **Read its README before touching audio deps, features or dev profiles** |
+| `plugins/{stepmania,ttr,osu-mania}` | ruleset plugins: typed game models over `charter-core` with a `Plugin` the editor validates through |
+| `third-party/symphonia-wrap` | build-time facade over `symphonia`, `dylib` + `rlib` |
 | `packaging/pack.py` | writes `.tar.gz`/`.zip` deterministically; `just pack-check` self-tests it |
 
 Keep dependency direction one-way: **data → DSP → UI**, with plugins written against the same
@@ -84,19 +82,12 @@ mdbook under `docs/`, published to <https://cn3rd.github.io/charter/>. Design, f
 workflows go in the book; READMEs stay short and point into it. Keep `docs/src/guide/` in step
 with user-visible changes, and `docs/src/packaging.md` with packaging changes.
 
-`docs/src/` is simultaneously an [OKF](https://github.com/GoogleCloudPlatform/open-knowledge-format)
-bundle: every chapter carries frontmatter with at least a `type`, and `docs/okf-frontmatter.py` is
-an mdbook preprocessor stripping it before render. `just docs-check` validates the bundle and
-self-tests the preprocessor.
-
-`docs/src/SUMMARY.md` must **not** have frontmatter, since mdbook parses it as a sidebar separator
-and the navigation breaks. The validator reports one expected `E1` for it; do not silence it.
-
 ## Tooling
 
 `.github/skills/README.md` lists every skill and its local rules: `/rust-skills` (a submodule,
 fetched by `just setup`), `/test-driven-development` before writing production code, `/commit` to
 split work into atomic commits. `.github/lsp.json` registers rust-analyzer for code intelligence.
+Rules for one area sit in `.github/instructions/` and load with the files they cover.
 
 CI (`.github/workflows/ci.yml`) runs the `just ci` pieces, Kani, and packages both platforms on
 push, publishing a `ci-<run>` prerelease and the book to GitHub Pages.
