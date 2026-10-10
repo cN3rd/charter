@@ -78,14 +78,7 @@ impl Window {
         let asked = ui.input(|input| keys::key_actions(input, lanes, lane_keys));
         // A focused widget or a question takes the keyboard, but a lane key coming up still ends
         // its chord.
-        let asking = self.dialogs.new_song.is_some()
-            || self.dialogs.discard.is_some()
-            || self.dialogs.restoring.is_some()
-            || self.dialogs.offer.is_some()
-            || self.calibration.is_open()
-            || self.dialogs.resetting
-            || self.dialogs.choosing.is_some()
-            || matches!(self.dialogs.finding, Finding::Asking | Finding::NoGpu);
+        let asking = self.dialogs.asking() || self.calibration.is_open();
         // A button that Tab focused wants no letters, so only a text field counts.
         let typing = ui
             .ctx()

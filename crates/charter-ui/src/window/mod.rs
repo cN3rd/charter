@@ -1008,6 +1008,36 @@ struct Dialogs {
     choosing: Option<formats::Choosing>,
 }
 
+impl Dialogs {
+    /// Whether a question is open and needs the keyboard.
+    #[expect(
+        clippy::unneeded_field_pattern,
+        reason = "listing every field makes new dialogs require a keyboard-gate decision"
+    )]
+    const fn asking(&self) -> bool {
+        let Self {
+            discard,
+            after_save: _,
+            leaving: _,
+            resetting,
+            finding,
+            finding_for: _,
+            tracker: _,
+            restoring,
+            new_song,
+            offer,
+            choosing,
+        } = self;
+        new_song.is_some()
+            || discard.is_some()
+            || restoring.is_some()
+            || offer.is_some()
+            || *resetting
+            || choosing.is_some()
+            || matches!(finding, Finding::Asking | Finding::NoGpu)
+    }
+}
+
 mod apply;
 mod artwork;
 mod clipboard;
@@ -2538,6 +2568,27 @@ pub(crate) mod test_support {
 #[cfg(test)]
 mod tests {
     use crate::window::test_support::*;
+
+    #[test]
+    fn pending_questions_take_keys_but_background_work_does_not() {
+        let mut dialogs = Dialogs::default();
+        assert!(!dialogs.asking());
+
+        dialogs.discard = Some(Discard::Close);
+        assert!(dialogs.asking());
+        dialogs.discard = None;
+        dialogs.resetting = true;
+        assert!(dialogs.asking());
+        dialogs.resetting = false;
+        dialogs.finding = Finding::Asking;
+        assert!(dialogs.asking());
+        dialogs.finding = Finding::NoGpu;
+        assert!(dialogs.asking());
+        dialogs.finding = Finding::Downloading(0.5);
+        assert!(!dialogs.asking());
+        dialogs.after_save = Some(Discard::Close);
+        assert!(!dialogs.asking());
+    }
 
     #[test]
     fn a_loop_region_requires_its_end_after_its_start() {
