@@ -1,0 +1,54 @@
+{
+  "rules": [
+    {
+      "id": "cargo-publish",
+      "rank": 2,
+      "tools": ["shell"],
+      "command": "\\bcargo\\b[^\\n;&|]*\\bpublish\\b",
+      "decision": "ask",
+      "why": "crates.io keeps every published version; a charter crate published by mistake can only be yanked.",
+      "examples": ["cargo publish", "cargo publish -p charter-core --allow-dirty"],
+      "passes": ["cargo build -p charter-core", "cargo package --list -p charter-core"]
+    },
+    {
+      "id": "hugging-face-write",
+      "rank": 2,
+      "tools": ["shell"],
+      "command": "\\b(?:hf|huggingface-cli)\\b[^\\n;&|]*\\b(?:upload|delete)\\b",
+      "decision": "ask",
+      "why": "Shipped builds download the Mapperatorinator model from huggingface.co/cnf3rd and pin its SHA-256; replacing or deleting it breaks them.",
+      "examples": [
+        "hf upload cnf3rd/timingator-v32-f16-gguf timingator-v32-f16.gguf",
+        "huggingface-cli upload cnf3rd/timingator-v32-f16-gguf model.gguf",
+        "hf repo delete cnf3rd/timingator-v32-f16-gguf"
+      ],
+      "passes": ["hf download cnf3rd/timingator-v32-f16-gguf", "huggingface-cli whoami"]
+    },
+    {
+      "id": "release-or-tag-delete",
+      "rank": 2,
+      "tools": ["shell"],
+      "command": "\\bgh\\b[^\\n;&|]*\\brelease\\s+delete\\b|\\bgit\\b[^\\n;&|]*\\bpush\\b[^\\n;&|]*(?:\\s--delete\\b|\\s-d\\b|\\s:\\S)",
+      "decision": "ask",
+      "why": "CI's ci-* prereleases are the download links, and each one's release notes start from the previous ci-* tag.",
+      "examples": [
+        "gh release delete ci-24 --yes",
+        "gh release delete-asset ci-24 charter-linux.tar.gz",
+        "git push origin --delete ci-24",
+        "git push -d origin ci-24",
+        "git push origin :refs/tags/ci-24"
+      ],
+      "passes": ["gh release view ci-24", "git push origin main", "git push --dry-run origin main", "git push origin main:main"]
+    },
+    {
+      "id": "commit-weights",
+      "rank": 2,
+      "tools": ["shell"],
+      "command": "\\bgit\\b[^\\n;&|]*\\badd\\b[^\\n;&|]*\\.(?:ckpt|gguf)\\b",
+      "decision": "ask",
+      "why": "Model weights download at runtime; a committed copy stays in every clone of a public repository until history is rewritten.",
+      "examples": ["git add -f final0.ckpt", "git add -f models/timingator-v32-f16.gguf"],
+      "passes": ["git add .gitignore", "git add crates/charter-beatthis-burn/src/lib.rs"]
+    }
+  ]
+}

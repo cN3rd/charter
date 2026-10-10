@@ -6,6 +6,20 @@ needing a special case in a core crate means the plugin surface is wrong; fix th
 
 Rust Cargo workspace, edition 2024, MSRV 1.95.
 
+## Zeroth Law
+
+Never do these unless the user asks for that exact action. A higher rule wins over a lower one.
+
+1. Rewrite history `origin/main` already has: force-push, or rebase or amend a pushed commit.
+   The repository is public, and CI publishes every prerelease and the book from `main`.
+2. Publish or delete outside the repository: `cargo publish`, uploads to
+   `huggingface.co/cnf3rd`, or deleting a `ci-*` release or tag. Shipped builds pin the Hugging
+   Face model's SHA-256, and CI's release notes start from the previous `ci-*` tag.
+3. Commit model weights (`*.ckpt`, `*.gguf`, ignored for this reason). They download at runtime,
+   a committed copy stays in every clone, and removing it breaks rule 1.
+
+Ask before any action that can't be undone and isn't covered above.
+
 ## Commands
 
 `just` lists every recipe; run `just setup` once after cloning. **`just ci`** is the pre-commit
