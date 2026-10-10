@@ -171,19 +171,16 @@ impl<D: Disk> Host<D> {
                         .window
                         .export_failed(folder, &chain(&error).to_string());
                 }
-                let written = std::iter::once((&path, &bytes))
-                    .chain(beside.iter().map(|(place, made)| (place, made)))
-                    .map(|(place, made)| (place, disk::write_whole(disk, place, made)))
-                    .chain(
-                        copies
-                            .iter()
-                            .map(|(from, to)| (to, disk::copy_over(disk, from, to))),
-                    )
-                    .chain(
-                        encodes
-                            .iter()
-                            .map(|(from, to)| (to, disk::encode_over(disk, from, to))),
-                    );
+                let written =
+                    std::iter::once((&path, &bytes))
+                        .chain(beside.iter().map(|(place, made)| (place, made)))
+                        .map(|(place, made)| (place, disk::write_whole(disk, place, made)))
+                        .chain(copies.iter().map(|(from, to)| {
+                            (to, disk::copy_over(disk, disk::Transfer { from, to }))
+                        }))
+                        .chain(encodes.iter().map(|(from, to)| {
+                            (to, disk::encode_over(disk, disk::Transfer { from, to }))
+                        }));
                 for (place, result) in written {
                     if let Err(error) = result {
                         self.window.export_failed(place, &chain(&error).to_string());
@@ -192,7 +189,11 @@ impl<D: Disk> Host<D> {
             }
             Request::Autosave { bytes } => self.autosave(&bytes),
             Request::CopyAudio { from, to } => {
-                if let Err(error) = disk::copy_whole(&self.disk, &from, &to) {
+                let transfer = disk::Transfer {
+                    from: &from,
+                    to: &to,
+                };
+                if let Err(error) = disk::copy_whole(&self.disk, transfer) {
                     let why = format!("{} to {}: {}", from.display(), to.display(), chain(&error));
                     self.window.audio_not_copied(&why);
                 }
@@ -269,9 +270,14 @@ impl<D: Disk> Host<D> {
     /// Writes the song and its accompanying assets, reporting the outcome to the window.
     pub(crate) fn write(&mut self, path: PathBuf, bytes: &[u8]) {
         let copied = match self.window.audio_copy_for(&path) {
-            Some((from, to)) => disk::copy_whole(&self.disk, &from, &to).map_err(|error| {
-                format!("{} to {}: {}", from.display(), to.display(), chain(&error))
-            }),
+            Some((from, to)) => disk::copy_whole(
+                &self.disk,
+                disk::Transfer {
+                    from: &from,
+                    to: &to,
+                },
+            )
+            .map_err(|error| format!("{} to {}: {}", from.display(), to.display(), chain(&error))),
             None => Ok(()),
         };
         let artwork = self.window.artwork_write_for(&path);
