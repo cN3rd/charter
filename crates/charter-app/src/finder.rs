@@ -225,8 +225,19 @@ fn timing_of(
     let beats = tracker
         .track(mono.samples(), mono.rate().get())
         .map_err(|why| chain(&why).to_string())?;
+    let marked: Vec<_> = beats
+        .beats
+        .iter()
+        .map(|&seconds| charter_autotiming::Beat {
+            seconds,
+            downbeat: beats
+                .downbeats
+                .iter()
+                .any(|&down| (down - seconds).abs() < 1e-3),
+        })
+        .collect();
     let onsets = onsets.unwrap_or_else(|| charter_audio::onsets(&track));
-    charter_autotiming::estimate(&beats.beats, &beats.downbeats, &onsets, ticks_per_beat)
+    charter_autotiming::estimate(&marked, &onsets, ticks_per_beat)
         .map_err(|why| chain(&why).to_string())?
         .map(|found| found.timing)
         .ok_or_else(|| "the audio has too few beats to fit a tempo to".to_owned())

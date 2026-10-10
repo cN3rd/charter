@@ -11,7 +11,7 @@
 use std::path::Path;
 use std::time::Instant;
 
-use charter_autotiming::estimate;
+use charter_autotiming::{Beat, estimate};
 use charter_beatthis_burn::Tracker;
 use charter_core::{BeatLength, ResolvedTime, Section, TicksPerBeat};
 
@@ -60,13 +60,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             percentile(&shifts, 0.9)
         );
     }
-    let found = estimate(
-        &beats.beats,
-        &beats.downbeats,
-        &onsets,
-        TicksPerBeat::default(),
-    )?
-    .ok_or("too few beats")?;
+    let marked: Vec<_> = beats
+        .beats
+        .iter()
+        .map(|&seconds| Beat {
+            seconds,
+            downbeat: beats
+                .downbeats
+                .iter()
+                .any(|&down| (down - seconds).abs() < 1e-3),
+        })
+        .collect();
+    let found = estimate(&marked, &onsets, TicksPerBeat::default())?.ok_or("too few beats")?;
     println!("estimated in {:.2?}", started.elapsed());
     for fitted in &found.fitted {
         println!(

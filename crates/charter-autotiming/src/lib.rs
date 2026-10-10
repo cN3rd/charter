@@ -57,10 +57,18 @@ pub struct Estimate {
     pub timing: Timing,
 }
 
-/// A beat as the fit sees it: its time, how much it counts, its place in the count of beats,
-/// and whether it starts a bar.
+/// A tracked beat in seconds from the audio's start, marked if it starts a bar.
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct Beat {
+pub struct Beat {
+    /// Beat position in seconds from the audio's start.
+    pub seconds: f64,
+    /// Whether the tracker marked this beat as a bar start.
+    pub downbeat: bool,
+}
+
+/// A beat as the fit sees it: its time, weight, counted position and bar start.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct CountedBeat {
     /// Beat position in seconds from the audio's start.
     seconds: f64,
     /// Fit weight: one if onset-confirmed, [`UNREFINED`] otherwise.
@@ -71,25 +79,24 @@ struct Beat {
     downbeat: bool,
 }
 
-/// The tempo map `beats` and `downbeats`, in seconds and earliest first, make with the song's
-/// `onsets`, at `ticks_per_beat`. None with too few beats to fit a tempo to.
+/// The tempo map `beats`, earliest first, make with the song's `onsets` at `ticks_per_beat`.
+/// None with too few beats to fit a tempo to.
 ///
 /// # Errors
 ///
 /// Returns [`SectionError`] when a fitted tempo or start is past what the format holds.
 pub fn estimate(
-    beats: &[f64],
-    downbeats: &[f64],
+    beats: &[Beat],
     onsets: &[Onset],
     ticks_per_beat: TicksPerBeat,
 ) -> Result<Option<Estimate>, SectionError> {
-    let counted = counted(&refined(beats, downbeats, onsets));
+    let counted = counted(&refined(beats, onsets));
     if counted.len() < MIN_BEATS {
         return Ok(None);
     }
     // Beats far off the line of the stretch they fall in are the tracker's mistakes; split again
     // without them, so they neither bend a tempo nor break a stretch in two.
-    let kept: Vec<Beat> = split(&counted).into_iter().flat_map(on_line).collect();
+    let kept: Vec<CountedBeat> = split(&counted).into_iter().flat_map(on_line).collect();
     let all: Vec<Fitted> = split(&kept).into_iter().filter_map(fit).collect();
     // A stretch whose beats scatter wider than a beat can and still count is one the tracker
     // lost, such as a beatless intro; the grid of the stretches around it carries through.
@@ -105,16 +112,15 @@ pub fn estimate(
 }
 
 /// Each beat moved onto the nearest onset within [`REFINE`] of it, counting fully, or left where
-/// it is counting [`UNREFINED`], and marked when a downbeat falls on it. The tracker's beats sit
-/// a steady few tens of milliseconds from the song's onsets, so they are first moved by the
-/// song's median of that; after it, the nearest onset is the beat's own even where a louder
-/// one, such as a hi-hat's, is near.
-fn refined(beats: &[f64], downbeats: &[f64], onsets: &[Onset]) -> Vec<(f64, f64, bool)> {
+/// it is counting [`UNREFINED`], keeping its bar start. The tracker's beats sit a steady few tens
+/// of milliseconds from the song's onsets, so they are first moved by the song's median of that;
+/// after it, the nearest onset is the beat's own even where a louder one is near.
+fn refined(beats: &[Beat], onsets: &[Onset]) -> Vec<(f64, f64, bool)> {
     let lag = lag(beats, onsets);
     beats
         .iter()
-        .map(|&tracked| {
-            let beat = tracked + lag;
+        .map(|tracked| {
+            let beat = tracked.seconds + lag;
             let from = onsets.partition_point(|onset| onset.seconds < beat - REFINE);
             let nearest = onsets
                 .get(from..)
@@ -126,10 +132,9 @@ fn refined(beats: &[f64], downbeats: &[f64], onsets: &[Onset]) -> Vec<(f64, f64,
                         .abs()
                         .total_cmp(&(b.seconds - beat).abs())
                 });
-            let downbeat = downbeats.iter().any(|down| (down - tracked).abs() < 1e-3);
             match nearest {
-                Some(onset) => (onset.seconds, 1.0, downbeat),
-                None => (beat, UNREFINED, downbeat),
+                Some(onset) => (onset.seconds, 1.0, tracked.downbeat),
+                None => (beat, UNREFINED, tracked.downbeat),
             }
         })
         .collect()
@@ -137,10 +142,11 @@ fn refined(beats: &[f64], downbeats: &[f64], onsets: &[Onset]) -> Vec<(f64, f64,
 
 /// How far the song's onsets typically sit from its beats: the median, over the beats with an
 /// onset within [`LAG`], of the nearest one's distance, later positive.
-fn lag(beats: &[f64], onsets: &[Onset]) -> f64 {
+fn lag(beats: &[Beat], onsets: &[Onset]) -> f64 {
     let mut shifts: Vec<f64> = beats
         .iter()
-        .filter_map(|&beat| {
+        .filter_map(|tracked| {
+            let beat = tracked.seconds;
             let from = onsets.partition_point(|onset| onset.seconds < beat - LAG);
             onsets
                 .get(from..)
@@ -166,7 +172,7 @@ fn median_or(values: &mut [f64], default: f64) -> f64 {
 /// The beats counted against the song's typical gap between them: a gap of about two counts as
 /// a beat missed, so a stretch the tracker followed at half the tempo stays on the song's grid,
 /// and a beat much closer to the one before than that is an extra one, dropped.
-fn counted(beats: &[(f64, f64, bool)]) -> Vec<Beat> {
+fn counted(beats: &[(f64, f64, bool)]) -> Vec<CountedBeat> {
     let mut gaps: Vec<f64> = beats
         .windows(2)
         .map(|pair| match pair {
@@ -175,7 +181,7 @@ fn counted(beats: &[(f64, f64, bool)]) -> Vec<Beat> {
         })
         .collect();
     let period = median_or(&mut gaps, f64::INFINITY);
-    let mut counted: Vec<Beat> = Vec::with_capacity(beats.len());
+    let mut counted: Vec<CountedBeat> = Vec::with_capacity(beats.len());
     for &(seconds, weight, downbeat) in beats {
         let index = match counted.last() {
             None => 0,
@@ -188,7 +194,7 @@ fn counted(beats: &[(f64, f64, bool)]) -> Vec<Beat> {
                 last.index.saturating_add(steps)
             }
         };
-        counted.push(Beat {
+        counted.push(CountedBeat {
             seconds,
             weight,
             index,
@@ -229,7 +235,7 @@ const fn index_float(index: i64) -> f64 {
 }
 
 /// The beats of `stretch` within [`OUTLIER`], or three times the stretch's spread, of its line.
-fn on_line(stretch: &[Beat]) -> impl Iterator<Item = Beat> + '_ {
+fn on_line(stretch: &[CountedBeat]) -> impl Iterator<Item = CountedBeat> + '_ {
     let sums = stretch.iter().fold(Sums::default(), Sums::add);
     let (start, period, error) = sums.line();
     let limit = OUTLIER.max(3.0 * (error / sums.w).sqrt());
@@ -258,7 +264,7 @@ struct Sums {
 
 impl Sums {
     /// The sums after including `beat`.
-    fn add(self, beat: &Beat) -> Self {
+    fn add(self, beat: &CountedBeat) -> Self {
         let k = index_float(beat.index);
         let (w, t) = (beat.weight, beat.seconds);
         Self {
@@ -305,7 +311,7 @@ impl Sums {
 /// `beats` split into stretches of one tempo each: the partition with the least squared error
 /// from each stretch's line plus a cost for each stretch, a little more for one that does not
 /// start on a downbeat.
-fn split(beats: &[Beat]) -> Vec<&[Beat]> {
+fn split(beats: &[CountedBeat]) -> Vec<&[CountedBeat]> {
     let len = beats.len();
     let mut sums = vec![Sums::default(); len.saturating_add(1)];
     for (at, beat) in beats.iter().enumerate() {
@@ -347,7 +353,7 @@ fn split(beats: &[Beat]) -> Vec<&[Beat]> {
 /// The section `stretch` fits: its tempo snapped where the snapped grid stays within [`SNAP`] of
 /// the fitted one across the stretch, which one stray beat cannot spoil, its bars as long as the
 /// downbeats most often are apart, starting on its first downbeat.
-fn fit(stretch: &[Beat]) -> Option<Fitted> {
+fn fit(stretch: &[CountedBeat]) -> Option<Fitted> {
     let sums = stretch.iter().fold(Sums::default(), Sums::add);
     let (_, period, error) = sums.line();
     if !(period.is_finite() && period > 0.0) {
@@ -360,8 +366,9 @@ fn fit(stretch: &[Beat]) -> Option<Fitted> {
     let snapped = [1.0, 2.0, 3.0].into_iter().find_map(|per| {
         let snapped_period = 60.0 / ((bpm * per).round() / per);
         let start = offset(stretch, snapped_period);
-        let apart =
-            |beat: &Beat| (grid(start, snapped_period, beat) - grid(free, period, beat)).abs();
+        let apart = |beat: &CountedBeat| {
+            (grid(start, snapped_period, beat) - grid(free, period, beat)).abs()
+        };
         (apart(first).max(apart(last)) <= SNAP).then_some((start, snapped_period))
     });
     let (start, final_period, is_snapped) = snapped.map_or_else(
@@ -388,13 +395,13 @@ fn fit(stretch: &[Beat]) -> Option<Fitted> {
 }
 
 /// Where the grid with `period` puts `beat`'s line, from the line of index 0 at `start`.
-fn grid(start: f64, period: f64, beat: &Beat) -> f64 {
+fn grid(start: f64, period: f64, beat: &CountedBeat) -> f64 {
     let index = index_float(beat.index);
     start + period * index
 }
 
 /// The start of index 0 that best fits `stretch` to a grid of `period`, by weight.
-fn offset(stretch: &[Beat], period: f64) -> f64 {
+fn offset(stretch: &[CountedBeat], period: f64) -> f64 {
     let (weighted, weight) = stretch.iter().fold((0.0, 0.0), |(sum, weight), beat| {
         let index = index_float(beat.index);
         (
@@ -407,7 +414,7 @@ fn offset(stretch: &[Beat], period: f64) -> f64 {
 
 /// The beats a bar of `stretch` most often holds, counted between its downbeats; four when its
 /// downbeats do not say.
-fn meter(stretch: &[Beat]) -> NonZeroU16 {
+fn meter(stretch: &[CountedBeat]) -> NonZeroU16 {
     let downbeats: Vec<i64> = stretch
         .iter()
         .filter(|beat| beat.downbeat)
@@ -442,17 +449,18 @@ mod tests {
 
     /// Beats `period` apart from `start`, `count` of them, each pushed by `jitter(n)`, with a
     /// downbeat every `bar` beats from the first.
-    fn beats(start: f64, bpm: f64, count: usize, bar: usize) -> (Vec<f64>, Vec<f64>) {
+    fn beats(start: f64, bpm: f64, count: usize, bar: usize) -> Vec<Beat> {
         let period = 60.0 / bpm;
-        let times: Vec<f64> = (0..count)
+        (0..count)
             .map(|n| {
-                let n = beat_float(n);
+                let at = beat_float(n);
                 // A tracker's beats sit a frame's worth either side of the audio's.
-                start + period * n + 0.008 * (n * 1.7).sin()
+                Beat {
+                    seconds: start + period * at + 0.008 * (at * 1.7).sin(),
+                    downbeat: n.is_multiple_of(bar),
+                }
             })
-            .collect();
-        let downbeats = times.iter().copied().step_by(bar).collect();
-        (times, downbeats)
+            .collect()
     }
 
     /// An onset exactly on each true beat.
@@ -488,7 +496,29 @@ mod tests {
                 strength: 1.0,
             },
         ];
-        assert_eq!(refined(&[1.0], &[], &heard), [(1.012, 1.0, false)]);
+        assert_eq!(
+            refined(
+                &[Beat {
+                    seconds: 1.0,
+                    downbeat: false
+                }],
+                &heard
+            ),
+            [(1.012, 1.0, false)]
+        );
+    }
+
+    #[test]
+    fn refining_a_downbeat_keeps_its_bar_start_marked() {
+        let heard = [Onset {
+            seconds: 1.012,
+            strength: 1.0,
+        }];
+        let beats = [Beat {
+            seconds: 1.0,
+            downbeat: true,
+        }];
+        assert_eq!(refined(&beats, &heard), [(1.012, 1.0, true)]);
     }
 
     #[test]
@@ -519,7 +549,11 @@ mod tests {
                 strength: 1.0,
             },
         ];
-        assert!((lag(&[0.0, 1.0, 2.0], &heard) - 0.02).abs() < 1e-9);
+        let beats = [0.0, 1.0, 2.0].map(|seconds| Beat {
+            seconds,
+            downbeat: false,
+        });
+        assert!((lag(&beats, &heard) - 0.02).abs() < 1e-9);
     }
 
     #[test]
@@ -531,15 +565,10 @@ mod tests {
 
     #[test]
     fn a_steady_song_is_one_snapped_section_on_its_first_downbeat() {
-        let (beats, downbeats) = beats(0.371, 128.0, 200, 4);
-        let found = estimate(
-            &beats,
-            &downbeats,
-            &onsets(0.371, 128.0, 200),
-            TicksPerBeat::default(),
-        )
-        .unwrap()
-        .unwrap();
+        let beats = beats(0.371, 128.0, 200, 4);
+        let found = estimate(&beats, &onsets(0.371, 128.0, 200), TicksPerBeat::default())
+            .unwrap()
+            .unwrap();
         assert_eq!(found.fitted.len(), 1, "{:?}", found.fitted);
         assert!(found.fitted[0].snapped);
         assert_eq!(found.timing.tempo, Bpm::try_from(128.0).unwrap());
@@ -548,14 +577,13 @@ mod tests {
 
     #[test]
     fn a_tempo_change_starts_a_section_where_it_happens() {
-        let (mut all, mut downs) = beats(0.2, 120.0, 64, 4);
+        let mut all = beats(0.2, 120.0, 64, 4);
         let change = 0.2 + 64.0 * 0.5;
-        let (later, later_downs) = beats(change, 150.0, 80, 4);
+        let later = beats(change, 150.0, 80, 4);
         let mut heard = onsets(0.2, 120.0, 64);
         heard.extend(onsets(change, 150.0, 80));
         all.extend(later);
-        downs.extend(later_downs);
-        let found = estimate(&all, &downs, &heard, TicksPerBeat::default())
+        let found = estimate(&all, &heard, TicksPerBeat::default())
             .unwrap()
             .unwrap();
         let bpms: Vec<f64> = found
@@ -570,8 +598,8 @@ mod tests {
 
     #[test]
     fn a_fitted_period_that_rounds_to_no_tempo_is_skipped() {
-        let stretch: Vec<Beat> = (0..MIN_BEATS)
-            .map(|index| Beat {
+        let stretch: Vec<CountedBeat> = (0..MIN_BEATS)
+            .map(|index| CountedBeat {
                 seconds: beat_float(index) * 1e6,
                 weight: 1.0,
                 index: i64::try_from(index).unwrap(),
@@ -583,32 +611,28 @@ mod tests {
 
     #[test]
     fn a_missed_beat_counts_two_and_an_extra_one_is_dropped() {
-        let (mut all, downs) = beats(0.5, 100.0, 60, 4);
+        let mut all = beats(0.5, 100.0, 60, 4);
         all.remove(20);
-        all.insert(30, all[29] + 0.1);
-        let found = estimate(
-            &all,
-            &downs,
-            &onsets(0.5, 100.0, 60),
-            TicksPerBeat::default(),
-        )
-        .unwrap()
-        .unwrap();
+        all.insert(
+            30,
+            Beat {
+                seconds: all[29].seconds + 0.1,
+                downbeat: false,
+            },
+        );
+        let found = estimate(&all, &onsets(0.5, 100.0, 60), TicksPerBeat::default())
+            .unwrap()
+            .unwrap();
         assert_eq!(found.fitted.len(), 1, "{:?}", found.fitted);
         assert_eq!(found.timing.tempo, Bpm::try_from(100.0).unwrap());
     }
 
     #[test]
     fn the_downbeats_give_the_bars_their_beats() {
-        let (beats, downbeats) = beats(0.0, 90.0, 60, 3);
-        let found = estimate(
-            &beats,
-            &downbeats,
-            &onsets(0.0, 90.0, 60),
-            TicksPerBeat::default(),
-        )
-        .unwrap()
-        .unwrap();
+        let beats = beats(0.0, 90.0, 60, 3);
+        let found = estimate(&beats, &onsets(0.0, 90.0, 60), TicksPerBeat::default())
+            .unwrap()
+            .unwrap();
         assert_eq!(found.fitted[0].section.meter.get(), 3);
         let meters: Vec<_> = found.timing.events.iter().map(|event| event.tick).collect();
         assert_eq!(meters, [Tick::new(0)]);
@@ -616,26 +640,18 @@ mod tests {
 
     #[test]
     fn a_tempo_between_whole_bpms_keeps_three_places() {
-        let (beats, downbeats) = beats(0.0, 133.2, 300, 4);
-        let found = estimate(
-            &beats,
-            &downbeats,
-            &onsets(0.0, 133.2, 300),
-            TicksPerBeat::default(),
-        )
-        .unwrap()
-        .unwrap();
+        let beats = beats(0.0, 133.2, 300, 4);
+        let found = estimate(&beats, &onsets(0.0, 133.2, 300), TicksPerBeat::default())
+            .unwrap()
+            .unwrap();
         assert!(!found.fitted[0].snapped);
         assert!((f64::from(found.timing.tempo) - 133.2).abs() < 1e-9);
     }
 
     #[test]
     fn too_few_beats_make_no_estimate() {
-        let (beats, downbeats) = beats(0.0, 120.0, 5, 4);
-        assert_eq!(
-            estimate(&beats, &downbeats, &[], TicksPerBeat::default()),
-            Ok(None)
-        );
+        let beats = beats(0.0, 120.0, 5, 4);
+        assert_eq!(estimate(&beats, &[], TicksPerBeat::default()), Ok(None));
     }
 }
 
@@ -648,7 +664,7 @@ mod proofs {
     #[kani::unwind(18)]
     fn three_matching_downbeat_gaps_choose_their_meter() {
         let gap: i64 = if kani::any::<bool>() { 3 } else { 5 };
-        let stretch: [Beat; 4] = std::array::from_fn(|index| Beat {
+        let stretch: [CountedBeat; 4] = std::array::from_fn(|index| CountedBeat {
             seconds: 0.0,
             weight: 1.0,
             index: i64::try_from(index).unwrap_or_default() * gap,
