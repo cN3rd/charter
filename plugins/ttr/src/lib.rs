@@ -892,7 +892,7 @@ impl RulesetPlugin for Plugin {
         &self,
         format: usize,
         song: &ValidDocument,
-        audio_seconds: Option<f64>,
+        audio: Option<std::time::Duration>,
     ) -> Result<ExportedSong, Box<dyn std::error::Error + Send + Sync>> {
         let file = SongFile::at(format)?;
         let parsed = Song::try_from(song)?;
@@ -903,7 +903,7 @@ impl RulesetPlugin for Plugin {
             report.add("the preview, which the game has no place for");
         }
         let exported = match file {
-            SongFile::Track(_) => track_folder(&parsed, &track, audio_seconds, &mut report),
+            SongFile::Track(_) => track_folder(&parsed, &track, audio, &mut report),
             SongFile::Midi(layout) => {
                 let themed = parsed.theme().is_some()
                     || parsed.charts().iter().any(|chart| chart.theme.is_some());
@@ -993,7 +993,7 @@ impl RulesetPlugin for Plugin {
 fn track_folder(
     song: &Song,
     track: &exchange::Track,
-    audio_seconds: Option<f64>,
+    audio: Option<std::time::Duration>,
     report: &mut exchange::Report,
 ) -> ExportedSong {
     let metadata = song.metadata();
@@ -1014,7 +1014,7 @@ fn track_folder(
             report.add("the artwork, which the game reads as a PNG");
         }
     }
-    if audio_seconds.is_none() {
+    if audio.is_none() {
         report.add("how long the audio lasts, which info.plist holds, as the audio has not loaded");
     }
     let common = charter_core::TimeSignature::default().numerator;
@@ -1022,10 +1022,7 @@ fn track_folder(
     if tempo.into_iter().any(|change| change.meter != common) {
         report.add("the meter, which a .ttr2_track does not hold");
     }
-    let beside = BTreeMap::from([(
-        "info.plist".to_owned(),
-        track::info(song, track, audio_seconds),
-    )]);
+    let beside = BTreeMap::from([("info.plist".to_owned(), track::info(song, track, audio))]);
     ExportedSong {
         bytes: track::write(track),
         file_name: Some("taptrack.ttr2_track".to_owned()),
@@ -1296,6 +1293,8 @@ fn to_tap(object: &Object, lanes: LaneCount) -> Option<Object> {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
     use charter_core::ValidDocument;
     use serde_json::{Value, json};
@@ -2152,7 +2151,9 @@ mod tests {
                 named("mega_tap")
             ]
         );
-        let tour_track = Plugin.export_song(1, &tour.document, Some(60.0)).unwrap();
+        let tour_track = Plugin
+            .export_song(1, &tour.document, Some(Duration::from_secs(60)))
+            .unwrap();
         assert!(tour_track.left_out.is_empty(), "{:?}", tour_track.left_out);
         assert_eq!(tour_track.bytes, track, "Tour's notes sit on the same keys");
     }
@@ -2191,7 +2192,9 @@ mod tests {
         themed["charts"][0]["settings"]["theme"] = json!("Slipknot");
         themed["metadata"]["genre"] = json!("Rock");
         let themed = ValidDocument::from_json(&serde_json::to_vec(&themed).unwrap()).unwrap();
-        let bundle = Plugin.export_song(TRACK, &themed, Some(1.0)).unwrap();
+        let bundle = Plugin
+            .export_song(TRACK, &themed, Some(Duration::from_secs(1)))
+            .unwrap();
         let back = Plugin
             .import_song(TRACK, &bundle.bytes, &bundle.beside)
             .unwrap();

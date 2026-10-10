@@ -251,7 +251,9 @@ impl Window {
                     return;
                 };
                 let seconds = match self.loaded() {
-                    Some(&super::Loaded::Ready(seconds)) => Some(seconds),
+                    Some(&super::Loaded::Ready(seconds)) => {
+                        std::time::Duration::try_from_secs_f64(seconds).ok()
+                    }
                     _ => None,
                 };
                 match plugin.export_song(index, song.document(), seconds) {

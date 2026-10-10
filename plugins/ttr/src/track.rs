@@ -196,8 +196,8 @@ impl Info {
 
 /// The `info.plist` a track folder holding `track`, of `song`, keeps beside it, as the game's own
 /// and custom tracks write theirs: its title and artist, levels, columns and themes, the files the
-/// folder holds, and how long `audio_seconds` says the audio lasts.
-pub(crate) fn info(song: &Song, track: &Track, audio_seconds: Option<f64>) -> Vec<u8> {
+/// folder holds, and how long `audio` says the audio lasts.
+pub(crate) fn info(song: &Song, track: &Track, audio: Option<std::time::Duration>) -> Vec<u8> {
     let number = |level: &Level| level.difficulty.index().saturating_add(1);
     let numbers: Vec<Value> = track
         .levels
@@ -255,8 +255,8 @@ pub(crate) fn info(song: &Song, track: &Track, audio_seconds: Option<f64>) -> Ve
     }));
     let metadata = song.metadata();
     let mut info = Dictionary::new();
-    if let Some(seconds) = audio_seconds {
-        info.insert("audioFileDuration".to_owned(), seconds.into());
+    if let Some(length) = audio {
+        info.insert("audioFileDuration".to_owned(), length.as_secs_f64().into());
     }
     info.insert(
         "availableDifficultyLevels".to_owned(),

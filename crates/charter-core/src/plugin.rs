@@ -302,7 +302,7 @@ pub trait RulesetPlugin: Debug {
     }
 
     /// `song`, which this plugin accepts, as a file of its [song format](Self::song_formats) at
-    /// index `format`. `audio_seconds` is how long the song's audio lasts, when the editor knows.
+    /// index `format`. `audio` is how long the song's audio lasts, when the editor knows.
     ///
     /// # Errors
     ///
@@ -311,9 +311,9 @@ pub trait RulesetPlugin: Debug {
         &self,
         format: usize,
         song: &ValidDocument,
-        audio_seconds: Option<f64>,
+        audio: Option<std::time::Duration>,
     ) -> Result<ExportedSong, Box<dyn Error + Send + Sync>> {
-        let _: (usize, &ValidDocument, Option<f64>) = (format, song, audio_seconds);
+        let _: (usize, &ValidDocument, Option<std::time::Duration>) = (format, song, audio);
         Err(format!("{} exports no songs", self.id()).into())
     }
 }
