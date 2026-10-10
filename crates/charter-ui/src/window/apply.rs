@@ -1,8 +1,9 @@
 //! Action dispatch from panels, keys and gestures.
 
 use super::{
-    Action, KeepNotes, Note, PASTE_WAIT, PendingPaste, Rate, Request, Saving, Selecting, Song,
-    Step, Tick, Toggled, Window, grow, nudge_bpm, pattern, placing_at, refused, retime, stretch,
+    Action, KeepNotes, Mode, Note, PASTE_WAIT, PendingPaste, Rate, Request, Saving, Selecting,
+    Song, Step, Tick, Toggled, Window, grow, nudge_bpm, pattern, placing_at, refused, retime,
+    stretch,
 };
 
 impl Window {
@@ -248,13 +249,16 @@ impl Window {
                 if self.typing.chord_since.is_none() {
                     self.typing.chord_since = Some(song.history_step());
                 }
-                let at = placing_at(song, self.playback.playing.then_some(input_latency));
+                let at = placing_at(
+                    song,
+                    self.playback.playing.is_some().then_some(input_latency),
+                );
                 let toggled = song.toggle(at, *lane, note.kind());
                 if matches!(toggled, Ok(Toggled::Placed)) {
                     self.typing.placed = true;
                     if *note == Note::Tap {
                         self.typing.holding.push((*lane, at));
-                        if self.playback.playing {
+                        if self.playback.playing.is_some() {
                             let now = song.timing().time_at(song.cursor()).seconds();
                             self.typing.pressed.push((*lane, now - input_latency));
                         }
@@ -263,7 +267,7 @@ impl Window {
                 self.failure = toggled.err().as_ref().map(refused);
             }
             Action::LaneUp(lane) => {
-                if self.playback.playing {
+                if self.playback.playing.is_some() {
                     // Where the key came up is where the hold ends.
                     let now = song.timing().time_at(song.cursor()).seconds() - input_latency;
                     let held: Vec<_> = self
@@ -287,7 +291,7 @@ impl Window {
                 }
                 if std::mem::take(&mut self.typing.placed)
                     && self.settings.auto_jump
-                    && !self.playback.playing
+                    && self.playback.playing.is_none()
                 {
                     song.step(Step::Later);
                 }
@@ -362,8 +366,11 @@ impl Window {
                     self.sync.refused(edit, &why, song.timing(), now);
                 }
                 // A loop plays again from its start, so the edit is heard on this pass.
-                Ok(()) if self.playback.looping.is_some() => self.play_loop(),
-                Ok(()) => {}
+                Ok(()) => {
+                    if let Some(Mode::Loop(from, to)) = self.playback.playing {
+                        self.play_loop(from, to);
+                    }
+                }
             },
             Action::JumpTo(tick) => song.jump_to(*tick),
             Action::JumpEnd => song.jump_to(song.end()),

@@ -150,7 +150,7 @@ impl Window {
         let song = self.song.as_ref();
         let audio_state = self.audio_state();
         let mut dismissed = false;
-        let playing = self.playback.playing;
+        let playing = self.playback.playing.is_some();
         egui::Panel::top("menu")
             .frame(style::chrome())
             .show(ui, |ui| {
@@ -179,7 +179,7 @@ impl Window {
         let view = (
             self.zoom,
             self.playback.rate,
-            self.playback.playing,
+            self.playback.playing.is_some(),
             self.settings.song_panel,
             self.settings.grid,
         );
@@ -194,7 +194,7 @@ impl Window {
                 panels::status_bar(
                     ui,
                     self.song.as_ref(),
-                    (&audio_state, self.playback.playing),
+                    (&audio_state, self.playback.playing.is_some()),
                     &mut actions,
                 );
             });
@@ -202,7 +202,8 @@ impl Window {
         // The ticks and metronome are mixed in, and the pitch kept or not, as playback starts,
         // so a change to them plays again from where it is, once the pointer lets go.
         let changed = self.playback.played_sounds != Some(Sounds::of(&self.settings));
-        if self.playback.playing && changed && !ui.input(|input| input.pointer.any_down()) {
+        if self.playback.playing.is_some() && changed && !ui.input(|input| input.pointer.any_down())
+        {
             self.replay();
         }
         if let Some(text) = self.clipboard.out.take() {
@@ -423,7 +424,7 @@ impl Window {
                 song: self.song.as_ref(),
                 peaks,
                 onsets,
-                playing: self.playback.playing,
+                playing: self.playback.playing.is_some(),
                 latency_ms: self.settings.audio_latency_ms.ms(),
             };
             let mut commands = Vec::new();
@@ -433,7 +434,7 @@ impl Window {
                     charter_timing::Command::Edit(edit) => actions.push(Action::Timing(edit)),
                     charter_timing::Command::PlayFrom(tick) => {
                         actions.push(Action::JumpTo(tick));
-                        if !self.playback.playing {
+                        if self.playback.playing.is_none() {
                             actions.push(Action::TogglePlay);
                         }
                     }
@@ -461,7 +462,7 @@ impl Window {
         for action in actions {
             self.apply(action);
         }
-        if self.playback.playing
+        if self.playback.playing.is_some()
             && let Some(playing_song) = &self.song
             && Some(playing_song.cursor()) != before
         {

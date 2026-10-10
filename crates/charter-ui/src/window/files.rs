@@ -223,7 +223,7 @@ impl Window {
             .is_some_and(|status| Some(&status.file) != wanted.as_ref())
         {
             self.playback.audio = None;
-            if std::mem::take(&mut self.playback.playing) {
+            if self.playback.playing.take().is_some() {
                 self.requests.push(Request::Pause);
             }
         }
@@ -574,7 +574,7 @@ impl Window {
                 self.artwork.audio_file = audio;
                 self.artwork.current = None;
                 self.artwork.parked.clear();
-                if std::mem::take(&mut self.playback.playing) {
+                if self.playback.playing.take().is_some() {
                     self.requests.push(Request::Pause);
                 }
                 // A restored song names what its unsaved changes chose, not what is on disk, so

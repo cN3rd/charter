@@ -786,8 +786,6 @@ struct EmbeddedArtwork {
 /// Playback state and audio host status.
 #[derive(Debug, Default)]
 struct Playback {
-    /// The ticks being looped, while a loop plays.
-    looping: Option<(Tick, Tick)>,
     /// The usual playback speed, while the alternate one plays.
     usual_rate: Option<Rate>,
     /// Whether the metronome is muted for as long as a key is held.
@@ -797,16 +795,32 @@ struct Playback {
     played: Option<PlayedAudio>,
     /// The audio file the host last reported on, and how it went.
     audio: Option<AudioStatus>,
-    /// Whether the audio is playing.
-    playing: bool,
-    /// Where in the audio, in seconds, the snippet playing stops, while one plays.
-    snippet: Option<f64>,
+    /// What the audio playing was started for, while it plays.
+    playing: Option<Mode>,
     /// Current playback speed relative to the audio's own speed.
     rate: Rate,
     /// Whether the audio playing was asked to keep its pitch.
     played_pitch: bool,
     /// The settings the audio playing was mixed with, so a change to them plays it again.
     played_sounds: Option<Sounds>,
+}
+
+/// What audio playing was started for, which playing it again keeps.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Mode {
+    /// From the cursor, which follows it.
+    Cursor,
+    /// From the cursor with the metronome on, to hear a timing edit.
+    Audition,
+    /// From `from` to `until` seconds into the audio, leaving the cursor where it is.
+    Snippet {
+        /// Where in the audio it starts, in seconds.
+        from: f64,
+        /// Where in the audio it stops, in seconds.
+        until: f64,
+    },
+    /// The ticks from the first to the second, over and over with the metronome on.
+    Loop(Tick, Tick),
 }
 
 /// The Help menu's windows, each showing or not.
@@ -989,8 +1003,7 @@ impl Window {
 
     /// Takes that the audio played to its end.
     pub const fn playback_ended(&mut self) {
-        self.playback.playing = false;
-        self.playback.snippet = None;
+        self.playback.playing = None;
     }
 
     /// Takes that the beat tracker's weights are not downloaded yet, so the user is asked.
@@ -1017,7 +1030,7 @@ impl Window {
     /// Whether the window takes the audio to be playing.
     #[must_use]
     pub const fn is_playing(&self) -> bool {
-        self.playback.playing
+        self.playback.playing.is_some()
     }
 }
 

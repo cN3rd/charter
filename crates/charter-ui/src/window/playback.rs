@@ -1,8 +1,8 @@
 //! Playback and audio-rate state changes.
 
 use super::{
-    AudioStatus, Finding, Loaded, NO_AUDIO, Path, PlayedAudio, Rate, Request, Sounds, Step, Tick,
-    Ui, Window, clicks, grow, latency,
+    AudioStatus, Finding, Loaded, Mode, NO_AUDIO, Path, PlayedAudio, Rate, Request, Sounds, Step,
+    Tick, Ui, Window, clicks, grow, latency,
 };
 
 impl Window {
@@ -23,13 +23,12 @@ impl Window {
     }
     /// Moves the cursor to the audio position the host says is playing.
     pub fn playhead(&mut self, seconds: f64) {
-        if !self.playback.playing {
+        let Some(mode) = self.playback.playing else {
             return;
-        }
-        if let Some(until) = self.playback.snippet {
+        };
+        if let Mode::Snippet { until, .. } = mode {
             if seconds >= until {
-                self.playback.snippet = None;
-                self.playback.playing = false;
+                self.playback.playing = None;
                 self.requests.push(Request::Pause);
             }
             return;
@@ -110,7 +109,7 @@ impl Window {
     }
     /// Sends live volume changes to the host, or restarts mixed-click playback after dragging.
     pub(super) fn follow_volumes(&mut self, ui: &Ui) {
-        let (Some(played), true) = (self.playback.played, self.playback.playing) else {
+        let (Some(played), true) = (self.playback.played, self.playback.playing.is_some()) else {
             return;
         };
         let wanted = self.settings.volumes;
@@ -126,14 +125,12 @@ impl Window {
                 mixed_clicks: false,
             });
         } else if !ui.input(|input| input.pointer.any_down()) {
-            self.toggle_play();
-            self.toggle_play();
+            self.replay();
         }
     }
     /// Plays from `from` with the metronome on to hear a timing edit.
     pub(super) fn audition(&mut self, from: f64) {
-        self.playback.looping = None;
-        self.start(from, None, true);
+        self.start(from, Mode::Audition);
     }
     /// Plays the settings' snippet of audio before the cursor, or after it, then pauses, leaving the
     /// cursor where it is so the same moment can be heard again.
@@ -143,7 +140,7 @@ impl Window {
         };
         if !matches!(self.loaded(), Some(Loaded::Ready(_))) {
             // Says why nothing plays.
-            if !self.playback.playing {
+            if self.playback.playing.is_none() {
                 self.toggle_play();
             }
             return;
@@ -154,51 +151,58 @@ impl Window {
             Step::Earlier => (at - length, at),
             Step::Later => (at, at + length),
         };
-        self.playback.looping = None;
-        self.start(from, None, false);
-        self.playback.snippet = Some(until);
+        self.start(from, Mode::Snippet { from, until });
     }
     /// Starts or stops looping the requested tick span.
     pub(super) fn toggle_loop(&mut self, from: Tick, to: Tick) {
-        if self.playback.looping == Some((from, to)) && self.playback.playing {
-            self.playback.looping = None;
-            self.playback.playing = false;
+        if self.playback.playing == Some(Mode::Loop(from, to)) {
+            self.playback.playing = None;
             self.requests.push(Request::Pause);
             return;
         }
-        self.playback.looping = Some((from, to));
-        self.play_loop();
+        self.play_loop(from, to);
     }
-    /// Starts playback for the current loop span.
-    pub(super) fn play_loop(&mut self) {
-        let (Some(song), Some((from, to))) = (&self.song, self.playback.looping) else {
+    /// Starts looping the ticks from `from` to `to`, from the first.
+    pub(super) fn play_loop(&mut self, from: Tick, to: Tick) {
+        let Some(song) = &self.song else {
             return;
         };
-        let timing = song.timing();
-        let span = (timing.time_at(from).seconds(), timing.time_at(to).seconds());
-        self.start(span.0, Some(span), true);
+        let start = song.timing().time_at(from).seconds();
+        self.start(start, Mode::Loop(from, to));
     }
-    /// Restarts playback from the cursor or loop start after a setting changes.
+    /// Plays what is playing again after a setting changes: a loop or a snippet from its start,
+    /// and anything else from the cursor.
     pub(super) fn replay(&mut self) {
-        if !self.playback.playing {
+        let Some(song) = &self.song else {
             return;
-        }
-        if self.playback.looping.is_some() {
-            self.play_loop();
-        } else if let Some(song) = &self.song {
-            let from = song.timing().time_at(song.cursor()).seconds();
-            self.start(from, None, false);
+        };
+        let cursor = song.timing().time_at(song.cursor()).seconds();
+        match self.playback.playing {
+            None => {}
+            Some(Mode::Loop(from, to)) => self.play_loop(from, to),
+            Some(mode @ Mode::Snippet { from, .. }) => self.start(from, mode),
+            Some(mode @ (Mode::Cursor | Mode::Audition)) => self.start(cursor, mode),
         }
     }
-    /// Asks the host to play the song from an audio time, optionally looping.
-    pub(super) fn start(&mut self, from: f64, looping: Option<(f64, f64)>, metronome: bool) {
+    /// Asks the host to play the song from an audio time for `mode`.
+    pub(super) fn start(&mut self, from: f64, mode: Mode) {
         let (Some(song), Some(&Loaded::Ready(seconds))) = (&self.song, self.loaded()) else {
             return;
         };
-        if self.playback.playing {
+        if self.playback.playing.is_some() {
             self.requests.push(Request::Pause);
         }
-        self.playback.snippet = None;
+        let looping = match mode {
+            Mode::Loop(first, last) => {
+                let timing = song.timing();
+                Some((
+                    timing.time_at(first).seconds(),
+                    timing.time_at(last).seconds(),
+                ))
+            }
+            Mode::Cursor | Mode::Audition | Mode::Snippet { .. } => None,
+        };
+        let metronome = matches!(mode, Mode::Audition | Mode::Loop(..));
         let from = from.max(0.0);
         let until = looping.map_or(seconds, |(_, end)| end.min(seconds));
         // From the song's start, so a seek back while playing still ticks.
@@ -210,7 +214,7 @@ impl Window {
             self.sync.grid(),
         );
         let volumes = self.settings.volumes;
-        self.playback.playing = true;
+        self.playback.playing = Some(mode);
         self.playback.played = Some(PlayedAudio {
             volumes,
             mixed_clicks: !clicks.is_empty(),
@@ -241,8 +245,7 @@ impl Window {
         reason = "the playback error names the Choose audio menu label with its ellipsis"
     )]
     pub(super) fn toggle_play(&mut self) {
-        if std::mem::take(&mut self.playback.playing) {
-            self.playback.snippet = None;
+        if self.playback.playing.take().is_some() {
             self.requests.push(Request::Pause);
             return;
         }
@@ -251,10 +254,7 @@ impl Window {
         };
         let from = song.timing().time_at(song.cursor()).seconds();
         match self.loaded() {
-            Some(&Loaded::Ready(_)) => {
-                self.playback.looping = None;
-                self.start(from, None, false);
-            }
+            Some(&Loaded::Ready(_)) => self.start(from, Mode::Cursor),
             Some(Loaded::Failed) => {
                 self.failure = Some(
                     "The audio could not be played. Choose another audio file with File > \
@@ -290,11 +290,10 @@ impl Window {
             .playback
             .played
             .is_some_and(|played| played.mixed_clicks);
-        if self.playback.playing
-            && (self.settings.keep_pitch || self.playback.played_pitch || clicked)
-        {
+        let playing = self.playback.playing.is_some();
+        if playing && (self.settings.keep_pitch || self.playback.played_pitch || clicked) {
             self.replay();
-        } else if self.playback.playing {
+        } else if playing {
             self.requests.push(Request::Rate(rate.factor()));
         }
     }
@@ -1176,6 +1175,67 @@ mod tests {
         );
         harness.run();
         assert_eq!(harness.state_mut().take_requests(), []);
+    }
+    #[test]
+    fn a_paused_loop_stays_paused_through_a_timing_edit() {
+        let mut harness = listening(Settings::default());
+        harness.key_press(egui::Key::L);
+        harness.run();
+        harness.state_mut().apply(Action::TogglePlay);
+        harness.state_mut().take_requests();
+        let bpm = charter_core::Bpm::try_from(100.0).unwrap();
+        let edit = charter_timing::Edit::SetBpmAt {
+            tick: Tick::new(0),
+            bpm,
+        };
+        harness.state_mut().apply(Action::Timing(edit));
+        harness.run();
+        assert_eq!(bpm_at_cursor(&harness), Some((0, "100".to_owned())));
+        assert_eq!(harness.state_mut().take_requests(), []);
+        assert!(!harness.state().is_playing());
+    }
+    #[test]
+    fn a_volume_change_under_a_loops_clicks_keeps_it_looping() {
+        let mut harness = listening(Settings::default());
+        harness.key_press(egui::Key::L);
+        harness.run();
+        played(&mut harness);
+        harness.state_mut().settings.volumes.music = Gain::from(0.3);
+        harness.run();
+        let (from, looping, _) = played(&mut harness);
+        assert!(from.abs() < 1e-9, "{from}");
+        assert_eq!(looping, Some((0.0, 2.0)));
+    }
+    #[test]
+    fn a_sound_change_during_a_snippet_plays_the_snippet_again() {
+        let mut harness = playable();
+        harness.key_press(egui::Key::PageDown);
+        harness.run();
+        harness.key_press(egui::Key::Q);
+        harness.run();
+        harness.state_mut().take_requests();
+        harness.state_mut().settings.note_ticks = true;
+        harness.run();
+        let (from, _, _) = played(&mut harness);
+        assert!((from - 1.8).abs() < 1e-9, "{from}");
+        harness.state_mut().playhead(2.01);
+        harness.run();
+        assert_eq!(request(&mut harness), Request::Pause);
+    }
+    #[test]
+    fn a_sound_change_during_an_audition_keeps_its_metronome() {
+        let mut harness = playable();
+        harness.state_mut().apply(Action::Audition(0.0));
+        harness.state_mut().take_requests();
+        harness.state_mut().settings.note_ticks = true;
+        harness.run();
+        let (_, _, clicks) = played(&mut harness);
+        assert!(
+            clicks
+                .iter()
+                .any(|(_, tone)| matches!(tone, Tone::Accent(_))),
+            "{clicks:?}"
+        );
     }
     #[test]
     fn playback_without_accessible_audio_explains_how_to_supply_it() {
