@@ -11,7 +11,8 @@ use crate::document::{
 use crate::error::Error;
 use crate::grid::{GridPosition, Measures};
 use crate::unit::{
-    Bpm, Origin, ResolvedTime, Seconds, Tick, Ticks, TicksPerBeat, TimeShift, TimeSignature,
+    BeatLength, Bpm, Origin, ResolvedTime, Seconds, Tick, Ticks, TicksPerBeat, TimeShift,
+    TimeSignature,
 };
 use crate::validate::validate;
 
@@ -207,7 +208,7 @@ impl Valid<'_, Timing> {
             .tempo_for(self.document.ticks_per_beat, from, to, later.seconds())
     }
 
-    /// The tempo that governs `tick`, with anchored segments derived from their end points.
+    /// The beat length at `tick`, with anchored segments derived from their end points.
     ///
     /// # Panics
     ///
@@ -217,7 +218,7 @@ impl Valid<'_, Timing> {
         clippy::expect_used,
         reason = "validation guarantees every segment derives a tempo"
     )]
-    pub fn tempo_at(&self, tick: Tick) -> f64 {
+    pub fn tempo_at(&self, tick: Tick) -> BeatLength {
         self.part
             .tempo_at(self.document.ticks_per_beat, tick)
             .expect("a valid timing map derives every segment tempo")
@@ -652,7 +653,7 @@ mod tests {
     use crate::number::{MAX_MILLIONTHS, from_millionths};
     use crate::path::ResourcePath;
     use crate::unit::{
-        AudioTime, LaneCount, LaneIndex, Seconds, Tick, Ticks, TicksPerBeat, TimeShift,
+        AudioTime, BeatLength, LaneCount, LaneIndex, Seconds, Tick, Ticks, TicksPerBeat, TimeShift,
         TimeSignature,
     };
 
@@ -1017,7 +1018,7 @@ mod tests {
         let doc = read(&value).unwrap();
         let timing = doc.timing();
         assert!((timing.time_at(Tick::new(0)).seconds() - 0.5).abs() < 1e-10);
-        assert!((timing.tempo_at(Tick::new(0)) - 120.0).abs() < 1e-10);
+        assert!((timing.tempo_at(Tick::new(0)).bpm() - 120.0).abs() < 1e-10);
         assert_eq!(timing.bpm_at(Tick::new(480)), Bpm::try_from(120.0).ok());
         assert_eq!(timing.bpm_at(Tick::new(960)), Bpm::try_from(60.0).ok());
         assert_eq!(
@@ -1028,6 +1029,26 @@ mod tests {
         assert_eq!(
             timing.latest_tick_by(ResolvedTime::from_seconds(1.5).unwrap()),
             Tick::new(960)
+        );
+    }
+
+    #[test]
+    fn a_valid_map_returns_the_derived_beat_length_without_rounding_its_tempo() {
+        let mut value = minimal();
+        value["timing"] = json!({
+            "anchors": [
+                { "tick": 0, "seconds": 0.0 },
+                { "tick": 2880, "seconds": 1.4 }
+            ],
+            "tempo": 120.0, "events": []
+        });
+        let timing = read(&value).unwrap();
+        let beat: BeatLength = timing.timing().tempo_at(Tick::new(960));
+        assert!((beat.seconds() - 1.4 / 3.0).abs() < 1e-12);
+        assert!((beat.bpm() - 180.0 / 1.4).abs() < 1e-9);
+        assert_eq!(
+            timing.timing().tempo_at(Tick::new(2880)),
+            BeatLength::from(Bpm::try_from(120.0).unwrap())
         );
     }
 

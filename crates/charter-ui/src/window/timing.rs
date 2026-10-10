@@ -423,7 +423,7 @@ mod tests {
         harness.run();
         let bpm = |view: &Harness<'_, Window>| {
             let song = view.state().song.as_ref().unwrap();
-            song.timing().tempo_at(Tick::new(0))
+            song.timing().tempo_at(Tick::new(0)).bpm()
         };
         let raised = bpm(&harness);
         assert_eq!(note_count(&harness), 6);

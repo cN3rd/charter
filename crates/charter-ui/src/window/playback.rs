@@ -71,7 +71,7 @@ impl Window {
             .measures_from(first)
             .next()
             .map_or(4, |measure| measure.meter.numerator.get());
-        latency::Beat::of(timing.tempo_at(first), per_measure)
+        latency::Beat::of(timing.tempo_at(first).bpm(), per_measure)
     }
     /// Input latency as playback-speed-adjusted seconds.
     pub(super) fn input_latency(&self) -> f64 {

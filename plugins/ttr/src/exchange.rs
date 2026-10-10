@@ -545,7 +545,7 @@ fn changes_of(timing: Valid<'_, Timing>, report: &mut Report) -> Vec<Change> {
             meter = meters.range(..=at).next_back().map_or(meter, |(_, &m)| m);
             Change {
                 seconds: timing.time_at(tick).seconds(),
-                bpm: bpm.unwrap_or_else(|| timing.tempo_at(tick)),
+                bpm: bpm.unwrap_or_else(|| timing.tempo_at(tick).bpm()),
                 meter,
             }
         })

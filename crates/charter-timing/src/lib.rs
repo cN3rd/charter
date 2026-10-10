@@ -22,7 +22,7 @@ pub mod rows;
 use std::num::NonZeroU16;
 
 use charter_audio::{Onset, Peaks};
-use charter_core::{Bpm, ResolvedTime, Tick, TimeShift, Timing, Valid};
+use charter_core::{BeatLength, Bpm, ResolvedTime, Tick, TimeShift, Timing, Valid};
 use charter_editor::{Pin, Refusal, Song};
 use charter_style as style;
 use egui::Pos2;
@@ -550,15 +550,11 @@ impl TimingWindow {
     }
 }
 
-/// Audio moment a beat before `tick`, when it can be represented.
+/// Audio moment up to a beat before `tick`, when it can be represented.
 fn audition_from(frame: &Frame<'_>, at: ResolvedTime, tick: Tick) -> Option<ResolvedTime> {
-    ResolvedTime::from_seconds(at.seconds() - lead(frame, tick))
-}
-
-/// How long before `tick` an audition starts: a beat there, kept between 150 and 600 ms.
-fn lead(frame: &Frame<'_>, tick: Tick) -> f64 {
-    let bpm = frame.timing.tempo_at(tick);
-    (60.0 / bpm).clamp(AUDITION.0, AUDITION.1)
+    // Convert the derived BPM back to seconds to keep the prior reciprocal rounding.
+    let beat = BeatLength::from_bpm(frame.timing.tempo_at(tick).bpm())?;
+    ResolvedTime::from_seconds(at.seconds() - beat.seconds().clamp(AUDITION.0, AUDITION.1))
 }
 
 /// Draws the timing window over `inputs` while it is open, and answers its input with
@@ -873,6 +869,45 @@ mod tests {
     use super::*;
     use crate::test_support::*;
     use crate::*;
+
+    #[test]
+    fn an_audition_keeps_the_reciprocal_rounding_of_a_derived_tempo() {
+        let document = ValidDocument::from_json(
+            &serde_json::to_vec(&json!({
+                "format_version": 1,
+                "ruleset": { "id": "test", "version": "1" },
+                "metadata": { "title": "t", "artist": "a", "audio": "a.ogg" },
+                "timing": {
+                    "anchors": [
+                        { "tick": 0, "seconds": 0.0 },
+                        { "tick": 2880, "seconds": 1.4 }
+                    ],
+                    "tempo": 120.0, "events": []
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let timing = document.timing();
+        let frame = Frame {
+            timing,
+            tail: Bpm::try_from(120.0).unwrap(),
+            pins: &[],
+            bars: Bars::new(timing, Tick::new(0), Tick::new(2880), 0),
+            onsets: &[],
+            residuals: &[],
+            issues: &[],
+            editable: true,
+            cursor: Tick::new(0),
+            now: 0.0,
+        };
+        let at = ResolvedTime::from_seconds(0.5).unwrap();
+        let from = audition_from(&frame, at, Tick::new(960)).unwrap();
+        assert_eq!(
+            from.seconds().to_bits(),
+            0.033_333_333_333_333_27_f64.to_bits()
+        );
+    }
 
     #[test]
     fn nudges_merge_for_the_same_selection_until_a_refusal_resets_them() {

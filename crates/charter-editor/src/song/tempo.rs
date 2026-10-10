@@ -218,7 +218,7 @@ impl Song {
         let timing = self.timing();
         let resolution = timing.ticks_per_beat();
         let per_beat = f64::from(u16::from(resolution));
-        let ratio = f64::from(bpm) / timing.tempo_at(from.tick);
+        let ratio = f64::from(bpm) / timing.tempo_at(from.tick).bpm();
         let start = from.tick;
         let stretched = TempoShift::Stretch {
             timing,

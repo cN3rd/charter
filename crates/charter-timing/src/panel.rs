@@ -879,6 +879,6 @@ mod tests {
             panic!("expected a tempo edit");
         };
         edit.apply(&mut song).unwrap();
-        assert!((song.timing().tempo_at(Tick::new(0)) - 150.0).abs() < 1e-4);
+        assert!((song.timing().tempo_at(Tick::new(0)).bpm() - 150.0).abs() < 1e-4);
     }
 }

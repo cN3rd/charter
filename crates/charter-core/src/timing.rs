@@ -1,5 +1,5 @@
 use crate::document::{Anchor, Timing, TimingEvent, TimingKind};
-use crate::unit::{Bpm, ResolvedTime, Tick, TicksPerBeat};
+use crate::unit::{BeatLength, Bpm, ResolvedTime, Tick, TicksPerBeat};
 
 impl Timing {
     /// Audio time of an object on `tick`; see [`Valid::time_at`](crate::Valid::time_at). Events
@@ -39,9 +39,9 @@ impl Timing {
         Some(ResolvedTime::new(seconds))
     }
 
-    /// The tempo governing `tick`, in quarter notes per minute: derived between anchors, the
-    /// stored tempo after the last, and the first segment's before the first.
-    pub(crate) fn tempo_at(&self, ticks_per_beat: TicksPerBeat, tick: Tick) -> Option<f64> {
+    /// The beat length governing `tick`: derived between anchors, the stored tempo after the
+    /// last, and the first segment's before the first.
+    pub(crate) fn tempo_at(&self, ticks_per_beat: TicksPerBeat, tick: Tick) -> Option<BeatLength> {
         let index = self.anchors.partition_point(|anchor| anchor.tick <= tick);
         let per_tick = if index == 0 {
             self.before_first(ticks_per_beat)?
@@ -54,13 +54,13 @@ impl Timing {
                 _ => tail_rate(self.tempo, ticks_per_beat),
             }
         };
-        Some(bpm_of(per_tick, ticks_per_beat))
+        BeatLength::from_seconds(per_tick * f64::from(ticks_per_beat.get()))
     }
 
     /// The tempo at `tick` as it is shown and typed: an anchored segment's to the fewest decimal
     /// places that land its next anchor on the same tick, and the tail's as stored.
     pub(crate) fn bpm_at(&self, ticks_per_beat: TicksPerBeat, tick: Tick) -> Option<f64> {
-        let exact = self.tempo_at(ticks_per_beat, tick)?;
+        let exact = self.tempo_at(ticks_per_beat, tick)?.bpm();
         let index = self
             .anchors
             .partition_point(|anchor| anchor.tick <= tick)
@@ -385,7 +385,10 @@ mod tests {
         assert_time(&t, 0, 1.0);
         assert_time(&t, 960, 2.0);
         assert_time(&t, 1920, 3.0);
-        let tempo = t.tempo_at(TicksPerBeat::default(), Tick::new(960)).unwrap();
+        let tempo = t
+            .tempo_at(TicksPerBeat::default(), Tick::new(960))
+            .unwrap()
+            .bpm();
         assert!((tempo - 60.0).abs() < 1e-9);
     }
 
@@ -394,7 +397,10 @@ mod tests {
         // Seven beats in two seconds is 210 BPM; three in 1.4 s is 128.571428…, which a BPM of six
         // places would round and land the next anchor a little off.
         let t = timing(&[(0, 0.0), (2880, 1.4), (5760, 2.8)], 128.0, Vec::new());
-        let tempo = t.tempo_at(TicksPerBeat::default(), Tick::new(1)).unwrap();
+        let tempo = t
+            .tempo_at(TicksPerBeat::default(), Tick::new(1))
+            .unwrap()
+            .bpm();
         assert!((tempo - 180.0 / 1.4).abs() < 1e-9, "{tempo}");
         assert!(time(&t, 2879) < 1.4);
         assert_time(&t, 2880, 1.4);
@@ -472,7 +478,10 @@ mod tests {
     #[test]
     fn an_anchor_on_a_delay_is_the_time_after_the_delay() {
         let t = timing(&[(0, 0.0), (960, 4.0)], 60.0, vec![event(960, delay(3.0))]);
-        let tempo = t.tempo_at(TicksPerBeat::default(), Tick::new(480)).unwrap();
+        let tempo = t
+            .tempo_at(TicksPerBeat::default(), Tick::new(480))
+            .unwrap()
+            .bpm();
         assert!(
             (tempo - 60.0).abs() < 1e-9,
             "the delay takes three of the four seconds"
@@ -483,7 +492,10 @@ mod tests {
     #[test]
     fn a_stop_inside_a_segment_shortens_the_time_its_beats_get() {
         let t = timing(&[(0, 0.0), (1920, 3.0)], 60.0, vec![event(960, stop(1.0))]);
-        let tempo = t.tempo_at(TicksPerBeat::default(), Tick::new(1)).unwrap();
+        let tempo = t
+            .tempo_at(TicksPerBeat::default(), Tick::new(1))
+            .unwrap()
+            .bpm();
         assert!((tempo - 60.0).abs() < 1e-9);
         assert_time(&t, 960, 1.0);
         assert_time(&t, 961, 2.0 + 1.0 / 960.0);
@@ -539,7 +551,10 @@ mod tests {
         assert!((time(&typed, 73_289) - 26.1).abs() < 1e-9);
         // A rate that no shorter decimal lands on the same tick is read exactly.
         let odd = timing(&[(0, 0.0), (73_289, 26.123_457)], 120.0, Vec::new());
-        let exact = odd.tempo_at(TicksPerBeat::default(), Tick::new(0)).unwrap();
+        let exact = odd
+            .tempo_at(TicksPerBeat::default(), Tick::new(0))
+            .unwrap()
+            .bpm();
         let read = odd.bpm_at(TicksPerBeat::default(), Tick::new(0)).unwrap();
         assert!(
             (read - exact).abs() * 73_289.0 / exact < 0.5,
@@ -708,7 +723,7 @@ mod tests {
             .expect("generated timing has an anchor");
         let per_tick = timing
             .tempo_at(TicksPerBeat::default(), at(tick))
-            .map(|tempo| 60.0 / (tempo * f64::from(TicksPerBeat::default().get())))
+            .map(|tempo| 60.0 / (tempo.bpm() * f64::from(TicksPerBeat::default().get())))
             .unwrap();
         let start = i64::from(from.tick);
         let (low, high) = if i64::from(tick) >= start {
