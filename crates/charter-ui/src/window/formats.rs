@@ -269,22 +269,17 @@ impl Window {
                             .as_ref()
                             .map_or(path, |main| folder.join(main.as_str()));
                         let mut left_out = exported.left_out;
-                        let (mut copies, mut encodes) = (Vec::new(), Vec::new());
+                        let mut resources = Vec::new();
                         for (copy, resource) in &exported.copies {
                             let from = match resource {
-                                SongResource::Audio | SongResource::AacAudio => self.audio_file(),
+                                SongResource::Audio | SongResource::M4aAudio => self.audio_file(),
                                 SongResource::Artwork => self.artwork_file(),
                             };
                             let Some(from) = from else {
                                 left_out.push(format!("{copy}, as the song's file is not chosen"));
                                 continue;
                             };
-                            let to = folder.join(copy.as_str());
-                            if *resource == SongResource::AacAudio && !is_aac(&from) {
-                                encodes.push((from, to));
-                            } else {
-                                copies.push((from, to));
-                            }
+                            resources.push((from, folder.join(copy.as_str()), *resource));
                         }
                         let beside = exported
                             .beside
@@ -299,8 +294,7 @@ impl Window {
                             path,
                             bytes: exported.bytes,
                             beside,
-                            copies,
-                            encodes,
+                            resources,
                         });
                     }
                     Err(why) => {
@@ -315,11 +309,6 @@ impl Window {
     pub fn export_failed(&mut self, path: &Path, why: &str) {
         self.failure = Some(format!("{} was not written: {why}", path.display()));
     }
-}
-
-/// Whether the audio at `path` is AAC already, as its extension says.
-fn is_aac(path: &Path) -> bool {
-    matches!(extension(path).as_deref(), Some("m4a" | "mp4" | "aac"))
 }
 
 /// Whether `format` names `extension` among its own.
@@ -353,7 +342,9 @@ mod tests {
 
     use egui_kittest::Harness;
 
-    use charter_core::{FileName, Metadata, NewChart, NewSong, ResourcePath, RulesetPlugin};
+    use charter_core::{
+        FileName, Metadata, NewChart, NewSong, ResourcePath, RulesetPlugin, SongResource,
+    };
 
     use crate::window::test_support::*;
     use crate::window::{Action, Note, Request, Window};
@@ -694,8 +685,7 @@ mod tests {
             path,
             bytes,
             beside,
-            copies,
-            encodes,
+            resources,
         }) = requests
             .iter()
             .find(|request| matches!(request, Request::WriteExport { .. }))
@@ -713,22 +703,24 @@ mod tests {
         assert!(plist.contains("<real>129.5</real>"), "{plist}");
         assert!(plist.contains("<string>TTRDJ</string>"), "{plist}");
         assert_eq!(
-            copies,
+            resources,
             &[
                 (
-                    PathBuf::from("/songs/cover.png"),
-                    folder.join("artwork.png")
+                    PathBuf::from("/songs/song.mp3"),
+                    folder.join("audio.m4a"),
+                    SongResource::M4aAudio
                 ),
                 (
                     PathBuf::from("/songs/cover.png"),
-                    folder.join("artwork@2x.png")
+                    folder.join("artwork.png"),
+                    SongResource::Artwork
+                ),
+                (
+                    PathBuf::from("/songs/cover.png"),
+                    folder.join("artwork@2x.png"),
+                    SongResource::Artwork
                 ),
             ]
-        );
-        // MP3 is not AAC, so the host encodes it.
-        assert_eq!(
-            encodes,
-            &[(PathBuf::from("/songs/song.mp3"), folder.join("audio.m4a"))]
         );
         assert_eq!(
             harness.state().message(),

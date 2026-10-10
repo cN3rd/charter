@@ -4,8 +4,28 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
+use charter_audio::AudioCodec;
+
 /// Failure when neither the chosen `FFmpeg` nor the system one can run.
 const MISSING_FFMPEG: &str = "ffmpeg was found neither at the configured path nor on the PATH";
+
+/// How ffmpeg makes M4A audio when the source cannot be copied as a file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum M4aConversion {
+    /// Move the compressed audio frames into an MP4 container unchanged.
+    Remux,
+    /// Encode audio to AAC.
+    Encode,
+}
+
+/// No conversion means the source is already AAC in MP4 and can be copied as a file.
+const fn m4a_conversion(codec: Option<AudioCodec>, mp4: bool) -> Option<M4aConversion> {
+    match codec {
+        Some(AudioCodec::Aac) if mp4 => None,
+        Some(AudioCodec::Aac | AudioCodec::Mp3) => Some(M4aConversion::Remux),
+        Some(AudioCodec::Other) | None => Some(M4aConversion::Encode),
+    }
+}
 
 /// The source and destination of a file operation.
 #[derive(Clone, Copy)]
@@ -55,11 +75,16 @@ pub(crate) trait Disk {
     /// # Errors
     /// Whatever keeps the folder from being read, such as it not being there.
     fn list(&self, folder: &Path) -> io::Result<Vec<PathBuf>>;
-    /// Writes the audio at `transfer.from` to `transfer.to` as AAC in an MP4 container.
+    /// Remuxes the audio unchanged or encodes it as AAC in an MP4 container.
     ///
     /// # Errors
-    /// Whatever keeps the audio from being encoded, such as no encoder being installed.
-    fn encode_aac(&self, ffmpeg: Option<&Path>, transfer: Transfer<'_>) -> io::Result<()>;
+    /// Whatever keeps the audio from being converted, such as no ffmpeg binary being available.
+    fn convert_m4a(
+        &self,
+        ffmpeg: Option<&Path>,
+        transfer: Transfer<'_>,
+        conversion: M4aConversion,
+    ) -> io::Result<()>;
 }
 
 /// The computer's own files.
@@ -110,38 +135,56 @@ impl Disk for Real {
         Ok(files)
     }
 
-    fn encode_aac(&self, ffmpeg: Option<&Path>, transfer: Transfer<'_>) -> io::Result<()> {
+    fn convert_m4a(
+        &self,
+        ffmpeg: Option<&Path>,
+        transfer: Transfer<'_>,
+        conversion: M4aConversion,
+    ) -> io::Result<()> {
         let ffmpeg =
             ffmpeg.ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, MISSING_FFMPEG))?;
-        // ponytail: blocks the window for the seconds a song takes to encode; run it on a thread
+        // ponytail: blocks the window for the seconds a song takes to convert; run it on a thread
         // with progress if long songs make that felt.
-        let encoded = encode_command(ffmpeg, transfer).output().map_err(|error| {
-            if error.kind() == io::ErrorKind::NotFound {
-                io::Error::new(io::ErrorKind::NotFound, MISSING_FFMPEG)
-            } else {
-                error
-            }
-        })?;
-        if encoded.status.success() {
+        let converted = m4a_command(ffmpeg, transfer, conversion)
+            .output()
+            .map_err(|error| {
+                if error.kind() == io::ErrorKind::NotFound {
+                    io::Error::new(io::ErrorKind::NotFound, MISSING_FFMPEG)
+                } else {
+                    error
+                }
+            })?;
+        if converted.status.success() {
             Ok(())
         } else {
             Err(io::Error::other(format!(
                 "ffmpeg could not convert the audio: {}",
-                String::from_utf8_lossy(&encoded.stderr).trim()
+                String::from_utf8_lossy(&converted.stderr).trim()
             )))
         }
     }
 }
 
-/// The `FFmpeg` invocation used for AAC audio in a game's export.
-fn encode_command(ffmpeg: &Path, transfer: Transfer<'_>) -> std::process::Command {
+/// The `FFmpeg` invocation used for M4A audio in a game's export.
+fn m4a_command(
+    ffmpeg: &Path,
+    transfer: Transfer<'_>,
+    conversion: M4aConversion,
+) -> std::process::Command {
     let mut command = std::process::Command::new(ffmpeg);
     command
         .args(["-nostdin", "-v", "error", "-y", "-i"])
         .arg(transfer.from)
-        // The ipod muxer marks the file M4A, as the game's own audio.m4a files are.
-        .args(["-vn", "-c:a", "aac", "-b:a", "256k", "-f", "ipod"])
-        .arg(transfer.to);
+        .arg("-vn");
+    match conversion {
+        M4aConversion::Remux => {
+            command.args(["-c:a", "copy", "-f", "mp4"]);
+        }
+        M4aConversion::Encode => {
+            command.args(["-c:a", "aac", "-b:a", "320k", "-f", "ipod"]);
+        }
+    }
+    command.arg(transfer.to);
     command
 }
 
@@ -234,27 +277,51 @@ pub(crate) fn copy_over(disk: &impl Disk, transfer: Transfer<'_>) -> io::Result<
     copied
 }
 
-/// Encodes the source as AAC to a partial file, then replaces the destination.
+/// Writes the source to an M4A file, copying AAC in MP4, remuxing AAC or MP3 in other containers,
+/// and encoding other audio as AAC.
 ///
 /// # Errors
 ///
-/// The audio cannot be encoded, or the result cannot be moved; the destination is as it was.
-pub(crate) fn encode_over(
+/// The source cannot be read or the file cannot be written; the destination is as it was.
+pub(crate) fn m4a_over(
     disk: &impl Disk,
     ffmpeg: Option<&Path>,
     transfer: Transfer<'_>,
+) -> io::Result<()> {
+    // ponytail: Disk::read loads the whole song to probe it; stream the probe if large songs
+    // make export memory-heavy.
+    let source = disk.read(transfer.from)?;
+    let mp4 = source.get(4..8) == Some(&b"ftyp"[..]);
+    let extension = transfer.from.extension().and_then(std::ffi::OsStr::to_str);
+    match m4a_conversion(charter_audio::audio_codec(source, extension), mp4) {
+        None => copy_over(disk, transfer),
+        Some(conversion) => convert_over(disk, ffmpeg, transfer, conversion),
+    }
+}
+
+/// Converts the source to M4A through a partial file, then replaces the destination.
+///
+/// # Errors
+///
+/// The audio cannot be converted, or the result cannot be moved; the destination is as it was.
+fn convert_over(
+    disk: &impl Disk,
+    ffmpeg: Option<&Path>,
+    transfer: Transfer<'_>,
+    conversion: M4aConversion,
 ) -> io::Result<()> {
     if let Some(folder) = transfer.to.parent() {
         disk.make_folder(folder)?;
     }
     let beside = partial_path(transfer.to);
-    let encoded = disk
-        .encode_aac(
+    let converted = disk
+        .convert_m4a(
             ffmpeg,
             Transfer {
                 from: transfer.from,
                 to: &beside,
             },
+            conversion,
         )
         .and_then(|()| {
             disk.rename(Transfer {
@@ -262,10 +329,10 @@ pub(crate) fn encode_over(
                 to: transfer.to,
             })
         });
-    if encoded.is_err() {
+    if converted.is_err() {
         drop(disk.remove(&beside));
     }
-    encoded
+    converted
 }
 
 #[cfg(test)]
@@ -290,10 +357,8 @@ pub(crate) mod memory {
         pub(crate) stuck: bool,
         /// Whether a copy writes half its bytes before failing.
         pub(crate) partial_copy_fail: bool,
-        /// Whether no audio encoder is installed.
-        pub(crate) no_encoder: bool,
-        /// Binary the host passed to the encoder, if any.
-        pub(crate) encoded_with: RefCell<Option<PathBuf>>,
+        /// Binary the host passed to ffmpeg, if any.
+        pub(crate) converted_with: RefCell<Option<PathBuf>>,
     }
 
     fn missing(path: &Path) -> io::Error {
@@ -396,15 +461,22 @@ pub(crate) mod memory {
             self.files.borrow().contains_key(path)
         }
 
-        /// Writes `aac:` and the source's bytes, standing in for an encoder.
-        fn encode_aac(&self, ffmpeg: Option<&Path>, transfer: Transfer<'_>) -> io::Result<()> {
-            if self.no_encoder {
-                return Err(io::Error::new(io::ErrorKind::NotFound, MISSING_FFMPEG));
-            }
-            *self.encoded_with.borrow_mut() = ffmpeg.map(Path::to_path_buf);
-            let mut encoded = b"aac:".to_vec();
-            encoded.extend(self.read(transfer.from)?);
-            self.write(transfer.to, &encoded)
+        /// Writes a prefix identifying the ffmpeg operation and the source's bytes.
+        fn convert_m4a(
+            &self,
+            ffmpeg: Option<&Path>,
+            transfer: Transfer<'_>,
+            conversion: M4aConversion,
+        ) -> io::Result<()> {
+            let ffmpeg =
+                ffmpeg.ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, MISSING_FFMPEG))?;
+            *self.converted_with.borrow_mut() = Some(ffmpeg.to_path_buf());
+            let mut converted = match conversion {
+                M4aConversion::Remux => b"remux:".to_vec(),
+                M4aConversion::Encode => b"aac:".to_vec(),
+            };
+            converted.extend(self.read(transfer.from)?);
+            self.write(transfer.to, &converted)
         }
 
         fn list(&self, folder: &Path) -> io::Result<Vec<PathBuf>> {
@@ -639,20 +711,128 @@ mod tests {
 
     #[test]
     fn an_audio_export_runs_the_selected_ffmpeg_binary() {
-        let command = encode_command(
+        let command = m4a_command(
             Path::new("/tools/ffmpeg"),
             Transfer {
                 from: Path::new("/songs/song.ogg"),
                 to: Path::new("/out/audio.m4a.partial"),
             },
+            M4aConversion::Encode,
         );
         assert_eq!(command.get_program(), "/tools/ffmpeg");
         let arguments: Vec<_> = command.get_args().collect();
-        assert_eq!(arguments[0], "-nostdin");
-        assert_eq!(arguments[5], "/songs/song.ogg");
         assert_eq!(
-            arguments.last().copied(),
-            Some(std::ffi::OsStr::new("/out/audio.m4a.partial"))
+            arguments,
+            [
+                "-nostdin",
+                "-v",
+                "error",
+                "-y",
+                "-i",
+                "/songs/song.ogg",
+                "-vn",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "320k",
+                "-f",
+                "ipod",
+                "/out/audio.m4a.partial",
+            ]
         );
+    }
+
+    #[test]
+    fn remuxing_mp3_to_m4a_copies_the_audio_stream() {
+        let command = m4a_command(
+            Path::new("/tools/ffmpeg"),
+            Transfer {
+                from: Path::new("/songs/song.mp3"),
+                to: Path::new("/out/audio.m4a.partial"),
+            },
+            M4aConversion::Remux,
+        );
+        assert_eq!(command.get_program(), "/tools/ffmpeg");
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            [
+                "-nostdin",
+                "-v",
+                "error",
+                "-y",
+                "-i",
+                "/songs/song.mp3",
+                "-vn",
+                "-c:a",
+                "copy",
+                "-f",
+                "mp4",
+                "/out/audio.m4a.partial",
+            ]
+        );
+    }
+
+    #[test]
+    fn aac_in_mp4_is_copied_without_ffmpeg() {
+        assert_eq!(
+            m4a_conversion(Some(charter_audio::AudioCodec::Aac), true),
+            None
+        );
+    }
+
+    #[test]
+    fn raw_aac_and_mp3_are_remuxed_even_if_they_are_named_m4a() {
+        for codec in [
+            charter_audio::AudioCodec::Aac,
+            charter_audio::AudioCodec::Mp3,
+        ] {
+            assert_eq!(
+                m4a_conversion(Some(codec), false),
+                Some(M4aConversion::Remux)
+            );
+        }
+        assert_eq!(
+            m4a_conversion(Some(charter_audio::AudioCodec::Mp3), true),
+            Some(M4aConversion::Remux)
+        );
+    }
+
+    #[test]
+    fn other_or_unrecognised_audio_is_encoded() {
+        assert_eq!(
+            m4a_conversion(Some(charter_audio::AudioCodec::Other), false),
+            Some(M4aConversion::Encode)
+        );
+        assert_eq!(m4a_conversion(None, false), Some(M4aConversion::Encode));
+    }
+
+    #[test]
+    fn m4a_export_remuxes_mp3_and_raw_aac_despite_their_m4a_names() {
+        let mut mp3_frame = vec![0xff, 0xfb, 0x90, 0x64];
+        mp3_frame.resize(417, 0);
+        let mp3 = [mp3_frame.clone(), mp3_frame].concat();
+        let aac_header = [0xff, 0xf1, 0x50, 0x80, 0x00, 0xff, 0xfc];
+        let aac = [aac_header, aac_header].concat();
+        for source in [&mp3, &aac] {
+            let disk = Memory::with(&[("/songs/song.m4a", source)]);
+            let to = Path::new("/out/audio.m4a");
+            m4a_over(
+                &disk,
+                Some(Path::new("/tools/ffmpeg")),
+                Transfer {
+                    from: Path::new("/songs/song.m4a"),
+                    to,
+                },
+            )
+            .unwrap();
+            let mut remuxed = b"remux:".to_vec();
+            remuxed.extend(source);
+            assert_eq!(disk.get("/out/audio.m4a"), Some(remuxed));
+            assert_eq!(disk.get("/out/audio.m4a.partial"), None);
+            assert_eq!(
+                disk.converted_with.borrow().as_deref(),
+                Some(Path::new("/tools/ffmpeg"))
+            );
+        }
     }
 }

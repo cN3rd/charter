@@ -15,8 +15,8 @@ use std::sync::Arc;
 use charter_audio::{Peaks, Spectrum};
 
 use charter_core::{
-    FileName, Kind, LaneIndex, LaneOffset, MarkerKey, NoteValue, ResolvedTime, RulesetPlugin, Tick,
-    TickOffset, TimeShift,
+    FileName, Kind, LaneIndex, LaneOffset, MarkerKey, NoteValue, ResolvedTime, RulesetPlugin,
+    SongResource, Tick, TickOffset, TimeShift,
 };
 use egui::Ui;
 
@@ -274,7 +274,7 @@ pub enum Request {
         formats: Vec<(String, Vec<String>)>,
     },
     /// Write `bytes`, the open song in another program's format, to `path`, the files `beside` it
-    /// and copies of the song's own, each from its file to its place, saying through
+    /// and the song's own resources, each from its file to its place, saying through
     /// [`Window::export_failed`] what could not be.
     WriteExport {
         /// Destination of the main file.
@@ -283,11 +283,9 @@ pub enum Request {
         bytes: Vec<u8>,
         /// Files made beside it, each with its place.
         beside: Vec<(PathBuf, Vec<u8>)>,
-        /// The song's files copied beside it, each from where it is to its place.
-        copies: Vec<(PathBuf, PathBuf)>,
-        /// The song's audio encoded as AAC in an MP4 container beside it, from where it is to its
-        /// place.
-        encodes: Vec<(PathBuf, PathBuf)>,
+        /// The song's files written beside it: source, destination and handling the plugin asks
+        /// of the host.
+        resources: Vec<(PathBuf, PathBuf, SongResource)>,
     },
     /// Download the beat tracker's weights, the user having agreed, telling
     /// [`Window::weights_progress`] how far it has got, then find the timing asked for.

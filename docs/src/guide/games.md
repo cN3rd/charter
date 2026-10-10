@@ -53,10 +53,13 @@ an empty folder such as `Anthem.track`, enter it in the save dialog and choose
 
 - `taptrack.ttr2_track`, the levels;
 - `info.plist`, the title, artist, genre, levels, their lanes and themes, and the song's length;
-- `audio.m4a`, the audio as AAC. Audio already in AAC is copied; any other is converted with
-  [ffmpeg](https://ffmpeg.org), at the path chosen under Settings > Sounds or on the `PATH`.
-  Without it the rest still exports, and a message says the audio was not written. Settings has
-  installation help when ffmpeg is missing;
+- `audio.m4a`, the audio in an MP4 container. AAC already in MP4 is copied. AAC in other containers
+  and MP3 are remuxed without re-encoding with [ffmpeg](https://ffmpeg.org)
+  (`-vn -c:a copy -f mp4`).
+  Other codecs are encoded as AAC at 320 kbps with ffmpeg's built-in encoder
+  (`-c:a aac -b:a 320k`). Charter probes the source codec, not its filename. Choose ffmpeg under
+  Settings > Sounds or use one on the `PATH`. Without it when conversion is needed, the rest
+  still exports, and a message says the audio was not written. Settings has installation help;
 - `artwork.png` and `artwork@2x.png`, when the artwork is a PNG.
 
 The selected filename is ignored for a track: choosing `Anthem.ttr2_track` still writes

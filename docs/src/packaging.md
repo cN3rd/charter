@@ -80,10 +80,11 @@ binary names the folder it was built in.
 
 A song's audio, artwork and chart files are the user's, beside the song, and never packaged.
 
-ffmpeg is not packaged either. Exporting a Tap Tap Revenge track converts audio that is not AAC
-with the binary chosen under Settings > Sounds, falling back to `ffmpeg` on the `PATH`. Without
-ffmpeg everything else still exports, and the export says the audio was not written. If neither
-binary runs, charter offers installation help. On Windows it can download Gyan's release
+ffmpeg is not packaged either. Exporting a Tap Tap Revenge track copies AAC already in MP4,
+remuxes other AAC and MP3 without re-encoding, and encodes other codecs as AAC at 320 kbps.
+Conversion uses the binary chosen under Settings > Sounds, falling back to `ffmpeg` on the `PATH`.
+Without ffmpeg everything else still exports, and the export says when the audio was not written.
+If neither binary runs, charter offers installation help. On Windows it can download Gyan's release
 essentials from gyan.dev into `<data>/ffmpeg/ffmpeg.exe`. On macOS it can download Martin Riedl's
 release from ffmpeg.martin-riedl.de into `<data>/ffmpeg/ffmpeg`, with its executable bit set.
 Each archive is checked against its published SHA-256 checksum before the binary is installed.

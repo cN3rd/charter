@@ -3,7 +3,7 @@
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 
-use charter_core::FileName;
+use charter_core::{FileName, SongResource};
 use charter_ui::{Request, Saved, Window};
 
 use crate::disk::Disk;
@@ -185,9 +185,8 @@ impl<D: Disk> Host<D> {
                 path,
                 bytes,
                 beside,
-                copies,
-                encodes,
-            } => self.write_export(&path, &bytes, &beside, &copies, &encodes),
+                resources,
+            } => self.write_export(&path, &bytes, &beside, &resources),
             Request::Autosave { bytes } => self.autosave(&bytes),
             Request::CopyAudio { from, to } => {
                 let transfer = disk::Transfer {
@@ -268,8 +267,7 @@ impl<D: Disk> Host<D> {
         path: &Path,
         bytes: &[u8],
         beside: &[(PathBuf, Vec<u8>)],
-        copies: &[(PathBuf, PathBuf)],
-        encodes: &[(PathBuf, PathBuf)],
+        resources: &[(PathBuf, PathBuf, SongResource)],
     ) {
         let disk = &self.disk;
         if let Some(folder) = path.parent()
@@ -287,17 +285,13 @@ impl<D: Disk> Host<D> {
                     .map(|(place, made)| (place.as_path(), made.as_slice())),
             )
             .map(|(place, made)| (place, disk::write_whole(disk, place, made)))
-            .chain(copies.iter().map(|(from, to)| {
-                (
-                    to.as_path(),
-                    disk::copy_over(disk, disk::Transfer { from, to }),
-                )
-            }))
-            .chain(encodes.iter().map(|(from, to)| {
-                (
-                    to.as_path(),
-                    disk::encode_over(disk, ffmpeg, disk::Transfer { from, to }),
-                )
+            .chain(resources.iter().map(|(from, to, resource)| {
+                let transfer = disk::Transfer { from, to };
+                let result = match resource {
+                    SongResource::Audio | SongResource::Artwork => disk::copy_over(disk, transfer),
+                    SongResource::M4aAudio => disk::m4a_over(disk, ffmpeg, transfer),
+                };
+                (to.as_path(), result)
             }));
         for (place, result) in written {
             if let Err(error) = result {

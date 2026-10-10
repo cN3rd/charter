@@ -1012,7 +1012,7 @@ fn track_folder(
             .map(str::to_lowercase)
             .unwrap_or_default()
     };
-    let mut copies = vec![(FileName::new("audio.m4a")?, SongResource::AacAudio)];
+    let mut copies = vec![(FileName::new("audio.m4a")?, SongResource::M4aAudio)];
     if let Some(artwork) = &metadata.artwork {
         if extension(artwork.as_str()) == "png" {
             for name in ["artwork.png", "artwork@2x.png"] {
@@ -2187,7 +2187,7 @@ mod tests {
         );
         assert_eq!(
             exported.copies,
-            [(FileName::new("audio.m4a").unwrap(), SongResource::AacAudio)]
+            [(FileName::new("audio.m4a").unwrap(), SongResource::M4aAudio)]
         );
         let companions = exported.beside.clone();
         let info =

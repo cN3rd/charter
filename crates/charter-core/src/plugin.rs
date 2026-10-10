@@ -167,7 +167,8 @@ pub struct ImportedSong {
 /// A song written in another program's format, with what the song held that the file leaves out.
 ///
 /// A format that keeps a song as a folder, such as a Tap Tap Revenge track, names the main file
-/// and writes the files beside it: some it makes, and some the song's own resources copied in.
+/// and writes the files beside it: some it makes, and some it asks the host to write from the
+/// song's own resources.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExportedSong {
     /// The file's contents.
@@ -177,20 +178,21 @@ pub struct ExportedSong {
     pub file_name: Option<FileName>,
     /// Files made beside the main one, by name, such as an `info.plist`.
     pub beside: BTreeMap<FileName, Vec<u8>>,
-    /// The song's resources copied beside the main file, each under a name, such as its audio as
-    /// `audio.m4a`.
+    /// The song's resources written beside the main file, each under a name, such as its audio
+    /// as `audio.m4a`.
     pub copies: Vec<(FileName, SongResource)>,
     /// What the song held that the file leaves out, in words for the user.
     pub left_out: Vec<String>,
 }
 
-/// A file of the song's own that an export copies beside its main file.
+/// How a file of the song's own is written beside an export's main file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SongResource {
     /// The song's audio, as it is.
     Audio,
-    /// The song's audio as AAC in an MP4 container, encoded when it is in another format.
-    AacAudio,
+    /// The song's audio in an MP4 container with an M4A name: AAC and MP3 streams are kept
+    /// without re-encoding; other codecs are encoded as AAC at 320 kbps.
+    M4aAudio,
     /// The song's artwork.
     Artwork,
 }

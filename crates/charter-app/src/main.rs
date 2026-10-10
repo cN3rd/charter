@@ -246,7 +246,7 @@ fn picture(bytes: Vec<u8>) -> Option<Picture> {
 mod tests {
     use std::num::NonZeroU32;
 
-    use charter_core::FileName;
+    use charter_core::{FileName, SongResource};
 
     use super::*;
     use crate::disk::Disk;
@@ -1253,8 +1253,7 @@ mod tests {
             path: PathBuf::from(path),
             bytes: b"MThd".to_vec(),
             beside: Vec::new(),
-            copies: Vec::new(),
-            encodes: Vec::new(),
+            resources: Vec::new(),
         };
         host.handle_requests(vec![export("/out/notes.mid")]);
         assert_eq!(
@@ -1277,12 +1276,23 @@ mod tests {
             ("/out/sudo.track/audio.m4a", b"old audio"),
         ]));
         let folder = PathBuf::from("/out/sudo.track");
+        host.ffmpeg.binary = Some("/tools/ffmpeg".into());
         host.handle_requests(vec![Request::WriteExport {
             path: folder.join("taptrack.ttr2_track"),
             bytes: b"bplist00".to_vec(),
             beside: vec![(folder.join("info.plist"), b"<plist/>".to_vec())],
-            copies: vec![(PathBuf::from("/songs/gone.png"), folder.join("artwork.png"))],
-            encodes: vec![(PathBuf::from("/songs/song.mp3"), folder.join("audio.m4a"))],
+            resources: vec![
+                (
+                    PathBuf::from("/songs/gone.png"),
+                    folder.join("artwork.png"),
+                    SongResource::Artwork,
+                ),
+                (
+                    PathBuf::from("/songs/song.mp3"),
+                    folder.join("audio.m4a"),
+                    SongResource::M4aAudio,
+                ),
+            ],
         }]);
         let read = |name: &str| host.disk.read(&folder.join(name)).unwrap();
         assert_eq!(read("taptrack.ttr2_track"), b"bplist00");
@@ -1298,18 +1308,15 @@ mod tests {
 
     #[test]
     fn audio_that_cannot_be_encoded_is_reported_and_leaves_no_partial_file() {
-        let mut host = host(Memory {
-            no_encoder: true,
-            ..Memory::with(&[("/songs/song.ogg", b"vorbis")])
-        });
+        let mut host = host(Memory::with(&[("/songs/song.ogg", b"vorbis")]));
         host.handle_requests(vec![Request::WriteExport {
             path: PathBuf::from("/out/taptrack.ttr2_track"),
             bytes: b"bplist00".to_vec(),
             beside: Vec::new(),
-            copies: Vec::new(),
-            encodes: vec![(
+            resources: vec![(
                 PathBuf::from("/songs/song.ogg"),
                 PathBuf::from("/out/audio.m4a"),
+                SongResource::M4aAudio,
             )],
         }]);
         assert_eq!(
@@ -1331,19 +1338,45 @@ mod tests {
             path: PathBuf::from("/out/taptrack.ttr2_track"),
             bytes: b"bplist00".to_vec(),
             beside: Vec::new(),
-            copies: Vec::new(),
-            encodes: vec![(
+            resources: vec![(
                 PathBuf::from("/songs/song.ogg"),
                 PathBuf::from("/out/audio.m4a"),
+                SongResource::M4aAudio,
             )],
         }]);
         assert_eq!(
-            host.disk.encoded_with.borrow().as_deref(),
+            host.disk.converted_with.borrow().as_deref(),
             Some(Path::new("/tools/ffmpeg"))
         );
         assert_eq!(
             host.disk.get("/out/audio.m4a").as_deref(),
             Some(&b"aac:vorbis"[..])
+        );
+    }
+
+    #[test]
+    fn a_track_export_remuxes_mp3_even_when_its_name_says_m4a() {
+        let mut frame = vec![0xff, 0xfb, 0x90, 0x64];
+        frame.resize(417, 0);
+        let mp3 = [frame.clone(), frame].concat();
+        let mut host = host(Memory::with(&[("/songs/song.m4a", &mp3)]));
+        host.ffmpeg.binary = Some("/tools/ffmpeg".into());
+        host.handle_requests(vec![Request::WriteExport {
+            path: PathBuf::from("/out/taptrack.ttr2_track"),
+            bytes: b"bplist00".to_vec(),
+            beside: Vec::new(),
+            resources: vec![(
+                PathBuf::from("/songs/song.m4a"),
+                PathBuf::from("/out/audio.m4a"),
+                SongResource::M4aAudio,
+            )],
+        }]);
+        let mut expected = b"remux:".to_vec();
+        expected.extend(mp3);
+        assert_eq!(host.disk.get("/out/audio.m4a"), Some(expected));
+        assert_eq!(
+            host.disk.converted_with.borrow().as_deref(),
+            Some(Path::new("/tools/ffmpeg"))
         );
     }
 

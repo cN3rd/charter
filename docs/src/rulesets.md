@@ -105,14 +105,16 @@ so each format is offered once for each game:
 
 A track export writes `taptrack.ttr2_track` directly in the selected file's parent folder, ignoring
 its selected filename, and an `info.plist` beside it with the title, artist, genre, levels, their
-columns and themes and how long the audio lasts. The audio goes in as `audio.m4a`, AAC in an M4A
-file as the game's own tracks have it, with PNG artwork as `artwork.png` and `artwork@2x.png`.
-Audio already in AAC is copied; any other is converted with ffmpeg, at the path chosen under
-Settings > Sounds or on the `PATH`. The export says when neither runs; Settings offers installation
-help, including verified downloads on Windows and macOS. The host does not create a
-named `.track` folder and can replace files under the fixed export names, so the user must choose
-a file inside a separate, empty track folder. Imported back with that `info.plist`, the supported
-game data returns,
+columns and themes and how long the audio lasts. The audio goes in as `audio.m4a`, with AAC or
+MP3 audio in an MP4 container, and PNG artwork as `artwork.png` and `artwork@2x.png`. AAC already
+in MP4 is copied. Other AAC and MP3 sources are remuxed with ffmpeg without re-encoding; other
+codecs are encoded with ffmpeg's built-in AAC encoder at 320 kbps (`-c:a aac -b:a 320k`).
+Charter probes the source codec rather than trusting its extension. ffmpeg runs from the path
+chosen under Settings > Sounds or from the `PATH`. If conversion needs ffmpeg and neither runs,
+the export says so; Settings offers installation help, including verified downloads on Windows
+and macOS. The host does not create a named `.track` folder and can replace files under the fixed
+export names, so the user must choose a file inside a separate, empty track folder. Imported back
+with that `info.plist`, the supported game data returns,
 subject to conversion losses. A track's import takes the title, artist, genre and themes from
 its `info.plist` too, as the game shows them. A theme dependency uses the fixed `Themes/` folder;
 export refuses a theme whose `{theme}.ttrTheme` file name has a separator.
