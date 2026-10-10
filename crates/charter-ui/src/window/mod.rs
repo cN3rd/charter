@@ -97,23 +97,22 @@ pub enum Request {
         /// Destination beside the chart file.
         to: PathBuf,
     },
-    /// Play the song's audio from `from` seconds, at `rate` times its speed. The host reports
-    /// where it is through [`Window::playhead`], and says when it ends through
-    /// [`Window::playback_ended`].
+    /// Play the song's audio from `from` at `rate` times its speed. The host reports where it is
+    /// through [`Window::playhead`], and says when it ends through [`Window::playback_ended`].
     /// `clicks` are the tones to mix over it, each at its time in seconds into the audio.
-    /// `volumes` say how loud the audio and each kind of click play, and `looping` the stretch
-    /// to play over and over, in seconds, if any.
+    /// `volumes` say how loud the audio and each kind of click play, and `looping` the interval
+    /// to play over and over, if any.
     Play {
-        /// Position in the audio where playback starts, in seconds.
-        from: f64,
+        /// Moment in the audio where playback starts.
+        from: ResolvedTime,
         /// Playback speed relative to the audio's usual speed.
         rate: f64,
         /// Tones timed from the start of the audio, in seconds.
         clicks: Vec<(f64, charter_audio::Tone)>,
         /// Levels for the music and each kind of click.
         volumes: charter_audio::Volumes,
-        /// Interval in the audio to repeat, in seconds.
-        looping: Option<(f64, f64)>,
+        /// Audio moments bounding the interval to repeat.
+        looping: Option<(ResolvedTime, ResolvedTime)>,
         /// Whether audio played faster or slower than its speed keeps its pitch.
         keep_pitch: bool,
     },
@@ -121,8 +120,8 @@ pub enum Request {
     Volume(charter_audio::Gain),
     /// Pause the song's audio at its current position.
     Pause,
-    /// Carry on playing from this many seconds into the audio.
-    Seek(f64),
+    /// Carry on playing from this audio moment.
+    Seek(ResolvedTime),
     /// Carry on playing at this many times the audio's speed.
     Rate(f64),
     /// Play `clicks` over silence, each at its time in seconds from now, alongside anything
@@ -811,12 +810,12 @@ enum Mode {
     Cursor,
     /// From the cursor with the metronome on, to hear a timing edit.
     Audition,
-    /// From `from` to `until` seconds into the audio, leaving the cursor where it is.
+    /// Between two audio moments, leaving the cursor where it is.
     Snippet {
-        /// Where in the audio it starts, in seconds.
-        from: f64,
-        /// Where in the audio it stops, in seconds.
-        until: f64,
+        /// Where in the audio it starts.
+        from: ResolvedTime,
+        /// Where in the audio it stops.
+        until: ResolvedTime,
     },
     /// The ticks from the first to the second, over and over with the metronome on.
     Loop(Tick, Tick),
@@ -2039,7 +2038,11 @@ pub(crate) mod test_support {
                 ..
             } = request
             {
-                Some((from, looping, clicks))
+                Some((
+                    from.seconds(),
+                    looping.map(|(start, end)| (start.seconds(), end.seconds())),
+                    clicks,
+                ))
             } else {
                 None
             }

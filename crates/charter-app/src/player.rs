@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError};
 
 use charter_audio::{Clicks, Onset, Peaks, Spectrum, Track};
+use charter_core::ResolvedTime;
 use charter_ui::{Request, Window};
 use kira::sound::PlaybackState;
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle, StaticSoundSettings};
@@ -326,10 +327,12 @@ impl Player {
                     return;
                 }
                 let settings = StaticSoundSettings::new()
-                    .start_position(from.max(0.0))
+                    .start_position(from.seconds().max(0.0))
                     .playback_rate(rate);
                 let settings = match looping {
-                    Some((start, end)) if end > start => settings.loop_region(start.max(0.0)..end),
+                    Some((start, end)) if end > start => {
+                        settings.loop_region(start.seconds().max(0.0)..end.seconds())
+                    }
                     _ => settings,
                 };
                 // Clicks are mixed in with the music at its volume; alone, kira sets it, so it can
@@ -374,7 +377,7 @@ impl Player {
             Request::Pause => self.stop(),
             Request::Seek(to) => {
                 if let Some(sound) = &mut self.playing {
-                    sound.seek_to(to.max(0.0));
+                    sound.seek_to(to.seconds().max(0.0));
                 }
             }
             // Stretched audio changes speed by playing again, which the window asks for.
@@ -421,7 +424,12 @@ impl Player {
         &mut self,
         path: &Path,
         stretched: Option<Stretched>,
-        (from, rate, looping, volume): (f64, f64, Option<(f64, f64)>, Option<Decibels>),
+        (from, rate, looping, volume): (
+            ResolvedTime,
+            f64,
+            Option<(ResolvedTime, ResolvedTime)>,
+            Option<Decibels>,
+        ),
         window: &mut Window,
     ) {
         let Some(stretched) = stretched else {
@@ -431,15 +439,15 @@ impl Player {
         };
         let rate = PlaybackRate(rate);
         let settings = StreamingSoundSettings::new()
-            .start_position(stretched_position(SourceSeconds(from).start(), rate).get());
+            .start_position(stretched_position(SourceSeconds(from.seconds()).start(), rate).get());
         let settings = match volume {
             Some(volume) => settings.volume(volume),
             None => settings,
         };
         let settings = match looping {
             Some((start, end)) if end > start => settings.loop_region(
-                stretched_position(SourceSeconds(start).start(), rate).get()
-                    ..stretched_position(SourceSeconds(end), rate).get(),
+                stretched_position(SourceSeconds(start.seconds()).start(), rate).get()
+                    ..stretched_position(SourceSeconds(end.seconds()), rate).get(),
             ),
             _ => settings,
         };
@@ -1077,7 +1085,7 @@ mod tests {
         let mut player = player(silent);
         let mut window = song_window();
         let play = Request::Play {
-            from: 0.0,
+            from: ResolvedTime::from_seconds(0.0).unwrap(),
             rate: 1.0,
             clicks: Vec::new(),
             volumes: charter_audio::Volumes::default(),
@@ -1095,7 +1103,7 @@ mod tests {
         let mut player = player(silent);
         let mut window = song_window();
         for request in [
-            Request::Seek(-4.0),
+            Request::Seek(ResolvedTime::from_seconds(-4.0).unwrap()),
             Request::Volume(charter_audio::Gain::default()),
             Request::Rate(1.5),
             Request::Pause,

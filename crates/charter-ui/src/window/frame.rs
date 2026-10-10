@@ -466,10 +466,7 @@ impl Window {
             && let Some(playing_song) = &self.song
             && Some(playing_song.cursor()) != before
         {
-            let to = playing_song
-                .timing()
-                .time_at(playing_song.cursor())
-                .seconds();
+            let to = playing_song.timing().time_at(playing_song.cursor());
             self.requests.push(Request::Seek(to));
         }
         self.follow_volumes(ui);

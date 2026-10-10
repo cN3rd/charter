@@ -709,7 +709,7 @@ come back, such as `300.5`, keeps its original in `ext`.
 
 Audio calculations use finite floats, but chart files store integer millionths. `ResolvedTime` is
 a moment in the audio, and `TimeShift` is the signed span between moments. Neither is stored in a
-chart file. Raw audio positions are checked before entering editing commands.
+chart file. Raw audio positions are checked before entering editing commands or playback requests.
 
 `tempo` must be positive. Negative BPM is a StepMania time-skipping gimmick predating explicit warps,
 and charter has `warp` for that. Zero BPM would stop position advancing while time ran on, an

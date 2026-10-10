@@ -900,7 +900,7 @@ mod tests {
                 None
             }
         });
-        assert!((from.expect("an audition") - (0.912 - 0.4)).abs() < 1e-6);
+        assert!((from.expect("an audition").seconds() - (0.912 - 0.4)).abs() < 1e-6);
     }
     #[test]
     fn a_click_forty_ms_from_any_onset_stays_where_it_was_clicked() {

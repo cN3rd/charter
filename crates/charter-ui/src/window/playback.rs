@@ -30,7 +30,7 @@ impl Window {
             return;
         };
         if let Mode::Snippet { until, .. } = mode {
-            if seconds.seconds() >= until {
+            if seconds >= until {
                 self.playback.playing = None;
                 self.requests.push(Request::Pause);
             }
@@ -139,7 +139,7 @@ impl Window {
     }
     /// Plays from `from` with the metronome on to hear a timing edit.
     pub(super) fn audition(&mut self, from: ResolvedTime) {
-        self.start(from.seconds(), Mode::Audition);
+        self.start(from, Mode::Audition);
     }
     /// Plays the settings' snippet of audio before the cursor, or after it, then pauses, leaving the
     /// cursor where it is so the same moment can be heard again.
@@ -154,8 +154,10 @@ impl Window {
             }
             return;
         }
-        let at = song.timing().time_at(song.cursor()).seconds();
-        let length = self.settings.snippet_seconds();
+        let at = song.timing().time_at(song.cursor());
+        let Some(length) = TimeShift::from_seconds(self.settings.snippet_seconds()) else {
+            return;
+        };
         let (from, until) = match side {
             Step::Earlier => (at - length, at),
             Step::Later => (at, at + length),
@@ -176,7 +178,7 @@ impl Window {
         let Some(song) = &self.song else {
             return;
         };
-        let start = song.timing().time_at(from).seconds();
+        let start = song.timing().time_at(from);
         self.start(start, Mode::Loop(from, to));
     }
     /// Plays what is playing again after a setting changes: a loop or a snippet from its start,
@@ -185,7 +187,7 @@ impl Window {
         let Some(song) = &self.song else {
             return;
         };
-        let cursor = song.timing().time_at(song.cursor()).seconds();
+        let cursor = song.timing().time_at(song.cursor());
         match self.playback.playing {
             None => {}
             Some(Mode::Loop(from, to)) => self.play_loop(from, to),
@@ -194,8 +196,11 @@ impl Window {
         }
     }
     /// Asks the host to play the song from an audio time for `mode`.
-    pub(super) fn start(&mut self, from: f64, mode: Mode) {
+    pub(super) fn start(&mut self, from: ResolvedTime, mode: Mode) {
         let (Some(song), Some(&Loaded::Ready(seconds))) = (&self.song, self.loaded()) else {
+            return;
+        };
+        let Some(from) = ResolvedTime::from_seconds(from.seconds().max(0.0)) else {
             return;
         };
         if self.playback.playing.is_some() {
@@ -204,16 +209,12 @@ impl Window {
         let looping = match mode {
             Mode::Loop(first, last) => {
                 let timing = song.timing();
-                Some((
-                    timing.time_at(first).seconds(),
-                    timing.time_at(last).seconds(),
-                ))
+                Some((timing.time_at(first), timing.time_at(last)))
             }
             Mode::Cursor | Mode::Audition | Mode::Snippet { .. } => None,
         };
         let metronome = matches!(mode, Mode::Audition | Mode::Loop(..));
-        let from = from.max(0.0);
-        let until = looping.map_or(seconds, |(_, end)| end.min(seconds));
+        let until = looping.map_or(seconds, |(_, end)| end.seconds().min(seconds));
         // From the song's start, so a seek back while playing still ticks.
         let clicks = clicks(
             song,
@@ -261,7 +262,7 @@ impl Window {
         let Some(song) = &self.song else {
             return;
         };
-        let from = song.timing().time_at(song.cursor()).seconds();
+        let from = song.timing().time_at(song.cursor());
         match self.loaded() {
             Some(&Loaded::Ready(_)) => self.start(from, Mode::Cursor),
             Some(Loaded::Failed) => {
@@ -434,7 +435,7 @@ mod tests {
         let Request::Play { from, rate, .. } = request(&mut harness) else {
             panic!("expected play");
         };
-        assert!((from - 0.125).abs() < 1e-9, "{from}");
+        assert_eq!(from, ResolvedTime::from_seconds(0.125).unwrap());
         assert!((rate - 1.0).abs() < f64::EPSILON);
         space(&mut harness);
         assert_eq!(request(&mut harness), Request::Pause);
@@ -550,7 +551,7 @@ mod tests {
         let Request::Seek(to) = request(&mut harness) else {
             panic!("expected a seek");
         };
-        assert!((to - 2.0).abs() < 1e-9, "{to}");
+        assert_eq!(to, ResolvedTime::from_seconds(2.0).unwrap());
     }
     #[test]
     fn audio_under_clicks_plays_again_at_a_new_speed_even_letting_its_pitch_follow() {
@@ -583,7 +584,7 @@ mod tests {
         let Request::Play { from, looping, .. } = request(&mut harness) else {
             panic!("expected play");
         };
-        assert!((from - 1.8).abs() < 1e-9, "{from}");
+        assert!((from.seconds() - 1.8).abs() < 1e-9, "{from:?}");
         assert_eq!(looping, None);
         harness.state_mut().playhead(1.9);
         harness.run();
@@ -596,8 +597,21 @@ mod tests {
         harness.key_press(egui::Key::Q);
         harness.run();
         assert!(
-            matches!(request(&mut harness), Request::Play { from: again, .. } if (again - 1.8).abs() < 1e-9)
+            matches!(request(&mut harness), Request::Play { from: again, .. } if (again.seconds() - 1.8).abs() < 1e-9)
         );
+    }
+
+    #[test]
+    fn a_snippet_before_the_audio_starts_at_zero_and_keeps_its_end() {
+        let mut harness = playable();
+        harness.key_press(egui::Key::Q);
+        harness.run();
+        let Request::Play { from, .. } = request(&mut harness) else {
+            panic!("expected play");
+        };
+        assert_eq!(from, ResolvedTime::from_seconds(0.0).unwrap());
+        harness.state_mut().playhead(0.0);
+        assert_eq!(request(&mut harness), Request::Pause);
     }
     #[test]
     fn w_plays_the_snippet_after_the_cursor_and_stops_at_its_end() {
@@ -610,7 +624,7 @@ mod tests {
         let Request::Play { from, .. } = request(&mut harness) else {
             panic!("expected play");
         };
-        assert!((from - 2.0).abs() < 1e-9, "{from}");
+        assert!((from.seconds() - 2.0).abs() < 1e-9, "{from:?}");
         harness.state_mut().playhead(2.1);
         harness.run();
         assert_eq!(harness.state_mut().take_requests(), []);
@@ -620,7 +634,7 @@ mod tests {
         assert_eq!(request(&mut harness), Request::Pause);
         space(&mut harness);
         assert!(
-            matches!(request(&mut harness), Request::Play { from: again, .. } if (again - 2.0).abs() < 1e-9)
+            matches!(request(&mut harness), Request::Play { from: again, .. } if (again.seconds() - 2.0).abs() < 1e-9)
         );
     }
     #[test]
@@ -651,7 +665,7 @@ mod tests {
         let Request::Play { from, .. } = request(&mut harness) else {
             panic!("expected play");
         };
-        assert!((from - 1.6).abs() < 1e-9, "{from}");
+        assert!((from.seconds() - 1.6).abs() < 1e-9, "{from:?}");
     }
     #[test]
     fn space_during_a_snippet_pauses_it_and_then_plays_on_normally() {
@@ -1201,8 +1215,14 @@ mod tests {
         else {
             panic!("expected restarted loop: {requests:?}");
         };
-        assert!(from.abs() < 1e-9);
-        assert_eq!(*looping, Some((0.0, 2.0)));
+        assert!(from.seconds().abs() < 1e-9);
+        assert_eq!(
+            *looping,
+            Some((
+                ResolvedTime::from_seconds(0.0).unwrap(),
+                ResolvedTime::from_seconds(2.0).unwrap()
+            ))
+        );
         assert!(
             clicks
                 .iter()
