@@ -30,7 +30,14 @@ pub enum DecodeError {
     /// The file contains no decodable audio track.
     #[error("the file has no audio track")]
     NoTrack,
+    /// The audio's sample rate is past any audio's.
+    #[error("the audio claims {0} samples a second, past the {MAX_RATE} any audio has")]
+    Rate(u32),
 }
+
+/// The fastest sample rate a track decodes at, twice the most any studio records at; a file
+/// claiming more is damaged or hostile, and clicks mixed in at its rate would fill memory.
+const MAX_RATE: u32 = 768_000;
 
 impl Track {
     /// Decodes `bytes`, an audio file whose name ends in `extension`, if it is known.
@@ -94,6 +101,9 @@ impl Track {
             }));
         }
         let rate = rate.ok_or(DecodeError::NoTrack)?;
+        if rate.get() > MAX_RATE {
+            return Err(DecodeError::Rate(rate.get()));
+        }
         Ok(Self {
             rate,
             frames: frames.into(),
@@ -198,6 +208,18 @@ mod tests {
         assert_eq!(frames.len(), 3);
         assert!(frames.iter().all(|[left, right]| near(*left, *right)));
         assert!(near(frames[0][0], 0.25));
+    }
+
+    #[test]
+    fn a_rate_past_any_audio_is_refused() {
+        let declared = Track::decode(wav(2_000_000_000, 1, &[0; 4]), Some("wav"));
+        assert!(
+            matches!(declared, Err(DecodeError::Rate(2_000_000_000))),
+            "{:?}",
+            declared.map(|track| track.rate())
+        );
+        let fastest = Track::decode(wav(768_000, 1, &[0; 4]), Some("wav")).unwrap();
+        assert_eq!(fastest.rate().get(), 768_000);
     }
 
     #[test]
