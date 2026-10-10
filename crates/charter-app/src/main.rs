@@ -131,13 +131,20 @@ fn main() -> eframe::Result {
                 finder: finder::Finder::new(eframe::storage_dir(APP)),
                 disk: disk::Real,
             };
-            if let Some(path) = std::env::args_os().nth(1) {
-                host.read(Path::new(&path));
+            if let Some(path) = song_argument(std::env::args_os()) {
+                host.read(&path);
             }
             host.recover();
             Ok(Box::new(host))
         }),
     )
+}
+
+/// The song the command line names, made absolute, so the recent list and the autosave keep
+/// the file it named whatever folder charter is started in next.
+fn song_argument(mut args: impl Iterator<Item = std::ffi::OsString>) -> Option<PathBuf> {
+    let path = PathBuf::from(args.nth(1)?);
+    Some(std::path::absolute(&path).unwrap_or(path))
 }
 
 /// The settings `storage` keeps: the changes from the defaults, or the whole copy an older version
@@ -253,6 +260,15 @@ mod tests {
 
     fn files(host: &Host<Memory>, path: &str) -> bool {
         host.disk.exists(Path::new(path))
+    }
+
+    #[test]
+    fn a_song_named_on_the_command_line_opens_by_its_absolute_path() {
+        let args = ["charter", "songs/demo.json"].map(std::ffi::OsString::from);
+        let path = song_argument(args.into_iter()).unwrap();
+        assert!(path.is_absolute(), "{path:?}");
+        assert!(path.ends_with("songs/demo.json"), "{path:?}");
+        assert_eq!(song_argument(std::iter::once("charter".into())), None);
     }
 
     #[test]
