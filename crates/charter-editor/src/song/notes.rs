@@ -31,7 +31,7 @@ impl Song {
             if !self.is_editable(object)
                 || chart.layer_index(object).unwrap_or(0) != self.active_layer().get()
             {
-                return Err(Refusal::OnLayer(self.object_layer_name(object)));
+                return Err(self.in_the_way(object));
             }
             let object = object.clone();
             (Edit(vec![Op::Remove { index, object }]), Toggled::Removed)
@@ -61,7 +61,7 @@ impl Song {
             return Ok(());
         };
         if !self.is_editable(old) {
-            return Err(Refusal::OnLayer(self.object_layer_name(old)));
+            return Err(self.in_the_way(old));
         }
         let mut new = old.clone();
         (new.kind, new.shape) = match from.ticks_until(to) {
@@ -403,7 +403,7 @@ impl Song {
             }
             if let Some(blocker) = blocking(&all, object) {
                 if !self.same_layer(blocker, object) {
-                    return Err(Refusal::OnLayer(self.object_layer_name(blocker)));
+                    return Err(self.in_the_way(blocker));
                 }
                 continue;
             }
@@ -478,7 +478,7 @@ impl Song {
                 return Err(if self.same_layer(blocker, object) {
                     Refusal::Occupied
                 } else {
-                    Refusal::OnLayer(self.object_layer_name(blocker))
+                    self.in_the_way(blocker)
                 });
             }
             let index = objects.partition_point(|other| other.tick <= object.tick);

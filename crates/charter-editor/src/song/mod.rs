@@ -135,16 +135,16 @@ pub enum Refusal {
     OffTheChart,
     /// The active layer is hidden.
     #[error("Layer {0} is hidden")]
-    LayerHidden(String),
+    LayerHidden(LayerName),
     /// The active layer is ghosted.
     #[error("Layer {0} is ghosted")]
-    LayerGhosted(String),
+    LayerGhosted(LayerName),
     /// The active layer is locked.
     #[error("Layer {0} is locked")]
-    LayerLocked(String),
+    LayerLocked(LayerName),
     /// Another layer has a note occupying the destination.
     #[error("A note on layer {0} is in the way")]
-    OnLayer(String),
+    OnLayer(LayerName),
     /// A layer name breaks the grammar of layer names.
     #[error("Invalid layer name: {0}")]
     LayerName(InvalidValue),

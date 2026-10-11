@@ -580,9 +580,9 @@ impl Song {
         }
         let layer = chart.layers.get(index).ok_or(Refusal::NoSuchLayer)?;
         match layer.view {
-            LayerView::Hidden => Err(Refusal::LayerHidden(layer.name.to_string())),
-            LayerView::Ghosted => Err(Refusal::LayerGhosted(layer.name.to_string())),
-            LayerView::Shown if layer.locked => Err(Refusal::LayerLocked(layer.name.to_string())),
+            LayerView::Hidden => Err(Refusal::LayerHidden(layer.name.clone())),
+            LayerView::Ghosted => Err(Refusal::LayerGhosted(layer.name.clone())),
+            LayerView::Shown if layer.locked => Err(Refusal::LayerLocked(layer.name.clone())),
             LayerView::Shown => Ok(Some(&layer.name)),
         }
     }
@@ -600,14 +600,16 @@ impl Song {
             })
     }
 
-    /// Human-readable name of an object's row, even when it has no explicit name.
-    pub(super) fn object_layer_name(&self, object: &Object) -> String {
+    /// Why `object` blocks an edit: a note on its layer is in the way, or it has no layer to name.
+    pub(super) fn in_the_way(&self, object: &Object) -> Refusal {
         self.document
             .document()
             .charts
             .get(self.chart)
             .and_then(|chart| chart.layers.get(chart.layer_index(object)?))
-            .map_or_else(|| "Notes".into(), |layer| layer.name.to_string())
+            .map_or(Refusal::NoSuchLayer, |layer| {
+                Refusal::OnLayer(layer.name.clone())
+            })
     }
 
     /// Compare effective layers, so an unnamed note on the first row counts as that row.
@@ -1217,15 +1219,15 @@ mod tests {
         song.add_layer().unwrap();
         let original = song.document().document().clone();
         assert!(
-            matches!(song.toggle(at(0), lane(0), Kind::Tap), Err(Refusal::OnLayer(name)) if name == "Layer 0")
+            matches!(song.toggle(at(0), lane(0), Kind::Tap), Err(Refusal::OnLayer(name)) if name.as_str() == "Layer 0")
         );
         assert!(
-            matches!(song.add_taps([(at(240), lane(1))]), Err(Refusal::OnLayer(name)) if name == "Layer 0")
+            matches!(song.add_taps([(at(240), lane(1))]), Err(Refusal::OnLayer(name)) if name.as_str() == "Layer 0")
         );
         song.select([note_at(0, 0)], Selecting::Replace);
         song.move_selection_to_layer(layer_index(0)).unwrap();
         assert!(
-            matches!(song.move_selection(TickOffset::new(240), LaneOffset::new(1)), Err(Refusal::OnLayer(name)) if name == "Layer 0")
+            matches!(song.move_selection(TickOffset::new(240), LaneOffset::new(1)), Err(Refusal::OnLayer(name)) if name.as_str() == "Layer 0")
         );
         song.undo().unwrap();
         assert_eq!(*song.document().document(), original);
