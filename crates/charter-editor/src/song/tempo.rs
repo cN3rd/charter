@@ -879,6 +879,16 @@ mod tests {
     }
 
     #[test]
+    fn a_new_offset_replaces_one_already_set() {
+        let mut song = timed(&json!([bpm_event(0, 120.0)]), None);
+        for seconds in [1.25, 0.5] {
+            song.set_offset(charter_core::Origin::try_from(seconds).unwrap())
+                .unwrap();
+        }
+        assert_eq!(offset(&song), json!(0.5));
+    }
+
+    #[test]
     fn a_chart_with_its_own_timing_takes_the_offset_itself() {
         let own = json!([bpm_event(0, 100.0)]);
         let mut song = timed(&json!([bpm_event(0, 120.0)]), Some(&own));
