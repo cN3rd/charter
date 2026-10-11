@@ -205,6 +205,14 @@ impl Valid<'_, Timing> {
             .tempo_for(self.document.ticks_per_beat, from, to, later.seconds())
     }
 
+    /// The ticks from `from` to `to` that warps leave timed, and the seconds of the stops and
+    /// delays between them: a stop counts from its own tick, a delay up to its own. `None` when
+    /// `to` is before `from`.
+    #[must_use]
+    pub fn span_parts(&self, from: Tick, to: Tick) -> Option<(f64, f64)> {
+        self.part.span_parts(from, to)
+    }
+
     /// The beat length at `tick`, with anchored segments derived from their end points.
     ///
     /// # Panics

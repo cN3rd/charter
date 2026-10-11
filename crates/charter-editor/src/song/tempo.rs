@@ -474,7 +474,11 @@ impl TimedSpan {
     /// The span between two ticks of a validated timing.
     #[must_use]
     pub fn between(timing: Valid<'_, Timing>, from: Tick, to: Tick) -> Option<Self> {
-        span_parts(&timing, from, to)
+        let (timed_ticks, paused_seconds) = timing.span_parts(from, to)?;
+        Some(Self {
+            timed_ticks,
+            paused_seconds,
+        })
     }
 
     /// What share of the timed ticks in `whole` this span holds.
@@ -500,47 +504,6 @@ impl TimedSpan {
     pub fn at_bpm(self, bpm: Bpm, ticks_per_beat: TicksPerBeat) -> f64 {
         self.paused_seconds + self.timed_beats(ticks_per_beat) * 60.0 / f64::from(bpm)
     }
-}
-
-/// Timed ticks and pause duration from `from` to `to`, or `None` for reversed bounds.
-fn span_parts(timing: &Timing, from: Tick, to: Tick) -> Option<TimedSpan> {
-    if to < from {
-        return None;
-    }
-    let timed = |cursor: Tick, until: Tick, warp_end: Option<Tick>| {
-        let start = warp_end.map_or(cursor, |end| end.max(cursor));
-        start
-            .ticks_until(until)
-            .map_or(0.0, |ticks| f64::from(u32::from(ticks)))
-    };
-    let mut timed_ticks = 0.0;
-    let mut pauses = 0.0;
-    let mut cursor = from;
-    let mut warp_end = None;
-    for event in &timing.events {
-        let at = event.tick;
-        if at > to {
-            break;
-        }
-        if at > from {
-            timed_ticks += timed(cursor, at, warp_end);
-            cursor = at;
-        }
-        match event.kind {
-            TimingKind::Stop(pause) if at >= from && at < to => pauses += f64::from(pause),
-            TimingKind::Delay(pause) if at > from => pauses += f64::from(pause),
-            TimingKind::Warp(ticks) => warp_end = Some(at.checked_add(ticks)?),
-            TimingKind::Stop(_)
-            | TimingKind::Delay(_)
-            | TimingKind::TimeSignature(..)
-            | TimingKind::Other { .. } => {}
-        }
-    }
-    timed_ticks += timed(cursor, to, warp_end);
-    Some(TimedSpan {
-        timed_ticks,
-        paused_seconds: pauses,
-    })
 }
 
 #[cfg(test)]
