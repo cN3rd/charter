@@ -609,6 +609,33 @@ mod tests {
     }
 
     #[test]
+    fn a_timed_span_counts_the_pauses_inside_it_and_skips_warped_ticks() {
+        let events = json!([
+            bpm_event(0, 120.0),
+            { "tick": 960, "kind": { "stop": 0.5 } },
+            { "tick": 1920, "kind": { "delay": 0.25 } },
+            { "tick": 2880, "kind": { "warp": 480 } }
+        ]);
+        let song = timed(&events, None);
+        let span =
+            |from, to| TimedSpan::between(song.timing(), Tick::new(from), Tick::new(to)).unwrap();
+        let near = |value: f64, want: f64| (value - want).abs() < 1e-9;
+        let resolution = TicksPerBeat::default();
+        let whole = span(0, 3840);
+        assert!(near(whole.paused_seconds(), 0.75));
+        assert!(near(whole.timed_beats(resolution), 3.5));
+        assert!(near(whole.at_bpm(tempo(120.0), resolution), 2.5));
+        // A stop pauses from its own tick on, a delay up to its own tick.
+        assert!(near(span(0, 960).paused_seconds(), 0.0));
+        assert!(near(span(960, 1920).paused_seconds(), 0.75));
+        assert!(near(span(1920, 2880).paused_seconds(), 0.0));
+        assert!(near(span(960, 960).paused_seconds(), 0.0));
+        let half = span(0, 960).fraction_of(span(0, 1920));
+        assert!(half.is_some_and(|share| near(share, 0.5)), "{half:?}");
+        assert_eq!(span(0, 960).fraction_of(span(2880, 3360)), None);
+    }
+
+    #[test]
     fn a_bpm_set_between_changes_changes_the_one_in_effect_undo_takes_back() {
         let meter = json!({ "tick": 960, "kind": { "time_signature": [3, 4] } });
         let events = json!([bpm_event(0, 120.0), meter, bpm_event(1920, 90.0)]);
