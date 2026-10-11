@@ -869,7 +869,7 @@ mod tests {
 
     #[test]
     fn without_a_data_folder_the_window_hears_why_nothing_was_found() {
-        let mut window = Window::new(&[]);
+        let mut window = window();
         let mut finder = Finder::new(None);
         finder.find(
             PathBuf::from("/songs/a.ogg"),
@@ -878,9 +878,15 @@ mod tests {
             Tracker::Mapperatorinator,
             &mut window,
         );
-        assert!(!finder.update(&mut window));
-        finder.download(&mut window);
+        assert!(
+            window
+                .message()
+                .is_some_and(|message| message.contains("no data folder")),
+            "{:?}",
+            window.message()
+        );
         assert!(matches!(finder.state, State::Idle));
+        assert!(!finder.update(&mut window));
     }
 
     #[test]
