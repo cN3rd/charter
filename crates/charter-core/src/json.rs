@@ -8,7 +8,7 @@ use crate::document::{
     Anchor, Chart, Child, Document, Extensions, FORMAT_VERSION, Object, Shape, Timing, TimingEvent,
     TimingKind,
 };
-use crate::error::Error;
+use crate::error::{Error, MigrationFailure};
 use crate::grid::{GridPosition, Measures};
 use crate::unit::{
     BeatLength, Bpm, Origin, ResolvedTime, Seconds, Tick, Ticks, TicksPerBeat, TimeShift,
@@ -29,7 +29,8 @@ impl ValidDocument {
     /// # Errors
     ///
     /// Fails on documents over [`MAX_DOCUMENT_BYTES`] or from a newer format version, on
-    /// malformed JSON, or on a value outside its type.
+    /// malformed JSON, on a value outside its type, or with [`Error::Migration`] on a format 0
+    /// timing that cannot become anchors.
     pub fn from_json(bytes: &[u8]) -> Result<Self, Error> {
         if bytes.len() > MAX_DOCUMENT_BYTES {
             return Err(Error::TooLarge(bytes.len()));
@@ -349,11 +350,7 @@ fn migrate_timing_value(
     ticks_per_beat: TicksPerBeat,
 ) -> Result<(), Error> {
     let old: V0Timing = serde_json::from_value(value.take())?;
-    let new = old.migrate(ticks_per_beat).map_err(|why| {
-        <serde_json::Error as serde::de::Error>::custom(format!(
-            "a format 0 timing cannot become anchors: {why}"
-        ))
-    })?;
+    let new = old.migrate(ticks_per_beat)?;
     *value = serde_json::to_value(new)?;
     Ok(())
 }
@@ -408,7 +405,7 @@ impl V0Timing {
     /// The timing with an anchor on every BPM change's tick at the time it resolved to, to the
     /// microsecond, and the last BPM as the tempo after them. Refuses a BPM change whose time
     /// does not resolve, or does not fit a time, rather than leaving its anchor out.
-    fn migrate(self, ticks_per_beat: TicksPerBeat) -> Result<Timing, String> {
+    fn migrate(self, ticks_per_beat: TicksPerBeat) -> Result<Timing, MigrationFailure> {
         let mut tempo = None;
         let mut anchors = Vec::new();
         for event in &self.events {
@@ -416,16 +413,19 @@ impl V0Timing {
                 tempo = Some(bpm);
                 let seconds = self
                     .seconds_at(ticks_per_beat, event.tick)
-                    .ok_or_else(|| format!("tick {} has no time", event.tick))?;
-                let seconds = Origin::nearest(seconds)
-                    .map_err(|why| format!("tick {}: {why}", event.tick))?;
+                    .ok_or(MigrationFailure::NoTime(event.tick))?;
+                let seconds =
+                    Origin::nearest(seconds).map_err(|why| MigrationFailure::OutOfRange {
+                        tick: event.tick,
+                        why,
+                    })?;
                 anchors.push(Anchor {
                     tick: event.tick,
                     seconds,
                 });
             }
         }
-        let tempo = tempo.ok_or("it has no bpm event")?;
+        let tempo = tempo.ok_or(MigrationFailure::NoBpm)?;
         let events = self
             .events
             .into_iter()
@@ -767,7 +767,10 @@ mod tests {
     fn a_format_0_map_without_a_bpm_is_refused_rather_than_guessed() {
         let timing = serde_json::json!({ "offset_seconds": 0.0, "events": [] });
         let refused = ValidDocument::from_json(&v0(&timing)).unwrap_err();
-        assert!(refused.to_string().contains("no bpm event"), "{refused}");
+        assert!(
+            matches!(refused, Error::Migration(MigrationFailure::NoBpm)),
+            "{refused}"
+        );
     }
 
     #[test]
@@ -781,7 +784,10 @@ mod tests {
             ]
         });
         let refused = ValidDocument::from_json(&v0(&timing)).unwrap_err();
-        assert!(refused.to_string().contains("no time"), "{refused}");
+        assert!(
+            matches!(refused, Error::Migration(MigrationFailure::NoTime(tick)) if tick == Tick::new(2)),
+            "{refused}"
+        );
     }
 
     #[test]
@@ -811,7 +817,14 @@ mod tests {
             ]
         });
         let refused = ValidDocument::from_json(&v0(&timing)).unwrap_err();
-        assert!(refused.to_string().contains("tick 2147483647"), "{refused}");
+        assert!(
+            matches!(
+                refused,
+                Error::Migration(MigrationFailure::OutOfRange { tick, .. })
+                    if tick == Tick::new(2_147_483_647)
+            ),
+            "{refused}"
+        );
     }
 
     #[test]

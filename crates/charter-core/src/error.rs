@@ -24,6 +24,28 @@ pub enum Error {
     /// A cross-field rule of the format was broken.
     #[error(transparent)]
     Invalid(#[from] Violation),
+    /// A format 0 timing could not become anchors.
+    #[error("a format 0 timing cannot become anchors: {0}")]
+    Migration(#[from] MigrationFailure),
+}
+
+/// Why a format 0 timing could not become anchors.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum MigrationFailure {
+    /// No BPM event gives the timing a tempo.
+    #[error("it has no bpm event")]
+    NoBpm,
+    /// The BPM change on this tick resolves to no audio time.
+    #[error("tick {0} has no time")]
+    NoTime(Tick),
+    /// The BPM change on this tick falls at a time an anchor cannot hold.
+    #[error("tick {tick}: {why}")]
+    OutOfRange {
+        /// Tick of the BPM change.
+        tick: Tick,
+        /// The time it falls at, outside an anchor's range.
+        why: InvalidValue,
+    },
 }
 
 /// A place in a document, shown as a path such as `charts[1].objects[4]`. Indices count from 0.

@@ -40,7 +40,7 @@ pub use document::{
     clippy::useless_attribute,
     reason = "format validation errors belong in the flat charter-core API"
 )]
-pub use error::{Error, InvalidValue, Location, Rule, Stream, Violation};
+pub use error::{Error, InvalidValue, Location, MigrationFailure, Rule, Stream, Violation};
 #[expect(
     clippy::pub_use,
     clippy::useless_attribute,
