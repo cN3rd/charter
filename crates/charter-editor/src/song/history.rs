@@ -605,6 +605,30 @@ mod tests {
         assert!(song.is_modified());
     }
 
+    #[test]
+    fn steps_on_two_charts_stay_apart() {
+        let mut song = Song::new(document(json!([])), EDITABLE);
+        let start = song.history_step();
+        song.toggle(at(0), lane(0), Kind::Tap).unwrap();
+        song.open_chart(chart_index(1));
+        song.toggle(at(0), lane(0), Kind::Tap).unwrap();
+        song.merge_since(start);
+        assert_eq!(song.history_step(), start + 2);
+    }
+
+    #[test]
+    fn a_save_just_after_the_merged_steps_still_marks_them_saved() {
+        let mut song = Song::new(document(json!([])), EDITABLE);
+        let start = song.history_step();
+        song.toggle(at(0), lane(0), Kind::Tap).unwrap();
+        song.toggle(at(240), lane(1), Kind::Tap).unwrap();
+        song.mark_saved();
+        song.merge_since(start);
+        assert!(!song.is_modified());
+        song.undo().unwrap();
+        assert!(song.is_modified());
+    }
+
     /// A song with a tap placed on lane 1 at tick 0 and on lane 2 at tick 240, and the cursor
     /// left three sixteenths on.
     fn two_taps_placed() -> Song {

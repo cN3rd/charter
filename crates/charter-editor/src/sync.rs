@@ -365,11 +365,11 @@ fn micro(seconds: f64) -> Option<f64> {
 
 #[cfg(test)]
 mod tests {
-    use charter_core::{ResolvedTime, TimeShift, TimingKind};
+    use charter_core::{Kind, ResolvedTime, TimeShift, TimingKind};
     use serde_json::{Value, json};
 
     use super::*;
-    use crate::song::tests::{bpm_event, song_events, timed};
+    use crate::song::tests::{bpm_event, lane, song_events, timed};
 
     fn at(tick: i32) -> Tick {
         Tick::new(tick)
@@ -643,6 +643,39 @@ mod tests {
         song.undo().unwrap();
         assert_eq!(song_events(&song), four());
         assert!(!song.can_undo());
+        song.redo().unwrap();
+        assert!(((song.anchors()[1].seconds - before).seconds() - 0.02).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_nudge_merges_only_into_an_unsaved_nudge_still_in_effect() {
+        let mut song = timed(&four(), None);
+        let before = song.anchors()[1].seconds;
+        let nudged = |state: &Song| (state.anchors()[1].seconds - before).seconds();
+        let nudge = |edited: &mut Song, merge| {
+            edited
+                .nudge_anchors(&[at(1920)], shift(0.001), merge)
+                .unwrap();
+        };
+        // Undone,
+        nudge(&mut song, false);
+        song.undo().unwrap();
+        nudge(&mut song, true);
+        song.undo().unwrap();
+        assert!(nudged(&song).abs() < 1e-9);
+        // saved,
+        nudge(&mut song, false);
+        song.mark_saved();
+        nudge(&mut song, true);
+        song.undo().unwrap();
+        assert!((nudged(&song) - 0.001).abs() < 1e-9);
+        assert!(!song.is_modified());
+        // or followed by another edit, the last nudge takes no more.
+        song.toggle(at(0), lane(0), Kind::Tap).unwrap();
+        nudge(&mut song, true);
+        song.undo().unwrap();
+        assert!((nudged(&song) - 0.001).abs() < 1e-9);
+        assert_eq!(song.chart().unwrap().objects.len(), 1);
     }
 
     #[test]
