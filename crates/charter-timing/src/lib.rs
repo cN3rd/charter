@@ -368,6 +368,9 @@ impl TimingWindow {
             | Refusal::LayerLocked(_)
             | Refusal::OnLayer(_)
             | Refusal::LayerName(_)
+            | Refusal::DuplicateLayerName(_)
+            | Refusal::NoSuchLayer
+            | Refusal::NoFreeLayerName
             | Refusal::LastLayer) => {
                 let first = other.to_string();
                 let mut letters = first.chars();

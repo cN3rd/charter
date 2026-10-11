@@ -9,10 +9,10 @@ use std::collections::BTreeSet;
 use std::ops::RangeInclusive;
 
 use charter_core::{
-    Anchor, Bpm, Chart, Error, Extensions, Kind, LaneCount, LaneIndex, LaneOffset, LaneSpan, Layer,
-    LayerColour, LayerName, LayerView, Marker, MarkerKey, MarkerKind, Metadata, NoteValue, Object,
-    Position, ResourcePath, RulesetPlugin, SettingScope, Shape, Tick, TickOffset, Ticks,
-    TicksPerBeat, Timing, TimingKind, Valid, ValidDocument,
+    Anchor, Bpm, Chart, Error, Extensions, InvalidValue, Kind, LaneCount, LaneIndex, LaneOffset,
+    LaneSpan, Layer, LayerColour, LayerName, LayerView, Marker, MarkerKey, MarkerKind, Metadata,
+    NoteValue, Object, Position, ResourcePath, RulesetPlugin, SettingScope, Shape, Tick,
+    TickOffset, Ticks, TicksPerBeat, Timing, TimingKind, Valid, ValidDocument,
 };
 
 use crate::edit::{Edit, Op};
@@ -145,9 +145,18 @@ pub enum Refusal {
     /// Another layer has a note occupying the destination.
     #[error("A note on layer {0} is in the way")]
     OnLayer(String),
-    /// A layer name is invalid or already used, or a layer row does not exist.
-    #[error("Invalid or duplicate layer name: {0}")]
-    LayerName(String),
+    /// A layer name breaks the grammar of layer names.
+    #[error("Invalid layer name: {0}")]
+    LayerName(InvalidValue),
+    /// Another layer of the chart already has this name.
+    #[error("A layer named {0} already exists")]
+    DuplicateLayerName(LayerName),
+    /// The chart has no layer at that row.
+    #[error("There is no such layer")]
+    NoSuchLayer,
+    /// Every name a new layer could take is used.
+    #[error("No name is left for a new layer")]
+    NoFreeLayerName,
     /// The chart must keep one layer.
     #[error("Cannot remove the last layer")]
     LastLayer,

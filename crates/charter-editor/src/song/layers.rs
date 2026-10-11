@@ -159,16 +159,13 @@ impl Song {
                 if !layers.iter().any(|layer| layer.name.as_str() == name) {
                     break name;
                 }
-                n = n
-                    .checked_add(1)
-                    .ok_or_else(|| Refusal::LayerName("no available layer name".into()))?;
+                n = n.checked_add(1).ok_or(Refusal::NoFreeLayerName)?;
             };
             let colour = LayerColour::next_unused(layers.iter().map(|layer| layer.colour));
             layers.insert(
                 active.get(),
                 Layer {
-                    name: LayerName::new(name)
-                        .map_err(|error| Refusal::LayerName(error.to_string()))?,
+                    name: LayerName::new(name).map_err(Refusal::LayerName)?,
                     colour,
                     view: LayerView::Shown,
                     locked: false,
@@ -186,7 +183,7 @@ impl Song {
     /// Refuses invalid or duplicate names, read-only songs and plugin rejections.
     pub fn rename_layer(&mut self, index: LayerIndex, name: &str) -> Result<(), Refusal> {
         let index = index.get();
-        let name = LayerName::new(name).map_err(|error| Refusal::LayerName(error.to_string()))?;
+        let name = LayerName::new(name).map_err(Refusal::LayerName)?;
         if self
             .layers()
             .get(index)
@@ -200,11 +197,9 @@ impl Song {
                 .enumerate()
                 .any(|(i, layer)| i != index && layer.name == name)
             {
-                return Err(Refusal::LayerName(name.to_string()));
+                return Err(Refusal::DuplicateLayerName(name.clone()));
             }
-            let layer = layers
-                .get_mut(index)
-                .ok_or_else(|| Refusal::LayerName("no such layer".into()))?;
+            let layer = layers.get_mut(index).ok_or(Refusal::NoSuchLayer)?;
             let old = std::mem::replace(&mut layer.name, name.clone());
             for object in objects {
                 if object.layer.as_ref() == Some(&old) {
@@ -233,10 +228,7 @@ impl Song {
             return Ok(());
         }
         self.edit_layers(|layers, _| {
-            layers
-                .get_mut(index)
-                .ok_or_else(|| Refusal::LayerName("no such layer".into()))?
-                .colour = colour;
+            layers.get_mut(index).ok_or(Refusal::NoSuchLayer)?.colour = colour;
             Ok(())
         })
     }
@@ -254,10 +246,7 @@ impl Song {
             return Ok(());
         }
         self.edit_layers(|layers, _| {
-            layers
-                .get_mut(index)
-                .ok_or_else(|| Refusal::LayerName("no such layer".into()))?
-                .view = view;
+            layers.get_mut(index).ok_or(Refusal::NoSuchLayer)?.view = view;
             Ok(())
         })?;
         if let Some(state) = self.chart_state.get_mut(self.chart) {
@@ -286,10 +275,7 @@ impl Song {
             return Ok(());
         }
         self.edit_layers(|layers, _| {
-            layers
-                .get_mut(index)
-                .ok_or_else(|| Refusal::LayerName("no such layer".into()))?
-                .locked = locked;
+            layers.get_mut(index).ok_or(Refusal::NoSuchLayer)?.locked = locked;
             Ok(())
         })
     }
@@ -306,7 +292,7 @@ impl Song {
         let active = self.active_layer().get();
         self.edit_layers(|layers, _| {
             if from >= layers.len() || to >= layers.len() {
-                return Err(Refusal::LayerName("no such layer".into()));
+                return Err(Refusal::NoSuchLayer);
             }
             let layer = layers.remove(from);
             layers.insert(to, layer);
@@ -348,7 +334,7 @@ impl Song {
                 return Err(Refusal::LastLayer);
             }
             let Some(layer) = layers.get(index) else {
-                return Err(Refusal::LayerName("no such layer".into()));
+                return Err(Refusal::NoSuchLayer);
             };
             let name = layer.name.clone();
             let into = match notes {
@@ -400,7 +386,7 @@ impl Song {
         let restoring = previous.as_ref().filter(|solo| solo.layer.get() == index);
         self.edit_layers(|layers, _| {
             if index >= layers.len() {
-                return Err(Refusal::LayerName("no such layer".into()));
+                return Err(Refusal::NoSuchLayer);
             }
             if let Some(solo) = restoring {
                 for (layer, view) in layers.iter_mut().zip(&solo.views) {
@@ -511,10 +497,9 @@ impl Song {
             .layers()
             .get(index)
             .cloned()
-            .ok_or_else(|| Refusal::LayerName("no such layer".into()))?;
+            .ok_or(Refusal::NoSuchLayer)?;
         let layer = Layer {
-            name: LayerName::new(&row.name)
-                .map_err(|error| Refusal::LayerName(error.to_string()))?,
+            name: LayerName::new(&row.name).map_err(Refusal::LayerName)?,
             colour: row.colour,
             view: row.view,
             locked: row.locked,
@@ -534,8 +519,7 @@ impl Song {
         let mut layers = target.layers.clone();
         let mut objects = target.objects.clone();
         if layers.is_empty() {
-            let notes =
-                LayerName::new("Notes").map_err(|error| Refusal::LayerName(error.to_string()))?;
+            let notes = LayerName::new("Notes").map_err(Refusal::LayerName)?;
             layers.push(Layer {
                 name: notes,
                 colour: LayerColour::Blue,
@@ -594,10 +578,7 @@ impl Song {
         if chart.layers.is_empty() {
             return Ok(None);
         }
-        let layer = chart
-            .layers
-            .get(index)
-            .ok_or_else(|| Refusal::LayerName("no such layer".into()))?;
+        let layer = chart.layers.get(index).ok_or(Refusal::NoSuchLayer)?;
         match layer.view {
             LayerView::Hidden => Err(Refusal::LayerHidden(layer.name.to_string())),
             LayerView::Ghosted => Err(Refusal::LayerGhosted(layer.name.to_string())),
@@ -655,8 +636,7 @@ impl Song {
         let mut layers = chart.layers.clone();
         let mut objects = chart.objects.clone();
         if layers.is_empty() {
-            let notes =
-                LayerName::new("Notes").map_err(|error| Refusal::LayerName(error.to_string()))?;
+            let notes = LayerName::new("Notes").map_err(Refusal::LayerName)?;
             layers.push(Layer {
                 name: notes.clone(),
                 colour: LayerColour::Blue,
@@ -993,7 +973,7 @@ mod tests {
         assert_eq!(song.active_layer(), layer_index(2));
         assert!(matches!(
             song.rename_layer(layer_index(0), "Layer 0"),
-            Err(Refusal::LayerName(_))
+            Err(Refusal::DuplicateLayerName(name)) if name.as_str() == "Layer 0"
         ));
         assert!(matches!(
             song.rename_layer(layer_index(0), " bad "),
@@ -1001,7 +981,7 @@ mod tests {
         ));
         assert!(matches!(
             song.rename_layer(layer_index(44), "ok"),
-            Err(Refusal::LayerName(_))
+            Err(Refusal::NoSuchLayer)
         ));
         song.rename_layer(layer_index(0), "Kick").unwrap();
         song.set_layer_view(layer_index(2), LayerView::Hidden)
