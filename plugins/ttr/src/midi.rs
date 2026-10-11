@@ -790,6 +790,29 @@ mod tests {
     }
 
     #[test]
+    fn a_zero_tempo_is_ignored_and_time_runs_on_at_the_last_one() {
+        let tracks = vec![vec![
+            meta(0, MetaMessage::Tempo(u24::new(500_000))),
+            meta(480, MetaMessage::Tempo(u24::new(0))),
+            note(480, 60, 100),
+            note(480, 60, 0),
+            meta(0, MetaMessage::EndOfTrack),
+        ]];
+        let smf = Smf {
+            header: Header::new(Format::Parallel, Timing::Metrical(u15::new(480))),
+            tracks,
+        };
+        let mut bytes = Vec::new();
+        smf.write_std(&mut bytes).unwrap();
+        let track = read(&bytes, Layout::Standard, &mut Report::default()).unwrap();
+        assert_eq!(
+            track.levels[0].tempo,
+            [Change::new(0.0, 120.0, meter(4)).unwrap()]
+        );
+        assert_eq!(track.levels[0].notes, [played(0, 1.0, 1.5)]);
+    }
+
+    #[test]
     fn what_is_not_a_beat_timed_midi_file_is_refused() {
         let mut report = Report::default();
         assert!(
