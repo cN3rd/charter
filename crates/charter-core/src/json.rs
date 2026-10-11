@@ -871,6 +871,39 @@ mod tests {
     }
 
     #[test]
+    fn format_0_pauses_on_bpm_changes_keep_their_old_times() {
+        // A tick's time takes in its own delay but not its own stop, and a delay on tick 0 is
+        // inside the offset.
+        let timing = json!({
+            "offset_seconds": 0.0,
+            "events": [
+                { "tick": 0, "kind": { "bpm": 120.0 } },
+                { "tick": 0, "kind": { "delay": 1.0 } },
+                { "tick": 1920, "kind": { "bpm": 60.0 } },
+                { "tick": 1920, "kind": { "stop": 0.25 } },
+                { "tick": 1920, "kind": { "delay": 0.5 } },
+                { "tick": 2880, "kind": { "bpm": 120.0 } }
+            ]
+        });
+        let migrated = ValidDocument::from_json(&v0(&timing)).unwrap();
+        let anchors: Vec<_> = migrated
+            .timing()
+            .anchors
+            .iter()
+            .map(|anchor| (anchor.tick, anchor.seconds))
+            .collect();
+        let at = |seconds| Origin::try_from(seconds).unwrap();
+        assert_eq!(
+            anchors,
+            [
+                (Tick::new(0), at(0.0)),
+                (Tick::new(1920), at(1.5)),
+                (Tick::new(2880), at(2.75))
+            ]
+        );
+    }
+
+    #[test]
     fn newer_versions_are_refused_before_their_keys_are_read() {
         let mut value = minimal();
         value["format_version"] = json!(2);
