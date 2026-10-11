@@ -530,7 +530,23 @@ mod tests {
         let accent = |track: &Track| loudest(&track.frames()[400..700]);
         let alone = mix(&Track::silence(8000, 800), &clicks, Volumes::default());
         assert!((accent(&quiet) - accent(&alone)).abs() < 1e-6);
-        assert!(accent(&full) > accent(&quiet) - 1e-6);
+        assert!((loudest(&full.frames()[..400]) - 0.5).abs() < 1e-6);
+        let half = Volumes {
+            music: Gain::from(0.5),
+            ..Volumes::default()
+        };
+        assert!((loudest(&mix(&hum, &clicks, half).frames()[..400]) - 0.25).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_gain_is_stored_as_its_factor_and_read_back_in_range() {
+        assert_eq!(
+            serde_json::to_value(Gain::from(0.25)).unwrap(),
+            serde_json::json!(0.25)
+        );
+        let read = |json: &str| serde_json::from_str::<Gain>(json).unwrap().amplitude();
+        assert!((read("0.25") - 0.25).abs() < f32::EPSILON);
+        assert!((read("3") - 1.0).abs() < f32::EPSILON);
     }
 
     #[test]

@@ -1697,6 +1697,7 @@ dependencies = [
  "rubato",
  "rustfft",
  "serde",
+ "serde_json",
  "symphonia-wrap",
  "thiserror 2.0.21",
 ]
