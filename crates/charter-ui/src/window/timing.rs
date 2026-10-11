@@ -1251,10 +1251,13 @@ mod tests {
         let song = harness.state().song.as_ref().unwrap().document().clone();
         harness.state_mut().song = Some(Song::new(song, &[]));
         harness.run();
+        let before = moments(&harness);
         let x = field(&harness).columns.timing_x();
         let (from, to) = (on_line(&harness, x, 960), on_line(&harness, x, 1920));
         drag(&mut harness, from, to, egui::Modifiers::NONE);
-        assert_eq!(event_ticks(&harness), [Tick::new(0), Tick::new(960)]);
+        // A drag keeps a point's tick and moves its moment, so the moments show it stayed.
+        assert_eq!(moments(&harness), before);
+        assert_eq!(harness.state().message(), None);
     }
     #[test]
     fn an_edit_the_game_refuses_says_why() {
