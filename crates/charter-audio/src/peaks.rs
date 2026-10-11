@@ -240,10 +240,22 @@ mod tests {
         let mut other = saved.clone();
         other[0] = b'X';
         assert_eq!(Peaks::from_bytes(&other, 7), None);
-        let mut not_a_number = saved;
+        let mut not_a_number = saved.clone();
         let last = not_a_number.len() - 4;
         not_a_number[last..].copy_from_slice(&f32::NAN.to_le_bytes());
         assert_eq!(Peaks::from_bytes(&not_a_number, 7), None);
+        for rate in [0.0, -1000.0, f64::NAN, f64::INFINITY] {
+            let mut wrong = saved.clone();
+            wrong[MAGIC.len()..][8..16].copy_from_slice(&rate.to_le_bytes());
+            assert_eq!(Peaks::from_bytes(&wrong, 7), None, "rate {rate}");
+        }
+        let mut inverted = saved;
+        let high_below_low: Vec<u8> = [0.5_f32, -0.5]
+            .iter()
+            .flat_map(|value| value.to_le_bytes())
+            .collect();
+        inverted[HEADER..][..8].copy_from_slice(&high_below_low);
+        assert_eq!(Peaks::from_bytes(&inverted, 7), None);
     }
 
     #[test]
