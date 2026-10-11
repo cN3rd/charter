@@ -477,7 +477,11 @@ mod tests {
 
     #[test]
     fn an_anchor_on_a_delay_is_the_time_after_the_delay() {
-        let t = timing(&[(0, 0.0), (960, 4.0)], 60.0, vec![event(960, delay(3.0))]);
+        let t = timing(
+            &[(0, 0.0), (960, 4.0), (1920, 5.0)],
+            60.0,
+            vec![event(960, delay(3.0))],
+        );
         let tempo = t
             .tempo_at(TicksPerBeat::default(), Tick::new(480))
             .unwrap()
@@ -487,6 +491,36 @@ mod tests {
             "the delay takes three of the four seconds"
         );
         assert_time(&t, 959, 959.0 / 960.0);
+        // Paused before the anchor, so not again after it.
+        assert_time(&t, 1440, 4.5);
+        assert_eq!(
+            t.span_parts(Tick::new(960), Tick::new(1920)),
+            Some((960.0, 0.0))
+        );
+    }
+
+    #[test]
+    fn a_stop_on_an_anchor_pauses_the_segment_it_starts() {
+        let t = timing(
+            &[(0, 0.0), (960, 1.0), (1920, 4.0)],
+            60.0,
+            vec![event(960, stop(2.0))],
+        );
+        assert_time(&t, 961, 3.0 + 1.0 / 960.0);
+        assert_time(&t, 1440, 3.5);
+        assert_eq!(
+            t.span_parts(Tick::new(960), Tick::new(1920)),
+            Some((960.0, 2.0))
+        );
+        assert_eq!(
+            t.span_parts(Tick::new(960), Tick::new(960)),
+            Some((0.0, 0.0))
+        );
+        let tempos = t.tempos(TicksPerBeat::default()).unwrap();
+        assert!(
+            tempos.iter().all(|&(_, bpm)| (bpm - 60.0).abs() < 1e-9),
+            "{tempos:?}"
+        );
     }
 
     #[test]
@@ -755,14 +789,26 @@ mod tests {
         prop_oneof![
             pause.clone().prop_map(TimingKind::Stop),
             pause.prop_map(TimingKind::Delay),
-            (1_u32..=2000).prop_map(|w| TimingKind::Warp(Ticks::new(w).unwrap())),
+            prop_oneof![
+                (1_u32..=4).prop_map(|w| w.saturating_mul(960)),
+                1_u32..=2000
+            ]
+            .prop_map(|w| TimingKind::Warp(Ticks::new(w).unwrap())),
+        ]
+    }
+
+    /// A tick, half the time on a beat so anchors often land on pauses and warp ends.
+    fn tick() -> impl Strategy<Value = i32> {
+        prop_oneof![
+            (-8_i32..=8).prop_map(|beat| beat.saturating_mul(960)),
+            -8000_i32..8000
         ]
     }
 
     fn map() -> impl Strategy<Value = Timing> {
         (
-            vec((-8000_i32..8000, kind()), 0..8),
-            vec((-8000_i32..8000, 0.01_f64..5.0), 1..6),
+            vec((tick(), kind()), 0..8),
+            vec((tick(), 0.01_f64..5.0), 1..6),
             (-5.0_f64..5.0, 20.0_f64..400.0),
         )
             .prop_map(|(events, anchors, (first, tempo))| {
