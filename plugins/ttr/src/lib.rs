@@ -1819,6 +1819,12 @@ mod tests {
             { "tick": 960, "kind": "swing.accent", "text": "" }
         ]);
         let song = read(&value).unwrap();
+        let kept: Vec<_> = song
+            .markers()
+            .iter()
+            .map(|marker| (marker.tick, marker.text.as_str()))
+            .collect();
+        assert_eq!(kept, [(Tick::new(0), "Intro"), (Tick::new(960), "fix")]);
         let mut out = expected(json!([]));
         out["charts"][0].as_object_mut().unwrap().remove("objects");
         out["markers"] = json!(value["markers"].as_array().unwrap()[..2]);
