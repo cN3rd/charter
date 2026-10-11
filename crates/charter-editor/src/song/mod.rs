@@ -11,7 +11,7 @@ use std::ops::RangeInclusive;
 use charter_core::{
     Anchor, Bpm, Chart, Error, Extensions, InvalidValue, Kind, LaneCount, LaneIndex, LaneOffset,
     LaneSpan, Layer, LayerColour, LayerName, LayerView, Marker, MarkerKey, MarkerKind, Metadata,
-    NoteValue, Object, Position, ResourcePath, RulesetPlugin, SettingScope, Shape, Tick,
+    Namespace, NoteValue, Object, Position, ResourcePath, RulesetPlugin, SettingScope, Shape, Tick,
     TickOffset, Ticks, TicksPerBeat, Timing, TimingKind, Valid, ValidDocument,
 };
 
@@ -307,7 +307,23 @@ enum Rules {
     /// The plugin for the song's ruleset, which accepted the song.
     Checked(&'static dyn RulesetPlugin),
     /// Why the song cannot be edited.
-    ReadOnly(String),
+    ReadOnly(ReadOnly),
+}
+
+/// Why a song cannot be edited.
+#[derive(Debug, thiserror::Error)]
+pub enum ReadOnly {
+    /// No plugin is registered for the song's ruleset.
+    #[error("charter has no {0} plugin")]
+    NoPlugin(Namespace),
+    /// The plugin for the song's ruleset refused the song.
+    #[error("the {plugin} plugin cannot read this song: {why}")]
+    Refused {
+        /// The ruleset whose plugin refused it.
+        plugin: Namespace,
+        /// What the plugin found.
+        why: Box<dyn std::error::Error + Send + Sync>,
+    },
 }
 
 impl Rules {
@@ -316,11 +332,14 @@ impl Rules {
     fn of(document: &ValidDocument, plugins: &[&'static dyn RulesetPlugin]) -> Self {
         let id = &document.document().ruleset.id;
         let Some(plugin) = plugins.iter().find(|plugin| plugin.id() == id.as_str()) else {
-            return Self::ReadOnly(format!("charter has no {id} plugin"));
+            return Self::ReadOnly(ReadOnly::NoPlugin(id.clone()));
         };
         match plugin.check(document) {
             Ok(()) => Self::Checked(*plugin),
-            Err(why) => Self::ReadOnly(format!("the {id} plugin cannot read this song: {why}")),
+            Err(why) => Self::ReadOnly(ReadOnly::Refused {
+                plugin: id.clone(),
+                why,
+            }),
         }
     }
 }
@@ -364,7 +383,7 @@ impl Song {
 
     /// Why the song cannot be edited, if it cannot.
     #[must_use]
-    pub fn read_only(&self) -> Option<&str> {
+    pub const fn read_only(&self) -> Option<&ReadOnly> {
         match &self.rules {
             Rules::Checked(_) => None,
             Rules::ReadOnly(why) => Some(why),
@@ -655,22 +674,31 @@ pub(crate) mod tests {
     #[test]
     fn a_song_is_read_only_without_a_plugin_for_its_ruleset() {
         let song = Song::new(document(json!([])), &[&Elsewhere]);
-        assert_eq!(song.read_only(), Some("charter has no test plugin"));
+        assert!(
+            matches!(song.read_only(), Some(ReadOnly::NoPlugin(id)) if id.as_str() == "test"),
+            "{:?}",
+            song.read_only()
+        );
     }
 
     #[test]
     fn a_song_its_plugin_refuses_is_read_only_and_says_why() {
         let song = Song::new(document(json!([object(0, 3, "tap")])), &[&NoLastLane]);
-        assert_eq!(
-            song.read_only(),
-            Some("the test plugin cannot read this song: a note on lane 4")
+        assert!(
+            matches!(
+                song.read_only(),
+                Some(ReadOnly::Refused { plugin, why })
+                    if plugin.as_str() == "test" && why.to_string() == "a note on lane 4"
+            ),
+            "{:?}",
+            song.read_only()
         );
     }
 
     #[test]
     fn a_song_its_plugin_accepts_is_editable() {
         let song = Song::new(document(json!([])), EDITABLE);
-        assert_eq!(song.read_only(), None);
+        assert!(song.read_only().is_none());
     }
 
     #[test]

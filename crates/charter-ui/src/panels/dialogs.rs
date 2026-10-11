@@ -380,7 +380,7 @@ pub(crate) fn toast(ui: &Ui, message: &str) -> bool {
 }
 
 /// Why the open song cannot be edited.
-pub(crate) fn read_only(ui: &mut Ui, why: &str) {
+pub(crate) fn read_only(ui: &mut Ui, why: &charter_editor::ReadOnly) {
     notice(ui, style::icon::LOCK_SIMPLE, |ui| {
         ui.label(format!("Read only: {why}"));
     });

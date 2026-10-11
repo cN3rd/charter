@@ -552,7 +552,7 @@ mod tests {
     #[test]
     fn a_row_click_emits_a_sync_and_an_audition_before_the_new_anchor() {
         let mut harness = timing_harness();
-        assert_eq!(harness.state().song.read_only(), None);
+        assert!(harness.state().song.read_only().is_none());
         let pos = row_point(&harness, 2880);
         click(&mut harness, pos, Modifiers::NONE);
         let [
