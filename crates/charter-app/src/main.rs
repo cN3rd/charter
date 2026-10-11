@@ -1434,15 +1434,18 @@ mod tests {
     }
 
     #[test]
-    fn an_install_request_without_storage_fails_without_starting_a_download() {
+    fn an_install_request_that_cannot_start_says_so_and_downloads_nothing() {
+        // No data folder, and on Linux no release either: the host's platform decides which
+        // stops it, so this checks only the hand-off. ffmpeg's own tests pick the platform.
         let mut host = host(Memory::default());
         host.window.ffmpeg_found(None);
         host.handle_requests(vec![Request::InstallFfmpeg]);
         assert!(
             host.window
                 .message()
-                .is_some_and(|message| message.contains("ffmpeg did not install"))
+                .is_some_and(|message| message.starts_with("ffmpeg did not install: "))
         );
+        assert!(!host.ffmpeg.update(&mut host.window));
     }
 
     #[test]
