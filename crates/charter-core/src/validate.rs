@@ -542,6 +542,26 @@ mod tests {
     }
 
     #[test]
+    fn a_warp_covers_its_first_tick_but_not_the_one_after_its_last() {
+        let anchored_at = |tick: i32| {
+            with(|v| {
+                v["timing"] = json!({
+                    "anchors": [ { "tick": 0, "seconds": 0.0 }, { "tick": tick, "seconds": 1.0 } ],
+                    "tempo": 120.0,
+                    "events": [ { "tick": 960, "kind": { "warp": 960 } } ]
+                });
+            })
+        };
+        assert_eq!(
+            broken_rule(&anchored_at(960)),
+            Rule::AnchorInWarp {
+                tick: Tick::new(960)
+            }
+        );
+        check(&anchored_at(1920)).unwrap();
+    }
+
+    #[test]
     fn many_anchors_and_events_validate_without_quadratic_scans() {
         let mut document: Document = serde_json::from_value(minimal()).unwrap();
         let name: Key = "test.pulse".parse().unwrap();
