@@ -370,15 +370,19 @@ fn convert_over(
 #[cfg(test)]
 pub(crate) mod memory {
     use std::cell::RefCell;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
     use super::*;
 
-    /// Files held in memory, some of which refuse to be written or moved.
+    /// Files held in memory, some of which refuse to be written or moved. As on a real disk, a
+    /// file goes only into a folder that exists: the root, one made, or one holding a file it
+    /// started with.
     #[derive(Debug, Default)]
     pub(crate) struct Memory {
         /// File contents keyed by path.
         pub(crate) files: RefCell<BTreeMap<PathBuf, Vec<u8>>>,
+        /// Folders that exist, besides the root.
+        pub(crate) folders: RefCell<BTreeSet<PathBuf>>,
         /// Files that refuse writes.
         pub(crate) unwritable: Vec<PathBuf>,
         /// Files that refuse reads.
@@ -401,15 +405,36 @@ pub(crate) mod memory {
     }
 
     impl Memory {
-        /// Starts with the given path-and-content pairs.
+        /// Starts with the given path-and-content pairs, and the folders holding them.
         pub(crate) fn with(files: &[(&str, &[u8])]) -> Self {
-            let files = files
-                .iter()
-                .map(|(path, bytes)| (PathBuf::from(path), bytes.to_vec()))
-                .collect();
-            Self {
-                files: RefCell::new(files),
-                ..Self::default()
+            let memory = Self::default();
+            for (path, bytes) in files {
+                let path = PathBuf::from(path);
+                if let Some(folder) = path.parent() {
+                    memory.add_folder(folder);
+                }
+                memory.files.borrow_mut().insert(path, bytes.to_vec());
+            }
+            memory
+        }
+
+        /// Makes `folder` and every folder above it.
+        fn add_folder(&self, folder: &Path) {
+            self.folders
+                .borrow_mut()
+                .extend(folder.ancestors().map(Path::to_path_buf));
+        }
+
+        /// Whether `folder` exists: the root, a relative path's base, or a folder made.
+        fn has_folder(&self, folder: &Path) -> bool {
+            folder.parent().is_none() || self.folders.borrow().contains(folder)
+        }
+
+        /// Refuses, as a real disk does, a file whose folder does not exist.
+        fn folder_of(&self, path: &Path) -> io::Result<()> {
+            match path.parent() {
+                Some(folder) if !self.has_folder(folder) => Err(missing(folder)),
+                _ => Ok(()),
             }
         }
 
@@ -438,6 +463,7 @@ pub(crate) mod memory {
             if self.unwritable.iter().any(|refused| refused == path) {
                 return Err(io::Error::other("the disk is full"));
             }
+            self.folder_of(path)?;
             self.files
                 .borrow_mut()
                 .insert(path.to_path_buf(), bytes.to_vec());
@@ -448,6 +474,7 @@ pub(crate) mod memory {
             if self.stuck {
                 return Err(io::Error::other("the move failed"));
             }
+            self.folder_of(transfer.to)?;
             let bytes = self
                 .files
                 .borrow_mut()
@@ -469,6 +496,7 @@ pub(crate) mod memory {
 
         fn copy(&self, transfer: Transfer<'_>) -> io::Result<()> {
             let bytes = self.read(transfer.from)?;
+            self.folder_of(transfer.to)?;
             if self.partial_copy_fail {
                 self.files.borrow_mut().insert(
                     transfer.to.to_path_buf(),
@@ -486,11 +514,12 @@ pub(crate) mod memory {
                     "folder cannot be created",
                 ));
             }
+            self.add_folder(path);
             Ok(())
         }
 
         fn exists(&self, path: &Path) -> bool {
-            self.files.borrow().contains_key(path)
+            self.files.borrow().contains_key(path) || self.folders.borrow().contains(path)
         }
 
         /// Writes a prefix identifying the ffmpeg operation and the source's bytes.
@@ -512,6 +541,9 @@ pub(crate) mod memory {
         }
 
         fn list(&self, folder: &Path) -> io::Result<Vec<PathBuf>> {
+            if !self.has_folder(folder) {
+                return Err(missing(folder));
+            }
             Ok(self
                 .files
                 .borrow()
