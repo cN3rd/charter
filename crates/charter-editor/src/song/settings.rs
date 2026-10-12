@@ -76,8 +76,7 @@ impl Song {
             old: old.clone(),
             new,
         }]);
-        self.document = self.edited(self.chart, &edit)?;
-        self.record(edit);
+        self.commit(edit)?;
         Ok(())
     }
 
@@ -96,8 +95,7 @@ impl Song {
             old: Box::new(old.clone()),
             new: Box::new(metadata),
         }]);
-        self.document = self.edited(self.chart, &edit)?;
-        self.record(edit);
+        self.commit(edit)?;
         Ok(())
     }
 }

@@ -294,6 +294,50 @@ impl Song {
         Ok(edited)
     }
 
+    /// Makes `edit` to chart `chart` and records it as one step of history.
+    ///
+    /// This is the one order an edit reaches the song in: the format and the game check it first,
+    /// so a refusal leaves the song exactly as it was, and only then does the selection follow it
+    /// and the step join the history.
+    ///
+    /// # Errors
+    ///
+    /// Refuses when the song is read-only, when `chart` is not there, or when the edited song
+    /// fails the format or its plugin.
+    pub(super) fn commit_to(&mut self, chart: usize, edit: Edit) -> Result<(), Refusal> {
+        self.document = self.edited(chart, &edit)?;
+        self.record(edit);
+        Ok(())
+    }
+
+    /// Makes `edit` to the open chart and records it, as [`Song::commit_to`] does.
+    ///
+    /// # Errors
+    ///
+    /// Refuses as [`Song::commit_to`] does.
+    pub(super) fn commit(&mut self, edit: Edit) -> Result<(), Refusal> {
+        self.commit_to(self.chart, edit)
+    }
+
+    /// Makes `edit` to the open chart, leaves `selection` selected, and records it.
+    ///
+    /// The selection goes in before the step is recorded, so recording remaps and prunes the
+    /// notes the edit just chose rather than the ones it replaced.
+    ///
+    /// # Errors
+    ///
+    /// Refuses as [`Song::commit_to`] does, leaving the old selection in place.
+    pub(super) fn commit_selecting(
+        &mut self,
+        edit: Edit,
+        selection: BTreeSet<NoteAt>,
+    ) -> Result<(), Refusal> {
+        self.document = self.edited(self.chart, &edit)?;
+        self.selection = selection;
+        self.record(edit);
+        Ok(())
+    }
+
     /// Takes back the newest edit still in effect, returning to the chart and cursor it was made
     /// at. Does nothing when no edit is left.
     ///

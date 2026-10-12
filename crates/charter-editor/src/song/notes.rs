@@ -41,8 +41,7 @@ impl Song {
             object.layer = active;
             (Edit(vec![Op::Insert { index, object }]), Toggled::Placed)
         };
-        self.document = self.edited(self.chart, &edit)?;
-        self.record(edit);
+        self.commit(edit)?;
         Ok(toggled)
     }
 
@@ -73,8 +72,7 @@ impl Song {
         }
         let old = old.clone();
         let edit = Edit(vec![Op::Replace { index, old, new }]);
-        self.document = self.edited(self.chart, &edit)?;
-        self.record(edit);
+        self.commit(edit)?;
         Ok(())
     }
 }
@@ -136,8 +134,7 @@ impl Song {
             return Ok(());
         }
         let edit = Edit(ops);
-        self.document = self.edited(self.chart, &edit)?;
-        self.record(edit);
+        self.commit(edit)?;
         Ok(())
     }
 
@@ -187,8 +184,7 @@ impl Song {
             return Ok(());
         }
         let edit = Edit(ops);
-        self.document = self.edited(self.chart, &edit)?;
-        self.record(edit);
+        self.commit(edit)?;
         Ok(())
     }
 
@@ -420,9 +416,7 @@ impl Song {
             return Ok(0);
         }
         let edit = Edit(ops);
-        self.document = self.edited(self.chart, &edit)?;
-        self.selection = selection;
-        self.record(edit);
+        self.commit_selecting(edit, selection)?;
         Ok(added)
     }
 
@@ -490,9 +484,7 @@ impl Song {
             });
         }
         let edit = Edit(ops);
-        self.document = self.edited(self.chart, &edit)?;
-        self.selection = selection;
-        self.record(edit);
+        self.commit_selecting(edit, selection)?;
         Ok(())
     }
 }
@@ -1052,6 +1044,27 @@ mod tests {
         let refusal = song.stretch(lane(0), at(0), at(480)).unwrap_err();
         assert_eq!(refusal.to_string(), "a hold");
         assert_eq!(objects(&song), [object(0, 0, "tap")]);
+    }
+
+    #[test]
+    fn a_paste_the_game_refuses_leaves_the_old_selection_in_place() {
+        let mut source = Song::new(document(json!([hold(0, 1, 240)])), EDITABLE);
+        select_everything(&mut source);
+        let clip = source.copied();
+
+        let mut song = Song::new(document(json!([object(0, 0, "tap")])), &[&NoHolds]);
+        song.select_all();
+        let before: Vec<_> = song.selection().collect();
+        assert_eq!(before.len(), 1);
+
+        let refusal = song.paste(&clip, at(960)).unwrap_err();
+
+        assert_eq!(refusal.to_string(), "a hold");
+        assert_eq!(objects(&song), [object(0, 0, "tap")]);
+        // The selection a paste makes goes in with the edit, so a refused one leaves the notes
+        // that were chosen before it.
+        assert_eq!(song.selection().collect::<Vec<_>>(), before);
+        assert!(!song.can_undo());
     }
 
     #[test]

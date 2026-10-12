@@ -101,8 +101,7 @@ impl Song {
     fn remark(&mut self, new: Vec<Marker>) -> Result<(), Refusal> {
         let old = self.document.document().markers.clone();
         let edit = Edit(vec![Op::Markers { old, new }]);
-        self.document = self.edited(self.chart, &edit)?;
-        self.record(edit);
+        self.commit(edit)?;
         Ok(())
     }
 

@@ -562,8 +562,7 @@ impl Song {
                 new: objects,
             },
         ]);
-        self.document = self.edited(chart, &edit)?;
-        self.record(edit);
+        self.commit_to(chart, edit)?;
         Ok(skipped)
     }
 
@@ -675,8 +674,7 @@ impl Song {
             return Ok(());
         }
         let edit = Edit(ops);
-        self.document = self.edited(self.chart, &edit)?;
-        self.record(edit);
+        self.commit(edit)?;
         Ok(())
     }
 }

@@ -164,8 +164,7 @@ impl Song {
         }];
         ops.extend(self.shifted_along(own, &map)?);
         let edit = Edit(ops);
-        self.document = self.edited(self.chart, &edit)?;
-        self.record(edit);
+        self.commit(edit)?;
         Ok(())
     }
 
@@ -420,6 +419,8 @@ impl Song {
             new: Box::new(new),
         }]);
         let document = self.edited(self.chart, &edit)?;
+        // Not `commit`: whether this joins the last step is only known once the edit checks out,
+        // and going through `commit` would check the whole document a second time.
         let joins = self.history.can_merge_timing(self.chart, own);
         if !joins {
             self.document = document;
@@ -455,8 +456,7 @@ impl Song {
             old: Box::new(old.clone()),
             new: Box::new(new),
         }]);
-        self.document = self.edited(self.chart, &edit)?;
-        self.record(edit);
+        self.commit(edit)?;
         Ok(())
     }
 }
