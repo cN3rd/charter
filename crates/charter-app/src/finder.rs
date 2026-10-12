@@ -82,8 +82,8 @@ enum Progress {
     Weights(Result<(), String>),
     /// Finding the timing is this share of the way done.
     Finding(f32),
-    /// There is no graphics card to find the timing of this audio at this resolution on.
-    NoGpu(PathBuf, TicksPerBeat),
+    /// There is no graphics card to run this job on, so it waits for the user to allow the CPU.
+    NoGpu(Job),
     /// The timing found, or why none was.
     Found(Result<Timing, String>),
 }
@@ -210,7 +210,12 @@ impl Finder {
                     mapperatorinator(&file, &weights, ticks_per_beat, Device::Gpu, tell)
                 }
                 Tracker::Mapperatorinator => {
-                    drop(send.send(Progress::NoGpu(file, ticks_per_beat)));
+                    drop(send.send(Progress::NoGpu(Job {
+                        file,
+                        ticks_per_beat,
+                        onsets,
+                        tracker,
+                    })));
                     return;
                 }
             };
@@ -264,13 +269,8 @@ impl Finder {
             match work.try_recv() {
                 Ok(Progress::Downloaded(share)) => window.answer(Answer::WeightsProgress(share)),
                 Ok(Progress::Finding(share)) => window.answer(Answer::FindingProgress(share)),
-                Ok(Progress::NoGpu(file, ticks_per_beat)) => {
-                    self.state = State::NeedsCpu(Job {
-                        file,
-                        ticks_per_beat,
-                        onsets: None,
-                        tracker: Tracker::Mapperatorinator,
-                    });
+                Ok(Progress::NoGpu(job)) => {
+                    self.state = State::NeedsCpu(job);
                     window.answer(Answer::GpuMissing);
                     return false;
                 }
@@ -640,29 +640,35 @@ mod tests {
     }
 
     #[test]
-    fn no_graphics_card_asks_first_and_keeps_the_song_for_the_cpu() {
+    fn no_graphics_card_asks_first_and_keeps_the_whole_job_for_the_cpu() {
         let mut window = window();
         let (send, receive) = std::sync::mpsc::channel();
         let mut finder = Finder {
             state: State::Finding(receive),
             ..Finder::default()
         };
+        let found = vec![Onset {
+            seconds: 1.5,
+            strength: 0.75,
+        }];
         send.send(Progress::Finding(0.5)).unwrap();
-        send.send(Progress::NoGpu(
-            PathBuf::from("/songs/a.ogg"),
-            charter_core::TicksPerBeat::default(),
-        ))
+        send.send(Progress::NoGpu(Job {
+            file: PathBuf::from("/songs/a.ogg"),
+            ticks_per_beat: charter_core::TicksPerBeat::default(),
+            onsets: Some(found.clone()),
+            tracker: Tracker::Mapperatorinator,
+        }))
         .unwrap();
 
         assert!(!finder.update(&mut window));
-        assert!(matches!(
-            &finder.state,
-            State::NeedsCpu(Job {
-                file,
-                tracker: Tracker::Mapperatorinator,
-                ..
-            }) if file == Path::new("/songs/a.ogg")
-        ));
+        let State::NeedsCpu(job) = &finder.state else {
+            panic!("the job should wait for the CPU");
+        };
+        assert_eq!(job.file, Path::new("/songs/a.ogg"));
+        assert_eq!(job.tracker, Tracker::Mapperatorinator);
+        // The onsets were measured before the graphics card was ruled out, so the CPU run must not
+        // have to measure them again.
+        assert_eq!(job.onsets.as_deref(), Some(found.as_slice()));
         assert!(window.message().is_none());
         finder.find_on_cpu(&mut window);
         assert!(matches!(finder.state, State::Idle));
