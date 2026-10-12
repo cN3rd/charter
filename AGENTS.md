@@ -107,3 +107,18 @@ for it; when a skill leads you wrong, append a trigger, wrong, right entry there
 
 CI (`.github/workflows/ci.yml`) runs the `just ci` pieces, Kani, and packages both platforms on
 push, publishing a `ci-<run>` prerelease and the book to GitHub Pages.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues on `cN3rd/charter`, driven by the `gh` CLI. See [`.agents/issue-tracker.md`](./.agents/issue-tracker.md).
+
+### Triage labels
+
+The five canonical names, unchanged. See [`.agents/triage-labels.md`](./.agents/triage-labels.md).
+
+### Domain docs
+
+Single-context, with the glossary and ADRs living in the book under `docs/src/`. See
+[`.agents/domain.md`](./.agents/domain.md).
