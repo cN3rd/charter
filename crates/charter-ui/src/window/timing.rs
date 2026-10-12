@@ -4,16 +4,16 @@ use super::{Finding, Request, Tracker, Window, found_message};
 
 impl Window {
     /// Loads pasted timing text from a file into the import window.
-    pub fn timing_file_read(&mut self, text: &str) {
+    pub(crate) fn timing_file_read(&mut self, text: &str) {
         text.clone_into(&mut self.import.text);
         self.import.set_open(true);
     }
     /// Shows why the chosen timing file could not be read.
-    pub fn timing_file_failed(&mut self, why: &str) {
+    pub(crate) fn timing_file_failed(&mut self, why: &str) {
         self.failure = Some(format!("Could not read the timing: {why}"));
     }
     /// Shows why another timing job could not start without ending the current one.
-    pub fn timing_refused(&mut self, why: &str) {
+    pub(crate) fn timing_refused(&mut self, why: &str) {
         self.failure = Some(format!("Finding the timing was refused: {why}"));
     }
     /// Starts automatic timing, or asks for tracker weights before it can.
@@ -34,7 +34,7 @@ impl Window {
     }
     /// Accepts automatic timing from the host or shows why it failed. Timing found for audio or
     /// a resolution the open song no longer has is left out.
-    pub fn timing_found(&mut self, found: Result<charter_core::Timing, String>) {
+    pub(crate) fn timing_found(&mut self, found: Result<charter_core::Timing, String>) {
         self.dialogs.finding = Finding::Idle;
         let asked = self.dialogs.finding_for.take();
         let open = self.audio_file().zip(

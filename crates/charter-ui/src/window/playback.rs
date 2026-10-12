@@ -7,14 +7,14 @@ use super::{
 
 impl Window {
     /// Marks the song's audio decoded and ready to play.
-    pub fn audio_ready(&mut self, file: &Path, seconds: f64) {
+    pub(crate) fn audio_ready(&mut self, file: &Path, seconds: f64) {
         self.playback.audio = Some(AudioStatus {
             file: file.to_path_buf(),
             loaded: Loaded::Ready(seconds),
         });
     }
     /// Marks the song's audio unreadable and shows why.
-    pub fn audio_failed(&mut self, file: &Path, why: &str) {
+    pub(crate) fn audio_failed(&mut self, file: &Path, why: &str) {
         self.playback.audio = Some(AudioStatus {
             file: file.to_path_buf(),
             loaded: Loaded::Failed,
@@ -22,7 +22,7 @@ impl Window {
         self.failure = Some(format!("{} cannot play: {why}", file.display()));
     }
     /// Moves the cursor to the audio position the host says is playing.
-    pub fn playhead(&mut self, seconds: f64) {
+    pub(crate) fn playhead(&mut self, seconds: f64) {
         let Some(seconds) = ResolvedTime::from_seconds(seconds) else {
             return;
         };

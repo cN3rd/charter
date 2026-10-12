@@ -119,7 +119,7 @@ impl Window {
     /// with no file of its own, and says what it left out. The plugin whose format names the
     /// extension reads it; when formats of several share it, the user picks which. Its audio is
     /// the file the format names beside `path`.
-    pub fn import_song(
+    pub(crate) fn import_song(
         &mut self,
         path: &Path,
         bytes: &[u8],
@@ -157,7 +157,7 @@ impl Window {
     /// Writes the open song to `path` in the format of its plugin that names the extension, or
     /// its first with that extension added, and says what the file leaves out. When several of
     /// its formats share the extension, the user picks which.
-    pub fn export_song(&mut self, path: &Path) {
+    pub(crate) fn export_song(&mut self, path: &Path) {
         let Some(plugin) = self.song_plugin().filter(|_| self.song.is_some()) else {
             return;
         };
@@ -308,7 +308,7 @@ impl Window {
     }
 
     /// Shows why the exported file could not be written to `path`.
-    pub fn export_failed(&mut self, path: &Path, why: &str) {
+    pub(crate) fn export_failed(&mut self, path: &Path, why: &str) {
         self.failure = Some(format!("{} was not written: {why}", path.display()));
     }
 }

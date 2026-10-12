@@ -24,7 +24,7 @@ use crate::host::Host;
 #[cfg(test)]
 use crate::{finder::Finder, player::Player};
 #[cfg(test)]
-use charter_ui::{Request, Saved};
+use charter_ui::{Answer, Request, Saved};
 
 /// The ruleset plugins built into charter.
 const PLUGINS: &[&dyn RulesetPlugin] = &[
@@ -323,7 +323,10 @@ mod tests {
     #[test]
     fn saving_as_a_name_makes_a_project_folder_holding_the_song_and_its_audio() {
         let mut host = host(Memory::with(&[("/m/a.ogg", b"audio")]));
-        host.window.open(Path::new("/m/t.json"), SONG);
+        host.window.answer(Answer::Opened {
+            path: Path::new("/m/t.json").to_path_buf(),
+            bytes: SONG.to_vec(),
+        });
         host.save_as(Path::new("/s/My Song.json"), b"{}");
         assert!(files(&host, "/s/My Song/My Song.json"));
         assert!(!files(&host, "/s/My Song.json"));
@@ -337,7 +340,10 @@ mod tests {
     #[test]
     fn saving_a_song_handles_its_audio_copy_before_returning_to_the_ui() {
         let mut host = host(Memory::with(&[("/m/a.ogg", b"audio")]));
-        host.window.open(Path::new("/m/t.json"), SONG);
+        host.window.answer(Answer::Opened {
+            path: Path::new("/m/t.json").to_path_buf(),
+            bytes: SONG.to_vec(),
+        });
         host.handle_requests(vec![Request::Write {
             path: PathBuf::from("/s/Song/Song.json"),
             bytes: SONG.to_vec(),
@@ -387,7 +393,10 @@ mod tests {
             ("/m/a.ogg", b"mine"),
             ("/s/Song/a.ogg", b"theirs"),
         ]));
-        host.window.open(Path::new("/m/t.json"), SONG);
+        host.window.answer(Answer::Opened {
+            path: Path::new("/m/t.json").to_path_buf(),
+            bytes: SONG.to_vec(),
+        });
         host.save_as(Path::new("/s/Song.json"), SONG);
         let requests = host.window.take_requests();
         host.handle_requests(requests);
@@ -406,7 +415,10 @@ mod tests {
             partial_copy_fail: true,
             ..Memory::with(&[("/m/a.ogg", b"the whole recording")])
         });
-        host.window.open(Path::new("/m/t.json"), SONG);
+        host.window.answer(Answer::Opened {
+            path: Path::new("/m/t.json").to_path_buf(),
+            bytes: SONG.to_vec(),
+        });
         host.save_as(Path::new("/s/Song.json"), SONG);
         let requests = host.window.take_requests();
         host.handle_requests(requests);
@@ -561,9 +573,14 @@ mod tests {
         let mut host = host(Memory::with(&[("/m/a.ogg", b"audio")]));
         host.window = Window::new(PLUGINS);
         let song = sm_song();
-        host.window.open(Path::new("/m/t.json"), &song);
-        host.window
-            .use_artwork(Path::new("/p/art.png"), picture(png(2, 2)));
+        host.window.answer(Answer::Opened {
+            path: Path::new("/m/t.json").to_path_buf(),
+            bytes: song,
+        });
+        host.window.answer(Answer::UsedArtwork {
+            file: Path::new("/p/art.png").to_path_buf(),
+            picture: picture(png(2, 2)),
+        });
         assert_eq!(host.window.message(), None);
         host.handle_requests(vec![Request::Write {
             path: PathBuf::from("/s/Song/Song.json"),
@@ -580,7 +597,10 @@ mod tests {
     fn a_picture_chosen_as_artwork_is_taken_by_its_own_name() {
         let mut host = host(Memory::with(&[("/p/art.png", &png(2, 2))]));
         host.window = Window::new(PLUGINS);
-        host.window.open(Path::new("/s/Song/Song.json"), &sm_song());
+        host.window.answer(Answer::Opened {
+            path: Path::new("/s/Song/Song.json").to_path_buf(),
+            bytes: sm_song(),
+        });
         host.choose_artwork(Path::new("/p/art.png"));
         assert_eq!(host.window.message(), None);
         assert_eq!(
@@ -594,7 +614,10 @@ mod tests {
     fn an_audio_file_chosen_as_artwork_is_read_for_its_cover() {
         let mut host = host(Memory::with(&[("/m/track.flac", b"not tagged")]));
         host.window = Window::new(PLUGINS);
-        host.window.open(Path::new("/s/Song/Song.json"), &sm_song());
+        host.window.answer(Answer::Opened {
+            path: Path::new("/s/Song/Song.json").to_path_buf(),
+            bytes: sm_song(),
+        });
         host.choose_artwork(Path::new("/m/track.flac"));
         assert!(
             host.window
@@ -609,7 +632,10 @@ mod tests {
     fn m4a_audio_chosen_as_artwork_is_read_for_its_cover() {
         let mut host = host(Memory::with(&[("/m/track.m4a", b"not tagged")]));
         host.window = Window::new(PLUGINS);
-        host.window.open(Path::new("/s/Song/Song.json"), &sm_song());
+        host.window.answer(Answer::Opened {
+            path: Path::new("/s/Song/Song.json").to_path_buf(),
+            bytes: sm_song(),
+        });
         host.choose_artwork(Path::new("/m/track.m4a"));
         assert!(
             host.window
@@ -625,13 +651,21 @@ mod tests {
         let mut host = host(Memory::with(&[("/m/track.flac", b"audio")]));
         host.window = Window::new(PLUGINS);
         let song = sm_song();
-        host.window.open(Path::new("/s/Song/Song.json"), &song);
+        host.window.answer(Answer::Opened {
+            path: Path::new("/s/Song/Song.json").to_path_buf(),
+            bytes: song.clone(),
+        });
         let audio = Path::new("/m/track.flac");
-        host.window.use_audio(audio);
+        host.window.answer(Answer::UsedAudio {
+            file: audio.to_path_buf(),
+        });
         host.window.take_requests();
         let (bytes, _) = picture(png(2, 2)).unwrap();
-        host.window
-            .artwork_embedded(audio, "png", picture(bytes).unwrap());
+        host.window.answer(Answer::ArtworkEmbedded {
+            file: audio.to_path_buf(),
+            extension: "png".to_owned(),
+            picture: picture(bytes).unwrap(),
+        });
         host.handle_requests(vec![Request::Write {
             path: PathBuf::from("/s/Song/Song.json"),
             bytes: song,
@@ -652,12 +686,20 @@ mod tests {
         ]));
         host.window = Window::new(PLUGINS);
         let song = sm_song();
-        host.window.open(Path::new("/s/Song/Song.json"), &song);
+        host.window.answer(Answer::Opened {
+            path: Path::new("/s/Song/Song.json").to_path_buf(),
+            bytes: song.clone(),
+        });
         let audio = Path::new("/m/track.flac");
-        host.window.use_audio(audio);
+        host.window.answer(Answer::UsedAudio {
+            file: audio.to_path_buf(),
+        });
         host.window.take_requests();
-        host.window
-            .artwork_embedded(audio, "png", picture(png(2, 2)).unwrap());
+        host.window.answer(Answer::ArtworkEmbedded {
+            file: audio.to_path_buf(),
+            extension: "png".to_owned(),
+            picture: picture(png(2, 2)).unwrap(),
+        });
         host.handle_requests(vec![Request::Write {
             path: PathBuf::from("/s/Song/Song.json"),
             bytes: song,
@@ -757,9 +799,14 @@ mod tests {
         });
         host.window = Window::new(PLUGINS);
         let song = sm_song_with(Some("art.png"));
-        host.window.open(Path::new("/s/Song/Song.json"), &song);
-        host.window
-            .use_artwork(Path::new("/p/art.png"), picture(png(2, 2)));
+        host.window.answer(Answer::Opened {
+            path: Path::new("/s/Song/Song.json").to_path_buf(),
+            bytes: song.clone(),
+        });
+        host.window.answer(Answer::UsedArtwork {
+            file: Path::new("/p/art.png").to_path_buf(),
+            picture: picture(png(2, 2)),
+        });
         host.window.take_requests();
         host.write(PathBuf::from("/s/Song/Song.json"), &song);
         assert!(
@@ -771,8 +818,10 @@ mod tests {
             host.disk.read(Path::new("/s/Song/art.png")).unwrap(),
             b"the old picture"
         );
-        host.window
-            .use_artwork(Path::new("/p/new.png"), picture(png(2, 2)));
+        host.window.answer(Answer::UsedArtwork {
+            file: Path::new("/p/new.png").to_path_buf(),
+            picture: picture(png(2, 2)),
+        });
         host.write(PathBuf::from("/s/Song/Song.json"), &song);
         assert!(!files(&host, "/s/Song/new.png"));
     }
@@ -945,8 +994,13 @@ mod tests {
         );
         let mut host = host(Memory::with(&[("/m/track.flac", &audio)]));
         host.window = Window::new(PLUGINS);
-        host.window.open(Path::new("/s/Song/Song.json"), &sm_song());
-        host.window.use_audio(Path::new("/m/track.flac"));
+        host.window.answer(Answer::Opened {
+            path: Path::new("/s/Song/Song.json").to_path_buf(),
+            bytes: sm_song(),
+        });
+        host.window.answer(Answer::UsedAudio {
+            file: Path::new("/m/track.flac").to_path_buf(),
+        });
         host.window.take_requests();
 
         host.answer(Request::ReadTags {
@@ -1033,9 +1087,14 @@ mod tests {
             ..Memory::with(&[("/s/Song/art.png", b"their picture")])
         });
         host.window = Window::new(PLUGINS);
-        host.window.open(Path::new("/s/Song/Song.json"), &sm_song());
-        host.window
-            .use_artwork(Path::new("/p/art.png"), picture(png(2, 2)));
+        host.window.answer(Answer::Opened {
+            path: Path::new("/s/Song/Song.json").to_path_buf(),
+            bytes: sm_song(),
+        });
+        host.window.answer(Answer::UsedArtwork {
+            file: Path::new("/p/art.png").to_path_buf(),
+            picture: picture(png(2, 2)),
+        });
         host.write(PathBuf::from("/s/Song/Song.json"), &sm_song());
         assert!(!files(&host, "/s/Song/Song.json"));
         assert!(!files(&host, "/s/Song/art.png.partial"));
@@ -1054,9 +1113,14 @@ mod tests {
         });
         host.window = Window::new(PLUGINS);
         let song = sm_song_with(Some("art.png"));
-        host.window.open(Path::new("/s/Song/Song.json"), &song);
-        host.window
-            .use_artwork(Path::new("/p/art.png"), picture(png(2, 2)));
+        host.window.answer(Answer::Opened {
+            path: Path::new("/s/Song/Song.json").to_path_buf(),
+            bytes: song.clone(),
+        });
+        host.window.answer(Answer::UsedArtwork {
+            file: Path::new("/p/art.png").to_path_buf(),
+            picture: picture(png(2, 2)),
+        });
         host.write(PathBuf::from("/s/Song/Song.json"), &song);
         assert_eq!(
             host.disk.read(Path::new("/s/Song/Song.json")).unwrap(),
@@ -1073,9 +1137,14 @@ mod tests {
             ..Memory::default()
         });
         host.window = Window::new(PLUGINS);
-        host.window.open(Path::new("/s/Song/Song.json"), &sm_song());
-        host.window
-            .use_artwork(Path::new("/p/art.png"), picture(png(2, 2)));
+        host.window.answer(Answer::Opened {
+            path: Path::new("/s/Song/Song.json").to_path_buf(),
+            bytes: sm_song(),
+        });
+        host.window.answer(Answer::UsedArtwork {
+            file: Path::new("/p/art.png").to_path_buf(),
+            picture: picture(png(2, 2)),
+        });
         host.write(PathBuf::from("/s/Song/Song.json"), &sm_song());
         assert!(!files(&host, "/s/Song/Song.json"));
         assert!(!files(&host, "/s/Song/art.png"));
@@ -1089,9 +1158,14 @@ mod tests {
             ..Memory::with(&[("/s/Song/Song.json", b"old song")])
         });
         host.window = Window::new(PLUGINS);
-        host.window.open(Path::new("/s/Song/Song.json"), &sm_song());
-        host.window
-            .use_artwork(Path::new("/p/art.png"), picture(png(2, 2)));
+        host.window.answer(Answer::Opened {
+            path: Path::new("/s/Song/Song.json").to_path_buf(),
+            bytes: sm_song(),
+        });
+        host.window.answer(Answer::UsedArtwork {
+            file: Path::new("/p/art.png").to_path_buf(),
+            picture: picture(png(2, 2)),
+        });
         host.write(PathBuf::from("/s/Song/Song.json"), &sm_song());
         assert_eq!(
             host.disk.read(Path::new("/s/Song/Song.json")).unwrap(),
@@ -1438,7 +1512,7 @@ mod tests {
         // No data folder, and on Linux no release either: the host's platform decides which
         // stops it, so this checks only the hand-off. ffmpeg's own tests pick the platform.
         let mut host = host(Memory::default());
-        host.window.ffmpeg_found(None);
+        host.window.answer(Answer::FfmpegFound { binary: None });
         host.handle_requests(vec![Request::InstallFfmpeg]);
         assert!(
             host.window
@@ -1467,14 +1541,16 @@ mod tests {
         let image = png(2, 3);
         let mut host = host(Memory::with(&[("/s/Song/art.png", &image)]));
         host.window = Window::new(PLUGINS);
-        host.window.open(
-            Path::new("/s/Song/Song.json"),
-            &sm_song_with(Some("art.png")),
-        );
+        host.window.answer(Answer::Opened {
+            path: Path::new("/s/Song/Song.json").to_path_buf(),
+            bytes: sm_song_with(Some("art.png")),
+        });
+        host.window.answer(Answer::UsedArtwork {
+            file: Path::new("/p/art.png").to_path_buf(),
+            picture: picture(png(1, 1)),
+        });
         host.window
-            .use_artwork(Path::new("/p/art.png"), picture(png(1, 1)));
-        host.window
-            .saved(Saved::To(PathBuf::from("/s/Song/Song.json")));
+            .answer(Answer::Saved(Saved::To(PathBuf::from("/s/Song/Song.json"))));
         host.answer(Request::ReadArtwork {
             file: PathBuf::from("/s/Song/art.png"),
         });
@@ -1491,14 +1567,16 @@ mod tests {
             ..Memory::with(&[("/s/Song/art.png", b"not readable")])
         });
         host.window = Window::new(PLUGINS);
-        host.window.open(
-            Path::new("/s/Song/Song.json"),
-            &sm_song_with(Some("art.png")),
-        );
+        host.window.answer(Answer::Opened {
+            path: Path::new("/s/Song/Song.json").to_path_buf(),
+            bytes: sm_song_with(Some("art.png")),
+        });
+        host.window.answer(Answer::UsedArtwork {
+            file: Path::new("/p/art.png").to_path_buf(),
+            picture: picture(png(1, 1)),
+        });
         host.window
-            .use_artwork(Path::new("/p/art.png"), picture(png(1, 1)));
-        host.window
-            .saved(Saved::To(PathBuf::from("/s/Song/Song.json")));
+            .answer(Answer::Saved(Saved::To(PathBuf::from("/s/Song/Song.json"))));
         host.answer(Request::ReadArtwork {
             file: PathBuf::from("/s/Song/art.png"),
         });
@@ -1513,10 +1591,10 @@ mod tests {
         let image = png(2, 3);
         let mut host = host(Memory::default());
         host.window = Window::new(PLUGINS);
-        host.window.open(
-            Path::new("/s/Song/Song.json"),
-            &sm_song_with(Some("art.png")),
-        );
+        host.window.answer(Answer::Opened {
+            path: Path::new("/s/Song/Song.json").to_path_buf(),
+            bytes: sm_song_with(Some("art.png")),
+        });
         host.answer(Request::DecodeArtwork {
             bytes: image.clone(),
         });

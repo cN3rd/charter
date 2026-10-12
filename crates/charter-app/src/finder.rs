@@ -8,7 +8,7 @@ use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 
 use charter_audio::{Onset, SampleRate, Track};
 use charter_core::{BeatLength, ResolvedTime, Section, TicksPerBeat, Timing};
-use charter_ui::{Tracker, Window};
+use charter_ui::{Answer, Tracker, Window};
 use sha2::{Digest, Sha256};
 
 use crate::report::chain;
@@ -122,9 +122,9 @@ impl Finder {
     fn weights(&self, tracker: Tracker, window: &mut Window) -> Option<PathBuf> {
         let folder = self.folder.as_ref();
         if folder.is_none() {
-            window.timing_found(Err(
+            window.answer(Answer::TimingFound(Err(
                 "charter has no data folder to keep the beat tracker in".into(),
-            ));
+            )));
         }
         folder.map(|folder| folder.join(source(tracker).file_name))
     }
@@ -140,7 +140,9 @@ impl Finder {
         window: &mut Window,
     ) {
         if matches!(&self.state, State::Downloading { .. } | State::Finding(_)) {
-            window.timing_refused("a timing search is already running");
+            window.answer(Answer::TimingRefused {
+                why: "a timing search is already running".to_owned(),
+            });
             return;
         }
         self.start(
@@ -164,7 +166,9 @@ impl Finder {
             | State::Downloading { .. }
             | State::Finding(_)) => {
                 self.state = state;
-                window.timing_refused("no CPU run is waiting");
+                window.answer(Answer::TimingRefused {
+                    why: "no CPU run is waiting".to_owned(),
+                });
             }
         }
     }
@@ -189,7 +193,7 @@ impl Finder {
                 onsets,
                 tracker,
             });
-            window.weights_needed();
+            window.answer(Answer::WeightsNeeded);
             return;
         }
         let (send, receive) = std::sync::mpsc::channel();
@@ -230,7 +234,9 @@ impl Finder {
                     "no download is waiting"
                 };
                 self.state = state;
-                window.timing_refused(why);
+                window.answer(Answer::TimingRefused {
+                    why: why.to_owned(),
+                });
                 return;
             }
         };
@@ -256,8 +262,8 @@ impl Finder {
         };
         loop {
             match work.try_recv() {
-                Ok(Progress::Downloaded(share)) => window.weights_progress(share),
-                Ok(Progress::Finding(share)) => window.finding_progress(share),
+                Ok(Progress::Downloaded(share)) => window.answer(Answer::WeightsProgress(share)),
+                Ok(Progress::Finding(share)) => window.answer(Answer::FindingProgress(share)),
                 Ok(Progress::NoGpu(file, ticks_per_beat)) => {
                     self.state = State::NeedsCpu(Job {
                         file,
@@ -265,7 +271,7 @@ impl Finder {
                         onsets: None,
                         tracker: Tracker::Mapperatorinator,
                     });
-                    window.gpu_missing();
+                    window.answer(Answer::GpuMissing);
                     return false;
                 }
                 Ok(Progress::Weights(Ok(()))) => {
@@ -276,18 +282,20 @@ impl Finder {
                 }
                 Ok(Progress::Weights(Err(why))) => {
                     self.state = State::Idle;
-                    window.timing_found(Err(format!("the beat tracker did not download: {why}")));
+                    window.answer(Answer::TimingFound(Err(format!(
+                        "the beat tracker did not download: {why}"
+                    ))));
                     return false;
                 }
                 Ok(Progress::Found(found)) => {
                     self.state = State::Idle;
-                    window.timing_found(found);
+                    window.answer(Answer::TimingFound(found));
                     return false;
                 }
                 Err(TryRecvError::Empty) => return true,
                 Err(TryRecvError::Disconnected) => {
                     self.state = State::Idle;
-                    window.timing_found(Err("the timing finder stopped".into()));
+                    window.answer(Answer::TimingFound(Err("the timing finder stopped".into())));
                     return false;
                 }
             }
@@ -520,7 +528,7 @@ mod tests {
 
     fn window() -> Window {
         let mut window = Window::new(crate::PLUGINS);
-        window.open_demo();
+        window.answer(Answer::OpenedDemo);
         window
     }
 

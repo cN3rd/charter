@@ -5,7 +5,7 @@ use charter_editor::HistoryMark;
 
 impl Window {
     /// Takes a chosen PNG or JPEG picture as the song's artwork.
-    pub fn use_artwork(&mut self, file: &Path, picture: Option<Picture>) {
+    pub(crate) fn use_artwork(&mut self, file: &Path, picture: Option<Picture>) {
         let Some(picture) = picture else {
             self.failure = Some(format!(
                 "{} cannot be the song's artwork: it is not a PNG or JPEG picture",
@@ -21,7 +21,7 @@ impl Window {
     /// Takes the cover embedded in `file`, an audio file chosen as the song's artwork, as
     /// `cover.<extension>` beside the song; `cover` is its extension and picture, or `None` when
     /// its tags hold no picture.
-    pub fn artwork_ripped(&mut self, file: &Path, cover: Option<(&str, Picture)>) {
+    pub(crate) fn artwork_ripped(&mut self, file: &Path, cover: Option<(&str, Picture)>) {
         let Some((extension, picture)) = cover else {
             self.failure = Some(format!(
                 "{} cannot give the song's artwork: it has no cover in its tags",
@@ -32,7 +32,7 @@ impl Window {
         self.take_artwork(format!("cover.{extension}"), picture);
     }
     /// Stores cover art embedded in a chosen audio file, or applies it to a song without artwork.
-    pub fn artwork_embedded(&mut self, file: &Path, extension: &str, picture: Picture) {
+    pub(crate) fn artwork_embedded(&mut self, file: &Path, extension: &str, picture: Picture) {
         if self
             .dialogs
             .new_song
@@ -55,7 +55,7 @@ impl Window {
         }
     }
     /// Restores artwork bytes kept in an autosave.
-    pub fn artwork_restored(&mut self, picture: Option<Picture>) {
+    pub(crate) fn artwork_restored(&mut self, picture: Option<Picture>) {
         let named = self.song.as_ref().and_then(|song| {
             let artwork = song.document().document().metadata.artwork.as_ref();
             artwork.map(ToString::to_string)
@@ -79,7 +79,7 @@ impl Window {
                 .is_some()
     }
     /// Accepts the host's decoded picture for the artwork file currently named by the song.
-    pub fn artwork_read(&mut self, file: &Path, picture: Option<Picture>) {
+    pub(crate) fn artwork_read(&mut self, file: &Path, picture: Option<Picture>) {
         if self.artwork_file().as_deref() == Some(file)
             && let Some(artwork) = &mut self.artwork.current
         {

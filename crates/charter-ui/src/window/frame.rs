@@ -83,7 +83,7 @@ impl Window {
         if self.dialogs.discard.is_some() {
             let name = self.song.as_ref().map(|song| self.file_name(song));
             if let Some(answer) = panels::ask_to_save(ui, name.as_deref().unwrap_or_default()) {
-                self.answer(answer);
+                self.answer_save_changes(answer);
             }
         }
     }

@@ -4,7 +4,7 @@ use std::io::{self, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 
-use charter_ui::{FfmpegPlatform, Window};
+use charter_ui::{Answer, FfmpegPlatform, Window};
 use sha2::{Digest, Sha256};
 use ureq::ResponseExt;
 
@@ -53,7 +53,9 @@ impl Ffmpeg {
         }
         self.binary = find(configured);
         self.checked = Some(configured.clone());
-        window.ffmpeg_found(self.binary.clone());
+        window.answer(Answer::FfmpegFound {
+            binary: self.binary.clone(),
+        });
         true
     }
 
@@ -63,11 +65,15 @@ impl Ffmpeg {
             return;
         }
         let Some(source) = source_for(platform, std::env::consts::ARCH) else {
-            window.ffmpeg_failed("no ffmpeg download is available for this system");
+            window.answer(Answer::FfmpegFailed {
+                why: "no ffmpeg download is available for this system".to_owned(),
+            });
             return;
         };
         let Some(folder) = self.folder.clone() else {
-            window.ffmpeg_failed("charter has no data folder to keep ffmpeg in");
+            window.answer(Answer::FfmpegFailed {
+                why: "charter has no data folder to keep ffmpeg in".to_owned(),
+            });
             return;
         };
         let (send, receive) = std::sync::mpsc::channel();
@@ -76,7 +82,7 @@ impl Ffmpeg {
             drop(send.send(Progress::Finished(result)));
         });
         self.download = Some(receive);
-        window.ffmpeg_progress(0.0);
+        window.answer(Answer::FfmpegProgress(0.0));
     }
 
     /// Relay worker progress and results; true while the worker is still active.
@@ -88,27 +94,31 @@ impl Ffmpeg {
             match work.try_recv() {
                 Ok(Progress::Downloaded(share)) => {
                     if self.binary.is_none() {
-                        window.ffmpeg_progress(share);
+                        window.answer(Answer::FfmpegProgress(share));
                     }
                 }
                 Ok(Progress::Finished(Ok(path))) => {
                     self.download = None;
                     if let Some(binary) = &self.binary {
-                        window.ffmpeg_found(Some(binary.clone()));
+                        window.answer(Answer::FfmpegFound {
+                            binary: Some(binary.clone()),
+                        });
                     } else {
-                        window.ffmpeg_installed(&path);
+                        window.answer(Answer::FfmpegInstalled { path });
                     }
                     return false;
                 }
                 Ok(Progress::Finished(Err(why))) => {
                     self.download = None;
-                    window.ffmpeg_failed(&why);
+                    window.answer(Answer::FfmpegFailed { why });
                     return false;
                 }
                 Err(TryRecvError::Empty) => return true,
                 Err(TryRecvError::Disconnected) => {
                     self.download = None;
-                    window.ffmpeg_failed("the download stopped");
+                    window.answer(Answer::FfmpegFailed {
+                        why: "the download stopped".to_owned(),
+                    });
                     return false;
                 }
             }
@@ -566,7 +576,9 @@ mod tests {
         assert_eq!(ffmpeg.binary, Some(PathBuf::from("/usr/bin/ffmpeg")));
         assert!(!ffmpeg.refresh(&mut window, |_| panic!("already checked")));
 
-        window.use_ffmpeg_path(Path::new("/tools/ffmpeg"));
+        window.answer(Answer::UsedFfmpegPath {
+            path: Path::new("/tools/ffmpeg").to_path_buf(),
+        });
         assert!(ffmpeg.refresh(&mut window, |configured| {
             assert_eq!(configured, "/tools/ffmpeg");
             Some(PathBuf::from("/tools/ffmpeg"))
@@ -800,7 +812,7 @@ mod tests {
             ..Ffmpeg::default()
         };
         let mut window = Window::new(&[]);
-        window.ffmpeg_found(None);
+        window.answer(Answer::FfmpegFound { binary: None });
         send.send(Progress::Downloaded(0.4)).unwrap();
         assert!(ffmpeg.update(&mut window));
         send.send(Progress::Finished(Err("checksum mismatch".into())))
@@ -818,7 +830,7 @@ mod tests {
             ..Ffmpeg::default()
         };
         let mut window = Window::new(&[]);
-        window.ffmpeg_found(None);
+        window.answer(Answer::FfmpegFound { binary: None });
         send.send(Progress::Finished(Ok("/data/ffmpeg/ffmpeg.exe".into())))
             .unwrap();
         assert!(!ffmpeg.update(&mut window));
@@ -835,8 +847,12 @@ mod tests {
             ..Ffmpeg::default()
         };
         let mut window = Window::new(&[]);
-        window.use_ffmpeg_path(Path::new("/tools/ffmpeg"));
-        window.ffmpeg_found(Some("/tools/ffmpeg".into()));
+        window.answer(Answer::UsedFfmpegPath {
+            path: Path::new("/tools/ffmpeg").to_path_buf(),
+        });
+        window.answer(Answer::FfmpegFound {
+            binary: Some("/tools/ffmpeg".into()),
+        });
         send.send(Progress::Finished(Ok("/data/ffmpeg/ffmpeg".into())))
             .unwrap();
         assert!(!ffmpeg.update(&mut window));
@@ -848,7 +864,7 @@ mod tests {
     fn download_does_not_start_without_a_data_folder() {
         let mut ffmpeg = Ffmpeg::default();
         let mut window = Window::new(&[]);
-        window.ffmpeg_found(None);
+        window.answer(Answer::FfmpegFound { binary: None });
         ffmpeg.start(&mut window, FfmpegPlatform::Windows);
         assert!(window.message().unwrap().contains("no data folder"));
         assert!(ffmpeg.download.is_none());

@@ -8,6 +8,7 @@
 //! focused `Window` impl blocks for files, playback, typing actions, clipboard,
 //! artwork, timing, action dispatch, and per-frame UI drawing.
 
+use std::collections::BTreeMap;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -105,7 +106,7 @@ impl LoopRegion {
 }
 
 /// Something only the program hosting the window can do. The host answers a save through
-/// [`Window::saved`], and an open by passing the file to [`Window::open`].
+/// [`Answer::Saved`], and an open by passing the file to [`Answer::Opened`].
 #[derive(Debug, PartialEq)]
 pub enum Request {
     /// Write `bytes`, the song as it stands, to `path`.
@@ -124,15 +125,15 @@ pub enum Request {
     },
     /// Ask for a song to open.
     Open,
-    /// Read the song at `path` and pass it to [`Window::open`], or say why with
-    /// [`Window::refuse`]: a song opened before.
+    /// Read the song at `path` and pass it to [`Answer::Opened`], or say why with
+    /// [`Answer::Refused`]: a song opened before.
     OpenPath {
         /// File last used to open this song.
         path: PathBuf,
     },
     /// Write `bytes`, the song as its file holds it, as a dated copy named after `name` into each
     /// of `folders`, keeping the newest `kept` copies of it there; say what fails with
-    /// [`Window::snapshot_failed`].
+    /// [`Answer::SnapshotFailed`].
     ///
     /// A request must keep at least one copy:
     /// ```
@@ -161,15 +162,15 @@ pub enum Request {
         kept: NonZeroU32,
     },
     /// Ask the user for a folder to keep snapshots in, and pass it to
-    /// [`Window::use_snapshot_folder`].
+    /// [`Answer::UsedSnapshotFolder`].
     ChooseSnapshotFolder,
-    /// Ask the user to choose an `FFmpeg` binary, and pass it to [`Window::use_ffmpeg_path`].
+    /// Ask the user to choose an `FFmpeg` binary, and pass it to [`Answer::UsedFfmpegPath`].
     ChooseFfmpeg,
     /// Install a verified `FFmpeg` release after the user agrees.
     InstallFfmpeg,
     /// Keep `bytes`, the song's unsaved changes, where the next run finds them, in place of any
-    /// kept before. The host passes them to [`Window::recover`] when it starts, and says through
-    /// [`Window::autosave_failed`] if they could not be kept.
+    /// kept before. The host passes them to [`Answer::Recovered`] when it starts, and says through
+    /// [`Answer::AutosaveFailed`] if they could not be kept.
     Autosave {
         /// Serialised autosave and its original file path.
         bytes: Vec<u8>,
@@ -177,7 +178,7 @@ pub enum Request {
     /// Remove the kept changes: they were saved or thrown away.
     DropAutosave,
     /// Copy the song's audio from `from` to `to`, beside the song, unless a file is there. The
-    /// host says through [`Window::audio_not_copied`] if it could not.
+    /// host says through [`Answer::AudioNotCopied`] if it could not.
     CopyAudio {
         /// Original audio file.
         from: PathBuf,
@@ -185,7 +186,7 @@ pub enum Request {
         to: PathBuf,
     },
     /// Play the song's audio from `from` at `rate` times its speed. The host reports where it is
-    /// through [`Window::playhead`], and says when it ends through [`Window::playback_ended`].
+    /// through [`Answer::Playhead`], and says when it ends through [`Answer::PlaybackEnded`].
     /// `clicks` are the tones to mix over it, each at its time in seconds into the audio.
     /// `volumes` say how loud the audio and each kind of click play, and `looping` the interval
     /// to play over and over, if any.
@@ -220,33 +221,33 @@ pub enum Request {
         volumes: charter_audio::Volumes,
     },
     /// Ask the user to choose an audio file for the open song, and pass it to
-    /// [`Window::use_audio`].
+    /// [`Answer::UsedAudio`].
     ChooseAudio,
     /// Ask the user to choose a picture for the open song's artwork, and pass it to
-    /// [`Window::use_artwork`].
+    /// [`Answer::UsedArtwork`].
     ChooseArtwork,
     /// Decode `bytes`, the artwork an autosave kept, and pass the picture to
-    /// [`Window::artwork_restored`].
+    /// [`Answer::ArtworkRestored`].
     DecodeArtwork {
         /// Picture bytes kept in the autosave.
         bytes: Vec<u8>,
     },
     /// Read and decode the picture at `file`, the song's artwork, and pass it to
-    /// [`Window::artwork_read`].
+    /// [`Answer::ArtworkRead`].
     ReadArtwork {
         /// Artwork file named by the song.
         file: PathBuf,
     },
     /// Ask the user to choose a file holding timing in another program's format, such as a
-    /// `.osu` file, and pass its text to [`Window::timing_file_read`].
+    /// `.osu` file, and pass its text to [`Answer::TimingFileRead`].
     ChooseTimingFile,
-    /// Read the tags of the audio file at `file`, and pass them to [`Window::tags_read`].
+    /// Read the tags of the audio file at `file`, and pass them to [`Answer::TagsRead`].
     ReadTags {
         /// Audio file whose title and artist tags should be read.
         file: PathBuf,
     },
     /// Find the timing of the audio in `file` at `ticks_per_beat` and pass it to
-    /// [`Window::timing_found`], or call [`Window::weights_needed`] when the beat tracker's
+    /// [`Answer::TimingFound`], or call [`Answer::WeightsNeeded`] when the beat tracker's
     /// weights are not there yet.
     FindTiming {
         /// Audio to analyse for beats.
@@ -257,7 +258,7 @@ pub enum Request {
         tracker: Tracker,
     },
     /// Ask the user for a song in one of `formats`, each a name and the extensions its files end
-    /// in, and pass its path and bytes to [`Window::import_song`] with those of the `companions`
+    /// in, and pass its path and bytes to [`Answer::ImportedSong`] with those of the `companions`
     /// found beside it, by name.
     ChooseImport {
         /// Formats a plugin reads songs from, with their extensions.
@@ -266,7 +267,7 @@ pub enum Request {
         companions: Vec<FileName>,
     },
     /// Ask where to write the open song in one of `formats`, suggesting the name `name`, and pass
-    /// the path to [`Window::export_song`].
+    /// the path to [`Answer::ExportedSong`].
     ChooseExport {
         /// Suggested file name, without an extension.
         name: String,
@@ -275,7 +276,7 @@ pub enum Request {
     },
     /// Write `bytes`, the open song in another program's format, to `path`, the files `beside` it
     /// and the song's own resources, each from its file to its place, saying through
-    /// [`Window::export_failed`] what could not be.
+    /// [`Answer::ExportFailed`] what could not be.
     WriteExport {
         /// Destination of the main file.
         path: PathBuf,
@@ -288,11 +289,221 @@ pub enum Request {
         resources: Vec<(PathBuf, PathBuf, SongResource)>,
     },
     /// Download the beat tracker's weights, the user having agreed, telling
-    /// [`Window::weights_progress`] how far it has got, then find the timing asked for.
+    /// [`Answer::WeightsProgress`] how far it has got, then find the timing asked for.
     DownloadWeights,
     /// Find the timing asked for on the CPU, the user having agreed after
-    /// [`Window::gpu_missing`].
+    /// [`Answer::GpuMissing`].
     FindTimingOnCpu,
+}
+
+/// What the host did about a [`Request`], or noticed without being asked. The host hands each one
+/// to [`Window::answer`], the one way anything reaches the window from outside it.
+///
+/// A variant carries its data owned, since the window keeps most of it. Several name the file they
+/// concern, so the window can tell an answer about the open song from one about a song it has since
+/// closed.
+#[derive(Debug)]
+pub enum Answer {
+    /// The song in `path` was read, holding `bytes`.
+    Opened {
+        /// File the song was read from.
+        path: PathBuf,
+        /// The song as it was stored.
+        bytes: Vec<u8>,
+    },
+    /// No song was named to open at startup, so the demo song stands in.
+    OpenedDemo,
+    /// A save finished, for better or worse.
+    Saved(Saved),
+    /// An autosave or snapshot holding `bytes` was found to offer the user.
+    Recovered {
+        /// The recovered song as it was stored.
+        bytes: Vec<u8>,
+    },
+    /// The file at `path` could not be opened, because `why`.
+    Refused {
+        /// File that would not open.
+        path: PathBuf,
+        /// What stopped it, in the user's words.
+        why: String,
+    },
+    /// The song's audio is `file` from now on.
+    UsedAudio {
+        /// Audio file the song now plays.
+        file: PathBuf,
+    },
+    /// `file` was decoded and runs for `seconds`.
+    AudioReady {
+        /// Audio file that was decoded.
+        file: PathBuf,
+        /// How long it runs.
+        seconds: f64,
+    },
+    /// `file` would not decode, because `why`.
+    AudioFailed {
+        /// Audio file that would not decode.
+        file: PathBuf,
+        /// What stopped it, in the user's words.
+        why: String,
+    },
+    /// The audio could not be copied beside the saved song, because `why`.
+    AudioNotCopied {
+        /// What stopped it, in the user's words.
+        why: String,
+    },
+    /// `file`'s tags named its `title` and `artist`, where it carried them.
+    TagsRead {
+        /// Audio file the tags were read from.
+        file: PathBuf,
+        /// Title the tags gave, if any.
+        title: Option<String>,
+        /// Artist the tags gave, if any.
+        artist: Option<String>,
+    },
+    /// `file`'s waveform `peaks` were measured.
+    WaveformReady {
+        /// Audio file the peaks were measured from.
+        file: PathBuf,
+        /// Peaks to draw.
+        peaks: Arc<Peaks>,
+    },
+    /// `file`'s `spectrum` was measured.
+    SpectrumReady {
+        /// Audio file the spectrum was measured from.
+        file: PathBuf,
+        /// Spectrum to draw.
+        spectrum: Arc<Spectrum>,
+    },
+    /// `file`'s `onsets` were found.
+    OnsetsReady {
+        /// Audio file the onsets were found in.
+        file: PathBuf,
+        /// Onsets to draw and to time against.
+        onsets: Arc<[charter_audio::Onset]>,
+    },
+    /// Playback reached the end of the audio, or was stopped.
+    PlaybackEnded,
+    /// Playback is this many seconds into the audio.
+    Playhead(f64),
+    /// Snapshots go in `folder` from now on.
+    UsedSnapshotFolder {
+        /// Folder the user chose for snapshots.
+        folder: PathBuf,
+    },
+    /// A snapshot could not be written, because `why`.
+    SnapshotFailed {
+        /// What stopped it, in the user's words.
+        why: String,
+    },
+    /// An autosave could not be written, because `why`.
+    AutosaveFailed {
+        /// What stopped it, in the user's words.
+        why: String,
+    },
+    /// A song in another program's format was read from `path`, holding `bytes`, with the
+    /// `companions` found beside it.
+    ImportedSong {
+        /// File the song was read from.
+        path: PathBuf,
+        /// The song as that program stored it.
+        bytes: Vec<u8>,
+        /// Files read beside it, by name.
+        companions: BTreeMap<FileName, Vec<u8>>,
+    },
+    /// The user chose `path` to export the song to.
+    ExportedSong {
+        /// Destination the user chose.
+        path: PathBuf,
+    },
+    /// The song could not be exported to `path`, because `why`.
+    ExportFailed {
+        /// Destination that would not take it.
+        path: PathBuf,
+        /// What stopped it, in the user's words.
+        why: String,
+    },
+    /// `file` held `picture`, or no artwork the host could read.
+    ArtworkRead {
+        /// Artwork file that was read.
+        file: PathBuf,
+        /// The picture, where it decoded.
+        picture: Option<Picture>,
+    },
+    /// `file`'s audio held `cover`, its extension and picture, where it carried one.
+    ArtworkRipped {
+        /// Audio file the cover was taken from.
+        file: PathBuf,
+        /// The cover's extension and picture, where it had one.
+        cover: Option<(String, Picture)>,
+    },
+    /// `file`'s audio held `picture`, to be saved with the `extension` given.
+    ArtworkEmbedded {
+        /// Audio file the picture was taken from.
+        file: PathBuf,
+        /// Extension to save the picture under.
+        extension: String,
+        /// The picture itself.
+        picture: Picture,
+    },
+    /// An undone artwork change put `picture` back, where it decoded.
+    ArtworkRestored {
+        /// The picture, where it decoded.
+        picture: Option<Picture>,
+    },
+    /// The song's artwork is `file` from now on, holding `picture` where it decoded.
+    UsedArtwork {
+        /// Artwork file the song now shows.
+        file: PathBuf,
+        /// The picture, where it decoded.
+        picture: Option<Picture>,
+    },
+    /// Finding the timing from the audio ended, with the timing or with why it could not.
+    TimingFound(Result<charter_core::Timing, String>),
+    /// The timing was not looked for, because `why`.
+    TimingRefused {
+        /// What stopped it, in the user's words.
+        why: String,
+    },
+    /// A timing file was read, holding `text`.
+    TimingFileRead {
+        /// The timing file's contents.
+        text: String,
+    },
+    /// A timing file would not be read, because `why`.
+    TimingFileFailed {
+        /// What stopped it, in the user's words.
+        why: String,
+    },
+    /// Finding the timing is this far along, from zero to one.
+    FindingProgress(f32),
+    /// The beat tracker's weights are missing, so the user is asked to download them.
+    WeightsNeeded,
+    /// Downloading the weights is this far along, from zero to one.
+    WeightsProgress(f32),
+    /// No graphics card the tracker can use was found, so the user is asked about the CPU.
+    GpuMissing,
+    /// `FFmpeg` was looked for and found at `binary`, or not found at all.
+    FfmpegFound {
+        /// Where `FFmpeg` is, if anywhere.
+        binary: Option<PathBuf>,
+    },
+    /// `FFmpeg` could not be installed, because `why`.
+    FfmpegFailed {
+        /// What stopped it, in the user's words.
+        why: String,
+    },
+    /// `FFmpeg` was installed to `path`.
+    FfmpegInstalled {
+        /// Where the installed binary went.
+        path: PathBuf,
+    },
+    /// Installing `FFmpeg` is this far along, from zero to one.
+    FfmpegProgress(f32),
+    /// `FFmpeg` is the binary at `path` from now on.
+    UsedFfmpegPath {
+        /// Binary the user chose.
+        path: PathBuf,
+    },
 }
 
 /// Where finding the song's timing from its audio has got to.
@@ -1130,12 +1341,12 @@ impl Window {
     }
 
     /// Set the `FFmpeg` binary chosen in the host's file dialog.
-    pub fn use_ffmpeg_path(&mut self, path: &Path) {
+    pub(crate) fn use_ffmpeg_path(&mut self, path: &Path) {
         self.settings.ffmpeg_path = path.to_string_lossy().into_owned();
     }
 
     /// Show whether and where the host found a usable `FFmpeg` binary.
-    pub fn ffmpeg_found(&mut self, binary: Option<PathBuf>) {
+    pub(crate) fn ffmpeg_found(&mut self, binary: Option<PathBuf>) {
         if matches!(&self.ffmpeg_status, settings::FfmpegStatus::Unknown)
             && binary.is_none()
             && !self.settings.ffmpeg_offered
@@ -1153,19 +1364,19 @@ impl Window {
     }
 
     /// Show the share of an `FFmpeg` release downloaded by the host.
-    pub fn ffmpeg_progress(&mut self, share: f32) {
+    pub(crate) fn ffmpeg_progress(&mut self, share: f32) {
         self.ffmpeg_status = settings::FfmpegStatus::Downloading(share.clamp(0.0, 1.0));
     }
 
     /// Show why the host could not install `FFmpeg` and allow the help to be reopened.
-    pub fn ffmpeg_failed(&mut self, why: &str) {
+    pub(crate) fn ffmpeg_failed(&mut self, why: &str) {
         self.dialogs.ffmpeg = false;
         self.ffmpeg_status = settings::FfmpegStatus::Missing;
         self.failure = Some(format!("ffmpeg did not install: {why}"));
     }
 
     /// Set the installed release as the chosen path, pending the host's version check.
-    pub fn ffmpeg_installed(&mut self, path: &Path) {
+    pub(crate) fn ffmpeg_installed(&mut self, path: &Path) {
         self.dialogs.ffmpeg = false;
         self.use_ffmpeg_path(path);
         self.ffmpeg_status = settings::FfmpegStatus::Unknown;
@@ -1185,29 +1396,93 @@ impl Window {
         std::mem::take(&mut self.requests)
     }
 
+    /// Takes what the host did, the one way anything reaches the window from outside it. Each
+    /// variant of [`Answer`] stands for one thing the host finished, whether the window asked for
+    /// it through a [`Request`] or the host noticed it by itself.
+    pub fn answer(&mut self, answer: Answer) {
+        match answer {
+            Answer::Opened { path, bytes } => self.open(&path, &bytes),
+            Answer::OpenedDemo => self.open_demo(),
+            Answer::Saved(saved) => self.saved(saved),
+            Answer::Recovered { bytes } => self.recover(&bytes),
+            Answer::Refused { path, why } => self.refuse(&path, why),
+            Answer::UsedAudio { file } => self.use_audio(&file),
+            Answer::AudioReady { file, seconds } => self.audio_ready(&file, seconds),
+            Answer::AudioFailed { file, why } => self.audio_failed(&file, &why),
+            Answer::AudioNotCopied { why } => self.audio_not_copied(&why),
+            Answer::TagsRead {
+                file,
+                title,
+                artist,
+            } => self.tags_read(&file, title, artist),
+            Answer::WaveformReady { file, peaks } => self.waveform_ready(&file, peaks),
+            Answer::SpectrumReady { file, spectrum } => self.spectrum_ready(&file, spectrum),
+            Answer::OnsetsReady { file, onsets } => self.onsets_ready(&file, onsets),
+            Answer::PlaybackEnded => self.playback_ended(),
+            Answer::Playhead(seconds) => self.playhead(seconds),
+            Answer::UsedSnapshotFolder { folder } => self.use_snapshot_folder(&folder),
+            Answer::SnapshotFailed { why } => self.snapshot_failed(&why),
+            Answer::AutosaveFailed { why } => self.autosave_failed(&why),
+            Answer::ImportedSong {
+                path,
+                bytes,
+                companions,
+            } => self.import_song(&path, &bytes, &companions),
+            Answer::ExportedSong { path } => self.export_song(&path),
+            Answer::ExportFailed { path, why } => self.export_failed(&path, &why),
+            Answer::ArtworkRead { file, picture } => self.artwork_read(&file, picture),
+            Answer::ArtworkRipped { file, cover } => match cover {
+                Some((extension, picture)) => {
+                    self.artwork_ripped(&file, Some((&extension, picture)));
+                }
+                None => self.artwork_ripped(&file, None),
+            },
+            Answer::ArtworkEmbedded {
+                file,
+                extension,
+                picture,
+            } => self.artwork_embedded(&file, &extension, picture),
+            Answer::ArtworkRestored { picture } => self.artwork_restored(picture),
+            Answer::UsedArtwork { file, picture } => self.use_artwork(&file, picture),
+            Answer::TimingFound(found) => self.timing_found(found),
+            Answer::TimingRefused { why } => self.timing_refused(&why),
+            Answer::TimingFileRead { text } => self.timing_file_read(&text),
+            Answer::TimingFileFailed { why } => self.timing_file_failed(&why),
+            Answer::FindingProgress(share) => self.finding_progress(share),
+            Answer::WeightsNeeded => self.weights_needed(),
+            Answer::WeightsProgress(share) => self.weights_progress(share),
+            Answer::GpuMissing => self.gpu_missing(),
+            Answer::FfmpegFound { binary } => self.ffmpeg_found(binary),
+            Answer::FfmpegFailed { why } => self.ffmpeg_failed(&why),
+            Answer::FfmpegInstalled { path } => self.ffmpeg_installed(&path),
+            Answer::FfmpegProgress(share) => self.ffmpeg_progress(share),
+            Answer::UsedFfmpegPath { path } => self.use_ffmpeg_path(&path),
+        }
+    }
+
     /// Takes that the audio played to its end.
-    pub const fn playback_ended(&mut self) {
+    pub(crate) const fn playback_ended(&mut self) {
         self.playback.playing = None;
     }
 
     /// Takes that the beat tracker's weights are not downloaded yet, so the user is asked.
-    pub const fn weights_needed(&mut self) {
+    pub(crate) const fn weights_needed(&mut self) {
         self.dialogs.finding = Finding::Asking;
     }
 
     /// Takes that there is no graphics card to find the timing on, so the user is asked whether
     /// to find it on the CPU instead.
-    pub const fn gpu_missing(&mut self) {
+    pub(crate) const fn gpu_missing(&mut self) {
         self.dialogs.finding = Finding::NoGpu;
     }
 
     /// Takes that finding the timing is `share` of the way done.
-    pub const fn finding_progress(&mut self, share: f32) {
+    pub(crate) const fn finding_progress(&mut self, share: f32) {
         self.dialogs.finding = Finding::Running(Some(share.clamp(0.0, 1.0)));
     }
 
     /// Takes that `share` of the beat tracker's weights has downloaded.
-    pub const fn weights_progress(&mut self, share: f32) {
+    pub(crate) const fn weights_progress(&mut self, share: f32) {
         self.dialogs.finding = Finding::Downloading(share.clamp(0.0, 1.0));
     }
 

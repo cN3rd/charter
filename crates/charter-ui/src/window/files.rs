@@ -12,7 +12,7 @@ impl Window {
         self.path.as_ref()?.parent().map(Path::to_path_buf)
     }
     /// Accepts the host's answer to a save request.
-    pub fn saved(&mut self, saved: Saved) {
+    pub(crate) fn saved(&mut self, saved: Saved) {
         match saved {
             Saved::To(path) => {
                 if let Some(song) = &mut self.song {
@@ -38,7 +38,7 @@ impl Window {
         }
     }
     /// Reads an autosave and offers to restore it.
-    pub fn recover(&mut self, bytes: &[u8]) {
+    pub(crate) fn recover(&mut self, bytes: &[u8]) {
         self.autosave.kept = true;
         match recovery::read(bytes, self.plugins) {
             Ok(recovery::Kept {
@@ -79,7 +79,7 @@ impl Window {
         })
     }
     /// Uses a chosen or dropped audio file, either in the new-song dialog or the open song.
-    pub fn use_audio(&mut self, file: &Path) {
+    pub(crate) fn use_audio(&mut self, file: &Path) {
         if self.dialogs.new_song.is_some() {
             self.draft_audio(file);
         } else {
@@ -87,7 +87,7 @@ impl Window {
         }
     }
     /// Applies audio tags to untouched title and artist fields, or asks before replacing them.
-    pub fn tags_read(&mut self, file: &Path, title: Option<String>, artist: Option<String>) {
+    pub(crate) fn tags_read(&mut self, file: &Path, title: Option<String>, artist: Option<String>) {
         if title.is_none() && artist.is_none() {
             return;
         }
@@ -169,21 +169,21 @@ impl Window {
         }
     }
     /// Stores waveform peaks decoded for `file`.
-    pub fn waveform_ready(&mut self, file: &Path, peaks: Arc<Peaks>) {
+    pub(crate) fn waveform_ready(&mut self, file: &Path, peaks: Arc<Peaks>) {
         self.analysis.waveform = Some(OfFile {
             file: file.to_path_buf(),
             value: peaks,
         });
     }
     /// Stores spectrum frames decoded for `file`.
-    pub fn spectrum_ready(&mut self, file: &Path, spectrum: Arc<Spectrum>) {
+    pub(crate) fn spectrum_ready(&mut self, file: &Path, spectrum: Arc<Spectrum>) {
         self.analysis.spectrum = Some(OfFile {
             file: file.to_path_buf(),
             value: notefield::Tiles::new(spectrum),
         });
     }
     /// Stores onset detections for `file`.
-    pub fn onsets_ready(&mut self, file: &Path, onsets: Arc<[charter_audio::Onset]>) {
+    pub(crate) fn onsets_ready(&mut self, file: &Path, onsets: Arc<[charter_audio::Onset]>) {
         self.analysis.onsets = Some(OfFile {
             file: file.to_path_buf(),
             value: onsets,
@@ -209,7 +209,7 @@ impl Window {
         self.failure.as_deref()
     }
     /// Shows why the host could not copy audio beside a saved song.
-    pub fn audio_not_copied(&mut self, why: &str) {
+    pub(crate) fn audio_not_copied(&mut self, why: &str) {
         self.failure = Some(format!("Audio not copied: {why}"));
     }
     /// Source and destination audio paths needed when saving the song to `path`.
@@ -293,7 +293,7 @@ impl Window {
         }
     }
     /// Shows why autosaving failed and schedules the next edit for another try.
-    pub fn autosave_failed(&mut self, why: &str) {
+    pub(crate) fn autosave_failed(&mut self, why: &str) {
         self.autosave.autosaved = None;
         self.failure = Some(format!("Autosave failed: {why}"));
     }
@@ -420,7 +420,7 @@ impl Window {
         self.requests.push(request);
     }
     /// Opens a song document from bytes supplied by the host.
-    pub fn open(&mut self, path: &Path, bytes: &[u8]) {
+    pub(crate) fn open(&mut self, path: &Path, bytes: &[u8]) {
         match Song::open(bytes, self.plugins) {
             Ok(song) => self.after_asking(Discard::Open {
                 path: Some(path.to_path_buf()),
@@ -433,18 +433,18 @@ impl Window {
         }
     }
     /// Shows why opening `path` failed and removes it from recent songs.
-    pub fn refuse(&mut self, path: &Path, why: impl std::fmt::Display) {
+    pub(crate) fn refuse(&mut self, path: &Path, why: impl std::fmt::Display) {
         self.failure = Some(format!("{} did not open: {why}", path.display()));
         // A song that no longer opens leaves the recent list.
         self.settings.recent.retain(|recent| recent != path);
     }
     /// Uses `folder` as the global snapshot destination.
-    pub fn use_snapshot_folder(&mut self, folder: &Path) {
+    pub(crate) fn use_snapshot_folder(&mut self, folder: &Path) {
         self.settings.snapshot_folder = Some(folder.to_path_buf());
         self.settings.snapshots_in_folder = true;
     }
     /// Shows why a snapshot write failed and allows another try.
-    pub fn snapshot_failed(&mut self, why: &str) {
+    pub(crate) fn snapshot_failed(&mut self, why: &str) {
         self.autosave.snapshotted = None;
         self.failure = Some(format!("Snapshot failed: {why}"));
     }
@@ -525,7 +525,7 @@ impl Window {
         }
     }
     /// Opens the built-in demo song after unsaved-change checks.
-    pub fn open_demo(&mut self) {
+    pub(crate) fn open_demo(&mut self) {
         let song = Box::new(Song::new(demo::song(), self.plugins));
         self.after_asking(Discard::Open {
             path: None,
@@ -606,7 +606,7 @@ impl Window {
         }
     }
     /// Applies the answer to the unsaved-changes question.
-    pub(super) fn answer(&mut self, answer: panels::SaveChanges) {
+    pub(super) fn answer_save_changes(&mut self, answer: panels::SaveChanges) {
         let Some(discard) = self.dialogs.discard.take() else {
             return;
         };
@@ -1892,7 +1892,9 @@ mod tests {
         harness.get_by_label("Create").click();
         harness.run();
         assert!(asks_to_save(&harness));
-        harness.state_mut().answer(panels::SaveChanges::Cancel);
+        harness
+            .state_mut()
+            .answer_save_changes(panels::SaveChanges::Cancel);
         harness.run();
 
         assert!(dialog_open(&harness));

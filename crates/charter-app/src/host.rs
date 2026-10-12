@@ -4,7 +4,7 @@ use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 
 use charter_core::{FileName, SongResource};
-use charter_ui::{Request, Saved, Window};
+use charter_ui::{Answer, Request, Saved, Window};
 
 use crate::disk::Disk;
 use crate::ffmpeg::{self, Ffmpeg};
@@ -81,7 +81,7 @@ impl<D: Disk> Host<D> {
                         let name = name.strip_suffix(".json").unwrap_or(&name);
                         match song_dialog().set_file_name(name).save_file() {
                             Some(path) => self.save_as(&path, &bytes),
-                            None => self.window.saved(Saved::Cancelled),
+                            None => self.window.answer(Answer::Saved(Saved::Cancelled)),
                         }
                     }
                     Request::Open => {
@@ -91,12 +91,15 @@ impl<D: Disk> Host<D> {
                     }
                     Request::ChooseSnapshotFolder => {
                         if let Some(folder) = rfd::FileDialog::new().pick_folder() {
-                            self.window.use_snapshot_folder(&folder);
+                            self.window.answer(Answer::UsedSnapshotFolder {
+                                folder: folder.clone(),
+                            });
                         }
                     }
                     Request::ChooseFfmpeg => {
                         if let Some(path) = rfd::FileDialog::new().pick_file() {
-                            self.window.use_ffmpeg_path(&path);
+                            self.window
+                                .answer(Answer::UsedFfmpegPath { path: path.clone() });
                         }
                     }
                     Request::ChooseTimingFile => {
@@ -120,7 +123,8 @@ impl<D: Disk> Host<D> {
                     Request::ChooseExport { name, formats } => {
                         let dialog = filtered(rfd::FileDialog::new(), &formats);
                         if let Some(path) = dialog.set_file_name(name).save_file() {
-                            self.window.export_song(&path);
+                            self.window
+                                .answer(Answer::ExportedSong { path: path.clone() });
                         }
                     }
                     Request::ChooseAudio => {
@@ -128,7 +132,7 @@ impl<D: Disk> Host<D> {
                             .add_filter("audio", &AUDIO)
                             .pick_file();
                         if let Some(path) = audio {
-                            self.window.use_audio(&path);
+                            self.window.answer(Answer::UsedAudio { file: path.clone() });
                         }
                     }
                     Request::ChooseArtwork => {
@@ -197,7 +201,7 @@ impl<D: Disk> Host<D> {
                 };
                 if let Err(error) = disk::copy_whole(&self.disk, transfer) {
                     let why = format!("{} to {}: {}", from.display(), to.display(), chain(&error));
-                    self.window.audio_not_copied(&why);
+                    self.window.answer(Answer::AudioNotCopied { why });
                 }
             }
             Request::ReadTags { file } => {
@@ -205,22 +209,33 @@ impl<D: Disk> Host<D> {
                 if let Ok(bytes) = self.disk.read(&file) {
                     let extension = file.extension().and_then(|extension| extension.to_str());
                     let tags = charter_audio::tags(bytes, extension);
-                    self.window.tags_read(&file, tags.title, tags.artist);
+                    self.window.answer(Answer::TagsRead {
+                        file: file.clone(),
+                        title: tags.title,
+                        artist: tags.artist,
+                    });
                     if let Some(artwork) = tags.artwork
                         && let Some(found) = picture(artwork.bytes)
                     {
-                        self.window
-                            .artwork_embedded(&file, artwork.extension, found);
+                        self.window.answer(Answer::ArtworkEmbedded {
+                            file: file.clone(),
+                            extension: artwork.extension.to_owned(),
+                            picture: found,
+                        });
                     }
                 }
             }
             Request::DecodeArtwork { bytes } => {
                 let found = picture(bytes);
-                self.window.artwork_restored(found);
+                self.window
+                    .answer(Answer::ArtworkRestored { picture: found });
             }
             Request::ReadArtwork { file } => {
                 let found = self.disk.read(&file).ok().and_then(picture);
-                self.window.artwork_read(&file, found);
+                self.window.answer(Answer::ArtworkRead {
+                    file,
+                    picture: found,
+                });
             }
             Request::OpenPath { path } => self.read(&path),
             Request::Snapshot {
@@ -275,9 +290,10 @@ impl<D: Disk> Host<D> {
         if let Some(folder) = path.parent()
             && let Err(error) = disk.make_folder(folder)
         {
-            return self
-                .window
-                .export_failed(folder, &chain(&error).to_string());
+            return self.window.answer(Answer::ExportFailed {
+                path: folder.to_path_buf(),
+                why: chain(&error).to_string(),
+            });
         }
         let ffmpeg = self.ffmpeg.binary.as_deref();
         let written = std::iter::once((path, bytes))
@@ -300,7 +316,10 @@ impl<D: Disk> Host<D> {
             }));
         for (place, result) in written {
             if let Err(error) = result {
-                self.window.export_failed(place, &chain(&error).to_string());
+                self.window.answer(Answer::ExportFailed {
+                    path: place.to_path_buf(),
+                    why: chain(&error).to_string(),
+                });
             }
         }
     }
@@ -308,8 +327,14 @@ impl<D: Disk> Host<D> {
     /// Opens the song at `path`, or reports the read failure to the window.
     pub(crate) fn read(&mut self, path: &Path) {
         match self.disk.read(path) {
-            Ok(bytes) => self.window.open(path, &bytes),
-            Err(error) => self.window.refuse(path, &error),
+            Ok(bytes) => self.window.answer(Answer::Opened {
+                path: path.to_path_buf(),
+                bytes,
+            }),
+            Err(error) => self.window.answer(Answer::Refused {
+                path: path.to_path_buf(),
+                why: error.to_string(),
+            }),
         }
     }
 
@@ -333,11 +358,11 @@ impl<D: Disk> Host<D> {
                 match self.disk.read(to) {
                     Ok(original_bytes) => Some(original_bytes),
                     Err(error) => {
-                        self.window.saved(Saved::Failed(format!(
+                        self.window.answer(Answer::Saved(Saved::Failed(format!(
                             "{}: {}",
                             to.display(),
                             chain(&error)
-                        )));
+                        ))));
                         return;
                     }
                 }
@@ -369,7 +394,7 @@ impl<D: Disk> Host<D> {
                 Saved::Failed(error)
             }
         };
-        self.window.saved(saved);
+        self.window.answer(Answer::Saved(saved));
     }
 
     /// Writes `bytes` as a copy of the song `name` into each of `folders`, named for `now`, seconds
@@ -388,8 +413,9 @@ impl<D: Disk> Host<D> {
                 .make_folder(folder)
                 .and_then(|()| disk::write_whole(&self.disk, &folder.join(&file), bytes));
             if let Err(error) = written {
-                self.window
-                    .snapshot_failed(&format!("{}: {}", folder.display(), chain(&error)));
+                self.window.answer(Answer::SnapshotFailed {
+                    why: format!("{}: {}", folder.display(), chain(&error)),
+                });
                 continue;
             }
             // Copies of this song alone, which a date sorts oldest first.
@@ -429,9 +455,15 @@ impl<D: Disk> Host<D> {
                 .map(|bytes| charter_audio::tags(bytes, extension))
                 .and_then(|tags| tags.artwork)
                 .and_then(|artwork| Some((artwork.extension, picture(artwork.bytes)?)));
-            self.window.artwork_ripped(path, cover);
+            self.window.answer(Answer::ArtworkRipped {
+                file: path.to_path_buf(),
+                cover: cover.map(|(at, picture)| (at.to_owned(), picture)),
+            });
         } else {
-            self.window.use_artwork(path, bytes.and_then(picture));
+            self.window.answer(Answer::UsedArtwork {
+                file: path.to_path_buf(),
+                picture: bytes.and_then(picture),
+            });
         }
     }
 
@@ -460,7 +492,7 @@ impl<D: Disk> Host<D> {
     pub(crate) fn save_as(&mut self, chosen: &Path, bytes: &[u8]) {
         let Some(file) = project_file(chosen) else {
             let why = format!("{} cannot name a song", chosen.display());
-            self.window.saved(Saved::Failed(why));
+            self.window.answer(Answer::Saved(Saved::Failed(why)));
             return;
         };
         let folder = file.parent().unwrap_or_else(|| Path::new(""));
@@ -469,12 +501,12 @@ impl<D: Disk> Host<D> {
                 "{} already holds a song. Choose that file to replace it, or another name",
                 folder.display()
             );
-            self.window.saved(Saved::Failed(why));
+            self.window.answer(Answer::Saved(Saved::Failed(why)));
             return;
         }
         if let Err(error) = self.disk.make_folder(folder) {
             let why = format!("{}: {}", folder.display(), chain(&error));
-            self.window.saved(Saved::Failed(why));
+            self.window.answer(Answer::Saved(Saved::Failed(why)));
             return;
         }
         self.write(file, bytes);
@@ -485,7 +517,12 @@ impl<D: Disk> Host<D> {
     pub(crate) fn read_import(&mut self, path: &Path, companions: &[FileName]) {
         let bytes = match self.disk.read(path) {
             Ok(bytes) => bytes,
-            Err(error) => return self.window.refuse(path, &error),
+            Err(error) => {
+                return self.window.answer(Answer::Refused {
+                    path: path.to_path_buf(),
+                    why: error.to_string(),
+                });
+            }
         };
         let folder = path.parent().unwrap_or_else(|| Path::new(""));
         // A companion missing or unreadable is one the format goes without.
@@ -498,18 +535,22 @@ impl<D: Disk> Host<D> {
                 ))
             })
             .collect();
-        self.window.import_song(path, &bytes, &found);
+        self.window.answer(Answer::ImportedSong {
+            path: path.to_path_buf(),
+            bytes,
+            companions: found,
+        });
     }
 
     /// Hands the text of the file at `path` to the import timing window.
     pub(crate) fn read_timing(&mut self, path: &Path) {
         match self.disk.read(path) {
-            Ok(bytes) => self
-                .window
-                .timing_file_read(&String::from_utf8_lossy(&bytes)),
+            Ok(bytes) => self.window.answer(Answer::TimingFileRead {
+                text: String::from_utf8_lossy(&bytes).into_owned(),
+            }),
             Err(error) => {
                 let why = format!("{}: {}", path.display(), chain(&error));
-                self.window.timing_file_failed(&why);
+                self.window.answer(Answer::TimingFileFailed { why });
             }
         }
     }
@@ -517,8 +558,9 @@ impl<D: Disk> Host<D> {
     /// Writes the current unsaved song into the recovery file.
     pub(crate) fn autosave(&mut self, bytes: &[u8]) {
         let Some(recovery) = &self.recovery else {
-            self.window
-                .autosave_failed("there is no folder to keep it in");
+            self.window.answer(Answer::AutosaveFailed {
+                why: "there is no folder to keep it in".to_owned(),
+            });
             return;
         };
         let kept = recovery
@@ -527,7 +569,7 @@ impl<D: Disk> Host<D> {
             .and_then(|()| disk::write_whole(&self.disk, recovery, bytes));
         if let Err(error) = kept {
             let why = format!("{}: {}", recovery.display(), chain(&error));
-            self.window.autosave_failed(&why);
+            self.window.answer(Answer::AutosaveFailed { why });
         }
     }
 
@@ -537,9 +579,12 @@ impl<D: Disk> Host<D> {
             return;
         };
         match self.disk.read(recovery) {
-            Ok(bytes) => self.window.recover(&bytes),
+            Ok(bytes) => self.window.answer(Answer::Recovered { bytes }),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => self.window.refuse(recovery, &error),
+            Err(error) => self.window.answer(Answer::Refused {
+                path: recovery.clone(),
+                why: error.to_string(),
+            }),
         }
     }
 }

@@ -6,7 +6,7 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 
 use charter_audio::{Clicks, Onset, Peaks, Spectrum, Track};
 use charter_core::ResolvedTime;
-use charter_ui::{LoopRegion, Request, Window};
+use charter_ui::{Answer, LoopRegion, Request, Window};
 use kira::sound::PlaybackState;
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle, StaticSoundSettings};
 use kira::sound::streaming::{StreamingSoundData, StreamingSoundHandle, StreamingSoundSettings};
@@ -227,10 +227,10 @@ impl Player {
         };
         if sound.state() == PlaybackState::Stopped {
             self.playing = None;
-            window.playback_ended();
+            window.answer(Answer::PlaybackEnded);
             return loading;
         }
-        window.playhead(sound.position());
+        window.answer(Answer::Playhead(sound.position()));
         true
     }
 
@@ -238,7 +238,7 @@ impl Player {
     fn replace_audio(&mut self, wanted: Option<PathBuf>, window: &mut Window) {
         if self.playing.is_some() {
             self.stop();
-            window.playback_ended();
+            window.answer(Answer::PlaybackEnded);
         }
         self.loaded = None;
         self.failed = None;
@@ -254,21 +254,39 @@ impl Player {
             let mut done = false;
             loop {
                 match receive.try_recv() {
-                    Ok(Loaded::Peaks(peaks)) => window.waveform_ready(path, Arc::new(peaks)),
-                    Ok(Loaded::Onsets(onsets)) => window.onsets_ready(path, onsets),
+                    Ok(Loaded::Peaks(peaks)) => window.answer(Answer::WaveformReady {
+                        file: path.clone(),
+                        peaks: Arc::new(peaks),
+                    }),
+                    Ok(Loaded::Onsets(onsets)) => window.answer(Answer::OnsetsReady {
+                        file: path.clone(),
+                        onsets,
+                    }),
                     Ok(Loaded::Spectrum(spectrum)) => {
-                        window.spectrum_ready(path, Arc::new(spectrum));
+                        window.answer(Answer::SpectrumReady {
+                            file: path.clone(),
+                            spectrum: Arc::new(spectrum),
+                        });
                     }
                     Ok(Loaded::Audio(Ok((track, peaks)))) => {
-                        window.audio_ready(path, track.seconds());
+                        window.answer(Answer::AudioReady {
+                            file: path.clone(),
+                            seconds: track.seconds(),
+                        });
                         if let Some(peaks) = peaks {
-                            window.waveform_ready(path, Arc::new(peaks));
+                            window.answer(Answer::WaveformReady {
+                                file: path.clone(),
+                                peaks: Arc::new(peaks),
+                            });
                         }
                         let data = sound(&track);
                         self.loaded = Some((path.clone(), track, data));
                     }
                     Ok(Loaded::Audio(Err(why))) => {
-                        window.audio_failed(path, &why);
+                        window.answer(Answer::AudioFailed {
+                            file: path.clone(),
+                            why,
+                        });
                         self.failed = Some(path.clone());
                         done = true;
                         break;
@@ -276,7 +294,10 @@ impl Player {
                     Err(TryRecvError::Empty) => break,
                     Err(TryRecvError::Disconnected) => {
                         if self.loaded.is_none() {
-                            window.audio_failed(path, "loading stopped");
+                            window.answer(Answer::AudioFailed {
+                                file: path.clone(),
+                                why: "loading stopped".to_owned(),
+                            });
                             self.failed = Some(path.clone());
                         }
                         done = true;
@@ -309,7 +330,7 @@ impl Player {
                     (*from, *rate, *volumes, *looping, *keep_pitch);
                 self.stop();
                 let Some((path, track, data)) = &self.loaded else {
-                    window.playback_ended();
+                    window.answer(Answer::PlaybackEnded);
                     return;
                 };
                 let pitch = if keep_pitch && stretch::keeps_pitch(rate) {
@@ -357,8 +378,8 @@ impl Player {
                 match played {
                     Ok(sound) => self.playing = Some(Playing::Plain(sound)),
                     Err(why) => {
-                        window.audio_failed(&path, &why);
-                        window.playback_ended();
+                        window.answer(Answer::AudioFailed { file: path, why });
+                        window.answer(Answer::PlaybackEnded);
                     }
                 }
             }
@@ -431,8 +452,11 @@ impl Player {
         window: &mut Window,
     ) {
         let Some(stretched) = stretched else {
-            window.audio_failed(path, "its sample rate cannot be played at another speed");
-            window.playback_ended();
+            window.answer(Answer::AudioFailed {
+                file: path.to_path_buf(),
+                why: "its sample rate cannot be played at another speed".to_owned(),
+            });
+            window.answer(Answer::PlaybackEnded);
             return;
         };
         let rate = PlaybackRate(rate);
@@ -462,8 +486,11 @@ impl Player {
                 });
             }
             Err(why) => {
-                window.audio_failed(path, &why);
-                window.playback_ended();
+                window.answer(Answer::AudioFailed {
+                    file: path.to_path_buf(),
+                    why,
+                });
+                window.answer(Answer::PlaybackEnded);
             }
         }
     }
@@ -685,7 +712,10 @@ mod tests {
 
     fn song_window() -> Window {
         let mut window = Window::new(&[]);
-        window.open(Path::new("/s/song.json"), SONG);
+        window.answer(Answer::Opened {
+            path: Path::new("/s/song.json").to_path_buf(),
+            bytes: SONG.to_vec(),
+        });
         window
     }
 
@@ -994,13 +1024,13 @@ mod tests {
         assert_eq!(player.failed.as_deref(), Some(Path::new("/s/a.wav")));
         assert!(player.loaded.is_none());
 
-        window.open(
-            Path::new("/s/other.json"),
-            std::str::from_utf8(SONG)
+        window.answer(Answer::Opened {
+            path: Path::new("/s/other.json").to_path_buf(),
+            bytes: std::str::from_utf8(SONG)
                 .unwrap()
                 .replace("a.wav", "b.wav")
-                .as_bytes(),
-        );
+                .into_bytes(),
+        });
         player.update(&mut window);
         assert_eq!(
             player.loaded.as_ref().map(|(path, ..)| path.as_path()),
@@ -1060,13 +1090,13 @@ mod tests {
         ))))
         .unwrap();
         player.loading = Some((PathBuf::from("/s/a.wav"), receive));
-        window.open(
-            Path::new("/s/other.json"),
-            std::str::from_utf8(SONG)
+        window.answer(Answer::Opened {
+            path: Path::new("/s/other.json").to_path_buf(),
+            bytes: std::str::from_utf8(SONG)
                 .unwrap()
                 .replace("a.wav", "b.wav")
-                .as_bytes(),
-        );
+                .into_bytes(),
+        });
         player.update(&mut window);
         assert_eq!(
             player.loaded.as_ref().map(|(path, ..)| path.as_path()),
