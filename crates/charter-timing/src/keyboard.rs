@@ -5,8 +5,8 @@ use egui::{Key, Modifiers};
 use crate::pointer::Gesture;
 
 use super::{
-    Bpm, Command, Edit, Frame, Grid, LastNudge, Layout, NUDGE_MERGE, RESOLUTIONS, ROW, Rounding,
-    Scale, Tick, TimingWindow, audition_from, style,
+    Adjusted, Bpm, Command, Edit, Frame, Grid, Layout, RESOLUTIONS, ROW, Rounding, Scale, Tick,
+    TimingWindow, audition_from, style,
 };
 
 /// What a key asks of the timing window.
@@ -361,13 +361,7 @@ pub(crate) fn act(
             let tempo = f64::from(frame.tail) + by;
             match Bpm::nearest(tempo) {
                 Ok(bpm) => {
-                    let merge = window.last_nudge.as_ref().is_some_and(|last| {
-                        last.ticks.is_empty() && frame.now - last.at < NUDGE_MERGE
-                    });
-                    window.last_nudge = Some(LastNudge {
-                        ticks: Vec::new(),
-                        at: frame.now,
-                    });
+                    let merge = window.adjusting(Adjusted::Tail, frame.now);
                     commands.push(Command::Edit(Edit::TailBpm { bpm, merge }));
                 }
                 Err(_) => window.status = Some(format!("{tempo} is not a tempo")),
@@ -791,6 +785,33 @@ mod tests {
                 }),
             ]
         );
+    }
+
+    #[test]
+    fn a_tail_adjustment_does_not_merge_into_a_nudge_of_the_anchors() {
+        let harness = timing_harness();
+        let state = harness.state();
+        let cache = state.window.cache.as_ref().unwrap();
+        let frame = frame(&state.song, &[], (cache, Layout::Bars), 1.0);
+        let mut window = TimingWindow::default();
+        let mut commands = Vec::new();
+
+        // A nudge and a tail change are different adjustments, so one never joins the other's
+        // undo step however close together they fall.
+        window.focus_on(Tick::new(0));
+        window.nudge(0.01, frame.now, &mut commands);
+        act(&mut window, &frame, Intent::Tail(1.0), &mut commands);
+        act(&mut window, &frame, Intent::Tail(1.0), &mut commands);
+        window.nudge(0.01, frame.now, &mut commands);
+
+        let mut merges = Vec::new();
+        for command in &commands {
+            if let Command::Edit(Edit::Nudge { merge, .. } | Edit::TailBpm { merge, .. }) = command
+            {
+                merges.push(*merge);
+            }
+        }
+        assert_eq!(merges, [false, false, true, false]);
     }
 
     #[test]

@@ -232,11 +232,20 @@ impl Default for TimingWindow {
     }
 }
 
+/// What an adjustment moved, so a later one can tell whether it continues the same run.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Adjusted {
+    /// These anchors were shifted in the audio.
+    Anchors(Vec<Tick>),
+    /// The tempo after the last anchor was changed.
+    Tail,
+}
+
 /// A run of related audio nudges that can merge into one undo step.
 #[derive(Clone, Debug, PartialEq)]
 struct LastNudge {
-    /// Anchors shifted by the last nudge; empty means the tail tempo changed.
-    ticks: Vec<Tick>,
+    /// What the last adjustment moved.
+    what: Adjusted,
     /// Frame timestamp when the nudge happened.
     at: f64,
 }
@@ -496,15 +505,19 @@ impl TimingWindow {
         let Some(by) = TimeShift::from_seconds(by) else {
             return;
         };
-        let merge = self
+        let merge = self.adjusting(Adjusted::Anchors(ticks.clone()), now);
+        commands.push(Command::Edit(Edit::Nudge { ticks, by, merge }));
+    }
+
+    /// Whether an adjustment of `what` at `now` continues the last one, so the two become one
+    /// undo step. Takes this adjustment as the latest either way.
+    fn adjusting(&mut self, what: Adjusted, now: f64) -> bool {
+        let merges = self
             .last_nudge
             .as_ref()
-            .is_some_and(|last| last.ticks == ticks && now - last.at < NUDGE_MERGE);
-        self.last_nudge = Some(LastNudge {
-            ticks: ticks.clone(),
-            at: now,
-        });
-        commands.push(Command::Edit(Edit::Nudge { ticks, by, merge }));
+            .is_some_and(|last| last.what == what && now - last.at < NUDGE_MERGE);
+        self.last_nudge = Some(LastNudge { what, at: now });
+        merges
     }
 
     /// An anchor at `seconds`, snapped to an onset and its beat to the grid as the toolbar says,
