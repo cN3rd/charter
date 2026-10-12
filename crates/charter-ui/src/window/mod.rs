@@ -1216,21 +1216,70 @@ struct ArtworkState {
     embedded: Option<EmbeddedArtwork>,
 }
 
+/// One recovery deadline: the wait before the open song is written somewhere it can be recovered
+/// from, and the revision last written there.
+///
+/// The wait starts the first frame the song differs from what was written, and the revision stops
+/// an unchanged song being written twice.
+#[derive(Debug, Default)]
+struct Deadline {
+    /// When the wait is up, in seconds on the frame clock.
+    due: Option<f64>,
+    /// The revision last written, or opened, so an unchanged song is not written again.
+    done: Option<u64>,
+}
+
+impl Deadline {
+    /// Whether `revision` is due to be written now, waiting `after` seconds from the first frame
+    /// it was asked about. Asks egui to come back when the wait is up, and clears the wait when
+    /// the setting is off.
+    fn ready(&mut self, ctx: &egui::Context, revision: u64, after: Option<f64>) -> bool {
+        let Some(after) = after else {
+            self.due = None;
+            return false;
+        };
+        if self.done == Some(revision) {
+            return false;
+        }
+        let now = ctx.input(|input| input.time);
+        let due = *self.due.get_or_insert(now + after);
+        if now < due {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(due - now));
+            return false;
+        }
+        self.due = None;
+        true
+    }
+
+    /// Takes `revision` as written, so nothing is written again until the song changes.
+    const fn wrote(&mut self, revision: u64) {
+        self.done = Some(revision);
+        self.due = None;
+    }
+
+    /// Lets the next frame try again after a write failed, keeping the wait that led to it.
+    const fn retry(&mut self) {
+        self.done = None;
+    }
+
+    /// Forgets the write and its wait, so the next change starts a fresh one.
+    const fn forget(&mut self) {
+        self.done = None;
+        self.due = None;
+    }
+}
+
 /// Autosave and snapshot bookkeeping.
 #[derive(Debug, Default)]
 struct Autosave {
     /// Whether the host may be keeping an autosave.
     kept: bool,
-    /// The revision of the open song the autosave holds, when it holds one.
-    autosaved: Option<u64>,
-    /// When the open song's changes are next autosaved, in seconds on the frame clock.
-    due: Option<f64>,
     /// Charter's data folder, where snapshots go by default, when the host has one.
     data_folder: Option<PathBuf>,
-    /// When the next snapshot of the changed song is due, on the frame clock.
-    snapshot_due: Option<f64>,
-    /// The revision of the song last copied, or opened, so an unchanged song is not copied.
-    snapshotted: Option<u64>,
+    /// When the open song's changes are next autosaved.
+    edits: Deadline,
+    /// When the changed song is next copied to a dated snapshot.
+    snapshots: Deadline,
 }
 
 /// Dialogs and pending answers.
@@ -2986,6 +3035,32 @@ mod tests {
         // A save in flight holds the same work, but asks the user nothing, so it leaves the keys.
         dialogs.pending = Some(Waiting::Saving(Discard::Close));
         assert!(!dialogs.asking());
+    }
+
+    #[test]
+    fn a_failed_recovery_write_tries_again_without_restarting_its_wait() {
+        let mut deadline = Deadline {
+            due: Some(12.0),
+            done: Some(7),
+        };
+
+        deadline.retry();
+        assert_eq!(deadline.done, None);
+        assert_eq!(
+            deadline.due,
+            Some(12.0),
+            "the wait that led to the failed write still stands"
+        );
+
+        deadline.wrote(9);
+        assert_eq!(deadline.done, Some(9));
+        assert_eq!(
+            deadline.due, None,
+            "a write ends the wait it was waiting on"
+        );
+
+        deadline.forget();
+        assert_eq!((deadline.done, deadline.due), (None, None));
     }
 
     #[test]

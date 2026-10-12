@@ -135,7 +135,7 @@ impl Window {
             artwork.set_mark(mark);
             self.artwork.current = Some(artwork);
             // A picture under the same name leaves the revision as it was, so autosave again.
-            self.autosave.autosaved = None;
+            self.autosave.edits.retry();
         }
     }
     /// Keeps the preview in step with undo, redo and artwork metadata changes.

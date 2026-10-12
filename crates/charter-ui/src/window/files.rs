@@ -294,13 +294,12 @@ impl Window {
     }
     /// Shows why autosaving failed and schedules the next edit for another try.
     pub(crate) fn autosave_failed(&mut self, why: &str) {
-        self.autosave.autosaved = None;
+        self.autosave.edits.retry();
         self.failure = Some(format!("Autosave failed: {why}"));
     }
     /// Removes the kept autosave, if one exists.
     pub(super) fn drop_autosave(&mut self) {
-        self.autosave.autosaved = None;
-        self.autosave.due = None;
+        self.autosave.edits.forget();
         if std::mem::take(&mut self.autosave.kept) {
             self.requests.push(Request::DropAutosave);
         }
@@ -325,20 +324,13 @@ impl Window {
             return;
         }
         let revision = song.revision();
-        if self.autosave.autosaved == Some(revision) {
+        if !self
+            .autosave
+            .edits
+            .ready(ctx, revision, self.settings.autosave_after())
+        {
             return;
         }
-        let now = ctx.input(|input| input.time);
-        let Some(after) = self.settings.autosave_after() else {
-            self.autosave.due = None;
-            return;
-        };
-        let due = *self.autosave.due.get_or_insert(now + after);
-        if now < due {
-            ctx.request_repaint_after(std::time::Duration::from_secs_f64(due - now));
-            return;
-        }
-        self.autosave.due = None;
         let audio = self.artwork.audio_file.as_deref();
         let artwork = self.artwork.current.as_ref().and_then(Artwork::unsaved);
         match recovery::write(
@@ -350,7 +342,7 @@ impl Window {
             Ok(bytes) => {
                 self.requests.push(Request::Autosave { bytes });
                 self.autosave.kept = true;
-                self.autosave.autosaved = Some(revision);
+                self.autosave.edits.wrote(revision);
             }
             Err(error) => self.failure = Some(format!("Autosave failed: {error}")),
         }
@@ -445,7 +437,7 @@ impl Window {
     }
     /// Shows why a snapshot write failed and allows another try.
     pub(crate) fn snapshot_failed(&mut self, why: &str) {
-        self.autosave.snapshotted = None;
+        self.autosave.snapshots.retry();
         self.failure = Some(format!("Snapshot failed: {why}"));
     }
     /// Returns this window with the host's data folder configured.
@@ -472,20 +464,13 @@ impl Window {
             return;
         };
         let revision = song.revision();
-        let Some(after) = self.settings.snapshot_after() else {
-            self.autosave.snapshot_due = None;
-            return;
-        };
-        if self.autosave.snapshotted == Some(revision) {
-            return;
-        }
-        let now = ctx.input(|input| input.time);
-        let due = *self.autosave.snapshot_due.get_or_insert(now + after);
-        if now < due {
-            ctx.request_repaint_after(std::time::Duration::from_secs_f64(due - now));
+        if !self
+            .autosave
+            .snapshots
+            .ready(ctx, revision, self.settings.snapshot_after())
+        {
             return;
         }
-        self.autosave.snapshot_due = None;
         let mut name = self.file_name(song);
         if let Some(bare) = name.strip_suffix(".json") {
             name.truncate(bare.len());
@@ -519,7 +504,7 @@ impl Window {
                     folders,
                     kept: self.settings.snapshots_kept.into(),
                 });
-                self.autosave.snapshotted = Some(revision);
+                self.autosave.snapshots.wrote(revision);
             }
             Err(error) => self.failure = Some(format!("Snapshot failed: {error}")),
         }
@@ -558,8 +543,7 @@ impl Window {
                 note,
             } => {
                 if restored {
-                    self.autosave.due = None;
-                    self.autosave.autosaved = Some(song.revision());
+                    self.autosave.edits.wrote(song.revision());
                 } else {
                     self.drop_autosave();
                 }
@@ -573,8 +557,10 @@ impl Window {
                 }
                 self.path = path;
                 // A song opened is not copied until it changes.
-                self.autosave.snapshotted = self.song.as_ref().map(Song::revision);
-                self.autosave.snapshot_due = None;
+                match self.song.as_ref().map(Song::revision) {
+                    Some(revision) => self.autosave.snapshots.wrote(revision),
+                    None => self.autosave.snapshots.forget(),
+                }
                 self.zoom = Zoom::default().by(self.settings.zoom.percent() / 100.0);
                 self.failure = note;
                 self.typing.placed = false;
