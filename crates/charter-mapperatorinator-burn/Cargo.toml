@@ -10,6 +10,7 @@ anyhow = "1"
 # ponytail: wgpu for Mapperatorinator's timing model, which took over 15 minutes a song on the CPU
 # and takes one or two on a graphics card; fusion and autotune as upstream runs it.
 burn = { workspace = true, features = ["wgpu", "fusion", "autotune"] }
+charter-audio.workspace = true
 half = "2.7"
 rustfft.workspace = true
 serde.workspace = true

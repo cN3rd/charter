@@ -6,7 +6,7 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 
-use charter_audio::{Onset, SampleRate, Track};
+use charter_audio::{Onset, Track};
 use charter_core::{BeatLength, ResolvedTime, Section, TicksPerBeat, Timing};
 use charter_ui::{Answer, Tracker, Window};
 use sha2::{Digest, Sha256};
@@ -321,7 +321,7 @@ fn timing_of(
     let tracker = charter_beatthis_burn::Tracker::from_checkpoint(weights)
         .map_err(|why| format!("{}: {}", weights.display(), chain(&why)))?;
     let beats = tracker
-        .track(mono.samples(), mono.rate().get())
+        .track(&mono)
         .map_err(|why| chain(&why).to_string())?;
     let marked: Vec<_> = beats
         .beats
@@ -357,35 +357,18 @@ fn mapperatorinator(
     device: charter_mapperatorinator_burn::Device,
     mut progress: impl FnMut(f32),
 ) -> Result<Timing, String> {
-    use charter_mapperatorinator_burn::SAMPLE_RATE;
-
     let bytes =
         std::fs::read(file).map_err(|why| format!("{}: {}", file.display(), chain(&why)))?;
     let extension = file.extension().and_then(|extension| extension.to_str());
     let track = Track::decode(bytes, extension).map_err(|why| chain(&why).to_string())?;
-    let rate = u32::try_from(SAMPLE_RATE).map_err(|why| chain(&why).to_string())?;
-    let rate = SampleRate::new(rate).ok_or_else(|| format!("invalid model sample rate: {rate}"))?;
-    let mut samples = track
-        .to_mono()
-        .resampled(rate)
-        .map_err(|why| chain(&why).to_string())?
-        .into_samples();
-    // Divided by the peak, as Mapperatorinator's model hears it.
-    let peak = samples
-        .iter()
-        .fold(0.0_f32, |peak, sample| peak.max(sample.abs()));
-    if peak > 0.0 {
-        for sample in &mut samples {
-            *sample /= peak;
-        }
-    }
+    let mono = track.to_mono();
     let model =
         std::fs::read(weights).map_err(|why| format!("{}: {}", weights.display(), chain(&why)))?;
     let timer = charter_mapperatorinator_burn::Timer::load(&model, device)
         .map_err(|why| format!("{}: {why:#}", weights.display()))?;
     let count = |windows: usize| u64::try_from(windows).unwrap_or(u64::MAX);
     let points = timer
-        .run(&samples, |done, all| {
+        .run(&mono, |done, all| {
             progress(download_share(count(done), count(all)));
         })
         .map_err(|why| format!("{why:#}"))?;

@@ -28,7 +28,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tracker = Tracker::from_checkpoint(Path::new(weights))?;
     println!("loaded in {:.2?}", loaded_at.elapsed());
     let tracked_at = Instant::now();
-    let found = tracker.track(mono.samples(), mono.rate().get())?;
+    let found = tracker.track(&mono)?;
     println!(
         "tracked {:.1} s of audio in {:.2?}",
         track.seconds(),

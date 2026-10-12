@@ -234,25 +234,43 @@ impl Timer {
         })
     }
 
-    /// The timing points of `samples`, mono at [`SAMPLE_RATE`] and divided by their peak,
-    /// calling `progress` with the windows decoded so far and in all.
+    /// The timing points of `audio`, brought to the rate the model hears and divided by its peak
+    /// here, calling `progress` with the windows decoded so far and in all.
     ///
     /// # Errors
     ///
-    /// When the model fails on the audio.
+    /// When the audio will not resample to the model's rate, or the model fails on it.
     pub fn run(
         &self,
-        samples: &[f32],
+        audio: &charter_audio::Mono,
         progress: impl FnMut(usize, usize),
     ) -> Result<Vec<TimingPoint>> {
         run(
             &self.model,
             &self.tokenizer,
-            samples,
+            &heard(audio)?,
             &Options::default(),
             progress,
         )
     }
+}
+
+/// `audio` as the model hears it: mono at [`SAMPLE_RATE`], divided by its peak so the loudest
+/// sample sits at one. Silence is left alone, having no peak to divide by.
+fn heard(audio: &charter_audio::Mono) -> Result<Vec<f32>> {
+    let rate = u32::try_from(SAMPLE_RATE).context("the model's sample rate does not fit")?;
+    let rate = charter_audio::SampleRate::new(rate)
+        .with_context(|| format!("invalid model sample rate: {rate}"))?;
+    let mut samples = audio.resampled(rate)?.into_samples();
+    let peak = samples
+        .iter()
+        .fold(0.0_f32, |peak, sample| peak.max(sample.abs()));
+    if peak > 0.0 {
+        for sample in &mut samples {
+            *sample /= peak;
+        }
+    }
+    Ok(samples)
 }
 
 /// Whether wgpu finds a graphics card, rather than none or a software renderer that would be
@@ -272,6 +290,34 @@ mod tests {
     fn bytes_that_are_not_the_model_s_file_are_refused() {
         Timer::load(b"not a gguf file", Device::Cpu).unwrap_err();
         Timer::load(&[], Device::Cpu).unwrap_err();
+    }
+
+    #[test]
+    fn audio_the_model_hears_is_at_its_rate_and_divided_by_its_peak() {
+        let rate = u32::try_from(SAMPLE_RATE).unwrap();
+        let at = |hz: u32, samples: Vec<f32>| {
+            charter_audio::Mono::new(charter_audio::SampleRate::new(hz).unwrap(), samples)
+        };
+
+        let loud = heard(&at(rate, vec![0.0, 0.25, -0.5, 0.125])).unwrap();
+        let peak = loud.iter().fold(0.0_f32, |peak, s| peak.max(s.abs()));
+        assert!(
+            (peak - 1.0).abs() < 1e-6,
+            "loudest sample sits at one: {peak}"
+        );
+
+        // Silence has no peak to divide by, so it must come back as silence rather than NaN.
+        let quiet = heard(&at(rate, vec![0.0; 64])).unwrap();
+        assert!(quiet.iter().all(|s| s.abs() < 1e-6), "silence stays silent");
+        assert!(quiet.iter().all(|s| s.is_finite()), "no sample is NaN");
+
+        // Audio at another rate is brought to the model's, so the caller never has to.
+        let resampled = heard(&at(rate * 2, vec![0.0; 4096])).unwrap();
+        assert!(
+            resampled.len() < 4096,
+            "halving the rate halves the samples: {}",
+            resampled.len()
+        );
     }
 
     #[test]

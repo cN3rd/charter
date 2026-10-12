@@ -35,8 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let started = Instant::now();
     let onsets = charter_audio::onsets(&track);
     println!("{} onsets", onsets.len());
-    let beats =
-        Tracker::from_checkpoint(Path::new(weights))?.track(mono.samples(), mono.rate().get())?;
+    let beats = Tracker::from_checkpoint(Path::new(weights))?.track(&mono)?;
     let mut shifts: Vec<f64> = beats
         .beats
         .iter()

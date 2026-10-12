@@ -110,17 +110,15 @@ impl Tracker {
         Ok(Self { model, device })
     }
 
-    /// The beats in `samples`, mono audio at `rate` samples a second.
+    /// The beats in `audio`, brought to the rate the network hears here.
     ///
     /// # Errors
     ///
     /// Returns [`Error::Resample`] when the audio cannot be brought to the network's rate.
-    pub fn track(&self, samples: &[f32], rate: u32) -> Result<Beats, Error> {
-        let rate = charter_audio::SampleRate::new(rate)
-            .ok_or_else(|| Error::Resample(format!("invalid sample rate: {rate}")))?;
+    pub fn track(&self, audio: &charter_audio::Mono) -> Result<Beats, Error> {
         let target = charter_audio::SampleRate::new(mel::RATE)
             .ok_or_else(|| Error::Resample("invalid model sample rate".into()))?;
-        let audio = charter_audio::Mono::new(rate, samples.to_vec())
+        let audio = audio
             .resampled(target)
             .map_err(|why| Error::Resample(why.to_string()))?;
         let spect = log_mel(audio.samples());
@@ -585,11 +583,19 @@ mod tests {
     #[test]
     fn tracking_empty_and_short_audio_uses_the_resampled_frame_count() {
         let tracker = tiny();
-        assert_eq!(tracker.track(&[], mel::RATE).unwrap(), Beats::default());
-        let found = tracker.track(&vec![0.0; 882], 44_100).unwrap();
+        let at = |rate: u32, samples: Vec<f32>| {
+            charter_audio::Mono::new(charter_audio::SampleRate::new(rate).unwrap(), samples)
+        };
+        assert_eq!(
+            tracker.track(&at(mel::RATE, Vec::new())).unwrap(),
+            Beats::default()
+        );
+        let found = tracker.track(&at(44_100, vec![0.0; 882])).unwrap();
         assert_eq!(found.beat_logits.len(), 2);
         assert_eq!(found.downbeat_logits.len(), 2);
-        assert!(matches!(tracker.track(&[0.5], 0), Err(Error::Resample(_))));
+        // A rate of zero no longer reaches here: `SampleRate` will not hold one, so audio that
+        // could not resample cannot be built in the first place.
+        assert!(charter_audio::SampleRate::new(0).is_none());
     }
 
     #[test]
