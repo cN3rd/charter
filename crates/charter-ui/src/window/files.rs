@@ -2,8 +2,8 @@
 
 use super::{
     Arc, Artwork, Autosave, Discard, EmbeddedArtwork, Leaving, NO_AUDIO, OfFile, Offer, Path,
-    PathBuf, Peaks, RECENT, Request, Restoring, Saved, Saving, Song, Spectrum, TagTarget, Window,
-    Zoom, demo, file_name, new_song, notefield, panels, recovery, refused, shown_strip,
+    PathBuf, Peaks, RECENT, Request, Restoring, Saved, Saving, Song, Spectrum, TagTarget, Waiting,
+    Window, Zoom, demo, file_name, new_song, notefield, panels, recovery, refused, shown_strip,
 };
 
 impl Window {
@@ -26,13 +26,13 @@ impl Window {
                 }
                 self.artwork.on_disk = self.artwork_file();
                 self.failure = None;
-                if let Some(discard) = self.dialogs.after_save.take() {
+                if let Some(Waiting::Saving(discard)) = self.dialogs.pending.take() {
                     self.carry_on(discard);
                 }
             }
-            Saved::Cancelled => self.dialogs.after_save = None,
+            Saved::Cancelled => self.dialogs.pending = None,
             Saved::Failed(why) => {
-                self.dialogs.after_save = None;
+                self.dialogs.pending = None;
                 self.failure = Some(format!("Could not save: {why}"));
             }
         }
@@ -538,7 +538,7 @@ impl Window {
     /// Asks before replacing unsaved work, otherwise continues immediately.
     pub(super) fn after_asking(&mut self, discard: Discard) {
         if self.modified() {
-            self.dialogs.discard = Some(discard);
+            self.dialogs.pending = Some(Waiting::Asking(discard));
         } else {
             self.carry_on(discard);
         }
@@ -607,12 +607,12 @@ impl Window {
     }
     /// Applies the answer to the unsaved-changes question.
     pub(super) fn answer_save_changes(&mut self, answer: panels::SaveChanges) {
-        let Some(discard) = self.dialogs.discard.take() else {
+        let Some(Waiting::Asking(discard)) = self.dialogs.pending.take() else {
             return;
         };
         match answer {
             panels::SaveChanges::Save => {
-                self.dialogs.after_save = Some(discard);
+                self.dialogs.pending = Some(Waiting::Saving(discard));
                 self.saving = Some(Saving::InPlace);
             }
             panels::SaveChanges::DontSave => self.carry_on(discard),

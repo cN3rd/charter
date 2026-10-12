@@ -2,8 +2,8 @@
 
 use super::{
     AUDIO, Action, Direction, Discard, Finding, Leaving, Loaded, NO_AUDIO, PendingPaste, Request,
-    Restoring, Song, Sounds, Ui, Window, editable_lanes, file_name, import, keys, latency, minimap,
-    new_song, notefield, panels, settings, shown_grid, shown_strip, style, timing_panel,
+    Restoring, Song, Sounds, Ui, Waiting, Window, editable_lanes, file_name, import, keys, latency,
+    minimap, new_song, notefield, panels, settings, shown_grid, shown_strip, style, timing_panel,
 };
 
 impl Window {
@@ -80,7 +80,7 @@ impl Window {
         {
             self.answer_restore(restore);
         }
-        if self.dialogs.discard.is_some() {
+        if matches!(self.dialogs.pending, Some(Waiting::Asking(_))) {
             let name = self.song.as_ref().map(|song| self.file_name(song));
             if let Some(answer) = panels::ask_to_save(ui, name.as_deref().unwrap_or_default()) {
                 self.answer_save_changes(answer);
@@ -160,7 +160,7 @@ impl Window {
             if self.modified() {
                 ui.ctx()
                     .send_viewport_cmd(egui::ViewportCommand::CancelClose);
-                self.dialogs.discard = Some(Discard::Close);
+                self.dialogs.pending = Some(Waiting::Asking(Discard::Close));
             } else {
                 self.dialogs.leaving = Leaving::Going;
             }

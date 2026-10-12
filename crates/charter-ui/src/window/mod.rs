@@ -638,6 +638,17 @@ struct Restoring {
     artwork: Option<Vec<u8>>,
 }
 
+/// Work held up by the open song's unsaved changes, and the one thing it waits for. A [`Discard`]
+/// sits in exactly one of these at a time: the window cannot be asking the user and waiting on a
+/// save at once.
+#[derive(Debug)]
+enum Waiting {
+    /// The unsaved-changes question is showing, and this is what its answer decides.
+    Asking(Discard),
+    /// The user chose to save first, so this waits for the host to report the save.
+    Saving(Discard),
+}
+
 /// Where a save the user asked for goes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Saving {
@@ -1225,10 +1236,8 @@ struct Autosave {
 /// Dialogs and pending answers.
 #[derive(Debug, Default)]
 struct Dialogs {
-    /// What waits on the answer to whether to save the open song's changes.
-    discard: Option<Discard>,
-    /// What to do once the save the user asked for is done.
-    after_save: Option<Discard>,
+    /// Work held up by the open song's unsaved changes, and what it is waiting for.
+    pending: Option<Waiting>,
     /// How far the window is in closing.
     leaving: Leaving,
     /// Whether the window asks whether to reset the timing.
@@ -1260,8 +1269,7 @@ impl Dialogs {
     )]
     const fn asking(&self) -> bool {
         let Self {
-            discard,
-            after_save: _,
+            pending,
             leaving: _,
             resetting,
             ffmpeg,
@@ -1274,7 +1282,7 @@ impl Dialogs {
             choosing,
         } = self;
         new_song.is_some()
-            || discard.is_some()
+            || matches!(pending, Some(Waiting::Asking(_)))
             || restoring.is_some()
             || offer.is_some()
             || *resetting
@@ -2963,9 +2971,9 @@ mod tests {
         let mut dialogs = Dialogs::default();
         assert!(!dialogs.asking());
 
-        dialogs.discard = Some(Discard::Close);
+        dialogs.pending = Some(Waiting::Asking(Discard::Close));
         assert!(dialogs.asking());
-        dialogs.discard = None;
+        dialogs.pending = None;
         dialogs.resetting = true;
         assert!(dialogs.asking());
         dialogs.resetting = false;
@@ -2975,7 +2983,8 @@ mod tests {
         assert!(dialogs.asking());
         dialogs.finding = Finding::Downloading(0.5);
         assert!(!dialogs.asking());
-        dialogs.after_save = Some(Discard::Close);
+        // A save in flight holds the same work, but asks the user nothing, so it leaves the keys.
+        dialogs.pending = Some(Waiting::Saving(Discard::Close));
         assert!(!dialogs.asking());
     }
 
