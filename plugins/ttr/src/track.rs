@@ -11,7 +11,7 @@
 //! itself. The keyed-archive crates decode any object graph by recursion, which a hostile file
 //! can make overflow the stack or grow without bound, and none writes custom classes.
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap};
 use std::io::Cursor;
 
 use plist::{Dictionary, Uid, Value};
@@ -19,7 +19,8 @@ use plist::{Dictionary, Uid, Value};
 use charter_core::{FileName, InvalidValue};
 
 use crate::exchange::{
-    Change, KEYS, Level, MAX_NOTES, Moment, Played, Report, Track, TrackBpm, TrackKey, beats_at,
+    Change, KEYS, Level, MAX_NOTES, Moment, Played, Report, Switches, Track, TrackBpm, TrackKey,
+    beats_at,
 };
 use crate::{Difficulty, Lanes, Song};
 
@@ -385,7 +386,7 @@ fn read_file(
     let mut title = text("title").unwrap_or_default().to_owned();
     let mut artist = text("copyrightInfo").unwrap_or_default().to_owned();
     let tempo = read_tempo(objects, file, report)?;
-    let mut open: HashMap<TrackKey, VecDeque<Moment>> = HashMap::new();
+    let mut open: Switches<()> = Switches::default();
     let mut played: Vec<Played> = Vec::new();
     let tracks = objects
         .field(file, "tracks")
@@ -429,22 +430,18 @@ fn read_file(
             };
             match (kind, integer("velocity").unwrap_or_default()) {
                 (Some(NOTE_ON), velocity) if velocity > 0 => {
-                    open.entry(key).or_default().push_back(time);
+                    open.on((), key, time);
                 }
                 (Some(NOTE_ON | NOTE_OFF), _) => {
-                    if let Some(on) = open.get_mut(&key).and_then(VecDeque::pop_front) {
-                        played.push(Played { key, on, off: time });
+                    if let Some(played_note) = open.off((), key, time) {
+                        played.push(played_note);
                     }
                 }
                 _ => {}
             }
         }
     }
-    // A note never switched off is a tap.
-    played.extend(
-        open.into_iter()
-            .flat_map(|(key, ons)| ons.into_iter().map(move |on| Played { key, on, off: on })),
-    );
+    played.extend(open.unfinished().into_iter().map(|((), note)| note));
     played.sort_by(|a, b| a.on.seconds().total_cmp(&b.on.seconds()));
     let level = Level {
         difficulty,

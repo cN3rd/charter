@@ -6,13 +6,11 @@
 //!
 //! [`midly`] reads and writes the file; this module maps its notes and tempo map.
 
-use std::collections::{HashMap, VecDeque};
-
 use midly::num::{u7, u15, u24, u28};
 use midly::{Format, Header, MetaMessage, MidiMessage, Smf, Timing, TrackEvent, TrackEventKind};
 
 use crate::exchange::{
-    Change, Level, MAX_NOTES, Moment, Played, Report, Track, TrackKey, beats_at,
+    Change, Level, MAX_NOTES, Moment, Report, Switches, Track, TrackKey, beats_at,
 };
 use crate::{Difficulty, Lanes};
 
@@ -118,7 +116,7 @@ pub(crate) fn read(bytes: &[u8], layout: Layout, report: &mut Report) -> Result<
     let mut beat = DEFAULT_BEAT;
     let mut meter = charter_core::TimeSignature::default().numerator;
     let (mut seconds, mut at) = (0.0, 0_u64);
-    let mut open: HashMap<(usize, TrackKey), VecDeque<Moment>> = HashMap::new();
+    let mut open: Switches<usize> = Switches::default();
     let mut levels: Vec<Level> = Vec::new();
     for (tick, event) in events(&smf, report)? {
         seconds += beats(tick.saturating_sub(at), per_beat) * f64::from(beat) / 1e6;
@@ -136,16 +134,12 @@ pub(crate) fn read(bytes: &[u8], layout: Layout, report: &mut Report) -> Result<
                 let Some((difficulty, key)) = level_key(key, layout, switch, report) else {
                     continue;
                 };
-                let waiting = open.entry((difficulty.index(), key)).or_default();
+                let place = difficulty.index();
                 match switch {
-                    Switch::On => waiting.push_back(moment),
+                    Switch::On => open.on(place, key, moment),
                     Switch::Off => {
-                        if let Some(start) = waiting.pop_front() {
-                            level(&mut levels, difficulty).notes.push(Played {
-                                key,
-                                on: start,
-                                off: moment,
-                            });
+                        if let Some(note) = open.off(place, key, moment) {
+                            level(&mut levels, difficulty).notes.push(note);
                         }
                     }
                 }
@@ -160,15 +154,11 @@ pub(crate) fn read(bytes: &[u8], layout: Layout, report: &mut Report) -> Result<
         }
         tempo_tick = Some(tick);
     }
-    // A note never switched off is a tap.
-    let mut open: Vec<_> = open.into_iter().collect();
-    open.sort_by_key(|&(place, _)| place);
-    for ((index, key), ons) in open {
+    for (index, note) in open.unfinished() {
         let Some(&difficulty) = Difficulty::ALL.get(index) else {
             continue;
         };
-        let notes = &mut level(&mut levels, difficulty).notes;
-        notes.extend(ons.into_iter().map(|on| Played { key, on, off: on }));
+        level(&mut levels, difficulty).notes.push(note);
     }
     if tempo
         .first()
@@ -528,6 +518,7 @@ mod tests {
     use proptest::prelude::*;
 
     use super::*;
+    use crate::exchange::Played;
 
     fn meter(beats: u16) -> NonZeroU16 {
         NonZeroU16::new(beats).unwrap()

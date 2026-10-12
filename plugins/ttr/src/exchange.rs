@@ -146,6 +146,57 @@ impl TrackKey {
     }
 }
 
+/// Notes switched on and waiting to be switched off, each at the place it plays: the level in a
+/// MIDI file, and nothing at all in a track, which holds one level.
+///
+/// Both formats record a note as a switch on and a switch off rather than a note with a length,
+/// and both repeat a key before releasing it, so a switch off takes the *oldest* note still on
+/// that key. A note never switched off is a tap, which is how the game plays one and keeps a file
+/// that ends mid-note from losing its last notes.
+#[derive(Debug)]
+pub(crate) struct Switches<P> {
+    /// Moments a key was switched on at and not yet off, oldest first.
+    open: std::collections::HashMap<(P, TrackKey), std::collections::VecDeque<Moment>>,
+}
+
+impl<P> Default for Switches<P> {
+    fn default() -> Self {
+        Self {
+            open: std::collections::HashMap::new(),
+        }
+    }
+}
+
+impl<P: Copy + Eq + std::hash::Hash + Ord> Switches<P> {
+    /// Takes `key` switched on at `at`, in `place`.
+    pub(crate) fn on(&mut self, place: P, key: TrackKey, at: Moment) {
+        self.open.entry((place, key)).or_default().push_back(at);
+    }
+
+    /// Takes `key` switched off at `at`, in `place`, giving the note it completes. Gives none
+    /// when nothing was on that key, as a file may switch off what it never switched on.
+    pub(crate) fn off(&mut self, place: P, key: TrackKey, at: Moment) -> Option<Played> {
+        let on = self
+            .open
+            .get_mut(&(place, key))
+            .and_then(std::collections::VecDeque::pop_front)?;
+        Some(Played { key, on, off: at })
+    }
+
+    /// The notes still switched on, as taps, by place and then key so a file reads the same way
+    /// every time.
+    pub(crate) fn unfinished(self) -> Vec<(P, Played)> {
+        let mut left: Vec<_> = self.open.into_iter().collect();
+        left.sort_by_key(|&((place, key), _)| (place, key));
+        left.into_iter()
+            .flat_map(|((place, key), ons)| {
+                ons.into_iter()
+                    .map(move |on| (place, Played { key, on, off: on }))
+            })
+            .collect()
+    }
+}
+
 impl Change {
     /// A tempo change at a finite moment with a positive, finite tempo.
     pub(crate) fn new(seconds: f64, bpm: f64, meter: NonZeroU16) -> Option<Self> {
@@ -681,6 +732,53 @@ pub(crate) fn beats_at(tempo: &[Change], seconds: Moment) -> f64 {
 mod tests {
     use super::*;
     use crate::Side;
+
+    /// A key that belongs to a level.
+    fn key(at: u8) -> TrackKey {
+        TrackKey::new(at).unwrap()
+    }
+
+    /// A moment of the audio.
+    fn at(seconds: f64) -> Moment {
+        Moment::from_seconds(seconds).unwrap()
+    }
+
+    #[test]
+    fn a_switch_off_completes_the_oldest_note_still_on_its_key() {
+        let mut open = Switches::default();
+        open.on((), key(0), at(0.0));
+        open.on((), key(0), at(1.0));
+
+        // The first off takes the first on, not the nearest one.
+        let first = open.off((), key(0), at(2.0)).unwrap();
+        assert_eq!((first.on, first.off), (at(0.0), at(2.0)));
+        let second = open.off((), key(0), at(3.0)).unwrap();
+        assert_eq!((second.on, second.off), (at(1.0), at(3.0)));
+
+        // Nothing is left on that key, and a stray off gives no note.
+        assert!(open.off((), key(0), at(4.0)).is_none());
+        assert!(open.unfinished().is_empty());
+    }
+
+    #[test]
+    fn a_note_never_switched_off_is_a_tap_and_keys_keep_to_their_place() {
+        let mut open = Switches::default();
+        open.on(1, key(3), at(5.0));
+        open.on(0, key(2), at(4.0));
+        open.on(0, key(1), at(6.0));
+        // A key switched off in one place does not take the note on in another.
+        assert!(open.off(1, key(2), at(7.0)).is_none());
+
+        let left = open.unfinished();
+        let places: Vec<_> = left
+            .iter()
+            .map(|&(place, note)| (place, note.key))
+            .collect();
+        assert_eq!(places, [(0, key(1)), (0, key(2)), (1, key(3))]);
+        for (_, note) in left {
+            assert_eq!(note.on, note.off, "a note left on plays as a tap");
+        }
+    }
 
     /// Four beats to the bar.
     fn four() -> NonZeroU16 {
