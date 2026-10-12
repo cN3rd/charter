@@ -66,7 +66,7 @@ if __name__ == "__main__":
     elif sys.argv[1:2] == ["check"]:
         bundle = sys.argv[2] if len(sys.argv) > 2 else "docs/src"
         result = subprocess.run(
-            [".github/skills/okf-open-knowledge-format/scripts/validate.sh", bundle],
+            [".agents/skills/okf-open-knowledge-format/scripts/validate.sh", bundle],
             capture_output=True,
             text=True,
             check=False,

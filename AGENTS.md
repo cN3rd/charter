@@ -98,7 +98,7 @@ with user-visible changes, and `docs/src/packaging.md` with packaging changes.
 
 ## Tooling
 
-`.github/skills/README.md` lists every skill and where it comes from: `/rust-skills` (a
+`.agents/skills/README.md` lists every skill and where it comes from: `/rust-skills` (a
 submodule, fetched by `just setup`), `/test-driven-development` before writing production code,
 `/commit` to split work into atomic commits. A skill's `PITFALLS.md` holds charter's local rules
 for it; when a skill leads you wrong, append a trigger, wrong, right entry there.
