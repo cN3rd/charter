@@ -354,7 +354,7 @@ pub(crate) fn act(
             if let Some(&(_, to)) = moved.iter().find(|(from, _)| Some(*from) == window.focus) {
                 window.focus = Some(to);
             }
-            window.selection = moved.iter().map(|(_, to)| *to).collect();
+            window.select(moved.iter().map(|(_, to)| *to));
             commands.push(Command::Edit(Edit::MoveAnchors(moved)));
         }
         Intent::Tail(by) => {
@@ -396,7 +396,7 @@ pub(crate) fn act(
             }
         }
         Intent::SelectAll => {
-            window.selection = frame.pins.iter().map(|pin| pin.tick).collect();
+            window.select(frame.pins.iter().map(|pin| pin.tick));
             window.focus = window.selection.first().copied();
         }
         Intent::Help => window.help = !window.help,

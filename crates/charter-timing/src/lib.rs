@@ -170,7 +170,7 @@ pub struct TimingWindow {
     follow: bool,
     /// Anchor under keyboard focus, by its tick.
     focus: Option<Tick>,
-    /// The selected anchors, a run of neighbours, by tick.
+    /// The selected anchors, a run of neighbours in tick order, kept so by [`Self::select`].
     selection: Vec<Tick>,
     /// Active pointer operation in the timing rows.
     gesture: pointer::Gesture,
@@ -473,26 +473,37 @@ impl TimingWindow {
         self.scroll_to = Some(tick);
         if frame.pins.iter().any(|pin| pin.tick == tick) {
             self.focus = Some(tick);
-            self.selection = vec![tick];
+            self.select([tick]);
         }
     }
 
     /// Selects and scrolls to the anchor at `tick`.
     fn focus_on(&mut self, tick: Tick) {
         self.focus = Some(tick);
-        self.selection = vec![tick];
+        self.select([tick]);
         self.scroll_to = Some(tick);
+    }
+
+    /// Selects `ticks`, in tick order and without repeats.
+    ///
+    /// [`Self::range`], [`Self::selected_span`] and `pointer::moving_bounds` all take the first
+    /// and last selected anchors as the ends of the run, so nothing may leave one out of order.
+    fn select(&mut self, ticks: impl IntoIterator<Item = Tick>) {
+        self.selection = ticks.into_iter().collect();
+        self.selection.sort_unstable();
+        self.selection.dedup();
     }
 
     /// Selects every anchor between `a` and `b`, inclusive.
     fn select_between(&mut self, frame: &Frame<'_>, a: Tick, b: Tick) {
         let (low, high) = if a <= b { (a, b) } else { (b, a) };
-        self.selection = frame
-            .pins
-            .iter()
-            .map(|pin| pin.tick)
-            .filter(|tick| *tick >= low && *tick <= high)
-            .collect();
+        self.select(
+            frame
+                .pins
+                .iter()
+                .map(|pin| pin.tick)
+                .filter(|tick| *tick >= low && *tick <= high),
+        );
     }
 
     /// Nudges the targets `by` seconds, joining the step before when they were nudged a moment
@@ -882,6 +893,27 @@ mod tests {
     use super::*;
     use crate::test_support::*;
     use crate::*;
+
+    #[test]
+    fn selecting_anchors_out_of_order_still_leaves_the_run_its_ends() {
+        let mut window = TimingWindow::default();
+        window.select([
+            Tick::new(1920),
+            Tick::new(0),
+            Tick::new(960),
+            Tick::new(960),
+        ]);
+
+        assert_eq!(
+            window.selection,
+            [Tick::new(0), Tick::new(960), Tick::new(1920)],
+            "the run is held in tick order, without repeats"
+        );
+        // `range`, `selected_span` and `pointer::moving_bounds` all read the run's ends this way,
+        // so an anchor arriving out of order would give them a backwards range.
+        assert_eq!(window.selection.first().copied(), Some(Tick::new(0)));
+        assert_eq!(window.selection.last().copied(), Some(Tick::new(1920)));
+    }
 
     #[test]
     fn nudges_merge_for_the_same_selection_until_a_refusal_resets_them() {
