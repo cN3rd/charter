@@ -390,6 +390,9 @@ impl TimingWindow {
                 }
             }
         };
+        // A refused nudge ends the run, so the next one starts a fresh undo step. A refused tail
+        // change deliberately does not: the tail run carries on, since the refusal changed
+        // nothing and `can_merge_timing` still decides whether the merge is allowed.
         if matches!(edit, Edit::Nudge { .. }) {
             self.last_nudge = None;
         }

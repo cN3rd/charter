@@ -152,6 +152,11 @@ fn hz(mel: f64) -> f64 {
 
 /// Each band's weight for every FFT bin: triangles between band edges spaced evenly in mel, as
 /// torchaudio's `melscale_fbanks` makes them without normalisation.
+// ponytail: this and the two mel conversions above are 68 lines of arithmetic pinned by the
+// parity fixtures. `mel_spec`'s `SparseMelFilterbank::from_mel` builds the same bank bit for bit,
+// but its spectrogram path is Whisper's (drops the Nyquist bin, power rather than magnitude), and
+// it costs a second `image` build, a `cc` build dependency and 5,700 lines to save these. Take it
+// once charter needs a second filterbank, Whisper-compatible mel, or Kaldi fbank anyway.
 fn filterbank() -> Vec<Vec<f64>> {
     let bins = WINDOW.div_euclid(2).saturating_add(1);
     let nyquist = f64::from(RATE) / 2.0;

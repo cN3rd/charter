@@ -61,7 +61,8 @@ impl Store<'_> {
 /// its three input steps' channels.
 // ponytail: im2col rather than burn's conv1d, whose direct kernel, the only one wgpu offers,
 // takes twice as long as burn 0.21's did on the encoder's second convolution (about 160 against
-// 82 ms a batch of four windows); the matmul copies its three steps' channels first.
+// 82 ms a batch of four windows); the matmul copies its three steps' channels first. Drop it once
+// a burn release times conv1d at or under the matmul here, which the fixtures will confirm.
 struct Conv3 {
     /// The weight as `[3 · in, out]`: every input channel at the first step, then at the second
     /// and the third.

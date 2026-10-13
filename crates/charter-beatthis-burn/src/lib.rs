@@ -73,7 +73,8 @@ impl Tracker {
     /// model.
     pub fn from_checkpoint(path: &Path) -> Result<Self, Error> {
         // ponytail: burn-store reads a zipped PyTorch checkpoint only from a file, so this is the
-        // one place the crate touches the disk; the host still chooses the file.
+        // one place the crate touches the disk; the host still chooses the file. Take the bytes
+        // instead, as `Timer::load` already does, once burn-store reads a checkpoint from memory.
         let mut store = remapped(PytorchStore::from_file(path).with_top_level_key("state_dict"));
         Self::loaded(Dims::FULL, |model| {
             model
