@@ -882,9 +882,7 @@ mod tests {
                         grid: grid_of(16),
                         colour_notes_by_layer: false,
                     },
-                    &mut [0.0; 2],
-                    &mut None,
-                    &mut ObjectOrder::default(),
+                    &mut State::default(),
                     &mut Vec::new(),
                 );
             });
@@ -1923,7 +1921,7 @@ mod tests {
     fn escape_discards_an_active_marquee_before_the_pointer_is_released() {
         struct Drag {
             song: Song,
-            gesture: Option<Gesture>,
+            notefield: State,
             actions: Vec<Action>,
         }
         let mut harness = Harness::builder()
@@ -1940,15 +1938,13 @@ mod tests {
                             grid: grid_of(16),
                             colour_notes_by_layer: false,
                         },
-                        &mut [0.0; 2],
-                        &mut state.gesture,
-                        &mut ObjectOrder::default(),
+                        &mut state.notefield,
                         &mut state.actions,
                     );
                 },
                 Drag {
                     song: song(),
-                    gesture: None,
+                    notefield: State::default(),
                     actions: Vec::new(),
                 },
             );
@@ -1973,12 +1969,12 @@ mod tests {
         harness.hover_at(to);
         harness.run();
         assert!(matches!(
-            harness.state().gesture,
+            harness.state().notefield.gesture,
             Some(Gesture::Marquee { .. })
         ));
         harness.key_press(egui::Key::Escape);
         harness.run();
-        assert_eq!(harness.state().gesture, None);
+        assert_eq!(harness.state().notefield.gesture, None);
         harness.event(egui::Event::PointerButton {
             pos: to,
             button: egui::PointerButton::Primary,

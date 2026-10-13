@@ -306,10 +306,8 @@ pub struct Window {
     zoom: Zoom,
     /// Why the last file failed to open, or the last edit was refused.
     failure: Option<String>,
-    /// A drag across the notefield in progress.
-    gesture: Option<notefield::Gesture>,
-    /// Cached visible-object paint order for the notefield.
-    object_order: notefield::ObjectOrder,
+    /// What the notefield keeps between frames.
+    notefield: notefield::State,
     /// What is being typed into the timing section of the song panel.
     timing_drafts: timing_panel::Drafts,
     /// What is being typed into the song panel's song fields.

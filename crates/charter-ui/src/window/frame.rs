@@ -319,11 +319,7 @@ impl Window {
                         _ => None,
                     };
                     let reversed = self.settings.direction == Direction::Down;
-                    let (scrolled, gesture, object_order) = (
-                        &mut self.typing.scrolled,
-                        &mut self.gesture,
-                        &mut self.object_order,
-                    );
+                    let notefield = &mut self.notefield;
                     style::stage().show(ui, |ui| {
                         ui.set_min_size(ui.available_size());
                         let whole = ui.available_rect_before_wrap();
@@ -339,9 +335,7 @@ impl Window {
                             &mut inner,
                             active_song,
                             shown,
-                            scrolled,
-                            gesture,
-                            object_order,
+                            notefield,
                             &mut actions,
                         );
                         if let (Some(beside), Some(visible)) = (beside, visible) {

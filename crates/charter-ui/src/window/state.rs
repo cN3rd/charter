@@ -108,8 +108,6 @@ pub(super) struct HelpWindows {
 /// Lane-key typing state.
 #[derive(Debug, Default)]
 pub(super) struct Typing {
-    /// Touchpad scrolling not yet turned into cursor steps, and into measures under Shift.
-    pub(super) scrolled: [f32; 2],
     /// Which lane keys are down, and which of those placed or removed a note.
     pub(super) lane_keys: keys::LaneKeys,
     /// Whether a lane key placed a note that the cursor has not moved on from, which it does once

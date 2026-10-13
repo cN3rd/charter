@@ -39,8 +39,9 @@ use spectrum::frequencies;
 use wheel::measure_steps;
 
 pub(crate) use draw::GRIDS;
-pub(crate) use draw::{ObjectOrder, kind_colours};
-pub(crate) use gesture::Gesture;
+use draw::ObjectOrder;
+pub(crate) use draw::kind_colours;
+use gesture::Gesture;
 pub(crate) use spectrum::Tiles;
 pub(crate) use wheel::wheel_steps;
 
@@ -338,9 +339,11 @@ pub(crate) fn show(
         grid: finest,
         colour_notes_by_layer,
     }: Shown<'_>,
-    scrolled: &mut [f32; 2],
-    gesture: &mut Option<Gesture>,
-    object_order: &mut ObjectOrder,
+    State {
+        scrolled,
+        gesture,
+        order: object_order,
+    }: &mut State,
     actions: &mut Vec<Action>,
 ) -> Option<(f64, f64)> {
     let Some(chart) = song.chart() else {
@@ -579,6 +582,21 @@ pub(crate) fn show(
         (bottom, top)
     };
     Some((earlier.seconds(), later.seconds()))
+}
+
+/// What the notefield keeps between frames, and nothing else does: the touchpad scrolling not yet
+/// turned into whole steps, the drag under way, and the paint order last worked out.
+///
+/// Its host holds one of these and hands it to [`show`]; the fields are the notefield's own, so
+/// nothing outside can leave them disagreeing.
+#[derive(Debug, Default)]
+pub(crate) struct State {
+    /// Touchpad scrolling not yet turned into cursor steps, and into measures under Shift.
+    scrolled: [f32; 2],
+    /// A drag across the notefield in progress.
+    gesture: Option<Gesture>,
+    /// Cached visible-object paint order.
+    order: ObjectOrder,
 }
 
 /// How the notefield is shown: how close, which way it runs, and the waveform of the song's
