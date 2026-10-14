@@ -51,8 +51,9 @@ With Frequencies on in the Display settings, the strip shows the audio's spectru
 pitches on the left and high on the right, brighter the louder, so a kick and a hi-hat that sound
 together show apart.
 
-The minimap beside the notefield shows the whole chart, its notes by lane and its sections as green
-lines, with a box over what the notefield shows. A click or drag on it moves the cursor there.
+The minimap beside the notefield shows the whole chart, its shown notes by lane, ghosted notes
+faintly and its sections as green lines; hidden notes disappear. A box shows what the notefield
+shows. A click or drag on it moves the cursor there.
 
 ## Latency
 

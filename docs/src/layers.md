@@ -91,7 +91,8 @@ the layer or its saved visibility are disabled and say why on hover.
   the order also applies where a ruleset permits its own kinds to overlap.
 - The status bar shows the active layer's swatch and name. A click there lists the chart's layers
   to switch to.
-- The minimap draws every layer, hidden ones included, since it shows the chart the game plays.
+- The minimap follows the notefield: hidden notes disappear and ghosted notes draw faintly, while
+  section lines and the visible-range box remain.
 
 ## Editing
 

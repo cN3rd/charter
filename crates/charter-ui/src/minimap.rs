@@ -2,7 +2,7 @@
 //! and its sections across, with a box over the stretch the notefield shows. A click or a drag on
 //! it moves the cursor there.
 
-use charter_core::{Kind, MarkerKind, Position, ResolvedTime};
+use charter_core::{Kind, LayerView, MarkerKind, Position, ResolvedTime};
 use charter_editor::Song;
 use egui::{Rect, Sense, Stroke, StrokeKind, Ui};
 
@@ -99,6 +99,10 @@ pub(crate) fn show(
         let lanes = chart.lanes.map_or(1, u16::from).max(1);
         let lane_w = (rect.width() - 4.0) / f32::from(lanes);
         for object in &chart.objects {
+            let (layer_view, _) = song.layer_look(object);
+            if layer_view == LayerView::Hidden {
+                continue;
+            }
             let Position::Lane { index, width } = object.position else {
                 continue;
             };
@@ -113,6 +117,11 @@ pub(crate) fn show(
                 style::HOLD
             } else {
                 kind_colours(&object.kind).0
+            };
+            let colour = if layer_view == LayerView::Ghosted {
+                colour.gamma_multiply(0.35)
+            } else {
+                colour
             };
             let note = Rect::from_x_y_ranges(left + 0.5..=right - 0.5, top..=bottom);
             painter.rect_filled(note, 0.0, colour);
@@ -207,6 +216,60 @@ mod tests {
         assert!((map.y_of(1.0) - 300.0).abs() < 1e-3);
         assert!((map.seconds_at(200.0) - 0.5).abs() < 1e-9);
         assert!((map.seconds_at(900.0) - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn the_minimap_hides_hidden_notes_and_dims_ghosted_notes() {
+        let document = json!({
+            "format_version": 1,
+            "ruleset": { "id": "test", "version": "1" },
+            "metadata": { "title": "t", "artist": "a", "audio": "a.ogg" },
+            "timing": { "anchors": [ { "tick": 0, "seconds": 0.0 } ], "tempo": 120.0, "events": [] },
+            "charts": [{
+                "name": "Easy", "lanes": 4,
+                "layers": [
+                    { "name": "Shown", "colour": "blue" },
+                    { "name": "Ghost", "colour": "red", "view": "ghosted" },
+                    { "name": "Hidden", "colour": "green", "view": "hidden" }
+                ],
+                "objects": [
+                    { "tick": 0, "position": { "lane": { "index": 0 } },
+                      "kind": "tap", "shape": "instant", "layer": "Shown" },
+                    { "tick": 960, "position": { "lane": { "index": 0 } },
+                      "kind": "tap", "shape": "instant", "layer": "Ghost" },
+                    { "tick": 1920, "position": { "lane": { "index": 0 } },
+                      "kind": "tap", "shape": "instant", "layer": "Hidden" }
+                ]
+            }]
+        });
+        let document = ValidDocument::from_json(&serde_json::to_vec(&document).unwrap()).unwrap();
+        let song = Song::new(document, &[]);
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            show(
+                ui,
+                rect(),
+                &song,
+                ((0.0, 1.0), Some(3.0), false),
+                &mut Vec::new(),
+            );
+        });
+        let notes: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| {
+                if let egui::Shape::Rect(rect) = &shape.shape
+                    && rect.rect.width() < 10.0
+                    && rect.rect.height() <= NOTE_H
+                {
+                    Some(rect.fill)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        output.textures_delta.clear();
+        assert_eq!(notes, [style::TAP, style::TAP.gamma_multiply(0.35)]);
     }
 
     #[test]
