@@ -1372,7 +1372,7 @@ mod tests {
                     menu_bar(
                         ui,
                         (Some(song), &[]),
-                        (false, true, true, false),
+                        (false, true, (true, false), false),
                         (true, true),
                         actions,
                     );

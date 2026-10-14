@@ -13,7 +13,12 @@ use charter_core::LaneOffset;
 pub(crate) fn menu_bar(
     ui: &mut Ui,
     (song, recent): (Option<&Song>, &[std::path::PathBuf]),
-    (playing, importable, findable, colour_notes_by_layer): (bool, bool, bool, bool),
+    (playing, importable, (audio_ready, searching), colour_notes_by_layer): (
+        bool,
+        bool,
+        (bool, bool),
+        bool,
+    ),
     (songs_importable, song_exportable): (bool, bool),
     actions: &mut Vec<Action>,
 ) {
@@ -189,12 +194,17 @@ pub(crate) fn menu_bar(
                     crate::Tracker::Mapperatorinator,
                 ),
             ];
+            let unavailable = find_timing_unavailable(song, audio_ready, searching);
             for (label, hover, tracker) in finders {
-                if ui
-                    .add_enabled(editable && findable, egui::Button::new(label))
-                    .on_hover_text(hover)
-                    .clicked()
-                {
+                let item = ui
+                    .add_enabled(unavailable.is_none(), egui::Button::new(label))
+                    .on_hover_text(hover);
+                let item = if let Some(reason) = unavailable {
+                    item.on_disabled_hover_text(reason)
+                } else {
+                    item
+                };
+                if item.clicked() {
                     actions.push(Action::FindTiming(tracker));
                 }
             }
@@ -331,6 +341,21 @@ fn menu_items<const N: usize>(
     }
 }
 
+/// Why automatic timing cannot start, if it cannot.
+const fn find_timing_unavailable(
+    song: Option<&Song>,
+    audio_ready: bool,
+    searching: bool,
+) -> Option<&'static str> {
+    match song {
+        None => Some("Open a song first"),
+        Some(song) if song.read_only().is_some() => Some("The song is read-only"),
+        _ if !audio_ready => Some("Choose audio before finding timing"),
+        _ if searching => Some("A timing search is already running"),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use egui_kittest::Harness;
@@ -347,7 +372,7 @@ mod tests {
                 menu_bar(
                     ui,
                     (Some(song), &[]),
-                    (false, false, false, false),
+                    (false, false, (false, false), false),
                     (false, false),
                     actions,
                 );
@@ -362,5 +387,30 @@ mod tests {
         copy.unwrap().click();
         harness.run();
         assert_eq!(harness.state().1, [Action::Copy]);
+    }
+
+    #[test]
+    fn automatic_timing_explains_why_it_is_unavailable() {
+        let bytes = charter_editor::demo::song().to_json().unwrap();
+        let editable = Song::open(&bytes, &[&charter_stepmania::Plugin]).unwrap();
+        let read_only = Song::open(&bytes, &[]).unwrap();
+
+        assert_eq!(
+            find_timing_unavailable(None, false, false),
+            Some("Open a song first")
+        );
+        assert_eq!(
+            find_timing_unavailable(Some(&editable), false, false),
+            Some("Choose audio before finding timing")
+        );
+        assert_eq!(
+            find_timing_unavailable(Some(&editable), true, true),
+            Some("A timing search is already running")
+        );
+        assert_eq!(
+            find_timing_unavailable(Some(&read_only), false, true),
+            Some("The song is read-only")
+        );
+        assert_eq!(find_timing_unavailable(Some(&editable), true, false), None);
     }
 }

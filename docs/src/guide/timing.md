@@ -79,7 +79,8 @@ The window takes the keyboard after a click in it and gives it back after a clic
 
 Timing > Find timing with Beat This!… and Find timing with Mapperatorinator… listen to the song and
 put a timing in place of the open chart's, as one undo step. Check what they find in the timing
-window before charting on it.
+window before charting on it. The menu explains when either finder is disabled: a song has no
+audio, another search is under way, or the song is read-only.
 
 | | Beat This! | Mapperatorinator |
 |---|---|---|

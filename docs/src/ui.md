@@ -402,7 +402,8 @@ The clicks are mixed into the music before it plays, so they need no correction 
 - Find timing with Beat This!… and Find timing with Mapperatorinator… draft the open chart's timing
   from its audio and put it in place as one step, as [automatic timing](autotiming.md) describes.
   The first time each runs it asks before downloading its model, and the status bar shows its
-  progress. Without a graphics card Mapperatorinator asks whether to run on the CPU.
+  progress. A disabled finder explains whether audio is missing, a search is under way, or the
+  song is read-only. Without a graphics card Mapperatorinator asks whether to run on the CPU.
 - Import timing… reads another program's timing, pasted or from a file, and shows what
   it holds before it replaces the open chart's tempo, meters and offset as one step. Each ruleset
   plugin may read a format through `RulesetPlugin::import_timing`; osu!mania reads osu!'s

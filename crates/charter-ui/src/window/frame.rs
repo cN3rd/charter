@@ -177,7 +177,8 @@ impl Window {
             .frame(style::chrome())
             .show(ui, |ui| {
                 let importable = import::offered(self.plugins);
-                let findable = self.audio_file().is_some() && self.dialogs.finding == Finding::Idle;
+                let audio_ready = self.audio_file().is_some();
+                let searching = self.dialogs.finding != Finding::Idle;
                 let recent = &self.settings.recent;
                 let formats = (self.songs_importable(), self.song_exportable());
                 panels::menu_bar(
@@ -186,7 +187,7 @@ impl Window {
                     (
                         playing,
                         importable,
-                        findable,
+                        (audio_ready, searching),
                         self.settings.colour_notes_by_layer,
                     ),
                     formats,
