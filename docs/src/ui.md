@@ -185,8 +185,9 @@ the lanes. The user guide describes the shipped layout; planned behavior is labe
 
 The notefield gets the centre and most of the width. The song panel collapses; nothing docks or
 floats, since one notefield has nothing to rearrange against. Docking can come with a second view.
-In a narrow window the timing column gives up width before the lanes; the audio strip has a fixed
-width.
+In a narrow window the timing column gives up width before the lanes. The audio strip disappears
+before lanes become too narrow, then the ruler and timing column yield at the tightest widths so
+every lane stays in reach.
 
 The window is dark whatever the system prefers. Charting means long sessions against a game's
 dark playfield, often in a dim room, and notes read best as bright shapes on dark lanes.

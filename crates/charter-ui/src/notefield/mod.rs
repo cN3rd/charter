@@ -168,14 +168,16 @@ pub(crate) fn earliest_tick_from(timing: Valid<'_, Timing>, at: ResolvedTime) ->
 const RULER_W: f32 = 80.0;
 /// Preferred timing gutter width, in points.
 const TIMING_W: f32 = 160.0;
-/// Smallest timing gutter width, in points.
+/// Preferred minimum timing gutter width, in points.
 const TIMING_MIN_W: f32 = 72.0;
 /// Preferred width of each note lane, in points.
 const LANE_W: f32 = 56.0;
 /// How wide the waveform strip is, when there is a waveform to show.
 const WAVE_W: f32 = 64.0;
-/// Smallest width of each note lane, in points.
+/// Preferred minimum width of each note lane, in points.
 const LANE_MIN_W: f32 = 20.0;
+/// Narrowest useful lane width when there is room, in points.
+const LANE_FLOOR_W: f32 = 4.0;
 /// Space above the timeline for lane labels, in points.
 const HEADER_H: f32 = 26.0;
 /// How far down the notefield the now line sits.
@@ -201,22 +203,30 @@ pub(crate) struct Columns {
 }
 
 impl Columns {
-    /// Centres the columns in `across`. Short of room, the timing gutter narrows first, then the
-    /// lanes, and past that the columns start at the left edge.
+    /// Centres the columns in `across`. Short of room, the timing gutter narrows first, the
+    /// waveform disappears, then the lanes narrow. The ruler and finally the timing gutter yield
+    /// before the lanes leave the canvas.
     fn laid_out(across: Rangef, lanes: u16, wave: bool) -> Self {
         let count = f32::from(lanes);
-        let wave_w = if wave { WAVE_W } else { 0.0 };
-        let room = across.span() - RULER_W - TIMING_MIN_W - wave_w;
+        let available = across.span().max(0.0);
+        let wave_w = if wave && available >= RULER_W + TIMING_MIN_W + WAVE_W + LANE_MIN_W * count {
+            WAVE_W
+        } else {
+            0.0
+        };
+        // ponytail: below four points per lane, even this floor yields; add horizontal scrolling
+        // if editing charts in such tiny canvases becomes necessary.
         let lane_w = if lanes == 0 {
             0.0
         } else {
-            (room / count).clamp(LANE_MIN_W, LANE_W)
+            let floor = LANE_FLOOR_W.min(available / count);
+            ((available - RULER_W - TIMING_MIN_W - wave_w) / count).clamp(floor, LANE_W)
         };
-        let timing =
-            (across.span() - RULER_W - wave_w - lane_w * count).clamp(TIMING_MIN_W, TIMING_W);
-        let total = RULER_W + timing + wave_w + lane_w * count;
+        let ruler = RULER_W.min((available - TIMING_MIN_W - wave_w - lane_w * count).max(0.0));
+        let timing = (available - ruler - wave_w - lane_w * count).clamp(0.0, TIMING_W);
+        let total = ruler + timing + wave_w + lane_w * count;
         let left = (across.center() - total / 2.0).max(across.min);
-        let ruler = Rangef::new(left, left + RULER_W);
+        let ruler = Rangef::new(left, left + ruler);
         let timing = Rangef::new(ruler.max, ruler.max + timing);
         let waveform = Rangef::new(timing.max, timing.max + wave_w);
         Self {
@@ -284,7 +294,7 @@ impl Field {
     /// The lane under `x`, if the chart has one there.
     fn lane_at(&self, x: f32) -> Option<LaneIndex> {
         let lanes = self.columns.lanes;
-        if !lanes.contains(x) || self.lanes == 0 {
+        if !lanes.contains(x) || self.lanes == 0 || self.columns.lane_w <= 0.0 {
             return None;
         }
         let across = ((x - lanes.min) / self.columns.lane_w).floor();
@@ -446,12 +456,14 @@ pub(crate) fn show(
     );
     let clipped = painter.clipped(Rect::from_x_y_ranges(area.x_range(), rows));
     backdrop(&clipped, columns, lanes, rows);
-    match strip {
-        Some(Strip::Waveform(peaks)) => waveform(&clipped, columns, view, rows, peaks),
-        Some(Strip::Frequencies(tiles)) => {
-            frequencies(&clipped, ui.ctx(), (columns, view, rows), tiles);
+    if columns.wave.span() > 0.0 {
+        match strip {
+            Some(Strip::Waveform(peaks)) => waveform(&clipped, columns, view, rows, peaks),
+            Some(Strip::Frequencies(tiles)) => {
+                frequencies(&clipped, ui.ctx(), (columns, view, rows), tiles);
+            }
+            None => {}
         }
-        None => {}
     }
     grid(&clipped, columns, (song, finest), view, rows);
     markers(&clipped, columns, song, view, rows, (first, last));
@@ -622,4 +634,26 @@ pub enum Strip<'a> {
     Waveform(&'a Peaks),
     /// How loud each band of pitch is over time, low on the strip's left and high on its right.
     Frequencies(&'a Tiles),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn eight_lanes_fit_even_when_the_canvas_is_narrower_than_the_columns() {
+        for width in [130.0, 80.0, 16.0] {
+            let across = Rangef::new(10.0, 10.0 + width);
+            let columns = Columns::laid_out(across, 8, true);
+            for lane in 0_u16..8 {
+                let span = columns.span(LaneIndex::new(lane), LaneCount::ONE);
+                assert!(
+                    span.min >= across.min && span.max <= across.max + 0.001 && span.span() > 0.0,
+                    "{width}-point canvas: lane {lane} spans {span:?}, beyond {across:?}"
+                );
+            }
+            assert_eq!(columns.wave.span(), 0.0, "{width}-point canvas");
+            assert!(columns.ruler.min >= across.min && columns.timing.max <= across.max + 0.001);
+        }
+    }
 }

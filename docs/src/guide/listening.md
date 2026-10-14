@@ -49,7 +49,7 @@ Hidden and faded [layers](../layers.md) make no ticks.
 Once the audio loads, its waveform draws in a strip beside the lanes, lined up with the notes.
 With Frequencies on in the Display settings, the strip shows the audio's spectrum instead, low
 pitches on the left and high on the right, brighter the louder, so a kick and a hi-hat that sound
-together show apart.
+together show apart. On a narrow canvas, the strip disappears to keep all lanes in view.
 
 The minimap beside the notefield shows the whole chart, its shown notes by lane, ghosted notes
 faintly and its sections as green lines; hidden notes disappear. A box shows what the notefield
