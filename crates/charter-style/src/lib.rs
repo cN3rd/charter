@@ -36,6 +36,9 @@ pub const STAGE: Color32 = Color32::from_gray(17);
 pub const WELL: Color32 = Color32::from_gray(14);
 /// Lines between regions.
 pub const EDGE: Color32 = Color32::from_gray(40);
+/// The edge of a switch or checkbox that is off, at least 3:1 against the panels behind it: with
+/// no fill or text of its own, that edge is all there is to identify the control by.
+pub const CONTROL_OFF: Color32 = Color32::from_gray(110);
 
 /// The one accent: the current selection, the primary action and focus.
 pub const ACCENT: Color32 = Color32::from_rgb(110, 170, 255);
@@ -324,10 +327,16 @@ pub fn primary(text: &str) -> egui::Button<'_> {
     egui::Button::new(RichText::new(text).color(ON_ACCENT)).fill(ACCENT_FILL)
 }
 
-/// Names `response`, a button, `name` for screen readers and tests.
-fn named(ui: &Ui, response: egui::Response, name: &str) -> egui::Response {
+/// Names `response`, a button, `name` for screen readers and tests, reporting `on` as the state
+/// it holds. `None` is a button that does something rather than holding a state, which a screen
+/// reader then announces without one.
+fn named(ui: &Ui, response: egui::Response, name: &str, on: Option<bool>) -> egui::Response {
     let enabled = ui.is_enabled();
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, name));
+    response.widget_info(|| {
+        let mut info = egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, name);
+        info.selected = on;
+        info
+    });
     response
 }
 
@@ -340,27 +349,30 @@ pub fn icon_button(ui: &mut Ui, symbol: &str, text: &str, primary_look: bool) ->
         egui::Button::new((glyph(ui, symbol), RichText::new(text)))
     };
     let response = ui.add(button);
-    named(ui, response, text)
+    named(ui, response, text, None)
 }
 
 /// An icon that shows its button only on hover, named `name` and explained by `tip`.
 pub fn quiet_icon(ui: &mut Ui, symbol: &str, name: &str, tip: &str) -> egui::Response {
     let button = egui::Button::new(glyph(ui, symbol).color(WEAK_TEXT)).frame_when_inactive(false);
     let response = ui.add(button).on_hover_text(tip);
-    named(ui, response, name)
+    named(ui, response, name, None)
 }
 
-/// An icon button for the toolbar, lit in the accent while `on`, named `name` and explained by
-/// `tip`.
-pub fn tool(ui: &mut Ui, symbol: &str, name: &str, tip: &str, on: bool) -> egui::Response {
+/// An icon button for the toolbar, named `name` and explained by `tip`.
+///
+/// `on` is the state a toggle holds, lit in the accent while it is `Some(true)`, and `None` for a
+/// button that does something instead: the state reaches a screen reader as well as the eye, since
+/// the accent alone says nothing to one.
+pub fn tool(ui: &mut Ui, symbol: &str, name: &str, tip: &str, on: Option<bool>) -> egui::Response {
     let symbol = glyph(ui, symbol).size(16.0);
-    let button = if on {
+    let button = if on == Some(true) {
         egui::Button::new(symbol.color(ON_ACCENT)).fill(ACCENT_FILL)
     } else {
         egui::Button::new(symbol.color(TEXT)).frame_when_inactive(false)
     };
     let response = ui.add(button.min_size(vec2(30.0, 28.0))).on_hover_text(tip);
-    named(ui, response, name)
+    named(ui, response, name, on)
 }
 
 /// An on and off switch, in the accent while on, named `name` for screen readers and tests.
@@ -378,18 +390,26 @@ pub fn switch(ui: &mut Ui, on: &mut bool, name: &str) -> egui::Response {
     });
     if ui.is_rect_visible(rect) {
         let lit = ui.ctx().animate_bool_responsive(response.id, *on);
-        let track = if *on {
-            ACCENT_FILL
+        // Off is a dark well like an empty checkbox, outlined at 3:1 against the panels so it can
+        // be found, and so unlit beside the accent fill of a switch that is on.
+        let (fill, edge) = if *on {
+            (ACCENT_FILL, Color32::TRANSPARENT)
         } else {
-            Color32::from_gray(58)
+            (FIELD, CONTROL_OFF)
         };
-        let track = if response.hovered() {
-            track.gamma_multiply(1.15)
+        let (fill, edge) = if response.hovered() {
+            (fill.gamma_multiply(1.15), edge.gamma_multiply(1.15))
         } else {
-            track
+            (fill, edge)
         };
         let radius = rect.height() / 2.0;
-        ui.painter().rect_filled(rect, radius, track);
+        ui.painter().rect(
+            rect,
+            radius,
+            fill,
+            Stroke::new(1.0, edge),
+            egui::StrokeKind::Inside,
+        );
         let x = egui::lerp((rect.left() + radius)..=(rect.right() - radius), lit);
         let knob = egui::pos2(x, rect.center().y);
         ui.painter()
@@ -521,7 +541,12 @@ pub fn check(ui: &mut Ui, on: &mut bool, text: &str) -> egui::Response {
                 Stroke::new(1.8, ON_ACCENT),
             );
         } else {
-            let edge = Color32::from_gray(if hovered { 140 } else { 96 });
+            // 3:1 against the panels behind it, since the edge is what identifies an empty box.
+            let edge = if hovered {
+                CONTROL_OFF.gamma_multiply(1.15)
+            } else {
+                CONTROL_OFF
+            };
             painter.rect_filled(square, 3.0, FIELD);
             painter.rect_stroke(
                 square,
@@ -672,6 +697,51 @@ mod tests {
     fn contrast(a: Color32, b: Color32) -> f64 {
         let (a, b) = (luminance(a), luminance(b));
         (a.max(b) + 0.05) / (a.min(b) + 0.05)
+    }
+
+    #[test]
+    fn an_off_control_stays_three_to_one_against_every_surface_it_sits_on() {
+        // WCAG 1.4.11: a switch or checkbox that is off has no fill or text, so its edge is the
+        // only thing that says a control is there.
+        for surface in [PANEL, RAISED, CHROME, TOOLBAR, CANVAS] {
+            let ratio = contrast(CONTROL_OFF, surface);
+            assert!(ratio >= 3.0, "{CONTROL_OFF:?} on {surface:?} is {ratio:.2}");
+        }
+    }
+
+    /// The track a switch draws while `on`, its fill and outline in the one shape.
+    fn track(on: bool) -> egui::epaint::RectShape {
+        let mut state = on;
+        let mut output = egui::Context::default().run_ui(egui::RawInput::default(), |ui| {
+            switch(ui, &mut state, "Switch");
+        });
+        output.textures_delta.clear();
+        output
+            .shapes
+            .into_iter()
+            .find_map(|clipped| {
+                if let egui::Shape::Rect(rect) = clipped.shape
+                    && (rect.rect.height() - 20.0).abs() < 0.01
+                {
+                    Some(rect)
+                } else {
+                    None
+                }
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn an_off_switch_is_an_outlined_well_dimmer_than_a_lit_one() {
+        let (off, on) = (track(false), track(true));
+        // Off has to look unlit beside on by its brightness, not by its hue alone.
+        let apart = contrast(on.fill, off.fill);
+        assert!(
+            apart >= 2.0 && luminance(off.fill) < luminance(on.fill),
+            "the on and off tracks are {apart:.2}:1 apart"
+        );
+        // The outline is what finds it on a panel, held at 3:1 by the test above.
+        assert_eq!(off.stroke.color, CONTROL_OFF);
     }
 
     #[test]

@@ -213,7 +213,17 @@ pub(crate) fn menu_bar(
             } else {
                 "Colour notes by layer"
             };
-            if ui.button(label).clicked() {
+            let colours = ui.button(label);
+            // The tick is for the eye; a screen reader needs the state and one steady name.
+            colours.widget_info(|| {
+                egui::WidgetInfo::selected(
+                    egui::WidgetType::Button,
+                    true,
+                    colour_notes_by_layer,
+                    "Colour notes by layer",
+                )
+            });
+            if colours.clicked() {
                 actions.push(Action::ToggleLayerColours);
             }
             ui.separator();

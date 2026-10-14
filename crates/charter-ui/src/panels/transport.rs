@@ -15,30 +15,38 @@ pub(crate) fn transport_bar(
     let width = ui.available_width();
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
-        let (name, tip) = if panel {
-            ("Hide the song panel", "Hide the song panel (Ctrl+\\)")
+        // One name in either state, which the toggle reports, and a tip saying what a click does.
+        let panel_tip = if panel {
+            "Hide the song panel (Ctrl+\\)"
         } else {
-            ("Show the song panel", "Show the song panel (Ctrl+\\)")
+            "Show the song panel (Ctrl+\\)"
         };
-        if style::tool(ui, icon::SIDEBAR_SIMPLE, name, tip, panel).clicked() {
+        if style::tool(
+            ui,
+            icon::SIDEBAR_SIMPLE,
+            "Show the song panel",
+            panel_tip,
+            Some(panel),
+        )
+        .clicked()
+        {
             actions.push(Action::ToggleSongPanel);
         }
         ui.add_enabled_ui(song.is_some(), |ui| {
             style::chip(ui, |ui| {
                 let start = Action::JumpTo(Tick::new(0));
-                if style::tool(ui, icon::SKIP_BACK, "Jump to the start", "Home", false).clicked() {
+                if style::tool(ui, icon::SKIP_BACK, "Jump to the start", "Home", None).clicked() {
                     actions.push(start);
                 }
-                let (symbol, playback_name) = if playing {
-                    (icon::PAUSE, "Pause")
+                let (symbol, playback_tip) = if playing {
+                    (icon::PAUSE, "Pause (Space)")
                 } else {
-                    (icon::PLAY, "Play")
+                    (icon::PLAY, "Play from the cursor (Space)")
                 };
-                let playback_tip = format!("{playback_name} from the cursor (Space)");
-                if style::tool(ui, symbol, playback_name, &playback_tip, playing).clicked() {
+                if style::tool(ui, symbol, "Play", playback_tip, Some(playing)).clicked() {
                     actions.push(Action::TogglePlay);
                 }
-                if style::tool(ui, icon::SKIP_FORWARD, "Jump to the end", "End", false).clicked() {
+                if style::tool(ui, icon::SKIP_FORWARD, "Jump to the end", "End", None).clicked() {
                     actions.push(Action::JumpEnd);
                 }
             });
@@ -146,7 +154,7 @@ pub(crate) fn transport_bar(
                 icon::GEAR_SIX,
                 "Open settings",
                 "Settings (Ctrl+Comma)",
-                false,
+                None,
             )
             .clicked()
             {
@@ -158,7 +166,7 @@ pub(crate) fn transport_bar(
                     icon::MUSIC_NOTE_SIMPLE,
                     "Note ticks",
                     "Note ticks (F4)",
-                    ticks,
+                    Some(ticks),
                 )
                 .clicked()
                 {
@@ -169,7 +177,7 @@ pub(crate) fn transport_bar(
                     icon::PIANO_KEYS,
                     "Tuned lanes",
                     "Tuned lanes: each lane ticks in its own pitch (Shift+F4)",
-                    tuned,
+                    Some(tuned),
                 )
                 .clicked()
                 {
@@ -180,13 +188,13 @@ pub(crate) fn transport_bar(
                     icon::METRONOME,
                     "Metronome",
                     "Metronome (F3)",
-                    metronome,
+                    Some(metronome),
                 )
                 .clicked()
                 {
                     actions.push(Action::ToggleMetronome);
                 }
-                let button = style::tool(ui, icon::SPEAKER_HIGH, "Volume", "Volume", false);
+                let button = style::tool(ui, icon::SPEAKER_HIGH, "Volume", "Volume", None);
                 let popup = egui::Popup::menu(&button)
                     .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
                 popup.show(|popup_ui| {

@@ -112,7 +112,12 @@ the tempo at the cursor.
   `crates/charter-style/assets/fonts` with Inter's OFL licence. The system's Japanese, Chinese and
   Korean fonts follow them whatever the locale, found with the `system-fonts` crate and read once,
   so titles in those scripts draw.
-- Messages float over the canvas rather than moving it.
+- Messages float over the canvas rather than moving it, and each is an assertive live alert, so a
+  screen reader reads a failure out as it appears. A toolbar button that holds a state, such as the
+  metronome, reports that state under one name as well as lighting up, since the accent alone says
+  nothing to a screen reader. An off switch or checkbox is a dark well whose edge reaches 3:1
+  against the panels behind it, that edge being all there is to find the control by, and it stays
+  unlit beside the accent fill of one that is on.
 - As the window narrows, the transport drops its secondary tempo, snap, speed, grid and zoom
   controls, keeping playback, position, sound and settings; the menus, keys and settings still
   offer the rest. The settings window puts its page choice above its controls, the shortcut sheet

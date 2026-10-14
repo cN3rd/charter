@@ -536,7 +536,7 @@ mod tests {
     fn the_song_panel_folds_away_and_comes_back() {
         let mut harness = editable_demo();
         assert!(harness.query_by_label("Verse").is_some());
-        harness.get_by_label("Hide the song panel").click();
+        harness.get_by_label("Show the song panel").click();
         harness.run();
         assert!(harness.query_by_label("Verse").is_none());
         assert!(!harness.state().settings().song_panel);

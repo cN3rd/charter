@@ -418,9 +418,9 @@ pub(crate) fn details(ui: &mut Ui, song: &Song) {
 #[cfg(test)]
 mod tests {
     use charter_core::RulesetPlugin;
-    use egui::accesskit::Role;
+    use egui::accesskit::{Role, Toggled};
     use egui_kittest::Harness;
-    use egui_kittest::kittest::Queryable;
+    use egui_kittest::kittest::{NodeT, Queryable};
 
     use super::super::*;
     use super::*;
@@ -1206,6 +1206,55 @@ mod tests {
         harness.get_by_label("Play").click();
         harness.run();
         assert_eq!(harness.state().1, [Action::TogglePlay]);
+    }
+
+    #[test]
+    fn toolbar_toggles_say_whether_they_are_on_rather_than_only_lighting_up() {
+        for on in [false, true] {
+            let song = Song::open(
+                &charter_editor::demo::song().to_json().unwrap(),
+                &[&charter_stepmania::Plugin],
+            )
+            .unwrap();
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(1280.0, 200.0))
+                .build_ui_state(
+                    move |ui, (song, actions): &mut (Song, Vec<Action>)| {
+                        transport_bar(
+                            ui,
+                            Some(song),
+                            (Zoom::default(), Rate::default(), on, on, NoteValue::QUARTER),
+                            (on, (on, on), charter_audio::Volumes::default()),
+                            actions,
+                        );
+                    },
+                    (song, Vec::new()),
+                );
+            harness.run();
+            let expected = if on { Toggled::True } else { Toggled::False };
+            // Each keeps one name in either state, so the state is the only thing that changes.
+            for name in [
+                "Metronome",
+                "Note ticks",
+                "Tuned lanes",
+                "Show the song panel",
+                "Play",
+            ] {
+                assert_eq!(
+                    harness.get_by_label(name).accesskit_node().toggled(),
+                    Some(expected),
+                    "{name} with on={on}"
+                );
+            }
+            // A button that does something rather than holding a state claims no state at all.
+            assert_eq!(
+                harness
+                    .get_by_label("Jump to the start")
+                    .accesskit_node()
+                    .toggled(),
+                None
+            );
+        }
     }
 
     #[test]

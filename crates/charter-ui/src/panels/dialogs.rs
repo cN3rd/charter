@@ -355,7 +355,18 @@ pub(crate) fn toast(ui: &Ui, message: &str) -> bool {
                     ui.set_width(width);
                     ui.horizontal(|ui| {
                         ui.label(style::glyph(ui, icon::WARNING).color(style::WARN));
-                        ui.add(egui::Label::new(RichText::new(message).color(style::WARN)).wrap());
+                        let text = ui.add(
+                            egui::Label::new(RichText::new(message).color(style::WARN)).wrap(),
+                        );
+                        // An assertive live alert, so a screen reader reads the failure out when it
+                        // appears: AccessKit announces live nodes, whatever their role. Both go on
+                        // the text itself, which is what there is to announce, and name it: egui
+                        // files a label's text under the value an alert does not carry.
+                        ui.ctx().accesskit_node_builder(text.id, |node| {
+                            node.set_role(egui::accesskit::Role::Alert);
+                            node.set_live(egui::accesskit::Live::Assertive);
+                            node.set_label(message.to_owned());
+                        });
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             let tip = "Dismiss this message";
                             style::quiet_icon(ui, icon::X, "Dismiss", tip).clicked()
@@ -379,8 +390,9 @@ pub(crate) fn read_only(ui: &mut Ui, why: &charter_editor::ReadOnly) {
 
 #[cfg(test)]
 mod tests {
+    use egui::accesskit::{Live, Role};
     use egui_kittest::Harness;
-    use egui_kittest::kittest::Queryable;
+    use egui_kittest::kittest::{NodeT, Queryable};
 
     use super::*;
 
@@ -522,5 +534,23 @@ mod tests {
                 .is_some()
         );
         assert!(harness.query_by_label("Download").is_none());
+    }
+
+    #[test]
+    fn a_failure_toast_is_an_alert_so_a_screen_reader_reads_it_out() {
+        let message = "Could not save: the disk is full";
+        let mut harness = Harness::builder().build_ui_state(
+            |ui, dismissed: &mut bool| *dismissed |= toast(ui, message),
+            false,
+        );
+        harness.run();
+        // The node carrying the failure text is itself the alert, so there is one thing to read,
+        // and it is live, since AccessKit announces live nodes whatever their role.
+        let alert = harness.get_by_label(message);
+        assert_eq!(alert.accesskit_node().role(), Role::Alert);
+        assert_eq!(alert.accesskit_node().live(), Live::Assertive);
+        harness.get_by_label("Dismiss").click();
+        harness.run();
+        assert!(harness.state());
     }
 }
