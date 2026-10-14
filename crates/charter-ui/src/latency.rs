@@ -164,6 +164,10 @@ pub(crate) struct Calibration {
     clippy::non_ascii_literal,
     reason = "the audio latency decrement button displays the minus sign"
 )]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the window's sections in reading order"
+)]
 pub(crate) fn show(
     ctx: &egui::Context,
     calibration: &mut Calibration,
@@ -187,16 +191,17 @@ pub(crate) fn show(
                 playing.bpm()
             ));
             ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                if ui.add(style::primary("Start")).clicked() {
-                    calibration.taps.clear();
-                    calibration.started = Some((now, beat));
-                    request = Some(Request::Preview {
-                        clicks: beat.tones(kit),
-                        volumes: settings.volumes,
-                    });
-                }
-            });
+            let started_now = ui
+                .horizontal(|ui| ui.add(style::primary("Start")).clicked())
+                .inner;
+            if started_now {
+                calibration.taps.clear();
+                calibration.started = Some((now, beat));
+                request = Some(Request::Preview {
+                    clicks: beat.tones(kit),
+                    volumes: settings.volumes,
+                });
+            }
             let clicks = playing.clicks();
             let elapsed = calibration.started.map(|(started, _)| now - started);
             if elapsed.is_some_and(|elapsed| elapsed < clicks.last().copied().unwrap_or(0.0) + 1.0)
@@ -236,7 +241,9 @@ pub(crate) fn show(
             ui.weak("Tap Space, or the Tap button, on each click as you would to the music.");
             ui.horizontal(|ui| {
                 let tap = ui.add_enabled(calibration.started.is_some(), egui::Button::new("Tap"));
-                if calibration.started.is_some() && calibration.taps.len() < WANTED {
+                // Ready for Space when the clicks start, once: after that the keyboard goes
+                // wherever Tab takes it.
+                if started_now {
                     tap.request_focus();
                 }
                 if tap.clicked()
@@ -280,7 +287,7 @@ pub(crate) fn show(
 mod tests {
     use super::*;
     use egui_kittest::Harness;
-    use egui_kittest::kittest::Queryable;
+    use egui_kittest::kittest::{NodeT, Queryable};
 
     const SPACING: f64 = 0.5;
 
@@ -424,6 +431,20 @@ mod tests {
                 None,
             ),
         )
+    }
+
+    #[test]
+    fn starting_hands_the_keyboard_to_tap_once_and_tab_still_leaves_it() {
+        let mut harness = calibrating();
+        harness.step();
+        harness.get_by_label("Start").click();
+        harness.step();
+        harness.step();
+        assert!(harness.get_by_label("Tap").accesskit_node().is_focused());
+        harness.key_press(egui::Key::Tab);
+        harness.step();
+        harness.step();
+        assert!(!harness.get_by_label("Tap").accesskit_node().is_focused());
     }
 
     #[test]
