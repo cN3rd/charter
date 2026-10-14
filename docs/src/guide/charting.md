@@ -67,6 +67,9 @@ A right click opens a menu of these edits without moving the cursor. It also hol
 - **Insert pattern here**, 1-1-1-1, 1-2-3-1-2-3 or 1-2-1-2 from the lane clicked, its notes a beat
   down to a 64th apart.
 
+Patterns and **Select lane** appear only when the click is on a lane. A click on the ruler, timing
+column or audio strip still offers pasting, timing points and bookmarks at the clicked line.
+
 Pastes and patterns go on the line clicked, on the active layer. They skip occupied starting
 positions on that layer; a collision with a note on another layer refuses the whole operation,
 even if that layer is hidden. A hidden, ghosted or locked active layer also refuses placement.

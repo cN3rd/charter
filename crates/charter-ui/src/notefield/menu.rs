@@ -33,24 +33,24 @@ pub(super) fn menu(
         {
             actions.push(Action::Select(Some(note), Selecting::Replace));
         }
-        let lane = field.lane_at(pos.x).unwrap_or(LaneIndex::new(0));
+        let lane = field.lane_at(pos.x);
         let tick = tick.unwrap_or_else(|| song.cursor());
         ui.data_mut(|data| data.insert_temp(spot_id, (lane, tick)));
     }
     // Where it was clicked, since playback moves the cursor on while the menu is open.
-    let spot: (LaneIndex, Tick) = ui
+    let spot: (Option<LaneIndex>, Tick) = ui
         .data(|data| data.get_temp(spot_id))
-        .unwrap_or_else(|| (LaneIndex::new(0), song.cursor()));
+        .unwrap_or_else(|| (None, song.cursor()));
     response.context_menu(|menu_ui| menu_items(menu_ui, song, spot, actions));
 }
 
-/// The right-click menu's items for `song`, with `lane` and `at` the lane and snap line clicked,
-/// where what it places goes.
+/// The right-click menu's items for `song`, with the lane if one was clicked and the snap line
+/// clicked, where what it places goes.
 #[expect(clippy::too_many_lines, reason = "menu items in display order")]
 pub(super) fn menu_items(
     ui: &mut Ui,
     song: &Song,
-    (lane, at): (LaneIndex, Tick),
+    (lane, at): (Option<LaneIndex>, Tick),
     actions: &mut Vec<Action>,
 ) {
     let editable = song.read_only().is_none();
@@ -156,14 +156,16 @@ pub(super) fn menu_items(
         });
     }
     ui.separator();
-    ui.add_enabled_ui(edits, |ui| patterns(ui, (lane, at), actions));
-    let lane_name = format!("Select lane {}", u16::from(lane).saturating_add(1));
-    item(
-        ui,
-        actions,
-        (&lane_name, "", true),
-        Action::SelectLane(lane),
-    );
+    if let Some(lane) = lane {
+        ui.add_enabled_ui(edits, |ui| patterns(ui, (lane, at), actions));
+        let lane_name = format!("Select lane {}", u16::from(lane).saturating_add(1));
+        item(
+            ui,
+            actions,
+            (&lane_name, "", true),
+            Action::SelectLane(lane),
+        );
+    }
     item(
         ui,
         actions,
@@ -231,5 +233,61 @@ fn item(
     };
     if ui.add_enabled(enabled, button).clicked() {
         actions.push(action);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use charter_editor::demo;
+    use egui::{Rect, pos2, vec2};
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::{NodeT, Queryable};
+
+    use super::super::{Direction, Zoom};
+    use super::*;
+
+    #[test]
+    fn off_lane_menu_has_no_lane_specific_actions_in_any_direction() {
+        let song = Song::new(demo::song(), &[&charter_stepmania::Plugin]);
+        let area = Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0));
+        for direction in Direction::ALL {
+            let flip = Flip { area, direction };
+            let field = Field::new(
+                flip.field(),
+                4,
+                song.timing().time_at(song.cursor()),
+                Zoom::default(),
+                true,
+            );
+            for (column, name) in ["ruler", "timing", "waveform"].into_iter().enumerate() {
+                let columns = [
+                    field.columns.ruler,
+                    field.columns.timing,
+                    field.columns.wave,
+                ];
+                let at = flip.pos(pos2(columns[column].center(), field.view.now_y));
+                let lane = field.lane_at(flip.back(at).x);
+                assert_eq!(lane, None, "{direction:?} {name} must not hit a lane");
+                let mut harness = Harness::builder().build_ui(|ui| {
+                    menu_items(ui, &song, (lane, Tick::new(960)), &mut Vec::new());
+                });
+                harness.run();
+                assert!(
+                    harness.query_by_label("Insert pattern here").is_none(),
+                    "{direction:?} {name}: pattern needs a lane"
+                );
+                assert!(
+                    harness.query_by_label("Select lane 1").is_none(),
+                    "{direction:?} {name}: selection needs a lane"
+                );
+                assert!(
+                    !harness
+                        .get_by_label("Add a timing point here")
+                        .accesskit_node()
+                        .is_disabled(),
+                    "{direction:?} {name}: timing is not lane-specific"
+                );
+            }
+        }
     }
 }

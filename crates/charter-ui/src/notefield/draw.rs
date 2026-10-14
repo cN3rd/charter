@@ -946,7 +946,7 @@ mod tests {
         );
         let mut harness = Harness::builder().build_ui_state(
             |ui, (song, actions): &mut (Song, Vec<Action>)| {
-                menu_items(ui, song, (LaneIndex::new(0), Tick::new(0)), actions);
+                menu_items(ui, song, (Some(LaneIndex::new(0)), Tick::new(0)), actions);
             },
             (song, Vec::new()),
         );
@@ -1836,7 +1836,12 @@ mod tests {
         song.select_all();
         let mut harness = Harness::builder().build_ui(|ui| {
             let mut actions = Vec::new();
-            menu_items(ui, &song, (LaneIndex::new(1), Tick::new(480)), &mut actions);
+            menu_items(
+                ui,
+                &song,
+                (Some(LaneIndex::new(1)), Tick::new(480)),
+                &mut actions,
+            );
             assert!(actions.is_empty());
         });
         harness.run();
@@ -1904,7 +1909,7 @@ mod tests {
         song.select_all();
         let mut harness = Harness::builder().build_ui_state(
             move |ui, actions: &mut Vec<Action>| {
-                menu_items(ui, &song, (LaneIndex::new(0), Tick::new(0)), actions);
+                menu_items(ui, &song, (Some(LaneIndex::new(0)), Tick::new(0)), actions);
             },
             Vec::new(),
         );
