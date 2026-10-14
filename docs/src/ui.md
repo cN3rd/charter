@@ -200,8 +200,9 @@ dark playfield, often in a dim room, and notes read best as bright shapes on dar
   [format](format.md#one-ruleset-per-file) names as the reference. Switching charts keeps the
   cursor on its tick, so two difficulties can be compared at one spot.
 - Plugins currently supply editable text settings, such as a TTR theme. Other chart settings,
-  such as StepMania's meter and osu!mania's HP and OD, show as read-only values. Forms for
-  arbitrary plugin `ext` fields and timing values remain planned.
+  such as StepMania's meter and osu!mania's HP and OD, show as read-only values in a folded Chart
+  settings section, which a chart without them leaves out. Forms for arbitrary plugin `ext` fields
+  and timing values remain planned.
 - Every section folds from its title as well as its triangle, and is a disclosure to screen
   readers, which say whether it is open.
 - A refused layer name keeps the typed text and focus for correction; Escape cancels the draft.

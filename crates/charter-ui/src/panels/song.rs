@@ -398,20 +398,31 @@ fn preview_rows(
     refused
 }
 
-/// What is read more than changed while charting: the open chart's settings and the song's
-/// keysound bank, folded away until wanted.
+/// What is read more than changed while charting: the open chart's settings that the Charts
+/// section has no field for, and the song's keysound bank, folded away until wanted.
 pub(crate) fn details(ui: &mut Ui, song: &Song) {
     if let Some(chart) = song.chart() {
-        egui::CollapsingHeader::new("Chart settings").show(ui, |ui| {
-            let settings: Vec<_> = chart
-                .settings
-                .iter()
-                .map(|(key, value)| (key.as_str(), shown(value)))
-                .collect();
-            fields(ui, "settings", &settings, "No chart settings");
+        let with_fields: Vec<_> = song.plugin().map_or_else(Vec::new, |plugin| {
+            plugin
+                .text_settings()
+                .into_iter()
+                .filter(|setting| setting.scope == SettingScope::Chart)
+                .map(|setting| setting.key)
+                .collect()
         });
+        let settings: Vec<_> = chart
+            .settings
+            .iter()
+            .filter(|(key, _)| !with_fields.contains(key))
+            .map(|(key, value)| (key.as_str(), shown(value)))
+            .collect();
+        if !settings.is_empty() {
+            style::folded_section(ui, "Chart settings", |ui| {
+                fields(ui, "settings", &settings, "No chart settings");
+            });
+        }
     }
-    egui::CollapsingHeader::new("Samples").show(ui, |ui| {
+    style::folded_section(ui, "Samples", |ui| {
         let samples: Vec<_> = song
             .document()
             .document()
@@ -549,6 +560,58 @@ mod tests {
                 .query_by_role_and_label(Role::TextInput, "Title")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn chart_settings_and_samples_are_headed_as_the_other_sections_are_and_start_folded() {
+        let mut harness = Harness::builder().build_ui_state(
+            |ui, song: &mut Song| {
+                song_panel(
+                    ui,
+                    song,
+                    (&mut SongDrafts::default(), None),
+                    &mut Vec::new(),
+                );
+                details(ui, song);
+            },
+            ttr_song("Extreme", Some(3)),
+        );
+        harness.run();
+        let song = harness
+            .query_by_label("Song")
+            .expect("the Song section's header");
+        assert_eq!(song.accesskit_node().data().is_expanded(), Some(true));
+        for name in ["Chart settings", "Samples"] {
+            let fold = harness.get_by_label(name);
+            assert_eq!(fold.accesskit_node().role(), song.accesskit_node().role());
+            assert_eq!(fold.rect().left(), song.rect().left(), "{name}");
+            assert_eq!(fold.rect().height(), song.rect().height(), "{name}");
+            assert_eq!(fold.accesskit_node().data().is_expanded(), Some(false));
+        }
+    }
+
+    #[test]
+    fn chart_settings_leave_out_those_the_charts_section_has_fields_for() {
+        let mut harness = Harness::builder().build_ui_state(
+            |ui, song: &mut Song| details(ui, song),
+            ttr_song("Extreme", Some(3)),
+        );
+        harness.run();
+        harness.get_by_label("Chart settings").click();
+        harness.run();
+        assert!(harness.query_by_label("extreme").is_some());
+        assert!(harness.query_by_label("theme").is_none());
+    }
+
+    #[test]
+    fn a_chart_with_a_field_for_each_of_its_settings_has_no_chart_settings_section() {
+        let mut harness = Harness::builder().build_ui_state(
+            |ui, song: &mut Song| details(ui, song),
+            ttr_song("Mine", None),
+        );
+        harness.run();
+        assert!(harness.query_by_label("Chart settings").is_none());
+        assert!(harness.query_by_label("Samples").is_some());
     }
 
     #[test]

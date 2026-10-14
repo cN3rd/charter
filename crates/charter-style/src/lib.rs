@@ -604,6 +604,12 @@ pub fn section(ui: &mut Ui, text: &str, body: impl FnOnce(&mut Ui)) {
     fold_body(ui, header, body);
 }
 
+/// A [`section`] folded to start with, for what is read more than changed.
+pub fn folded_section(ui: &mut Ui, text: &str, body: impl FnOnce(&mut Ui)) {
+    let header = fold_header(ui, (text, false), |_| {});
+    fold_body(ui, header, body);
+}
+
 /// A section whose header also holds controls at the trailing edge.
 pub fn section_with_actions(ui: &mut Ui, text: &str, mut contents: impl FnMut(&mut Ui, bool)) {
     let header = fold_header(ui, (text, true), |ui| {

@@ -102,9 +102,13 @@ folds or unfolds it, and the panel remembers which are folded.
   as `cover.jpg` or `cover.png`. A song without artwork takes the cover of the audio chosen for it.
   Settings the game keeps as text, such as Tap Tap Revenge's theme, follow.
 - **Charts**: the song's charts. Switching chart keeps the cursor where it is, to compare two
-  difficulties at one spot. The open chart's own settings, such as a StepMania meter, follow.
+  difficulties at one spot. Settings the game keeps as text for each chart, such as Tap Tap
+  Revenge's chart theme, follow.
 - Layers, described above.
 - **Timing**: the offset, the tempo and every timing point; see [Timing](timing.md).
 - **Markers**: the song's sections and bookmarks. A click jumps there. A name typed into *Section
   here* names the section at the cursor, or starts one, on Enter or when the field is left; Escape
   discards the draft. Ctrl+B adds or removes a bookmark at the cursor.
+- **Chart settings** and **Samples**, folded until opened, to read: the open chart's other
+  settings, such as a StepMania meter, and the song's keysounds. A chart whose every setting has a
+  field under Charts has no Chart settings section.
