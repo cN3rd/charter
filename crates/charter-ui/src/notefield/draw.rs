@@ -329,6 +329,22 @@ pub(super) fn events(
 ) {
     let timing = song.timing();
     let gutter = painter.clipped(Rect::from_x_y_ranges(columns.timing, rows));
+    // Anchors carry the tempo, and a drag here moves them: each draws its line and the tempo
+    // from it on, above the line, clear of the details of an event at the same tick.
+    for anchor in between(&timing.anchors, |anchor| anchor.tick, first, last) {
+        let y = view.y(timing.time_at(anchor.tick));
+        painter.hline(columns.timing, y, Stroke::new(2.0, style::ANCHOR));
+        if let Some(bpm) = timing.bpm_at(anchor.tick) {
+            let at = pos2(columns.timing.min + 6.0, y - 3.0);
+            gutter.text(
+                at,
+                Align2::LEFT_BOTTOM,
+                bpm,
+                FontId::monospace(11.0),
+                style::ANCHOR,
+            );
+        }
+    }
     let shown = between(&timing.events, |event| event.tick, first, last);
     // Every event at a tick is one timing point, as osu! has them: one line, its values
     // beneath it.
@@ -1269,6 +1285,17 @@ mod tests {
             labels.iter().any(|label| label == "sm.e0 null"),
             "{labels:?}"
         );
+    }
+
+    #[test]
+    fn each_tempo_anchor_draws_a_timing_point_naming_its_tempo() {
+        // Tempo lives in the anchors rather than in timing events, and a drag in the gutter
+        // moves them, so the gutter shows them too.
+        let song = Song::new(demo::song(), &[]);
+        let timing = song.timing();
+        let tempo = timing.bpm_at(timing.anchors[0].tick).unwrap().to_string();
+        let labels = event_labels(&song);
+        assert!(labels.contains(&tempo), "{labels:?} lacks {tempo}");
     }
 
     /// The text of every label [`events`] draws over the first beat of `song`.
