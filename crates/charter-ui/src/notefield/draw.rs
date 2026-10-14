@@ -299,6 +299,7 @@ pub(super) fn markers(
     let timing = song.timing();
     let ruler = painter.clipped(Rect::from_x_y_ranges(columns.ruler, rows));
     let markers = &song.document().document().markers;
+    let mut labels = Vec::new();
     for marker in between(markers, |marker| marker.tick, first, last) {
         let colour = match marker.kind {
             MarkerKind::Section => style::SECTION,
@@ -308,13 +309,16 @@ pub(super) fn markers(
         let y = view.y(timing.time_at(marker.tick));
         painter.hline(columns.timeline(), y, Stroke::new(2.0, colour));
         let at = pos2(columns.ruler.min + 6.0, y + 3.0);
-        ruler.text(
+        if let Some(rect) = ruler.text_if_clear(
             at,
             Align2::LEFT_TOP,
             &marker.text,
             FontId::proportional(12.0),
             colour,
-        );
+            &labels,
+        ) {
+            labels.push(rect);
+        }
     }
 }
 
@@ -329,6 +333,7 @@ pub(super) fn events(
 ) {
     let timing = song.timing();
     let gutter = painter.clipped(Rect::from_x_y_ranges(columns.timing, rows));
+    let mut labels = Vec::new();
     // Anchors carry the tempo, and a drag here moves them: each draws its line and the tempo
     // from it on, above the line, clear of the details of an event at the same tick.
     for anchor in between(&timing.anchors, |anchor| anchor.tick, first, last) {
@@ -336,13 +341,16 @@ pub(super) fn events(
         painter.hline(columns.timing, y, Stroke::new(2.0, style::ANCHOR));
         if let Some(bpm) = timing.bpm_at(anchor.tick) {
             let at = pos2(columns.timing.min + 6.0, y - 3.0);
-            gutter.text(
+            if let Some(rect) = gutter.text_if_clear(
                 at,
                 Align2::LEFT_BOTTOM,
-                bpm,
+                &bpm,
                 FontId::monospace(11.0),
                 style::ANCHOR,
-            );
+                &labels,
+            ) {
+                labels.push(rect);
+            }
         }
     }
     let shown = between(&timing.events, |event| event.tick, first, last);
@@ -354,6 +362,7 @@ pub(super) fn events(
         };
         let y = view.y(timing.time_at(event.tick));
         painter.hline(columns.timing, y, Stroke::new(2.0, style::TIMING_MARK));
+        let mut point_labels = Vec::new();
         // ponytail: the first 256 details only; at 13 points a row the rest are off any screen.
         for (row, detail) in (0..=u8::MAX).zip(point) {
             let text = match &detail.kind {
@@ -364,14 +373,18 @@ pub(super) fn events(
                 TimingKind::Other { name, value } => format!("{name} {value}"),
             };
             let at = pos2(columns.timing.min + 6.0, y + 3.0 + 13.0 * f32::from(row));
-            gutter.text(
+            if let Some(rect) = gutter.text_if_clear(
                 at,
                 Align2::LEFT_TOP,
-                text,
+                &text,
                 FontId::monospace(11.0),
                 style::TEXT,
-            );
+                &labels,
+            ) {
+                point_labels.push(rect);
+            }
         }
+        labels.extend(point_labels);
     }
 }
 
@@ -1243,6 +1256,83 @@ mod tests {
         )
     }
 
+    fn demo_with_markers(second_tick: i32) -> Song {
+        let mut document = serde_json::to_value(demo::song().document()).unwrap();
+        document["markers"] = serde_json::json!([
+            { "tick": 480, "kind": "section", "text": "A long first section name" },
+            { "tick": second_tick, "kind": "section", "text": "Next section" }
+        ]);
+        let document =
+            charter_core::ValidDocument::from_json(&serde_json::to_vec(&document).unwrap())
+                .unwrap();
+        Song::new(document, &[])
+    }
+
+    #[test]
+    fn nearby_marker_labels_skip_overlaps_after_flip_but_keep_both_lines() {
+        for (second_tick, vertical_labels) in [(520, 1), (720, 2)] {
+            let song = demo_with_markers(second_tick);
+            for direction in Direction::ALL {
+                let area = Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0));
+                let flip = Flip { area, direction };
+                let field = Field::new(
+                    flip.field(),
+                    4,
+                    song.timing().time_at(song.cursor()),
+                    Zoom::default(),
+                    false,
+                );
+                let ctx = egui::Context::default();
+                let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                    let canvas = Canvas::new(ui.painter_at(area), flip);
+                    markers(
+                        &canvas,
+                        &field.columns,
+                        &song,
+                        field.view,
+                        field.rows,
+                        (Tick::new(0), Tick::new(960)),
+                    );
+                });
+                let labels: Vec<_> = output
+                    .shapes
+                    .iter()
+                    .filter_map(|shape| {
+                        if let egui::Shape::Text(text) = &shape.shape {
+                            Some(text.galley.text().to_owned())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                let lines = output
+                    .shapes
+                    .iter()
+                    .filter(|shape| {
+                        if let egui::Shape::Path(path) = &shape.shape {
+                            path.stroke.color == egui::epaint::ColorMode::Solid(style::SECTION)
+                        } else {
+                            false
+                        }
+                    })
+                    .count();
+                output.textures_delta.clear();
+                let expected = if matches!(direction, Direction::Up | Direction::Down) {
+                    vertical_labels
+                } else {
+                    1
+                };
+                assert_eq!(
+                    labels.len(),
+                    expected,
+                    "{direction:?} at {second_tick}: {labels:?}"
+                );
+                assert_eq!(labels[0], "A long first section name");
+                assert_eq!(lines, 2, "{direction:?} at {second_tick}");
+            }
+        }
+    }
+
     /// The demo song with `events` ahead of its own timing events.
     fn demo_with_events(events: impl IntoIterator<Item = serde_json::Value>) -> Song {
         let mut document = serde_json::to_value(demo::song().document()).unwrap();
@@ -1250,6 +1340,19 @@ mod tests {
         for (at, event) in events.into_iter().enumerate() {
             timing_events.insert(at, event);
         }
+        let document =
+            charter_core::ValidDocument::from_json(&serde_json::to_vec(&document).unwrap())
+                .unwrap();
+        Song::new(document, &[])
+    }
+
+    fn demo_with_close_anchors() -> Song {
+        let mut document = serde_json::to_value(demo::song().document()).unwrap();
+        document["timing"]["anchors"] = serde_json::json!([
+            { "tick": 0, "seconds": 0.0 },
+            { "tick": 2880, "seconds": 1.0 },
+            { "tick": 2920, "seconds": 1.014 }
+        ]);
         let document =
             charter_core::ValidDocument::from_json(&serde_json::to_vec(&document).unwrap())
                 .unwrap();
@@ -1271,6 +1374,26 @@ mod tests {
             labels.iter().any(|label| label == "delay 0.125 s"),
             "{labels:?}"
         );
+    }
+
+    #[test]
+    fn nearby_timing_points_keep_both_lines_but_only_clear_details() {
+        let song = demo_with_events([
+            serde_json::json!({"tick": 1920,
+                "kind": {"other": {"name": "sm.first", "value": null}}}),
+            serde_json::json!({"tick": 1960,
+                "kind": {"other": {"name": "sm.second", "value": null}}}),
+        ]);
+        for direction in Direction::ALL {
+            let (labels, lines) = timing_labels_and_lines(&song, direction, style::TIMING_MARK);
+            let details: Vec<_> = labels
+                .into_iter()
+                .filter(|label| label.starts_with("sm.first") || label.starts_with("sm.second"))
+                .collect();
+            assert_eq!(details, ["sm.first null"], "{direction:?}");
+            // The song's tempo anchor shares the timing-line colour with both events.
+            assert_eq!(lines, 3, "{direction:?}");
+        }
     }
 
     #[test]
@@ -1298,26 +1421,46 @@ mod tests {
         assert!(labels.contains(&tempo), "{labels:?} lacks {tempo}");
     }
 
-    /// The text of every label [`events`] draws over the first beat of `song`.
+    #[test]
+    fn nearby_tempo_anchors_keep_their_lines_without_overprinting_their_bpm() {
+        let song = demo_with_close_anchors();
+        for direction in Direction::ALL {
+            let (labels, lines) = timing_labels_and_lines(&song, direction, style::ANCHOR);
+            assert_eq!(labels.len(), 2, "{direction:?}: {labels:?}");
+            assert_eq!(labels[0], "180");
+            assert_eq!(lines, 3, "{direction:?}");
+        }
+    }
+
+    /// The text of every label [`events`] draws over the first measure of `song`.
     fn event_labels(song: &Song) -> Vec<String> {
-        let field = field(song);
+        timing_labels_and_lines(song, Direction::Up, style::TIMING_MARK).0
+    }
+
+    fn timing_labels_and_lines(
+        song: &Song,
+        direction: Direction,
+        line_colour: egui::Color32,
+    ) -> (Vec<String>, usize) {
+        let area = Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0));
+        let flip = Flip { area, direction };
+        let field = Field::new(
+            flip.field(),
+            4,
+            song.timing().time_at(song.cursor()),
+            Zoom::default(),
+            false,
+        );
         let ctx = egui::Context::default();
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-            let area = Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0));
-            let canvas = Canvas::new(
-                ui.painter_at(area),
-                Flip {
-                    area,
-                    direction: Direction::Up,
-                },
-            );
+            let canvas = Canvas::new(ui.painter_at(area), flip);
             events(
                 &canvas,
                 &field.columns,
                 song,
                 field.view,
-                Rangef::new(0.0, 600.0),
-                (Tick::new(0), Tick::new(960)),
+                field.rows,
+                (Tick::new(0), Tick::new(3840)),
             );
         });
         let labels = output
@@ -1330,8 +1473,19 @@ mod tests {
                 Some(text.galley.text().to_owned())
             })
             .collect();
+        let lines = output
+            .shapes
+            .iter()
+            .filter(|shape| {
+                if let egui::Shape::Path(path) = &shape.shape {
+                    path.stroke.color == egui::epaint::ColorMode::Solid(line_colour)
+                } else {
+                    false
+                }
+            })
+            .count();
         output.textures_delta.clear();
-        labels
+        (labels, lines)
     }
 
     #[test]

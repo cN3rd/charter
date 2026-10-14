@@ -256,6 +256,33 @@ impl Canvas {
             colour,
         );
     }
+
+    /// Draws text only if its screen rectangle does not cover an earlier label in this column,
+    /// returning the rectangle of text drawn.
+    pub(crate) fn text_if_clear(
+        &self,
+        at: Pos2,
+        align: Align2,
+        text: &impl ToString,
+        font: egui::FontId,
+        colour: egui::Color32,
+        drawn: &[Rect],
+    ) -> Option<Rect> {
+        let galley = self.painter.layout_no_wrap(text.to_string(), font, colour);
+        let rect = self
+            .flip
+            .align(align)
+            .anchor_size(self.flip.pos(at), galley.size());
+        // ponytail: this quadratic scan is bounded by visible labels; bucket by screen position
+        // if dense timing charts make the label pass slow.
+        if !rect.intersects(self.painter.clip_rect())
+            || drawn.iter().any(|previous| rect.intersects(*previous))
+        {
+            return None;
+        }
+        self.painter.galley(rect.min, galley, colour);
+        Some(rect)
+    }
 }
 
 #[cfg(test)]

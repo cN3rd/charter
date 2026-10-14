@@ -39,7 +39,8 @@ The song panel's Timing section is laid out as osu!'s timing panel is:
 
 F7 and F8 lower and raise the tempo at the cursor by 1 BPM. In the notefield, a tempo point drags
 along the timing column to the moment it is dropped on, keeping its beat; a meter or stop point,
-and a marker on the ruler, drag to another snap line.
+and a marker on the ruler, drag to another snap line. If marker or timing labels crowd together,
+their lines stay visible; zoom in or use the panel to read a label that was left out.
 
 ## The timing window
 

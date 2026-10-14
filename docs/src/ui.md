@@ -47,9 +47,12 @@ Sekai and Arcaea. No ruleset plugin draws yet, so charts draw in the shared voca
 ### Timing points
 
 The timing events at one tick form one timing point, as osu! has them: one line in the notefield,
-its values stacked beneath it (`150 BPM`, then `3/4`), and one handle. Every tempo point stays at
-its moment of the audio: a BPM set on one changes how many beats fit before the next point, and the
-next point moves along the grid with everything after it, as EOF's anchors and osu!'s red lines do.
+its event values stacked beneath it (`stop 0.5 s`, then `3/4`), and one handle. A tempo anchor's
+BPM sits above its line. Close marker and timing lines remain visible when their labels would
+overlap; zooming closer brings the labels back.
+Every tempo point stays at its moment of the audio: a BPM set on one changes how many beats fit
+before the next point, and the next point moves along the grid with everything after it, as EOF's
+anchors and osu!'s red lines do.
 A drag shows a guide where the point will land, labelled with the time or the beat. F7 and F8 nudge
 the tempo at the cursor.
 
