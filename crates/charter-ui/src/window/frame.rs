@@ -295,10 +295,15 @@ impl Window {
                 if let Some(why) = self.song.as_ref().and_then(Song::read_only) {
                     panels::read_only(ui, why);
                 }
-                if self.song.as_ref().is_some_and(|open_song| {
+                if let Some(open_song) = self.song.as_ref().filter(|open_song| {
                     open_song.document().document().metadata.audio.as_str() == NO_AUDIO
                 }) {
-                    panels::no_audio(ui, self.no_drops, &mut actions);
+                    panels::no_audio(
+                        ui,
+                        self.no_drops,
+                        open_song.read_only().is_none(),
+                        &mut actions,
+                    );
                 }
                 if let Some(active_song) = &self.song {
                     let shown = notefield::Shown {

@@ -82,13 +82,13 @@ pub(crate) fn menu_bar(
                     ("Select none", "Escape", Action::ClearSelection),
                 ],
             );
+            menu_items(ui, editable, actions, [("Cut", "Ctrl+X", Action::Cut)]);
+            menu_items(ui, song_open, actions, [("Copy", "Ctrl+C", Action::Copy)]);
             menu_items(
                 ui,
                 editable,
                 actions,
                 [
-                    ("Cut", "Ctrl+X", Action::Cut),
-                    ("Copy", "Ctrl+C", Action::Copy),
                     (
                         "Paste at the cursor",
                         "Ctrl+V",
@@ -328,5 +328,39 @@ fn menu_items<const N: usize>(
         if ui.add_enabled(enabled, item).clicked() {
             actions.push(action);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+
+    use super::*;
+
+    #[test]
+    fn read_only_song_offers_edit_copy() {
+        let song = Song::open(&charter_editor::demo::song().to_json().unwrap(), &[]).unwrap();
+        assert!(song.read_only().is_some());
+        let mut harness = Harness::builder().build_ui_state(
+            |ui, (song, actions): &mut (Song, Vec<Action>)| {
+                menu_bar(
+                    ui,
+                    (Some(song), &[]),
+                    (false, false, false, false),
+                    (false, false),
+                    actions,
+                );
+            },
+            (song, Vec::new()),
+        );
+        harness.run();
+        harness.get_by_label("Edit").click();
+        harness.run();
+        let copy = harness.query_by_label_contains("Copy");
+        assert!(copy.is_some(), "Edit > Copy should be offered");
+        copy.unwrap().click();
+        harness.run();
+        assert_eq!(harness.state().1, [Action::Copy]);
     }
 }

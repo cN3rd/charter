@@ -85,4 +85,6 @@ of the audio beside it. [Files and recovery](files.md) has the details.
   song; see [Games, import and export](games.md).
 
 A song opens for editing when charter has its game's plugin. A song of another game opens
-read-only, with a banner naming the plugin it needs.
+read-only, with a banner naming the plugin it needs. You can still select and copy its notes
+with Edit > Copy or Ctrl+C, but cannot change its audio. When it has no audio, the chooser is
+disabled and the notice does not offer file drops.

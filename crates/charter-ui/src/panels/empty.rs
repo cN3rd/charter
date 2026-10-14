@@ -70,22 +70,27 @@ pub(crate) fn empty(
     });
 }
 
-/// That the open song has no audio yet, and how to give it some: choosing a file, or dropping
-/// one unless `no_drops`.
+/// That the open song has no audio yet, and how to give an editable one some: choosing a file,
+/// or dropping one unless `no_drops`.
 #[expect(
     clippy::non_ascii_literal,
     reason = "the missing-audio chooser button displays an ellipsis"
 )]
-pub(crate) fn no_audio(ui: &mut Ui, no_drops: bool, actions: &mut Vec<Action>) {
+pub(crate) fn no_audio(ui: &mut Ui, no_drops: bool, editable: bool, actions: &mut Vec<Action>) {
     notice(ui, style::icon::MUSIC_NOTES, |ui| {
-        if no_drops {
+        if no_drops || !editable {
             ui.label("No audio yet (.ogg, .mp3, .wav, .flac).");
         } else {
             ui.label(
                 "No audio yet. Drop an audio file (.ogg, .mp3, .wav, .flac) on the window, or",
             );
         }
-        let choose = style::icon_button(ui, style::icon::FOLDER_OPEN, "Choose audio…", true);
+        let choose = ui
+            .add_enabled_ui(editable, |ui| {
+                style::icon_button(ui, style::icon::FOLDER_OPEN, "Choose audio…", true)
+            })
+            .inner
+            .on_disabled_hover_text("The song is read-only; its audio cannot be changed.");
         let choose = if no_drops {
             choose.on_hover_text(NO_DROPS)
         } else {
@@ -116,4 +121,34 @@ pub(super) fn notice<R>(ui: &mut Ui, symbol: &str, body: impl FnOnce(&mut Ui) ->
             .inner
         })
         .inner
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::window::test_support::*;
+
+    #[test]
+    fn read_only_song_without_audio_offers_neither_drops_nor_chooser() {
+        let mut document: serde_json::Value = serde_json::from_slice(&four_taps()).unwrap();
+        document["metadata"]["audio"] = serde_json::json!(crate::new_song::NO_AUDIO);
+        let mut app = Window::new(&[]);
+        app.open(
+            Path::new("/songs/no-audio.json"),
+            &serde_json::to_vec(&document).unwrap(),
+        );
+        let harness = window(app);
+
+        assert!(harness.query_by_label_contains("Read only:").is_some());
+        assert!(
+            harness
+                .query_by_label_contains("Drop an audio file")
+                .is_none()
+        );
+        assert!(
+            harness
+                .get_by_label_contains("Choose audio")
+                .accesskit_node()
+                .is_disabled()
+        );
+    }
 }

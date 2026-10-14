@@ -266,7 +266,8 @@ dark playfield, often in a dim room, and notes read best as bright shapes on dar
   which is why the format keeps `lanes` on the chart. The chart then opens read-only, with a
   banner naming the missing plugin, because only the ruleset can check an edit against the game:
   moving a Tap Tap Revenge shake out of the lane of its direction is a plain lane move that breaks
-  a rule.
+  a rule. Selection and Copy still work, while an empty audio slot offers neither a file drop nor
+  an enabled chooser.
 - The lane header shows the fixed digit bindings for the first ten lanes. Wider layouts can be
   edited with the mouse; per-ruleset bindings and the scheme above ten lanes remain
   [open](research/topics/wide-layouts.md). Clicking a header to arm a recording lane is planned.

@@ -83,6 +83,26 @@ mod tests {
     use proptest::prelude::*;
 
     #[test]
+    fn ctrl_c_copies_selected_notes_from_a_read_only_song() {
+        let mut app = Window::new(&[]);
+        app.open(Path::new("four.json"), &four_taps());
+        let mut harness = window(app);
+        assert!(harness.state().song.as_ref().unwrap().read_only().is_some());
+
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.run();
+        assert_eq!(
+            harness.state().song.as_ref().unwrap().selection().count(),
+            4
+        );
+
+        // egui-winit turns Ctrl+C into a Copy event before the window handles it.
+        harness.event(egui::Event::Copy);
+        harness.run();
+        assert_eq!(harness.state().clipboard.clip.len(), 4);
+    }
+
+    #[test]
     fn add_layer_button_and_shortcut_both_create_undoable_layers() {
         let mut harness = editable_demo();
         harness.get_by_label("Add layer").click();
