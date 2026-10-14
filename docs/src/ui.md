@@ -129,8 +129,9 @@ the tempo at the cursor.
 - As the window narrows, the transport drops its secondary tempo, snap, speed, grid and zoom
   controls, keeping playback, position, sound and settings; the menus, keys and settings still
   offer the rest. The settings window puts its page choice above its controls, the shortcut sheet
-  stacks each key above its explanation, and the new-song and import forms scroll so their actions
-  stay in reach.
+  stacks each key above its explanation, the empty window stacks its actions, still centred,
+  rather than running them off the edge, and the new-song and import forms scroll so their
+  actions stay in reach.
 - The settings window has a sidebar of pages, each setting with a line on what it does and on and
   off choices as switches. Only settings changed from their defaults are kept, so one left alone
   follows its default when a later version changes it, and one a later version cannot read falls

@@ -20,10 +20,18 @@ pub(crate) fn empty(
         ui.add_space(2.0);
         ui.weak("A chart editor for rhythm games");
         ui.add_space(22.0);
+        // ponytail: the three buttons' measured width, so the parent centres a row egui would
+        // otherwise start at the left; the test that centres them fails if this drifts.
         let row = 3.0 * 136.0;
+        let fits = ui.available_width() >= row;
         ui.allocate_ui_with_layout(
-            egui::vec2(row, 30.0),
-            Layout::left_to_right(Align::Center),
+            egui::vec2(row.min(ui.available_width()), 30.0),
+            // Stacked, still centred, where the row would run off a narrow window.
+            if fits {
+                Layout::left_to_right(Align::Center)
+            } else {
+                Layout::top_down(Align::Center)
+            },
             |ui| {
                 ui.spacing_mut().button_padding = egui::vec2(14.0, 7.0);
                 if style::icon_button(ui, style::icon::FILE_PLUS, "New song", true).clicked() {

@@ -65,10 +65,14 @@ fn markers_body(ui: &mut Ui, song: &Song, draft: &mut Option<String>, actions: &
                     marker.text.as_str()
                 };
                 let here = marker.tick == song.cursor();
-                let label =
-                    egui::Button::selectable(here, text).wrap_mode(egui::TextWrapMode::Truncate);
+                // Read from the left like the rest of the list, not centred in the cell.
+                let label = egui::Button::selectable(here, (text, egui::Atom::grow()))
+                    .wrap_mode(egui::TextWrapMode::Truncate);
+                // ponytail: a fixed width, the whole name on hover. Filling the panel needs the
+                // other columns measured first: a Grid learns its widths a frame late, so a cell
+                // sized from what is left keeps the grid laying itself out again.
                 if ui
-                    .add_sized([120.0, 20.0], label)
+                    .add_sized([120.0, ui.spacing().interact_size.y], label)
                     .on_hover_text(text)
                     .clicked()
                 {

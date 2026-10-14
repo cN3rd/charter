@@ -114,7 +114,7 @@ pub(crate) fn transport_bar(
                     {
                         actions.push(Action::NudgeRate(-0.1));
                     }
-                    ui.label(format!("Speed {:.0}%", rate.percent()));
+                    ui.label(RichText::new(format!("Speed {:.0}%", rate.percent())).monospace());
                     if style::quiet_icon(ui, icon::PLUS, "Faster", "Play faster (Shift+Right)")
                         .clicked()
                     {
@@ -134,7 +134,7 @@ pub(crate) fn transport_bar(
                     {
                         actions.push(Action::ZoomBy(Zoom::STEP.recip()));
                     }
-                    ui.label(format!("Zoom {:.0}%", zoom.percent()));
+                    ui.label(RichText::new(format!("Zoom {:.0}%", zoom.percent())).monospace());
                     if style::quiet_icon(
                         ui,
                         icon::MAGNIFYING_GLASS_PLUS,
@@ -307,7 +307,7 @@ pub(crate) fn status_bar(
         if selected > 0 {
             ui.separator();
             let noun = if selected == 1 { "note" } else { "notes" };
-            ui.label(format!("{selected} {noun} selected"));
+            ui.label(RichText::new(format!("{selected} {noun} selected")).monospace());
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if song.read_only().is_some() {

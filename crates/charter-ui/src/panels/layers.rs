@@ -141,7 +141,9 @@ pub(super) fn layers(ui: &mut Ui, song: &Song, drafts: &mut SongDrafts, actions:
                         if let Some((editing, name)) = drafts.layer_name.as_mut()
                             && *editing == index
                         {
-                            let edit = ui.add(egui::TextEdit::singleline(name).desired_width(95.0));
+                            let width = ui.available_width().max(95.0);
+                            let edit =
+                                ui.add(egui::TextEdit::singleline(name).desired_width(width));
                             edit.widget_info(|| {
                                 egui::WidgetInfo::labeled(
                                     egui::WidgetType::TextEdit,
