@@ -169,6 +169,11 @@ impl Canvas {
     /// A four-pixel stripe at the head's screen-left edge, independent of the scroll direction.
     pub(crate) fn left_stripe(&self, rect: Rect, fill: egui::Color32) {
         let screen = self.flip.rect(rect);
+        // A lane-dark gutter behind the stripe, so a layer colour close to the note's own kind
+        // colour still reads as a bar of its own instead of merging into the head.
+        let gutter = Rect::from_min_size(screen.min, vec2(5.0, screen.height()));
+        self.painter
+            .rect_filled(gutter, 2.0, crate::style::LANES_BG);
         let stripe = Rect::from_min_size(screen.min, vec2(4.0, screen.height()));
         self.painter.rect_filled(stripe, 2.0, fill);
     }

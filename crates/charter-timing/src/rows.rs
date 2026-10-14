@@ -714,8 +714,9 @@ pub(crate) fn x_at_seconds(row: &Row, scene: &Scene<'_>, seconds: f64) -> f32 {
     }
 }
 
-/// The residual strip: each onset on the grid as a bar in the strip under the row, blue when the
-/// audio comes early and orange when late, fuller the farther off, full at the saturation.
+/// The residual strip: each onset on the grid as a bar in the strip under the row, in the top half
+/// when the audio comes early and the bottom half when late, so the half says which as well as
+/// the colour, and fuller the farther off, full at the saturation.
 fn strip(painter: &egui::Painter, row: &Row, scene: &Scene<'_>) {
     let strip = Rect::from_min_max(
         pos2(row.rect.left(), row.rect.bottom() - STRIP),
@@ -728,12 +729,12 @@ fn strip(painter: &egui::Painter, row: &Row, scene: &Scene<'_>) {
         }
         let x = x_at_seconds(row, scene, residual.seconds);
         let size = float_to_f32((residual.ms.abs() / SATURATION_MS).min(1.0));
-        let colour = if residual.ms < 0.0 {
-            style::RESIDUAL_EARLY
+        let (colour, half) = if residual.ms < 0.0 {
+            (style::RESIDUAL_EARLY, strip.top()..=strip.center().y)
         } else {
-            style::RESIDUAL_LATE
+            (style::RESIDUAL_LATE, strip.center().y..=strip.bottom())
         };
-        let bar = Rect::from_center_size(pos2(x, strip.center().y), vec2(3.0, STRIP));
+        let bar = Rect::from_x_y_ranges(x - 1.5..=x + 1.5, half);
         painter.rect_filled(bar, 0.0, colour.gamma_multiply(0.2 + 0.8 * size));
     }
 }
@@ -761,7 +762,8 @@ fn dim(painter: &egui::Painter, row: &Row, audio: Rect, from: f64, to: f64) {
 }
 
 /// An anchor: a line the height of the audio with a flag at its head naming the tempo from it
-/// on. Focused, it draws brighter and thicker; selected, its flag is filled.
+/// on. Focused or selected, it draws at twice the playhead's width with its flag filled, and
+/// focused, brighter.
 #[expect(
     clippy::arithmetic_side_effects,
     reason = "egui screen-coordinate vector addition cannot overflow integers"
@@ -776,11 +778,13 @@ fn draw_anchor(painter: &egui::Painter, row: &Row, audio: Rect, bars: &Bars, anc
         style::ANCHOR
     };
     let colour = if anchor.pulse > 0.0 {
-        colour.lerp_to_gamma(style::WARN, anchor.pulse)
+        colour.lerp_to_gamma(style::REFUSED, anchor.pulse)
     } else {
         colour
     };
-    let width = if anchor.focused { 3.0 } else { 2.0 } + 2.0 * anchor.pulse;
+    // Selected, it is near-white like the playhead, so its weight sets it apart.
+    let held = anchor.focused || anchor.selected;
+    let width = if held { 3.0 } else { 2.0 } + 2.0 * anchor.pulse;
     painter.vline(x, audio.y_range(), Stroke::new(width, colour));
     let galley = painter.layout_no_wrap(anchor.bpm.clone(), FontId::monospace(11.0), colour);
     let flag = Rect::from_min_size(pos2(x, audio.top() + 12.0), galley.size() + vec2(8.0, 2.0));
@@ -866,6 +870,112 @@ mod tests {
                 egui::Shape::LineSegment { stroke, .. } if stroke.color == style::TIMING_WAVE
             )
         }));
+    }
+
+    /// What `paint` draws over a row holding the first bar of a 120 BPM song, with `residuals`,
+    /// `anchors` and the playhead at `cursor`.
+    fn painted(
+        residuals: &[Residual],
+        anchors: &[Anchor],
+        cursor: Tick,
+        paint: fn(&egui::Painter, &Row, &Scene<'_>),
+    ) -> Vec<Shape> {
+        let document = song(&serde_json::json!([{ "tick": 0, "kind": { "bpm": 120.0 } }]));
+        let timing = document.timing();
+        let bars = Bars::new(timing, Tick::new(0), Tick::new(3840), 0);
+        let row = Row {
+            from: -0.1,
+            start: 0.0,
+            to: 1.0,
+            rect: Rect::from_min_size(pos2(0.0, 0.0), vec2(110.0, ROW)),
+        };
+        let scene = Scene {
+            timing,
+            bars: &bars,
+            grid: Grid::default(),
+            peaks: None,
+            onsets: &[],
+            sensitivity: 0.1,
+            residuals,
+            anchors,
+            cursor,
+            ghost: None,
+            reach: None,
+        };
+        let mut output = egui::Context::default().run_ui(egui::RawInput::default(), |ui| {
+            paint(ui.painter(), &row, &scene);
+        });
+        output.textures_delta.clear();
+        output
+            .shapes
+            .into_iter()
+            .map(|clipped| clipped.shape)
+            .collect()
+    }
+
+    #[test]
+    fn an_early_residual_fills_the_top_of_the_strip_and_a_late_one_the_bottom() {
+        let residuals = [
+            Residual {
+                seconds: 0.48,
+                strength: 1.0,
+                line: Tick::new(960),
+                ms: -SATURATION_MS,
+            },
+            Residual {
+                seconds: 1.02,
+                strength: 1.0,
+                line: Tick::new(1920),
+                ms: SATURATION_MS,
+            },
+        ];
+        let shapes = painted(&residuals, &[], Tick::new(0), strip);
+        let bar = |colour: Color32| {
+            shapes
+                .iter()
+                .find_map(|shape| {
+                    if let Shape::Rect(rect) = shape
+                        && rect.fill == colour
+                    {
+                        Some(rect.rect)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap()
+        };
+        // The half says early or late, so the two read apart without their colours.
+        let middle = ROW - STRIP / 2.0;
+        assert!(bar(style::RESIDUAL_EARLY).bottom() <= middle + 0.01);
+        assert!(bar(style::RESIDUAL_LATE).top() >= middle - 0.01);
+    }
+
+    #[test]
+    fn a_selected_anchor_is_drawn_at_least_twice_as_wide_as_the_playhead() {
+        let anchors = [Anchor {
+            tick: Tick::new(0),
+            bpm: "120".to_owned(),
+            focused: false,
+            selected: true,
+            pulse: 0.0,
+        }];
+        let shapes = painted(&[], &anchors, Tick::new(1920), draw);
+        let width = |colour: Color32| {
+            shapes
+                .iter()
+                .find_map(|shape| {
+                    if let Shape::LineSegment { stroke, .. } = shape
+                        && stroke.color == colour
+                    {
+                        Some(stroke.width)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap()
+        };
+        // Both are near-white lines down the audio, so their weight is what tells them apart.
+        assert!(width(style::ANCHOR_SELECTED) >= 2.0 * width(style::NOW_LINE));
     }
 
     #[test]

@@ -838,25 +838,31 @@ mod tests {
                     ),
                 );
             });
-            let stripes: Vec<_> = output
+            let rects: Vec<_> = output
                 .shapes
                 .iter()
                 .filter_map(|shape| {
-                    if let egui::Shape::Rect(rect) = &shape.shape
-                        && rect.fill == style::layer_colour(charter_core::LayerColour::Blue)
-                    {
-                        Some(rect.rect)
+                    if let egui::Shape::Rect(rect) = &shape.shape {
+                        Some((rect.rect, rect.fill))
                     } else {
                         None
                     }
                 })
                 .collect();
+            let layer = style::layer_colour(charter_core::LayerColour::Blue);
+            let stripes: Vec<_> = rects
+                .iter()
+                .filter(|(_, fill)| *fill == layer)
+                .map(|(rect, _)| *rect)
+                .collect();
             output.textures_delta.clear();
             assert!(
                 stripes.iter().any(|stripe| {
                     (stripe.width() - 4.0).abs() < 0.01
-                        && stripes.iter().any(|head| {
-                            (head.height() - stripe.height()).abs() < 0.01
+                        && rects.iter().any(|(head, fill)| {
+                            // The lane-dark gutter behind the stripe is not the head.
+                            *fill != style::LANES_BG
+                                && (head.height() - stripe.height()).abs() < 0.01
                                 && (head.left() - stripe.left()).abs() < 0.01
                                 && head.width() > stripe.width()
                         })

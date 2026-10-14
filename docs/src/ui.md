@@ -112,6 +112,14 @@ the tempo at the cursor.
   `crates/charter-style/assets/fonts` with Inter's OFL licence. The system's Japanese, Chinese and
   Korean fonts follow them whatever the locale, found with the `system-fonts` crate and read once,
   so titles in those scripts draw.
+- Colours are kept apart by what shares a surface, not by taste. A layer's colour stays at least
+  15° of hue from the section and bookmark markers and from the accent, and its stripe down a
+  note's leading edge sits on a lane-dark gutter, so it reads whatever kind of note it marks. The
+  timing window gives blue to the waveform, orange to anchors and a green-and-magenta pair to the
+  early and late estimates, which lie on top of both; early ones fill the top half of the strip
+  under a row and late ones the bottom, so the pair reads without colour. A selected anchor draws
+  at twice the playhead's width, since both are near-white. A refused edit pulses red rather than
+  the warning amber an anchor is already drawn in. `charter-style`'s tests hold each of these.
 - Messages float over the canvas rather than moving it, and each is an assertive live alert, so a
   screen reader reads a failure out as it appears. A toolbar button that holds a state, such as the
   metronome, reports that state under one name as well as lighting up, since the accent alone says

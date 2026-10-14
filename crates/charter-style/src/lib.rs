@@ -48,8 +48,11 @@ pub const ACCENT_FILL: Color32 = Color32::from_rgb(40, 104, 208);
 pub const ON_ACCENT: Color32 = Color32::WHITE;
 /// A row of a list under the pointer, lighter than the panel without reading as a border.
 pub const ROW_HOVER: Color32 = Color32::from_gray(40);
-/// Warnings and refusals.
+/// Warnings and refusals in words: notices, failed reads, locked layers.
 pub const WARN: Color32 = Color32::from_rgb(240, 180, 90);
+/// An edit the game refuses, flashed on the thing in its way. Far enough from [`TIMING_MARK`]
+/// and [`ANCHOR`] to show when it pulses over one, which [`WARN`] is not.
+pub const REFUSED: Color32 = Color32::from_rgb(229, 76, 74);
 /// The strip a notice sits on, tinted from the warning.
 pub const NOTICE: Color32 = Color32::from_rgb(40, 34, 24);
 
@@ -91,28 +94,33 @@ pub const FAKE: Color32 = Color32::from_gray(110);
 pub const OTHER: Color32 = Color32::from_rgb(170, 170, 120);
 /// Highlighted notes in a selection.
 pub const SELECTED: Color32 = Color32::from_rgb(200, 224, 255);
-/// The outline of a selection marquee.
-pub const MARQUEE: Color32 = ACCENT;
+/// The outline of a selection marquee, the same light blue as the notes it gathers rather than
+/// the accent, which is also [`TAP`].
+pub const MARQUEE: Color32 = SELECTED;
 /// The waveform, quieter than the notes it sits beside, on a strip of its own.
 pub const WAVE: Color32 = Color32::from_rgb(92, 128, 176);
 /// The strip beneath a waveform.
 pub const WAVE_BG: Color32 = Color32::from_gray(16);
-/// The translucent interior of a selection marquee.
-pub const MARQUEE_FILL: Color32 = Color32::from_rgba_unmultiplied_const(110, 170, 255, 28);
+/// The translucent interior of a selection marquee, from the same light blue as its outline.
+pub const MARQUEE_FILL: Color32 = Color32::from_rgba_unmultiplied_const(200, 224, 255, 28);
 /// The timing window: onsets, how far they miss the grid either way, and anchors as they stand,
-/// focused and selected. Early and late differ in lightness as well as hue, so they read without
-/// colour.
+/// focused and selected.
+///
+/// Early and late differ in lightness as well as hue, and the residual strip draws them in its
+/// two halves, so they read without colour.
 pub const ONSET: Color32 = Color32::from_rgb(170, 180, 196);
-/// A timing estimate before the chart's grid line.
-pub const RESIDUAL_EARLY: Color32 = Color32::from_rgb(90, 160, 255);
-/// A timing estimate after the chart's grid line.
-pub const RESIDUAL_LATE: Color32 = Color32::from_rgb(255, 190, 110);
+/// A timing estimate before the chart's grid line. Green rather than blue: blue is the
+/// waveform these sit on, and orange is the anchors they sit among.
+pub const RESIDUAL_EARLY: Color32 = Color32::from_rgb(110, 216, 137);
+/// A timing estimate after the chart's grid line, opposite the early one in hue and darker.
+pub const RESIDUAL_LATE: Color32 = Color32::from_rgb(215, 115, 208);
 /// An ordinary timing anchor.
 pub const ANCHOR: Color32 = TIMING_MARK;
 /// An anchor under keyboard focus.
 pub const ANCHOR_FOCUS: Color32 = Color32::from_rgb(255, 214, 140);
-/// A selected timing anchor.
-pub const ANCHOR_SELECTED: Color32 = ACCENT;
+/// A selected timing anchor, in the same light blue as any other selected thing: the accent sits
+/// too close to [`TIMING_WAVE`], the waveform an anchor is drawn over.
+pub const ANCHOR_SELECTED: Color32 = SELECTED;
 /// The area beyond the timing window's editable reach.
 pub const REACH_DIM: Color32 = Color32::from_rgba_unmultiplied_const(0, 0, 0, 120);
 /// The timing window's waveform, brighter than the notefield waveform because it stands alone.
@@ -126,10 +134,13 @@ pub const fn layer_colour(colour: charter_core::LayerColour) -> Color32 {
         LayerColour::Red => Color32::from_rgb(240, 105, 110),
         LayerColour::Orange => Color32::from_rgb(240, 155, 85),
         LayerColour::Yellow => Color32::from_rgb(235, 205, 95),
-        LayerColour::Green => Color32::from_rgb(120, 205, 115),
+        // Clear of SECTION, which marks a part of the chart rather than a layer.
+        LayerColour::Green => Color32::from_rgb(151, 199, 89),
         LayerColour::Teal => Color32::from_rgb(85, 205, 190),
-        LayerColour::Blue => Color32::from_rgb(110, 170, 255),
-        LayerColour::Purple => Color32::from_rgb(180, 140, 235),
+        // Away from the accent, which marks selection and focus rather than a layer.
+        LayerColour::Blue => Color32::from_rgb(35, 184, 239),
+        // Clear of BOOKMARK, which marks a place in the chart rather than a layer.
+        LayerColour::Purple => Color32::from_rgb(148, 151, 248),
         LayerColour::Pink => Color32::from_rgb(235, 140, 195),
     }
 }
@@ -680,6 +691,7 @@ pub fn table(ui: &mut Ui, id: &str, rows: impl FnOnce(&mut Ui)) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     /// WCAG relative luminance of `colour`, drawn opaque.
     fn luminance(colour: Color32) -> f64 {
         let channel = |value: u8| {
@@ -754,6 +766,93 @@ mod tests {
         }
         let on_fill = contrast(ON_ACCENT, ACCENT_FILL);
         assert!(on_fill >= 4.5, "ON_ACCENT on ACCENT_FILL is {on_fill:.2}");
+    }
+
+    /// OKLCH hue of `colour` in degrees, and its chroma.
+    fn hue(colour: Color32) -> (f64, f64) {
+        let channel = |value: u8| {
+            let value = f64::from(value) / 255.0;
+            if value <= 0.040_45 {
+                value / 12.92
+            } else {
+                ((value + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        let (red, green, blue) = (
+            channel(colour.r()),
+            channel(colour.g()),
+            channel(colour.b()),
+        );
+        let long = (0.412_221_47 * red + 0.536_332_54 * green + 0.051_445_993 * blue).cbrt();
+        let medium = (0.211_903_5 * red + 0.680_699_55 * green + 0.107_396_96 * blue).cbrt();
+        let short = (0.088_302_46 * red + 0.281_718_84 * green + 0.629_978_7 * blue).cbrt();
+        let green_red = 1.977_998_5 * long - 2.428_592_2 * medium + 0.450_593_7 * short;
+        let blue_yellow = 0.025_904_037 * long + 0.782_771_77 * medium - 0.808_675_77 * short;
+        (
+            blue_yellow.atan2(green_red).to_degrees().rem_euclid(360.0),
+            green_red.hypot(blue_yellow),
+        )
+    }
+
+    /// Degrees between the hues of `a` and `b`, at most 180.
+    fn apart(a: Color32, b: Color32) -> f64 {
+        let gap = (hue(a).0 - hue(b).0).abs();
+        gap.min(360.0 - gap)
+    }
+
+    #[test]
+    fn every_layer_colour_is_told_apart_from_what_shares_the_notefield_with_it() {
+        // A layer's colour lands beside the markers and the taps, so inside 15 degrees of hue it
+        // stops saying which layer a note is on. ACCENT covers TAP, which aliases it. The other
+        // note kinds are left out: a mine's ring and a hold's or roll's body tell them apart, and
+        // a layer's stripe sits on a lane-dark gutter beside the head it marks.
+        for colour in charter_core::LayerColour::ALL {
+            for (name, other) in [
+                ("SECTION", SECTION),
+                ("BOOKMARK", BOOKMARK),
+                ("ACCENT", ACCENT),
+            ] {
+                let gap = apart(layer_colour(colour), other);
+                assert!(gap >= 15.0, "{colour:?} is {gap:.1} degrees from {name}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_layer_palette_keeps_its_entries_apart_from_each_other() {
+        for one in charter_core::LayerColour::ALL {
+            for two in charter_core::LayerColour::ALL {
+                if one == two {
+                    continue;
+                }
+                let gap = apart(layer_colour(one), layer_colour(two));
+                assert!(gap >= 15.0, "{one:?} is {gap:.1} degrees from {two:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_refused_anchor_pulses_to_a_colour_an_anchor_is_not_already() {
+        // rows.rs lerps an anchor toward REFUSED, so the two must not already match.
+        for (name, anchor) in [("ANCHOR", ANCHOR), ("ANCHOR_FOCUS", ANCHOR_FOCUS)] {
+            let gap = apart(REFUSED, anchor);
+            assert!(gap >= 15.0, "REFUSED is {gap:.1} degrees from {name}");
+        }
+    }
+
+    #[test]
+    fn the_timing_window_separates_its_markers_from_the_waveform_under_them() {
+        // Either hue or lightness has to carry each pair; the residuals do it by hue and a
+        // selected anchor by lightness.
+        for (name, marker) in [
+            ("RESIDUAL_EARLY", RESIDUAL_EARLY),
+            ("RESIDUAL_LATE", RESIDUAL_LATE),
+            ("ANCHOR_SELECTED", ANCHOR_SELECTED),
+        ] {
+            let split = apart(marker, TIMING_WAVE) >= 15.0
+                || (luminance(marker) - luminance(TIMING_WAVE)).abs() > 0.2;
+            assert!(split, "{name} does not separate from TIMING_WAVE");
+        }
     }
 
     #[test]
