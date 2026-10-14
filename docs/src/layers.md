@@ -74,6 +74,8 @@ The highlighted row is the **active layer**, where new notes go; a click on a ro
 Drag a row by its handle to reorder it. `[+]` makes a layer above the active one and makes it
 active. `[…]`, and right-click on a row, hold the rest: rename, colour, *Select notes*, *Merge
 down*, *Copy to chart ›* and delete.
+On a read-only song, choosing a row and *Select notes* still work, but controls that change
+the layer or its saved visibility are disabled and say why on hover.
 
 ## Drawing
 

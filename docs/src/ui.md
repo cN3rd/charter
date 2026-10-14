@@ -268,7 +268,8 @@ dark playfield, often in a dim room, and notes read best as bright shapes on dar
   banner naming the missing plugin, because only the ruleset can check an edit against the game:
   moving a Tap Tap Revenge shake out of the lane of its direction is a plain lane move that breaks
   a rule. Selection and Copy still work, while an empty audio slot offers neither a file drop nor
-  an enabled chooser.
+  an enabled chooser. Its layer list remains visible for choosing a layer or selecting notes, but
+  layer edits, including visibility and locks, are disabled.
 - The lane header shows the fixed digit bindings for the first ten lanes. Wider layouts can be
   edited with the mouse; per-ruleset bindings and the scheme above ten lanes remain
   [open](research/topics/wide-layouts.md). Clicking a header to arm a recording lane is planned.

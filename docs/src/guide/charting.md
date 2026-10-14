@@ -81,6 +81,9 @@ idea being tried. A layer can be shown, faded, hidden, soloed or locked, and mer
 below. The Layers section of the song panel lists them, and Alt+1 to 9 makes one active, so new
 notes go there; Alt+Shift+1 to 9 moves the selected notes. View > Colour notes by layer tints
 whole notes in their layer's colour. [Layers](../layers.md) describes them in full.
+In a read-only song, the list still lets you choose a layer or select its notes, but adding,
+renaming, recolouring, reordering, showing, hiding and locking layers are disabled. Visibility
+is saved in the song, so changing it is an edit.
 
 ## The song panel
 

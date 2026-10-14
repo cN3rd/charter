@@ -46,6 +46,7 @@ pub(crate) fn song_panel(
     if song.chart().is_some() {
         style::section_with_actions(ui, "Layers", |ui, header| {
             if header {
+                let read_only = song.read_only().map(|why| format!("Read only: {why}"));
                 ui.menu_button(style::glyph(ui, icon::DOTS_THREE), |ui| {
                     layer_menu(ui, song, song.active_layer(), drafts, actions);
                 })
@@ -53,7 +54,12 @@ pub(crate) fn song_panel(
                 .widget_info(|| {
                     egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Layer actions")
                 });
-                if style::quiet_icon(ui, icon::PLUS, "Add layer", "Add layer (Ctrl+Shift+N)")
+                if ui
+                    .add_enabled_ui(read_only.is_none(), |ui| {
+                        style::quiet_icon(ui, icon::PLUS, "Add layer", "Add layer (Ctrl+Shift+N)")
+                    })
+                    .inner
+                    .on_disabled_hover_text(read_only.as_deref().unwrap_or_default())
                     .clicked()
                 {
                     actions.push(Action::AddLayer);
@@ -629,6 +635,26 @@ mod tests {
             );
         harness.run();
         harness
+    }
+
+    #[test]
+    fn a_read_only_song_disables_adding_a_layer() {
+        let song = Song::new(charter_editor::demo::song(), &[]);
+        assert!(song.read_only().is_some());
+        assert!(song.chart().is_some());
+        let mut harness = Harness::builder().build_ui_state(
+            |ui, (song, drafts, actions): &mut (Song, SongDrafts, Vec<Action>)| {
+                song_panel(ui, song, (drafts, None), actions);
+            },
+            (song, SongDrafts::default(), Vec::new()),
+        );
+        harness.run();
+        assert!(
+            harness
+                .get_by_label("Add layer")
+                .accesskit_node()
+                .is_disabled()
+        );
     }
 
     #[test]

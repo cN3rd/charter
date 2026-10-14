@@ -11,6 +11,9 @@ use super::{
 )]
 pub(super) fn layers(ui: &mut Ui, song: &Song, drafts: &mut SongDrafts, actions: &mut Vec<Action>) {
     let rows = song.layers();
+    let read_only = song.read_only().map(|why| format!("Read only: {why}"));
+    let editable = read_only.is_none();
+    let why = read_only.as_deref().unwrap_or_default();
     for (index, row) in rows.iter().enumerate() {
         let index = LayerIndex::new(index);
         let hover_rect = egui::Rect::from_min_size(
@@ -37,18 +40,26 @@ pub(super) fn layers(ui: &mut Ui, song: &Song, drafts: &mut SongDrafts, actions:
                 ui.dnd_drop_zone::<LayerIndex, _>(egui::Frame::new().corner_radius(4), |ui| {
                     ui.set_min_width(ui.available_width());
                     ui.horizontal(|ui| {
-                        let handle =
-                            ui.dnd_drag_source(ui.id().with(("layer", index.get())), index, |ui| {
-                                ui.label(
-                                    style::glyph(ui, icon::DOTS_SIX_VERTICAL)
-                                        .color(style::WEAK_TEXT),
-                                );
-                            });
+                        let handle = ui
+                            .add_enabled_ui(editable, |ui| {
+                                ui.dnd_drag_source(
+                                    ui.id().with(("layer", index.get())),
+                                    index,
+                                    |ui| {
+                                        ui.label(
+                                            style::glyph(ui, icon::DOTS_SIX_VERTICAL)
+                                                .color(style::WEAK_TEXT),
+                                        );
+                                    },
+                                )
+                            })
+                            .inner;
                         handled |= handle.response.clicked();
                         handle
                             .response
                             .clone()
-                            .on_hover_cursor(egui::CursorIcon::Grab);
+                            .on_hover_cursor(egui::CursorIcon::Grab)
+                            .on_disabled_hover_text(why);
                         handle.response.widget_info(|| {
                             egui::WidgetInfo::labeled(
                                 egui::WidgetType::Button,
@@ -72,13 +83,15 @@ pub(super) fn layers(ui: &mut Ui, song: &Song, drafts: &mut SongDrafts, actions:
                             LayerView::Hidden => ("hidden", "show"),
                         };
                         let view = ui
-                            .add(
+                            .add_enabled(
+                                editable,
                                 egui::Button::new(style::glyph(ui, symbol).color(view_colour))
                                     .frame_when_inactive(false),
                             )
                             .on_hover_text(format!(
                                 "{state}; click to {next_state}; Alt+click to solo"
-                            ));
+                            ))
+                            .on_disabled_hover_text(why);
                         view.widget_info(|| {
                             egui::WidgetInfo::labeled(
                                 egui::WidgetType::Button,
@@ -107,7 +120,8 @@ pub(super) fn layers(ui: &mut Ui, song: &Song, drafts: &mut SongDrafts, actions:
                             style::WEAK_TEXT.gamma_multiply(0.55)
                         };
                         let lock = ui
-                            .add(
+                            .add_enabled(
+                                editable,
                                 egui::Button::new(style::glyph(ui, locked).color(lock_colour))
                                     .frame_when_inactive(false),
                             )
@@ -115,7 +129,8 @@ pub(super) fn layers(ui: &mut Ui, song: &Song, drafts: &mut SongDrafts, actions:
                                 "locked; click to unlock"
                             } else {
                                 "unlocked; click to lock"
-                            });
+                            })
+                            .on_disabled_hover_text(why);
                         lock.widget_info(|| {
                             egui::WidgetInfo::labeled(
                                 egui::WidgetType::Button,
@@ -127,10 +142,16 @@ pub(super) fn layers(ui: &mut Ui, song: &Song, drafts: &mut SongDrafts, actions:
                             handled = true;
                             actions.push(Action::SetLayerLocked(index, !row.locked));
                         }
-                        let palette =
-                            ui.menu_button(" ", |ui| layer_palette(ui, index, row.colour, actions));
+                        let palette = ui
+                            .add_enabled_ui(editable, |ui| {
+                                ui.menu_button(" ", |ui| {
+                                    layer_palette(ui, index, row.colour, actions);
+                                })
+                            })
+                            .inner;
                         handled |= palette.response.clicked();
                         paint_swatch(ui, palette.response.rect.center(), row.colour, false);
+                        palette.response.clone().on_disabled_hover_text(why);
                         palette.response.widget_info(|| {
                             egui::WidgetInfo::labeled(
                                 egui::WidgetType::Button,
@@ -142,8 +163,12 @@ pub(super) fn layers(ui: &mut Ui, song: &Song, drafts: &mut SongDrafts, actions:
                             && *editing == index
                         {
                             let width = ui.available_width().max(95.0);
-                            let edit =
-                                ui.add(egui::TextEdit::singleline(name).desired_width(width));
+                            let edit = ui
+                                .add_enabled(
+                                    editable,
+                                    egui::TextEdit::singleline(name).desired_width(width),
+                                )
+                                .on_disabled_hover_text(why);
                             edit.widget_info(|| {
                                 egui::WidgetInfo::labeled(
                                     egui::WidgetType::TextEdit,
@@ -151,7 +176,7 @@ pub(super) fn layers(ui: &mut Ui, song: &Song, drafts: &mut SongDrafts, actions:
                                     format!("Rename {}", row.name),
                                 )
                             });
-                            if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
+                            if !editable || ui.input(|input| input.key_pressed(egui::Key::Escape)) {
                                 drafts.layer_name = None;
                             } else if ui.input(|input| input.key_pressed(egui::Key::Enter))
                                 || (edit.lost_focus() && !edit.has_focus())
@@ -181,7 +206,7 @@ pub(super) fn layers(ui: &mut Ui, song: &Song, drafts: &mut SongDrafts, actions:
                                     format!("Layer {}", row.name),
                                 )
                             });
-                            if label.double_clicked() {
+                            if editable && label.double_clicked() {
                                 drafts.layer_name = Some((index, row.name.clone()));
                             }
                             if label.clicked() && !label.double_clicked() {
@@ -235,7 +260,8 @@ pub(super) fn layers(ui: &mut Ui, song: &Song, drafts: &mut SongDrafts, actions:
                 actions.push(Action::SetActiveLayer(index));
             }
         }
-        if let Some(from) = dropped
+        if editable
+            && let Some(from) = dropped
             && *from != index
         {
             actions.push(Action::MoveLayer {
@@ -354,36 +380,50 @@ pub(super) fn layer_menu(
     let Some(row) = rows.get(index.get()) else {
         return;
     };
-    if ui.button("New layer above").clicked() {
+    let read_only = song.read_only().map(|why| format!("Read only: {why}"));
+    let editable = read_only.is_none();
+    let why = read_only.as_deref().unwrap_or_default();
+    let edit_button = |item_ui: &mut Ui, label: &str, available: bool| {
+        item_ui
+            .add_enabled(editable && available, egui::Button::new(label))
+            .on_disabled_hover_text(why)
+    };
+    if edit_button(ui, "New layer above", true).clicked() {
         actions.push(Action::SetActiveLayer(index));
         actions.push(Action::AddLayer);
         ui.close();
     }
     ui.separator();
-    if ui.button("Rename").clicked() {
+    if edit_button(ui, "Rename", true).clicked() {
         drafts.layer_name = Some((index, row.name.clone()));
         ui.close();
     }
-    ui.menu_button("Colour", |ui| layer_palette(ui, index, row.colour, actions));
+    if editable {
+        ui.menu_button("Colour", |ui| layer_palette(ui, index, row.colour, actions));
+    } else {
+        edit_button(ui, "Colour", true);
+    }
     ui.separator();
     for (label, view) in [
         ("Show", LayerView::Shown),
         ("Ghost", LayerView::Ghosted),
         ("Hide", LayerView::Hidden),
     ] {
-        if ui.radio(row.view == view, label).clicked() {
+        if ui
+            .add_enabled_ui(editable, |ui| ui.radio(row.view == view, label))
+            .inner
+            .on_disabled_hover_text(why)
+            .clicked()
+        {
             actions.push(Action::SetLayerView(index, view));
             ui.close();
         }
     }
-    if ui
-        .button(if row.locked { "Unlock" } else { "Lock" })
-        .clicked()
-    {
+    if edit_button(ui, if row.locked { "Unlock" } else { "Lock" }, true).clicked() {
         actions.push(Action::SetLayerLocked(index, !row.locked));
         ui.close();
     }
-    if ui.button("Solo").clicked() {
+    if edit_button(ui, "Solo", true).clicked() {
         actions.push(Action::SoloLayer(index));
         ui.close();
     }
@@ -392,45 +432,35 @@ pub(super) fn layer_menu(
         actions.push(Action::SelectLayer(index));
         ui.close();
     }
-    if ui
-        .add_enabled(
-            song.selection().next().is_some(),
-            egui::Button::new("Move selected notes here"),
-        )
-        .clicked()
-    {
+    let has_selection = song.selection().next().is_some();
+    if edit_button(ui, "Move selected notes here", has_selection).clicked() {
         actions.push(Action::MoveSelectionToLayer(index));
         ui.close();
     }
-    if ui
-        .add_enabled(
-            index.get().saturating_add(1) < rows.len(),
-            egui::Button::new("Merge down"),
-        )
-        .clicked()
-    {
+    if edit_button(ui, "Merge down", index.get().saturating_add(1) < rows.len()).clicked() {
         actions.push(Action::MergeLayer(index));
         ui.close();
     }
-    ui.menu_button("Copy to chart", |ui| {
-        for (chart, target) in song.document().document().charts.iter().enumerate() {
-            let chart = ChartIndex::new(chart);
-            if chart != song.chart_index()
-                && ui.button(format!("Copy to {}", target.name)).clicked()
-            {
-                actions.push(Action::CopyLayerToChart {
-                    layer: index,
-                    chart,
-                });
-                ui.close();
+    if editable {
+        ui.menu_button("Copy to chart", |ui| {
+            for (chart, target) in song.document().document().charts.iter().enumerate() {
+                let chart = ChartIndex::new(chart);
+                if chart != song.chart_index()
+                    && ui.button(format!("Copy to {}", target.name)).clicked()
+                {
+                    actions.push(Action::CopyLayerToChart {
+                        layer: index,
+                        chart,
+                    });
+                    ui.close();
+                }
             }
-        }
-    });
+        });
+    } else {
+        edit_button(ui, "Copy to chart", true);
+    }
     ui.separator();
-    if ui
-        .add_enabled(rows.len() > 1, egui::Button::new("Delete"))
-        .clicked()
-    {
+    if edit_button(ui, "Delete", rows.len() > 1).clicked() {
         if row.notes == 0 {
             actions.push(Action::DeleteLayer(index, LayerNotes::Delete));
         } else {
@@ -447,8 +477,9 @@ pub(super) fn layer_menu(
 
 #[cfg(test)]
 mod tests {
+    use egui::accesskit::Role;
     use egui_kittest::Harness;
-    use egui_kittest::kittest::Queryable;
+    use egui_kittest::kittest::{NodeT, Queryable};
 
     use super::*;
 
@@ -464,6 +495,88 @@ mod tests {
             );
         harness.run();
         harness
+    }
+
+    fn read_only_layers() -> Harness<'static, (Song, SongDrafts, Vec<Action>)> {
+        let mut harness = editable_layers();
+        harness.state_mut().0.add_layer().unwrap();
+        let document = harness.state().0.document().clone();
+        harness.state_mut().0 = Song::new(document, &[]);
+        harness.run();
+        assert!(harness.state().0.read_only().is_some());
+        harness
+    }
+
+    #[test]
+    fn a_read_only_layer_disables_changes_but_can_still_be_selected() {
+        let mut harness = read_only_layers();
+        for label in [
+            "Reorder Layer 0",
+            "Cycle visibility of Layer 0",
+            "Toggle lock of Layer 0",
+            "Colour of Layer 0",
+        ] {
+            assert!(
+                harness.get_by_label(label).accesskit_node().is_disabled(),
+                "{label}"
+            );
+        }
+        assert!(
+            !harness
+                .get_by_label("Layer Layer 0")
+                .accesskit_node()
+                .is_disabled()
+        );
+        harness
+            .ctx
+            .options_mut(|options| options.input_options.max_double_click_delay = 2.0);
+        harness.get_by_label("Layer Layer 0").click();
+        harness.step();
+        harness.get_by_label("Layer Layer 0").click();
+        harness.step();
+        harness.run();
+        assert!(
+            harness
+                .query_by_role_and_label(Role::TextInput, "Rename Layer 0")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_read_only_layer_menu_disables_edits_but_offers_selection() {
+        let mut harness = read_only_layers();
+        harness.state_mut().0.select_all();
+        harness.run();
+        harness.get_by_label("Layer row Layer 1").click_secondary();
+        harness.run();
+        for label in [
+            "New layer above",
+            "Rename",
+            "Colour",
+            "Show",
+            "Ghost",
+            "Hide",
+            "Lock",
+            "Solo",
+            "Move selected notes here",
+            "Merge down",
+            "Copy to chart",
+            "Delete",
+        ] {
+            assert!(
+                harness.get_by_label(label).accesskit_node().is_disabled(),
+                "{label}"
+            );
+        }
+        assert!(
+            !harness
+                .get_by_label("Select notes")
+                .accesskit_node()
+                .is_disabled()
+        );
+        harness.get_by_label("Select notes").click();
+        harness.run();
+        assert_eq!(harness.state().2, [Action::SelectLayer(LayerIndex::new(0))]);
     }
 
     fn ask_to_delete_layer_zero(harness: &mut Harness<'_, (Song, SongDrafts, Vec<Action>)>) {
