@@ -100,5 +100,6 @@ back. A refused layer name stays in its field so you can correct it.
   difficulties at one spot. The open chart's own settings, such as a StepMania meter, follow.
 - Layers, described above.
 - **Timing**: the offset, the tempo and every timing point; see [Timing](timing.md).
-- **Markers**: the song's sections and bookmarks. A click jumps there. A name typed and entered
-  names the section at the cursor, or starts one; Ctrl+B adds or removes a bookmark at the cursor.
+- **Markers**: the song's sections and bookmarks. A click jumps there. A name typed into *Section
+  here* names the section at the cursor, or starts one, on Enter or when the field is left; Escape
+  discards the draft. Ctrl+B adds or removes a bookmark at the cursor.

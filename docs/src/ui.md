@@ -200,6 +200,8 @@ dark playfield, often in a dim room, and notes read best as bright shapes on dar
 - There is no inspector panel; the notefield keeps the width. The status bar counts the selection,
   the song panel sets the tempo, offset and sections at the cursor, and what keys cannot express
   on a note, such as a keysound, is still to find a place.
+- The *Section here* field commits a changed name on Enter or a click away. Escape discards it;
+  leaving an unchanged name creates no edit.
 - Menus carry the common actions, and `F1` opens a searchable keyboard shortcut sheet. Rebindable
   keys and a command palette are still planned; all four major editors surveyed ship customizable
   shortcuts, and Tempora's drag modifiers stay invisible until learned

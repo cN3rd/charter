@@ -2,8 +2,8 @@ use super::song::WIDE;
 use super::{Action, MarkerKind, RichText, Song, Ui, egui, style, table};
 
 /// The song's markers, each of which jumps the cursor to it when clicked. In a song open for
-/// editing a name typed and entered names the section at the cursor, starting one there if
-/// there is none, and each marker can be removed.
+/// editing, Enter or leaving the field names the section at the cursor, starting one if there
+/// is none. Escape cancels the draft, and each marker can be removed.
 pub(crate) fn markers(
     ui: &mut Ui,
     song: &Song,
@@ -19,9 +19,8 @@ fn markers_body(ui: &mut Ui, song: &Song, draft: &mut Option<String>, actions: &
     if editable {
         table(ui, "section here", |ui| {
             let caption = ui.weak("Section here");
-            let mut text = draft
-                .take()
-                .unwrap_or_else(|| song.section().unwrap_or_default().to_owned());
+            let current = song.section().unwrap_or_default();
+            let mut text = draft.take().unwrap_or_else(|| current.to_owned());
             let field = ui
                 .add(
                     egui::TextEdit::singleline(&mut text)
@@ -29,16 +28,18 @@ fn markers_body(ui: &mut Ui, song: &Song, draft: &mut Option<String>, actions: &
                         .desired_width(WIDE),
                 )
                 .labelled_by(caption.id);
-            let entered =
-                field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
+            let left = field.lost_focus()
+                && !ui.input(|input| input.key_pressed(egui::Key::Escape))
+                && text.trim() != current;
             if field.has_focus() {
                 *draft = Some(text);
-            } else if entered {
+            } else if left {
                 actions.push(Action::SetSection(text.trim().to_owned()));
             }
             ui.end_row();
         });
     }
+
     let document = song.document().document();
     if document.markers.is_empty() {
         ui.weak("No markers");
@@ -92,4 +93,85 @@ fn markers_body(ui: &mut Ui, song: &Song, draft: &mut Option<String>, actions: &
                 ui.end_row();
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use egui::accesskit::Role;
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+
+    use super::*;
+
+    fn editable_markers() -> Harness<'static, (Song, Option<String>, Vec<Action>)> {
+        let song = Song::new(charter_editor::demo::song(), &[&charter_stepmania::Plugin]);
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(650.0, 900.0))
+            .build_ui_state(
+                |ui, (song, draft, actions): &mut (Song, Option<String>, Vec<Action>)| {
+                    markers(ui, song, draft, actions);
+                    ui.button("Elsewhere").clicked();
+                },
+                (song, None, Vec::new()),
+            );
+        harness.run();
+        harness
+    }
+
+    #[test]
+    fn leaving_a_changed_section_field_sets_its_name_without_enter() {
+        let mut harness = editable_markers();
+        harness
+            .get_by_role_and_label(Role::TextInput, "Section here")
+            .focus();
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness
+            .get_by_role_and_label(Role::TextInput, "Section here")
+            .type_text("Opening");
+        harness.run();
+        harness.get_by_label("Elsewhere").click();
+        harness.run();
+        assert_eq!(
+            harness.state().2,
+            [Action::SetSection("Opening".to_owned())]
+        );
+    }
+
+    #[test]
+    fn leaving_an_unchanged_section_field_sends_no_edit() {
+        let mut harness = editable_markers();
+        harness
+            .get_by_role_and_label(Role::TextInput, "Section here")
+            .focus();
+        harness.run();
+        harness.get_by_label("Elsewhere").click();
+        harness.run();
+        assert!(harness.state().2.is_empty());
+    }
+
+    #[test]
+    fn escape_discards_a_section_draft_without_editing_it() {
+        let mut harness = editable_markers();
+        harness
+            .get_by_role_and_label(Role::TextInput, "Section here")
+            .focus();
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness
+            .get_by_role_and_label(Role::TextInput, "Section here")
+            .type_text("Opening");
+        harness.run();
+        harness.key_press(egui::Key::Escape);
+        harness.run();
+        assert!(harness.state().2.is_empty());
+        assert!(harness.state().1.is_none());
+        assert_eq!(
+            harness
+                .get_by_role_and_label(Role::TextInput, "Section here")
+                .value()
+                .as_deref(),
+            Some("Intro")
+        );
+    }
 }
