@@ -21,6 +21,10 @@ name. A song whose file would pass 64 MiB, a few hundred thousand notes, stops t
 opens no larger file. Saves write beside the song and then move over it, so a failed save leaves
 the old file.
 
+An export to another program's format says it is exporting while its files are being written,
+and reports success only after the main file, files beside it and copied resources are all written.
+If one fails, charter names the file that was not written instead.
+
 Charter keeps what it works out from the audio in a `cache` folder in the song's folder, such as
 the waveform, so the next open shows it at once. Deleting the folder only costs the time to work it
 out again.

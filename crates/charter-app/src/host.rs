@@ -325,13 +325,20 @@ impl<D: Disk> Host<D> {
                 };
                 (to.as_path(), result)
             }));
+        let mut failed = false;
         for (place, result) in written {
             if let Err(error) = result {
+                failed = true;
                 self.window.answer(Answer::ExportFailed {
                     path: place.to_path_buf(),
                     why: chain(&error).to_string(),
                 });
             }
+        }
+        if !failed {
+            self.window.answer(Answer::ExportWritten {
+                path: path.to_path_buf(),
+            });
         }
     }
 

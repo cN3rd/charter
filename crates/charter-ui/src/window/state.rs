@@ -261,6 +261,8 @@ pub(super) struct Dialogs {
     pub(super) offer: Option<Offer>,
     /// A file to import or export, waiting on which of the formats sharing its extension it is.
     pub(super) choosing: Option<formats::Choosing>,
+    /// An export whose files the host has yet to confirm were written.
+    pub(super) exporting: Option<formats::Exporting>,
 }
 
 impl Dialogs {
@@ -283,6 +285,7 @@ impl Dialogs {
             new_song,
             offer,
             choosing,
+            exporting: _,
         } = self;
         new_song.is_some()
             || matches!(pending, Some(Waiting::Asking(_)))

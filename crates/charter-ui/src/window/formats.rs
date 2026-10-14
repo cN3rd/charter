@@ -44,6 +44,15 @@ enum Pending {
     },
 }
 
+/// The message to show once the host confirms every exported file was written.
+#[derive(Debug)]
+pub(super) struct Exporting {
+    /// Where the main exported file is being written.
+    path: PathBuf,
+    /// Format, destination and anything the export left out.
+    message: String,
+}
+
 impl Window {
     /// Each song format the plugins offer, with the plugin and its index there.
     fn song_formats(
@@ -288,10 +297,14 @@ impl Window {
                             .into_iter()
                             .map(|(made, bytes)| (folder.join(made.as_str()), bytes))
                             .collect();
-                        self.failure = Some(described(
-                            &format!("Exported {name} to {}", path.display()),
-                            &left_out,
-                        ));
+                        self.dialogs.exporting = Some(Exporting {
+                            message: described(
+                                &format!("Exported {name} to {}", path.display()),
+                                &left_out,
+                            ),
+                            path: path.clone(),
+                        });
+                        self.failure = Some(format!("Exporting {name}…"));
                         self.requests.push(Request::WriteExport {
                             path,
                             bytes: exported.bytes,
@@ -307,8 +320,20 @@ impl Window {
         }
     }
 
+    /// Reports an export only after the host has written every file it requested.
+    pub(crate) fn export_written(&mut self, path: &Path) {
+        if let Some(written) = self
+            .dialogs
+            .exporting
+            .take_if(|pending| pending.path == path)
+        {
+            self.failure = Some(written.message);
+        }
+    }
+
     /// Shows why the exported file could not be written to `path`.
     pub(crate) fn export_failed(&mut self, path: &Path, why: &str) {
+        self.dialogs.exporting = None;
         self.failure = Some(format!("{} was not written: {why}", path.display()));
     }
 }
@@ -548,7 +573,7 @@ mod tests {
     }
 
     #[test]
-    fn exporting_writes_the_picked_format_and_says_what_the_file_leaves_out() {
+    fn exporting_reports_success_and_omissions_only_after_the_host_confirms_the_write() {
         let mut app = opened(&ttr_song());
         assert!(app.song_exportable());
         app.apply(Action::ExportSong);
@@ -579,6 +604,13 @@ mod tests {
         };
         assert_eq!(*path, &PathBuf::from("/out/notes.mid"));
         assert!(bytes.starts_with(b"MThd"));
+        assert_eq!(
+            harness.state().message(),
+            Some("Exporting Editor on Fire MIDI\u{2026}")
+        );
+        harness.state_mut().answer(crate::Answer::ExportWritten {
+            path: PathBuf::from("/out/notes.mid"),
+        });
         assert_eq!(
             harness.state().message(),
             Some(
@@ -729,6 +761,13 @@ mod tests {
                 ),
             ]
         );
+        assert_eq!(
+            harness.state().message(),
+            Some("Exporting Tap Tap Revenge track\u{2026}")
+        );
+        harness.state_mut().answer(crate::Answer::ExportWritten {
+            path: folder.join("taptrack.ttr2_track"),
+        });
         assert_eq!(
             harness.state().message(),
             Some(

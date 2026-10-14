@@ -503,6 +503,7 @@ impl Window {
                 companions,
             } => self.import_song(&path, &bytes, &companions),
             Answer::ExportedSong { path } => self.export_song(&path),
+            Answer::ExportWritten { path } => self.export_written(&path),
             Answer::ExportFailed { path, why } => self.export_failed(&path, &why),
             Answer::ArtworkRead { file, picture } => self.artwork_read(&file, picture),
             Answer::ArtworkRipped { file, cover } => match cover {

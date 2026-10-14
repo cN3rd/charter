@@ -186,8 +186,8 @@ pub enum Request {
         formats: Vec<(String, Vec<String>)>,
     },
     /// Write `bytes`, the open song in another program's format, to `path`, the files `beside` it
-    /// and the song's own resources, each from its file to its place, saying through
-    /// [`Answer::ExportFailed`] what could not be.
+    /// and the song's own resources, each from its file to its place. The host confirms every
+    /// write through [`Answer::ExportWritten`] or says what failed through [`Answer::ExportFailed`].
     WriteExport {
         /// Destination of the main file.
         path: PathBuf,
@@ -324,6 +324,11 @@ pub enum Answer {
     /// The user chose `path` to export the song to.
     ExportedSong {
         /// Destination the user chose.
+        path: PathBuf,
+    },
+    /// All of the exported song's files were written.
+    ExportWritten {
+        /// Destination of the main exported file.
         path: PathBuf,
     },
     /// The song could not be exported to `path`, because `why`.

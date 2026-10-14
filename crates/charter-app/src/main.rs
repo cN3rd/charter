@@ -246,7 +246,9 @@ fn picture(bytes: Vec<u8>) -> Option<Picture> {
 mod tests {
     use std::num::NonZeroU32;
 
-    use charter_core::{FileName, SongResource};
+    use charter_core::{
+        Extensions, FileName, Metadata, NewChart, NewSong, ResourcePath, SongResource,
+    };
 
     use super::*;
     use crate::disk::Disk;
@@ -1361,6 +1363,70 @@ mod tests {
                 .message()
                 .unwrap()
                 .starts_with("/full/notes.mid was not written")
+        );
+    }
+
+    #[test]
+    fn an_export_is_confirmed_only_after_all_its_files_are_written() {
+        let document = charter_ttr::Plugin
+            .new_song(&NewSong {
+                metadata: Metadata {
+                    title: "sudo".to_owned(),
+                    artist: "Mr. Bill".to_owned(),
+                    audio: ResourcePath::new("audio.ogg").unwrap(),
+                    preview: None,
+                    artwork: None,
+                    genre: None,
+                    ext: Extensions::new(),
+                },
+                layout: 0,
+                charts: vec![NewChart {
+                    name: "Extreme".to_owned(),
+                    level: Some(3),
+                }],
+            })
+            .unwrap();
+        let mut host = host(Memory::with(&[("/songs/audio.ogg", b"vorbis")]));
+        host.ffmpeg.binary = Some(PathBuf::from("/tools/ffmpeg"));
+        host.window = Window::new(PLUGINS);
+        host.window.answer(Answer::Opened {
+            path: PathBuf::from("/songs/sudo.json"),
+            bytes: document.to_json().unwrap(),
+        });
+        host.window.answer(Answer::ExportedSong {
+            path: PathBuf::from("/out/sudo"),
+        });
+        assert!(
+            host.window
+                .message()
+                .unwrap()
+                .starts_with("Exporting Tap Tap Revenge track")
+        );
+        let requests = host.window.take_requests();
+        assert!(matches!(requests.as_slice(), [Request::WriteExport { .. }]));
+        host.handle_requests(requests);
+        assert!(files(&host, "/out/taptrack.ttr2_track"));
+        assert!(files(&host, "/out/info.plist"));
+        assert!(files(&host, "/out/audio.m4a"));
+        assert!(
+            host.window
+                .message()
+                .unwrap()
+                .starts_with("Exported Tap Tap Revenge track to /out/taptrack.ttr2_track")
+        );
+
+        host.disk.remove(Path::new("/songs/audio.ogg")).unwrap();
+        host.window.answer(Answer::ExportedSong {
+            path: PathBuf::from("/second/sudo"),
+        });
+        let second_requests = host.window.take_requests();
+        host.handle_requests(second_requests);
+        assert!(files(&host, "/second/taptrack.ttr2_track"));
+        assert!(
+            host.window
+                .message()
+                .unwrap()
+                .starts_with("/second/audio.m4a was not written")
         );
     }
 
