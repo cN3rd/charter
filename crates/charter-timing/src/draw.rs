@@ -139,10 +139,10 @@ pub(crate) fn rows(
             laid.push(row);
         }
     });
-    if let Gesture::Band { origin, .. } = window.gesture
+    if let Gesture::Band { origin, from, .. } = window.gesture
         && let Some(to) = latest
     {
-        window.gesture = Gesture::Band { origin, to };
+        window.gesture = Gesture::Band { origin, from, to };
         let band = egui::Rect::from_two_pos(origin, to);
         ui.painter().rect_filled(band, 0.0, style::MARQUEE_FILL);
         ui.painter().rect_stroke(
@@ -151,6 +151,13 @@ pub(crate) fn rows(
             egui::Stroke::new(1.0, style::MARQUEE),
             egui::StrokeKind::Inside,
         );
+    }
+    // The originating row cannot report drag_stopped once scrolling has laid out other rows.
+    if released.is_none()
+        && matches!(window.gesture, Gesture::Band { .. })
+        && ui.input(|input| input.pointer.any_released())
+    {
+        released = latest;
     }
     if let Some(at) = released {
         release(window, frame, &laid, at, commands);

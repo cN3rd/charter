@@ -58,7 +58,8 @@ offset and appear below. The inspector's Δ uses the same sign: onset time minus
 - A click adds an anchor, snapped to the strongest onset within 25 ms and to the grid. The grid
   runs from 1/1 to 1/32 of a whole note, chosen with the keys 1 to 0.
 - Dragging an anchor moves its beat, and Ctrl+drag its moment; Shift makes either finer and
-  unsnapped. Dragging elsewhere selects the anchors it boxes.
+  unsnapped. Dragging elsewhere selects the anchors between the drag's start and end, even after
+  the starting row scrolls away.
 - Left and Right nudge the focused anchor by 1 ms, 0.1 ms with Shift and 10 ms with Ctrl; Up and
   Down move it a grid step; J and K focus the anchor before or after. Delete removes it. + and -
   change the last section's tempo by 0.1 BPM, 1 BPM with Shift.

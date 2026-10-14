@@ -38,6 +38,8 @@ pub(crate) enum Gesture {
     Band {
         /// Screen position where the selection drag began.
         origin: Pos2,
+        /// Tick at the beginning of the drag, even when its row scrolls out of view.
+        from: Tick,
         /// Current opposite corner of the selection rectangle.
         to: Pos2,
     },
@@ -217,7 +219,11 @@ pub(crate) fn row_input(
                 to: tick,
                 origin: row.position_at(origin.x),
             },
-            None => Gesture::Band { origin, to: origin },
+            None => Gesture::Band {
+                origin,
+                from: row.tick_at(&frame.bars, origin.x),
+                to: origin,
+            },
         };
         if let Some(tick) = pressed
             && !window.selection.contains(&tick)
@@ -446,13 +452,11 @@ pub(crate) fn release(
                 }));
             }
         }
-        Gesture::Band { origin, .. } => {
-            let tick_of =
-                |pos: Pos2| rows::row_at(laid, pos).map(|row| row.tick_at(&frame.bars, pos.x));
-            let (Some(a), Some(b)) = (tick_of(origin), tick_of(at)) else {
+        Gesture::Band { from, .. } => {
+            let Some(row) = rows::row_at(laid, at) else {
                 return;
             };
-            window.select_between(frame, a, b);
+            window.select_between(frame, from, row.tick_at(&frame.bars, at.x));
             window.focus = window.selection.first().copied();
         }
         Gesture::DragBeat { .. } | Gesture::DragAudio { .. } | Gesture::Idle => {}
@@ -636,6 +640,85 @@ mod tests {
         assert_eq!(harness.state().window.selection, [Tick::new(960)]);
         assert_eq!(harness.state().commands, []);
         assert_eq!(harness.state().window.gesture, pointer::Gesture::Idle);
+    }
+
+    #[test]
+    fn a_band_selects_across_a_scroll_after_its_start_row_disappears() {
+        let mut harness = timing_harness();
+        let origin = row_point(&harness, 400);
+        harness.hover_at(origin);
+        pointer(&harness, origin, true, Modifiers::NONE);
+        harness.hover_at(origin + vec2(20.0, 0.0));
+        harness.step();
+        let state = harness.state();
+        assert!(matches!(state.window.gesture, Gesture::Band { .. }));
+
+        let cache = state.window.cache.as_ref().unwrap();
+        let frame = frame(&state.song, &[], (cache, Layout::Bars), 0.0);
+        let span = frame.bars.rows(BarsPerRow::One, SecondsPerRow::default())[1];
+        let first = harness
+            .query_all_by_label("Measure 0")
+            .next()
+            .unwrap()
+            .rect();
+        let visible = Row {
+            from: span.from,
+            start: span.start,
+            to: span.to,
+            rect: egui::Rect::from_min_size(
+                egui::pos2(first.left(), origin.y + ROW + 8.0),
+                first.size(),
+            ),
+        };
+        let end = egui::pos2(visible.x_of(span.start), visible.rect.center().y);
+        let mut window = TimingWindow {
+            gesture: state.window.gesture,
+            ..TimingWindow::default()
+        };
+        let mut commands = Vec::new();
+        release(&mut window, &frame, &[visible], end, &mut commands);
+        assert_eq!(window.selection, [Tick::new(960), Tick::new(1920)]);
+        assert!(commands.is_empty());
+    }
+
+    #[test]
+    fn releasing_a_band_after_the_origin_row_scrolls_away_selects_anchors() {
+        let mut harness = timing_harness();
+        harness.set_size(vec2(1280.0, 380.0));
+        harness.state_mut().window.bars_per_row = BarsPerRow::Half;
+        harness.run();
+        let first = harness
+            .query_all_by_label("Measure 0")
+            .next()
+            .unwrap()
+            .rect();
+        let origin = egui::pos2(first.left() + first.width() * 0.3, first.top() + 30.0);
+        harness.hover_at(origin);
+        pointer(&harness, origin, true, Modifiers::NONE);
+        harness.hover_at(origin + vec2(20.0, 0.0));
+        harness.step();
+        assert!(matches!(
+            harness.state().window.gesture,
+            Gesture::Band { .. }
+        ));
+
+        harness.state_mut().window.scroll_to = Some(Tick::new(3840 * 3));
+        harness.run();
+        harness.run();
+        assert!(harness.query_all_by_label("Measure 0").next().is_none());
+        let last = harness
+            .query_all_by_label("Measure 3")
+            .next()
+            .unwrap()
+            .rect();
+        let end = egui::pos2(last.left() + last.width() * 0.5, last.top() + 30.0);
+        harness.hover_at(end);
+        pointer(&harness, end, false, Modifiers::NONE);
+        harness.step();
+        assert_eq!(
+            harness.state().window.selection,
+            [Tick::new(960), Tick::new(1920)]
+        );
     }
 
     #[test]
