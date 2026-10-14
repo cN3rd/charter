@@ -77,6 +77,15 @@ pub(crate) enum ResetTiming {
     Cancel,
 }
 
+/// Whether to replace the open chart's timing with the timing found from its audio.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FoundTiming {
+    /// Use what the finder found.
+    Use,
+    /// Leave the current timing alone.
+    Keep,
+}
+
 /// Asks whether to save the changes to the song in `name` before they are lost. Escape or a
 /// click outside cancels.
 pub(crate) fn ask_to_save(ui: &Ui, name: &str) -> Option<SaveChanges> {
@@ -269,6 +278,30 @@ pub(crate) fn ask_to_run_on_cpu(ui: &Ui) -> Option<RunOnCpu> {
             }
             if ui.button("Cancel").clicked() {
                 answer = Some(RunOnCpu::Cancel);
+            }
+        });
+    });
+    answer
+}
+
+/// Asks whether to replace the current timing with the one found. Only an answer closes it.
+pub(crate) fn ask_to_use_timing(ui: &Ui, summary: &str) -> Option<FoundTiming> {
+    let mut answer = None;
+    egui::Modal::new(egui::Id::new("use found timing")).show(ui.ctx(), |ui| {
+        ui.set_max_width(420.0);
+        ui.label(style::dialog_title(ui, "Use the timing found?"));
+        ui.add_space(4.0);
+        ui.label(format!(
+            "Found {summary}. Using it replaces the open chart's timing; Undo brings the current \
+             timing back."
+        ));
+        ui.add_space(14.0);
+        ui.horizontal(|ui| {
+            if ui.add(style::primary("Use it")).clicked() {
+                answer = Some(FoundTiming::Use);
+            }
+            if ui.button("Keep the current timing").clicked() {
+                answer = Some(FoundTiming::Keep);
             }
         });
     });

@@ -690,8 +690,9 @@ mod tests {
     }
 
     #[test]
-    fn found_timing_is_applied_to_the_open_song() {
+    fn found_timing_waits_for_the_windows_review() {
         let mut window = window();
+        let before = window.title();
         let (send, receive) = std::sync::mpsc::channel();
         let mut finder = Finder {
             state: State::Finding(receive),
@@ -709,7 +710,8 @@ mod tests {
 
         assert!(!finder.update(&mut window));
         assert!(matches!(finder.state, State::Idle));
-        assert!(window.message().unwrap().contains("132 BPM"));
+        assert_eq!(window.title(), before);
+        assert_eq!(window.message(), None);
     }
 
     #[test]

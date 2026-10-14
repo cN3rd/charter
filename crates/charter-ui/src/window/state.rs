@@ -249,6 +249,8 @@ pub(super) struct Dialogs {
     /// The audio and resolution the timing last asked for is for, which a song open when it
     /// arrives must still have for it to take the timing.
     pub(super) finding_for: Option<(PathBuf, charter_core::TicksPerBeat)>,
+    /// Timing the user has yet to accept or keep their current timing instead of.
+    pub(super) found: Option<charter_core::Timing>,
     /// The model finding it, or last asked to.
     pub(super) tracker: Tracker,
     /// Unsaved changes from an earlier run, waiting on whether to restore them.
@@ -275,6 +277,7 @@ impl Dialogs {
             ffmpeg,
             finding,
             finding_for: _,
+            found,
             tracker: _,
             restoring,
             new_song,
@@ -288,6 +291,7 @@ impl Dialogs {
             || *resetting
             || *ffmpeg
             || choosing.is_some()
+            || found.is_some()
             || matches!(finding, Finding::Asking | Finding::NoGpu)
     }
 }

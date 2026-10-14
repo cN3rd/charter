@@ -79,9 +79,11 @@ The window takes the keyboard after a click in it and gives it back after a clic
 ## Finding timing automatically
 
 Timing > Find timing with Beat This!… and Find timing with Mapperatorinator… listen to the song and
-put a timing in place of the open chart's, as one undo step. Check what they find in the timing
-window before charting on it. The menu explains when either finder is disabled: a song has no
-audio, another search is under way, or the song is read-only.
+offer the timing they find for review. The dialog shows how many tempo points it found and the
+ending BPM; choose **Use it** to replace the open chart's timing as one undo step, or **Keep the
+current timing** to leave it alone. Check an accepted timing in the timing window before charting
+on it. The menu explains when either finder is disabled: a song has no audio, another search is
+under way, or the song is read-only.
 
 | | Beat This! | Mapperatorinator |
 |---|---|---|
@@ -92,8 +94,10 @@ audio, another search is under way, or the song is read-only.
 The first time each runs it asks before downloading its model into charter's data folder. The song
 itself is never sent anywhere. Charter checks each download against its published SHA-256
 checksum before keeping it. The status bar shows the download and the search, and editing goes on
-meanwhile. A timing found after another song was opened, or after the song's audio changed, is not
-used. Without a graphics card Mapperatorinator asks whether to run on the processor, which can
+meanwhile. **Shift+Esc** stops waiting for a download or search and ignores its result; the worker
+may continue until it finishes, so another search starts only afterward. A timing found after
+another song was opened, or after the song's audio changed, is not used. Without a graphics card
+Mapperatorinator asks whether to run on the processor, which can
 take over 15 minutes a song. [Automatic timing](../autotiming.md) explains how each works and how
 well.
 

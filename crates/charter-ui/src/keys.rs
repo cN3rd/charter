@@ -31,6 +31,9 @@ pub(crate) const NEW_SONG: KeyboardShortcut = KeyboardShortcut::new(Modifiers::C
 pub(crate) const BOOKMARK: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::B);
 /// Toggle the timing window.
 pub(crate) const SYNC: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::T);
+/// Stop waiting for an automatic timing search.
+pub(crate) const CANCEL_TIMING: KeyboardShortcut =
+    KeyboardShortcut::new(Modifiers::SHIFT, Key::Escape);
 /// Toggle the keyboard shortcut help.
 pub(crate) const HELP: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE, Key::F1);
 
@@ -215,6 +218,9 @@ fn command(key: Key, modifiers: Modifiers) -> Option<Action> {
     }
     if is(SYNC) {
         return Some(Action::ToggleSync);
+    }
+    if is(CANCEL_TIMING) {
+        return Some(Action::CancelTiming);
     }
     if is(HELP) {
         return Some(Action::Help);

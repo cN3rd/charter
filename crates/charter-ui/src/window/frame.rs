@@ -86,6 +86,7 @@ impl Window {
                 self.answer_save_changes(answer);
             }
         }
+        self.review_found_timing(ui);
     }
     /// Filters raw key actions through focused text fields, modals and the timing window.
     pub(super) fn keyboard(&mut self, ui: &Ui) -> Vec<Action> {
@@ -119,6 +120,7 @@ impl Window {
                     | Action::Open
                     | Action::NewSong
                     | Action::Settings
+                    | Action::CancelTiming
                     | Action::ToggleSync
                     | Action::Help
             )

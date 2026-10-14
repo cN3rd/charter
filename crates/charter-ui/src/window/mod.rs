@@ -119,6 +119,10 @@ enum Finding {
     NoGpu,
     /// The host is finding it, this share of the way when it says.
     Running(Option<f32>),
+    /// The user stopped waiting; ignore the worker until it finishes.
+    Cancelled,
+    /// A timing was found and waits for the user's choice.
+    Review,
 }
 
 /// Where accepted tags from an audio file belong.
@@ -536,24 +540,38 @@ impl Window {
     }
 
     /// Takes that the beat tracker's weights are not downloaded yet, so the user is asked.
-    pub(crate) const fn weights_needed(&mut self) {
-        self.dialogs.finding = Finding::Asking;
+    pub(crate) fn weights_needed(&mut self) {
+        if self.dialogs.finding == Finding::Cancelled {
+            self.dialogs.finding = Finding::Idle;
+            self.dialogs.finding_for = None;
+        } else {
+            self.dialogs.finding = Finding::Asking;
+        }
     }
 
     /// Takes that there is no graphics card to find the timing on, so the user is asked whether
     /// to find it on the CPU instead.
-    pub(crate) const fn gpu_missing(&mut self) {
-        self.dialogs.finding = Finding::NoGpu;
+    pub(crate) fn gpu_missing(&mut self) {
+        if self.dialogs.finding == Finding::Cancelled {
+            self.dialogs.finding = Finding::Idle;
+            self.dialogs.finding_for = None;
+        } else {
+            self.dialogs.finding = Finding::NoGpu;
+        }
     }
 
     /// Takes that finding the timing is `share` of the way done.
     pub(crate) const fn finding_progress(&mut self, share: f32) {
-        self.dialogs.finding = Finding::Running(Some(share.clamp(0.0, 1.0)));
+        if !matches!(self.dialogs.finding, Finding::Cancelled) {
+            self.dialogs.finding = Finding::Running(Some(share.clamp(0.0, 1.0)));
+        }
     }
 
     /// Takes that `share` of the beat tracker's weights has downloaded.
     pub(crate) const fn weights_progress(&mut self, share: f32) {
-        self.dialogs.finding = Finding::Downloading(share.clamp(0.0, 1.0));
+        if !matches!(self.dialogs.finding, Finding::Cancelled) {
+            self.dialogs.finding = Finding::Downloading(share.clamp(0.0, 1.0));
+        }
     }
 
     /// Whether the window takes the audio to be playing.

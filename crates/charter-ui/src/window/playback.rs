@@ -94,13 +94,25 @@ impl Window {
                     super::Tracker::BeatThis => "Beat This!",
                     super::Tracker::Mapperatorinator => "Mapperatorinator",
                 };
-                return format!("Downloading the {name} weights, {:.0}%", share * 100.0);
+                return format!(
+                    "Downloading the {name} weights, {:.0}% (Shift+Esc to stop waiting)",
+                    share * 100.0
+                );
             }
-            Finding::Running(None) => return "Finding the timing…".to_owned(),
+            Finding::Running(None) => {
+                return "Finding the timing… (Shift+Esc to stop waiting)".to_owned();
+            }
             Finding::Running(Some(share)) => {
-                return format!("Finding the timing, {:.0}%", share * 100.0);
+                return format!(
+                    "Finding the timing, {:.0}% (Shift+Esc to stop waiting)",
+                    share * 100.0
+                );
             }
-            Finding::Idle | Finding::Asking | Finding::NoGpu => {}
+            Finding::Idle
+            | Finding::Asking
+            | Finding::NoGpu
+            | Finding::Cancelled
+            | Finding::Review => {}
         }
         match (self.audio_file(), self.loaded()) {
             (None, _) => "No audio",

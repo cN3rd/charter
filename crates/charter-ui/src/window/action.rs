@@ -315,6 +315,8 @@ pub(crate) enum Action {
     ToggleTunedLanes,
     /// Finds the song's timing from its audio with this model.
     FindTiming(Tracker),
+    /// Stop waiting for a timing search and ignore what it finds.
+    CancelTiming,
     /// Asks for a song in another program's format to open.
     ImportSong,
     /// Asks where to write the open song in another program's format.

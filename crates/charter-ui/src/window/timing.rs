@@ -1,6 +1,6 @@
 //! Timing import and automatic timing discovery.
 
-use super::{Finding, Request, Tracker, Window, found_message};
+use super::{Finding, Request, Tracker, Window, found_message, panels};
 
 impl Window {
     /// Loads pasted timing text from a file into the import window.
@@ -18,6 +18,9 @@ impl Window {
     }
     /// Starts automatic timing, or asks for tracker weights before it can.
     pub(super) fn find_timing(&mut self, tracker: Tracker) {
+        if self.dialogs.finding != Finding::Idle {
+            return;
+        }
         let (Some(song), Some(file)) = (&self.song, self.audio_file()) else {
             self.failure = Some("Finding the timing needs the song's audio".to_owned());
             return;
@@ -32,9 +35,25 @@ impl Window {
         self.dialogs.finding_for = Some((file, ticks_per_beat));
         self.dialogs.tracker = tracker;
     }
-    /// Accepts automatic timing from the host or shows why it failed. Timing found for audio or
-    /// a resolution the open song no longer has is left out.
+    /// Stops waiting for the search; its late progress and result must not change the song.
+    pub(super) const fn cancel_timing(&mut self) {
+        if matches!(
+            self.dialogs.finding,
+            Finding::Running(_) | Finding::Downloading(_)
+        ) {
+            // ponytail: cancellation stops waiting, not model computation; pass a cancellation
+            // token into the tracker when its worker exposes checkpoints.
+            self.dialogs.finding = Finding::Cancelled;
+        }
+    }
+    /// Offers timing from the host for review, or shows why none was found. Timing found for
+    /// audio or a resolution the open song no longer has is left out.
     pub(crate) fn timing_found(&mut self, found: Result<charter_core::Timing, String>) {
+        if self.dialogs.finding == Finding::Cancelled {
+            self.dialogs.finding = Finding::Idle;
+            self.dialogs.finding_for = None;
+            return;
+        }
         self.dialogs.finding = Finding::Idle;
         let asked = self.dialogs.finding_for.take();
         let open = self.audio_file().zip(
@@ -42,19 +61,57 @@ impl Window {
                 .as_ref()
                 .map(|song| song.document().document().ticks_per_beat),
         );
-        let Some(song) = &mut self.song else {
+        if self.song.is_none() {
+            return;
+        }
+        match found {
+            Ok(_) if asked != open => {
+                self.failure = Some(
+                    "The timing found no longer fits the open song, so it was not used".into(),
+                );
+            }
+            Ok(timing) => {
+                self.dialogs.finding = Finding::Review;
+                self.dialogs.finding_for = asked;
+                self.dialogs.found = Some(timing);
+                self.failure = None;
+            }
+            Err(why) => self.failure = Some(format!("No timing found: {why}")),
+        }
+    }
+    /// Applies the timing the user accepted, or leaves their chart alone.
+    pub(super) fn review_found_timing(&mut self, ui: &egui::Ui) {
+        let Some(timing) = self.dialogs.found.as_ref() else {
             return;
         };
-        self.failure = Some(match found {
-            Ok(_) if asked != open => {
-                "The timing found no longer fits the open song, so it was not used".to_owned()
-            }
-            Ok(timing) => match song.replace_timing(timing) {
+        let count = timing.anchors.len();
+        let point = if count == 1 { "point" } else { "points" };
+        let summary = format!("{count} tempo {point}, ending at {} BPM", timing.tempo);
+        let Some(answer) = panels::ask_to_use_timing(ui, &summary) else {
+            return;
+        };
+        let Some(accepted) = self.dialogs.found.take() else {
+            return;
+        };
+        self.dialogs.finding = Finding::Idle;
+        let asked = self.dialogs.finding_for.take();
+        if answer == panels::FoundTiming::Keep {
+            return;
+        }
+        let open = self.audio_file().zip(
+            self.song
+                .as_ref()
+                .map(|song| song.document().document().ticks_per_beat),
+        );
+        if asked != open {
+            self.failure =
+                Some("The timing found no longer fits the open song, so it was not used".into());
+        } else if let Some(song) = &mut self.song {
+            self.failure = Some(match song.replace_timing(accepted) {
                 Ok(()) => found_message(song),
                 Err(refusal) => format!("The timing found was refused: {refusal}"),
-            },
-            Err(why) => format!("No timing found: {why}"),
-        });
+            });
+        }
     }
 }
 
@@ -773,7 +830,7 @@ mod tests {
         );
     }
     #[test]
-    fn timing_found_takes_the_songs_place_in_one_step_and_says_what_it_is() {
+    fn timing_found_waits_for_approval_then_replaces_the_songs_timing_in_one_step() {
         let mut harness = playable();
         find_from_the_menu(&mut harness);
         harness.state_mut().take_requests();
@@ -785,6 +842,11 @@ mod tests {
         }))
         .unwrap();
         harness.state_mut().timing_found(Ok(found));
+        harness.run();
+        assert_eq!(anchor_seconds(&harness), before);
+        assert!(harness.query_by_label("Use the timing found?").is_some());
+        assert!(harness.query_by_label_contains("1 tempo point").is_some());
+        harness.get_by_label("Use it").click();
         harness.run();
         assert_eq!(anchor_seconds(&harness), [3.616]);
         assert!(
@@ -805,6 +867,102 @@ mod tests {
             .timing_found(Err("the tracker would not load".to_owned()));
         harness.run();
         assert!(harness.query_by_label_contains("would not load").is_some());
+    }
+    #[test]
+    fn keeping_the_current_timing_leaves_the_song_unchanged() {
+        let mut harness = playable();
+        let before = anchor_seconds(&harness);
+        find_from_the_menu(&mut harness);
+        harness.state_mut().take_requests();
+        let found = serde_json::from_value(serde_json::json!({
+            "anchors": [ { "tick": 0, "seconds": 3.616 } ],
+            "tempo": 132.0,
+            "events": []
+        }))
+        .unwrap();
+        harness.state_mut().timing_found(Ok(found));
+        harness.run();
+        assert_eq!(anchor_seconds(&harness), before);
+        harness.get_by_label("Keep the current timing").click();
+        harness.run();
+        assert_eq!(anchor_seconds(&harness), before);
+        assert!(harness.state().message().is_none());
+        assert!(harness.query_by_label("Use the timing found?").is_none());
+    }
+    #[test]
+    fn cancelling_a_timing_search_stops_waiting_and_ignores_the_result() {
+        let mut harness = playable();
+        let before = anchor_seconds(&harness);
+        find_from_the_menu(&mut harness);
+        harness.state_mut().take_requests();
+        harness.state_mut().finding_progress(0.25);
+        harness.run();
+        assert!(
+            harness
+                .query_by_label_contains("Finding the timing, 25%")
+                .is_some()
+        );
+        harness.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::Escape);
+        harness.run();
+        assert!(
+            harness
+                .query_by_label_contains("Finding the timing")
+                .is_none()
+        );
+        harness.state_mut().finding_progress(0.9);
+        harness.run();
+        assert!(
+            harness
+                .query_by_label_contains("Finding the timing")
+                .is_none()
+        );
+        let found = serde_json::from_value(serde_json::json!({
+            "anchors": [ { "tick": 0, "seconds": 3.616 } ],
+            "tempo": 132.0,
+            "events": []
+        }))
+        .unwrap();
+        harness.state_mut().timing_found(Ok(found));
+        harness.run();
+        assert_eq!(anchor_seconds(&harness), before);
+        assert!(harness.state().message().is_none());
+        assert!(harness.query_by_label("Use the timing found?").is_none());
+        find_from_the_menu(&mut harness);
+        assert!(matches!(
+            harness.state_mut().take_requests().as_slice(),
+            [Request::FindTiming { .. }]
+        ));
+    }
+    #[test]
+    fn the_download_status_offers_cancellation_and_does_not_resume_when_cancelled() {
+        let mut harness = playable();
+        find_from_the_menu(&mut harness);
+        harness.state_mut().take_requests();
+        harness.state_mut().weights_needed();
+        harness.run();
+        harness.get_by_label("Download").click();
+        harness.run();
+        assert_eq!(
+            harness.state_mut().take_requests(),
+            [Request::DownloadWeights]
+        );
+        harness.state_mut().weights_progress(0.42);
+        harness.run();
+        assert!(
+            harness
+                .query_by_label_contains("42% (Shift+Esc to stop waiting)")
+                .is_some()
+        );
+        harness.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::Escape);
+        harness.run();
+        harness.state_mut().weights_progress(0.8);
+        harness.run();
+        assert!(harness.query_by_label_contains("Downloading the").is_none());
+        harness
+            .state_mut()
+            .timing_found(Err("download could not finish".to_owned()));
+        harness.run();
+        assert!(harness.state().message().is_none());
     }
     #[test]
     fn refusing_a_second_search_keeps_the_first_one_waiting_for_its_result() {
@@ -831,6 +989,10 @@ mod tests {
         }))
         .unwrap();
         harness.state_mut().timing_found(Ok(found));
+        harness.run();
+        assert_eq!(anchor_seconds(&harness), [0.0]);
+        harness.get_by_label("Use it").click();
+        harness.run();
         assert_eq!(anchor_seconds(&harness), [3.616]);
     }
     #[test]
@@ -1452,12 +1614,23 @@ mod tests {
         .unwrap();
         app.find_timing(Tracker::BeatThis);
         app.timing_found(Ok(found));
+        let mut harness = window(app);
+        harness.get_by_label("Use it").click();
+        harness.run();
+        let reviewed = harness.state();
         assert!(
-            app.message()
+            reviewed
+                .message()
                 .is_some_and(|message| message.contains("timing found was refused"))
         );
         assert_eq!(
-            app.song.as_ref().unwrap().document().to_json().unwrap(),
+            reviewed
+                .song
+                .as_ref()
+                .unwrap()
+                .document()
+                .to_json()
+                .unwrap(),
             before
         );
 
