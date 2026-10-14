@@ -488,7 +488,7 @@ mod tests {
     }
 
     #[test]
-    fn a_recovery_file_left_behind_is_offered_and_a_damaged_one_says_so() {
+    fn a_recovery_file_left_behind_is_offered_and_a_damaged_one_is_set_aside() {
         let mut host = host(Memory::with(&[("/data/recovery.json", b"{ damaged")]));
         host.recover();
         assert!(
@@ -500,6 +500,12 @@ mod tests {
         let requests = host.window.take_requests();
         host.handle_requests(requests);
         assert!(!files(&host, "/data/recovery.json"));
+        assert_eq!(
+            host.disk
+                .read(Path::new("/data/recovery-unreadable.json"))
+                .unwrap(),
+            b"{ damaged"
+        );
     }
 
     #[test]

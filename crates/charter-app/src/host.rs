@@ -176,7 +176,8 @@ impl<D: Disk> Host<D> {
                     | Request::OpenPath { .. }
                     | Request::Snapshot { .. }
                     | Request::WriteExport { .. }
-                    | Request::DropAutosave) => self.answer(file_request),
+                    | Request::DropAutosave
+                    | Request::SetAsideAutosave) => self.answer(file_request),
                 }
             }
             requests = self.window.take_requests();
@@ -254,6 +255,16 @@ impl<D: Disk> Host<D> {
                     // Nothing to remove is fine, and a file left over is offered, then
                     // removed, on the next run.
                     drop(self.disk.remove(recovery));
+                }
+            }
+            Request::SetAsideAutosave => {
+                if let Some(recovery) = &self.recovery {
+                    let aside = recovery.with_file_name(charter_ui::UNREADABLE_AUTOSAVE);
+                    // One that will not move stays where the next run offers it again.
+                    drop(self.disk.rename(disk::Transfer {
+                        from: recovery,
+                        to: &aside,
+                    }));
                 }
             }
             Request::SaveAs { .. }

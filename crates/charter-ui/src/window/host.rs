@@ -9,6 +9,9 @@
 )]
 use super::*;
 
+/// The name an autosave this run could not read is set aside under, beside the kept changes.
+pub const UNREADABLE_AUTOSAVE: &str = "recovery-unreadable.json";
+
 /// Something only the program hosting the window can do. The host answers a save through
 /// [`Answer::Saved`], and an open by passing the file to [`Answer::Opened`].
 #[derive(Debug, PartialEq)]
@@ -81,6 +84,10 @@ pub enum Request {
     },
     /// Remove the kept changes: they were saved or thrown away.
     DropAutosave,
+    /// Move the kept changes, which this run could not read, aside to [`UNREADABLE_AUTOSAVE`]
+    /// beside them, where later autosaves leave them for repair, in place of any set aside
+    /// before.
+    SetAsideAutosave,
     /// Copy the song's audio from `from` to `to`, beside the song, unless a file is there. The
     /// host says through [`Answer::AudioNotCopied`] if it could not.
     CopyAudio {

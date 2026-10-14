@@ -34,7 +34,7 @@ Charter keeps its own files in `~/.local/share/charter` on Linux and `%APPDATA%\
 Windows; the Autosave page of the settings names it. It holds:
 
 - `app.ron`, the settings, only those changed from their defaults;
-- `recovery.json`, the autosave;
+- `recovery.json`, the autosave, and `recovery-unreadable.json`, one a later start could not read;
 - the timing models' weights, once downloaded;
 - `snapshots`, when snapshots in a folder are on;
 - `crash-<number>.txt`, a report for each crash.
@@ -45,7 +45,8 @@ Half a minute after a change, charter saves the unsaved song to `recovery.json`;
 sets the wait from 5 seconds to 10 minutes, or turns it off. Saving the song, undoing back to the
 saved version, or throwing the changes away removes the file. If charter closes without any of
 those, as after a crash or a power cut, the next start offers the song back, unsaved, for the file
-it belongs to.
+it belongs to. An autosave that start cannot read is not thrown away: charter says so and moves it
+to `recovery-unreadable.json` beside it, where later autosaves leave it for repair.
 
 ## Snapshots
 

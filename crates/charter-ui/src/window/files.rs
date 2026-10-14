@@ -2,8 +2,9 @@
 
 use super::{
     Arc, Artwork, Autosave, Discard, EmbeddedArtwork, Leaving, NO_AUDIO, OfFile, Offer, Path,
-    PathBuf, Peaks, RECENT, Request, Restoring, Saved, Saving, Song, Spectrum, TagTarget, Waiting,
-    Window, Zoom, demo, file_name, new_song, notefield, panels, recovery, refused, shown_strip,
+    PathBuf, Peaks, RECENT, Request, Restoring, Saved, Saving, Song, Spectrum, TagTarget,
+    UNREADABLE_AUTOSAVE, Waiting, Window, Zoom, demo, file_name, new_song, notefield, panels,
+    recovery, refused, shown_strip,
 };
 
 impl Window {
@@ -56,9 +57,14 @@ impl Window {
             }
             Err(error) => {
                 self.failure = Some(format!(
-                    "Unsaved changes from last time could not be restored: {error}"
+                    "Unsaved changes from last time could not be restored: {error}. The file is \
+                     kept as {UNREADABLE_AUTOSAVE} in the data folder Settings > Autosave names."
                 ));
-                self.drop_autosave();
+                // Set aside rather than removed, and no longer this run's to drop: the next
+                // autosave would write over it, and nothing could restore it again.
+                self.autosave.kept = false;
+                self.autosave.edits.forget();
+                self.requests.push(Request::SetAsideAutosave);
             }
         }
     }

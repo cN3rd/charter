@@ -417,6 +417,7 @@ impl Player {
             | Request::ChooseFfmpeg
             | Request::Autosave { .. }
             | Request::DropAutosave
+            | Request::SetAsideAutosave
             | Request::CopyAudio { .. }
             | Request::ChooseAudio
             | Request::ChooseArtwork

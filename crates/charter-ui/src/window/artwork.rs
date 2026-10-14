@@ -696,7 +696,7 @@ mod tests {
         assert!(harness.state().song.is_none());
     }
     #[test]
-    fn a_damaged_autosave_says_so_and_is_removed() {
+    fn a_damaged_autosave_says_so_and_is_set_aside_where_no_autosave_overwrites_it() {
         let mut harness = window(Window::new(PLUGINS));
         harness.state_mut().recover(b"{ not json");
         harness.run();
@@ -705,7 +705,16 @@ mod tests {
                 .query_by_label_contains("could not be restored")
                 .is_some()
         );
-        assert_eq!(request(&mut harness), Request::DropAutosave);
+        assert_eq!(request(&mut harness), Request::SetAsideAutosave);
+        // It is no longer this run's to drop, so a clean song opened after leaves it alone.
+        harness.state_mut().open_demo();
+        harness.run();
+        assert!(
+            !harness
+                .state_mut()
+                .take_requests()
+                .contains(&Request::DropAutosave)
+        );
     }
     #[test]
     fn a_new_song_takes_the_cover_its_audio_holds_and_writes_it_into_its_folder() {

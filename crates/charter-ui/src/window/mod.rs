@@ -357,7 +357,7 @@ pub(crate) use action::{Action, Note};
     clippy::useless_attribute,
     reason = "the host protocol is charter-ui's public surface, kept beside the window it serves"
 )]
-pub use host::{Answer, Request};
+pub use host::{Answer, Request, UNREADABLE_AUTOSAVE};
 pub(in crate::window) use state::{
     Analysis, ArtworkState, AudioStatus, Autosave, Clipboard, Dialogs, EmbeddedArtwork,
     HelpWindows, Mode, OfFile, PendingPaste, Playback, PlayedAudio, Typing,
