@@ -136,8 +136,8 @@ the tempo at the cursor.
 - As the window narrows, the transport drops its secondary tempo, snap, speed, grid and zoom
   controls, keeping playback, position, sound and settings; the menus, keys and settings still
   offer the rest. The settings window puts its page choice above its controls, the shortcut sheet
-  stacks each key above its explanation, the empty window stacks its actions, still centred,
-  rather than running them off the edge, and the new-song and import forms scroll so their
+  stacks each key above its explanation, the welcome screen stacks its Start and Recent
+  columns, still centred, rather than running them off the edge, and the new-song and import forms scroll so their
   actions stay in reach.
 - The settings window has a sidebar of pages, each setting with a line on what it does and on and
   off choices as switches. Only settings changed from their defaults are kept, so one left alone
@@ -439,7 +439,10 @@ The clicks are mixed into the music before it plays, so they need no correction 
   layer losses are still unreported ([export loss reporting](research/topics/export-loss-reporting.md)).
   Automatic timing applies the requested result as one undo step, with no candidate picker
   ([suggestion UI](research/topics/suggestion-ui.md)).
-- With no song open, the centre offers new, open and recent songs.
+- With no song open, the centre is a welcome screen: the ways to start, each with its shortcut,
+  beside the last ten songs, each named over its folder. A folder too long for its row loses
+  folders from its start, so those nearest the song stay. Import song… shows only when a plugin
+  reads another game's songs, naming the games, and audio dropped on the screen starts a new song.
 - Closing the window, opening another song or the demo over unsaved changes first asks whether to
   save them. Starting a new song does too; Cancel keeps its filled-in draft.
 - The recovery file lives in charter's data folder, never beside the song, and is written half a

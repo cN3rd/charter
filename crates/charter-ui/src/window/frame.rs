@@ -359,7 +359,13 @@ impl Window {
                     });
                 } else {
                     let recent = &self.settings.recent;
-                    panels::empty(ui, (self.no_drops, recent), &mut actions);
+                    let games: Vec<_> = self
+                        .plugins
+                        .iter()
+                        .filter(|plugin| !plugin.song_formats().is_empty())
+                        .map(|plugin| plugin.name())
+                        .collect();
+                    panels::empty(ui, (self.no_drops, &games, recent), &mut actions);
                 }
             });
         let asked = settings::show(

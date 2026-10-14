@@ -57,9 +57,10 @@ report, with the licence and credits.
 
 ## Starting a song
 
-With nothing open, the window offers Open song…, New song and the demo song. The demo is also under
-Help, to try things on. On Windows and X11, an audio file dropped on the window starts a new song
-with that audio.
+With nothing open, the window lists the ways to start beside the songs opened last: New song…,
+Open song…, Import song… when a game's songs can be read, and the demo song, which is also under
+Help, to try things on. Each recent song shows its folder, with the whole path on hover. On
+Windows and X11, an audio file dropped on the window starts a new song with that audio.
 
 **New song** (Ctrl+N) asks for:
 
@@ -80,7 +81,7 @@ of the audio beside it. [Files and recovery](files.md) has the details.
 ## Opening a song
 
 - **Open song…** (Ctrl+O) opens a charter song, a `.json` file.
-- **File > Open recent** lists the last ten.
+- The window with nothing open, and **File > Open recent**, list the last ten.
 - `charter path/to/song.json` on the command line opens one at start.
 - On Windows and X11 a song file dropped on the window opens. Under Wayland nothing can be dropped
   yet, so the window offers its buttons instead.

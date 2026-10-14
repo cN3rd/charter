@@ -8,7 +8,7 @@ const REPOSITORY: &str = "https://github.com/cN3rd/charter";
 const BOOK: &str = "https://cn3rd.github.io/charter/";
 
 /// The build's version, and the commit it was built from when packaging named one.
-fn version_line(version: &str, commit: Option<&str>) -> String {
+pub(super) fn version_line(version: &str, commit: Option<&str>) -> String {
     match commit {
         Some(commit) => format!("Version {version}, commit {commit}"),
         None => format!("Version {version}, development build"),

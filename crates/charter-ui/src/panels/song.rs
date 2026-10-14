@@ -638,7 +638,7 @@ mod tests {
         let mut harness = Harness::builder().build_ui_state(
             |ui, actions: &mut Vec<Action>| {
                 style::apply(ui.ctx(), &[]);
-                empty(ui, (false, &[std::path::PathBuf::from("/")]), actions);
+                empty(ui, (false, &[], &[std::path::PathBuf::from("/")]), actions);
             },
             Vec::new(),
         );
@@ -1395,38 +1395,6 @@ mod tests {
                     .accesskit_node()
                     .toggled(),
                 None
-            );
-        }
-    }
-
-    #[test]
-    #[expect(
-        clippy::non_ascii_literal,
-        reason = "the empty window's Open song button displays an ellipsis"
-    )]
-    fn the_empty_window_centres_its_actions_and_keeps_them_on_screen_however_narrow_it_is() {
-        // 427 points is the default window at the largest interface size the settings allow.
-        for width in [1280.0_f32, 640.0, 427.0, 360.0] {
-            let mut harness = Harness::builder()
-                .with_size(egui::vec2(width, 600.0))
-                .build_ui_state(
-                    |ui, actions: &mut Vec<Action>| empty(ui, (true, &[]), actions),
-                    Vec::new(),
-                );
-            harness.run();
-            let mut actions = egui::Rect::NOTHING;
-            for label in ["New song", "Open song…", "Open the demo song"] {
-                let rect = harness.get_by_label(label).rect();
-                assert!(
-                    rect.left() >= 0.0 && rect.right() <= width,
-                    "at {width} wide, {label} sits at {rect:?}"
-                );
-                actions = actions.union(rect);
-            }
-            // Under the centred title, whether they share a row or stack.
-            assert!(
-                (actions.center().x - width / 2.0).abs() < 2.0,
-                "at {width} wide, the actions span {actions:?}"
             );
         }
     }

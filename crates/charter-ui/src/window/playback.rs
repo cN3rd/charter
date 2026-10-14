@@ -1187,7 +1187,8 @@ mod tests {
         let mut harness = window(Window::new(GAMES));
         harness.get_by_label("File").click();
         harness.run();
-        harness.get_by_label_contains("New song…").click();
+        // The menu's item, named with its shortcut, rather than the welcome screen's.
+        harness.get_by_label("New song… Ctrl+N").click();
         harness.run();
         assert!(dialog_open(&harness));
         harness.get_by_label("Cancel").click();

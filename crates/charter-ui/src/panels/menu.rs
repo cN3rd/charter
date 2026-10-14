@@ -305,10 +305,7 @@ pub(super) fn open_recent(ui: &mut Ui, recent: &[std::path::PathBuf], actions: &
     ui.add_enabled_ui(!recent.is_empty(), |ui| {
         ui.menu_button("Open recent", |ui| {
             for path in recent {
-                let name = path.file_name().map_or_else(
-                    || path.display().to_string(),
-                    |name| name.to_string_lossy().into_owned(),
-                );
+                let name = super::empty::song_name(path);
                 let folder = path.parent().map(|folder| folder.display().to_string());
                 // The name tells the songs apart, so it stays whole and the folder beside it is
                 // what a narrow menu cuts short; the whole path shows on hover. Left to itself,

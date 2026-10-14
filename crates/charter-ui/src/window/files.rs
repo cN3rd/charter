@@ -1284,10 +1284,10 @@ mod tests {
         let mut harness = window(Window::new(GAMES).without_file_drops());
         assert!(
             harness
-                .query_by_label_contains("drop a charter song")
+                .query_by_label_contains("Drop a charter song")
                 .is_none()
         );
-        harness.get_by_label("New song").click();
+        harness.get_by_label("New song…").click();
         harness.run();
         assert!(harness.query_by_label_contains("Drop an audio").is_none());
         assert!(
@@ -1543,7 +1543,7 @@ mod tests {
             ..Settings::default()
         });
         let mut harness = window(app);
-        harness.get_by_label("Starlight.json").click();
+        harness.get_by_label("Starlight").click();
         harness.run();
         assert_eq!(
             harness.state_mut().take_requests(),
@@ -1570,7 +1570,8 @@ mod tests {
         harness.run();
         harness.get_by_label_contains("Open recent").click();
         harness.run();
-        harness.get_by_label_contains("b.json").click();
+        // The menu's item, named by the song and its folder; the welcome screen's is "b".
+        harness.get_by_label("b /songs").click();
         harness.run();
         assert_eq!(
             harness.state_mut().take_requests(),
@@ -1604,7 +1605,7 @@ mod tests {
             harness.state().settings().recent.as_slice(),
             std::slice::from_ref(&path)
         );
-        assert!(harness.query_by_label("retry.json").is_some());
+        assert!(harness.query_by_label("retry").is_some());
 
         harness.state_mut().answer(Answer::Refused {
             path,
@@ -1757,9 +1758,13 @@ mod tests {
         assert!(harness.query_all_by_label("Future").next().is_some());
     }
     #[test]
+    #[expect(
+        clippy::non_ascii_literal,
+        reason = "the welcome screen's New song ends in an ellipsis, as it asks for more"
+    )]
     fn the_empty_window_offers_a_new_song() {
         let mut harness = window(Window::new(GAMES));
-        harness.get_by_label("New song").click();
+        harness.get_by_label("New song…").click();
         harness.run();
         assert!(dialog_open(&harness));
     }
