@@ -13,6 +13,9 @@ use egui::{self, Color32, CornerRadius, FontFamily, FontId, Margin, RichText, St
 )]
 pub use egui_phosphor::regular as icon;
 
+// Every neutral below is a step of one ramp of fourteen grays, each far enough in lightness from
+// the next to tell apart; a test lists the steps and holds every gray token to them.
+
 /// Ordinary text against the dark surfaces.
 pub const TEXT: Color32 = Color32::from_gray(214);
 /// At least 4.5:1 against the panels, which egui's own weak text is not.
@@ -23,7 +26,7 @@ pub const CHROME: Color32 = Color32::from_gray(17);
 /// The side panels, a step lighter than the chrome.
 pub const PANEL: Color32 = Color32::from_gray(26);
 /// The centre, where the notefield sits.
-pub const CANVAS: Color32 = Color32::from_gray(21);
+pub const CANVAS: Color32 = Color32::from_gray(22);
 /// Dialogs and popups, lifted above the panels.
 pub const RAISED: Color32 = Color32::from_gray(32);
 /// Text fields, sunk below the panels.
@@ -39,6 +42,8 @@ pub const EDGE: Color32 = Color32::from_gray(40);
 /// The edge of a switch or checkbox that is off, at least 3:1 against the panels behind it: with
 /// no fill or text of its own, that edge is all there is to identify the control by.
 pub const CONTROL_OFF: Color32 = Color32::from_gray(110);
+/// The knob of a switch, on or off.
+const KNOB: Color32 = Color32::from_gray(245);
 
 /// The one accent: the current selection, the primary action and focus.
 pub const ACCENT: Color32 = Color32::from_rgb(110, 170, 255);
@@ -57,9 +62,9 @@ pub const REFUSED: Color32 = Color32::from_rgb(229, 76, 74);
 pub const NOTICE: Color32 = Color32::from_rgb(40, 34, 24);
 
 /// The notefield's surround behind its lanes.
-pub const COLUMN_BG: Color32 = Color32::from_gray(24);
+pub const COLUMN_BG: Color32 = Color32::from_gray(26);
 /// The darker interior of each note lane.
-pub const LANES_BG: Color32 = Color32::from_gray(13);
+pub const LANES_BG: Color32 = Color32::from_gray(14);
 /// Separators between adjacent note lanes.
 pub const DIVIDER: Color32 = Color32::from_gray(58);
 /// Ordinary beat guides across the notefield.
@@ -100,7 +105,7 @@ pub const MARQUEE: Color32 = SELECTED;
 /// The waveform, quieter than the notes it sits beside, on a strip of its own.
 pub const WAVE: Color32 = Color32::from_rgb(92, 128, 176);
 /// The strip beneath a waveform.
-pub const WAVE_BG: Color32 = Color32::from_gray(16);
+pub const WAVE_BG: Color32 = Color32::from_gray(17);
 /// The translucent interior of a selection marquee, from the same light blue as its outline.
 pub const MARQUEE_FILL: Color32 = Color32::from_rgba_unmultiplied_const(200, 224, 255, 28);
 /// The timing window: onsets, how far they miss the grid either way, and anchors as they stand,
@@ -278,7 +283,7 @@ fn look(style: &mut egui::Style) {
         ..shadow
     };
     visuals.extreme_bg_color = FIELD;
-    visuals.faint_bg_color = Color32::from_gray(30);
+    visuals.faint_bg_color = RAISED;
     visuals.selection.bg_fill = ACCENT_FILL;
     visuals.selection.stroke = Stroke::new(1.0, ON_ACCENT);
     visuals.hyperlink_color = ACCENT;
@@ -424,8 +429,7 @@ pub fn switch(ui: &mut Ui, on: &mut bool, name: &str) -> egui::Response {
         );
         let x = egui::lerp((rect.left() + radius)..=(rect.right() - radius), lit);
         let knob = egui::pos2(x, rect.center().y);
-        ui.painter()
-            .circle_filled(knob, radius - 3.0, Color32::from_gray(245));
+        ui.painter().circle_filled(knob, radius - 3.0, KNOB);
         if response.has_focus() {
             let ring = Stroke::new(2.0, ACCENT);
             ui.painter().rect_stroke(
@@ -777,6 +781,55 @@ mod tests {
         }
         let on_fill = contrast(ON_ACCENT, ACCENT_FILL);
         assert!(on_fill >= 4.5, "ON_ACCENT on ACCENT_FILL is {on_fill:.2}");
+    }
+
+    /// The grays every neutral token is one of, darkest first.
+    const RAMP: [u8; 14] = [14, 17, 22, 26, 32, 36, 40, 52, 58, 92, 110, 146, 214, 245];
+
+    #[test]
+    fn every_neutral_token_is_a_step_of_a_ramp_whose_steps_tell_apart() {
+        // Two grays a hair apart read as one, and only multiply the names for it.
+        for pair in RAMP.windows(2) {
+            let lightness = |gray| oklab(linear(Color32::from_gray(gray)))[0];
+            let step = lightness(pair[1]) - lightness(pair[0]);
+            assert!(
+                step >= 0.012,
+                "grays {} and {} are {step:.3} apart",
+                pair[0],
+                pair[1]
+            );
+        }
+        for (name, colour) in [
+            ("TEXT", TEXT),
+            ("WEAK_TEXT", WEAK_TEXT),
+            ("CHROME", CHROME),
+            ("PANEL", PANEL),
+            ("CANVAS", CANVAS),
+            ("RAISED", RAISED),
+            ("FIELD", FIELD),
+            ("TOOLBAR", TOOLBAR),
+            ("STAGE", STAGE),
+            ("WELL", WELL),
+            ("EDGE", EDGE),
+            ("CONTROL_OFF", CONTROL_OFF),
+            ("ROW_HOVER", ROW_HOVER),
+            ("COLUMN_BG", COLUMN_BG),
+            ("LANES_BG", LANES_BG),
+            ("DIVIDER", DIVIDER),
+            ("BEAT_LINE", BEAT_LINE),
+            ("BEAT_LINE_STRONG", BEAT_LINE_STRONG),
+            ("SIXTEENTH_LINE", SIXTEENTH_LINE),
+            ("MEASURE_LINE", MEASURE_LINE),
+            ("FAKE", FAKE),
+            ("WAVE_BG", WAVE_BG),
+            ("KNOB", KNOB),
+        ] {
+            let gray = colour.r() == colour.g() && colour.g() == colour.b();
+            assert!(
+                gray && RAMP.contains(&colour.r()),
+                "{name} is {colour:?}, off the ramp"
+            );
+        }
     }
 
     /// Oklab lightness, green–red and blue–yellow of the linear-light `[red, green, blue]`.
