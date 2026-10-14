@@ -524,12 +524,13 @@ pub(crate) fn draw(painter: &egui::Painter, row: &Row, scene: &Scene<'_>) {
     if let Some(reach) = scene.reach {
         dim(painter, row, audio, reach.from, reach.to);
     }
-    for anchor in scene
-        .anchors
-        .iter()
-        .filter(|anchor| row.holds(scene.bars, anchor.tick))
-    {
-        draw_anchor(painter, row, audio, scene.bars, anchor);
+    let mut flags = Vec::new();
+    for highlighted in [true, false] {
+        for anchor in scene.anchors.iter().filter(|anchor| {
+            row.holds(scene.bars, anchor.tick) && (anchor.focused || anchor.selected) == highlighted
+        }) {
+            draw_anchor(painter, row, audio, scene.bars, anchor, &mut flags);
+        }
     }
     if row.holds(scene.bars, scene.cursor) {
         let x = row.x(scene.bars, scene.cursor);
@@ -629,6 +630,7 @@ fn waveform(painter: &egui::Painter, row: &Row, audio: Rect, scene: &Scene<'_>, 
 /// solid, lines between dashed, or dotted for triplets, and the beats numbered along the top.
 fn grid(painter: &egui::Painter, row: &Row, audio: Rect, scene: &Scene<'_>) {
     let resolution = scene.timing.ticks_per_beat();
+    let mut label_right = audio.left();
     for measure in scene.bars.measures() {
         let (from, to) = (
             scene.bars.position(start(measure)),
@@ -669,14 +671,16 @@ fn grid(painter: &egui::Painter, row: &Row, audio: Rect, scene: &Scene<'_>) {
             }
             if matches!(line, Line::Downbeat | Line::Beat) {
                 let label = pos2(x + 3.0, audio.top() + 2.0);
-                let text = beat.to_string();
-                painter.text(
-                    label,
-                    Align2::LEFT_TOP,
-                    text,
-                    FontId::monospace(9.0),
-                    style::WEAK_TEXT,
-                );
+                if label.x >= label_right {
+                    let bounds = painter.text(
+                        label,
+                        Align2::LEFT_TOP,
+                        beat.to_string(),
+                        FontId::monospace(9.0),
+                        style::WEAK_TEXT,
+                    );
+                    label_right = bounds.right() + 2.0;
+                }
             }
         }
     }
@@ -768,7 +772,14 @@ fn dim(painter: &egui::Painter, row: &Row, audio: Rect, from: f64, to: f64) {
     clippy::arithmetic_side_effects,
     reason = "egui screen-coordinate vector addition cannot overflow integers"
 )]
-fn draw_anchor(painter: &egui::Painter, row: &Row, audio: Rect, bars: &Bars, anchor: &Anchor) {
+fn draw_anchor(
+    painter: &egui::Painter,
+    row: &Row,
+    audio: Rect,
+    bars: &Bars,
+    anchor: &Anchor,
+    flags: &mut Vec<Rect>,
+) {
     let x = row.x(bars, anchor.tick);
     let colour = if anchor.focused {
         style::ANCHOR_FOCUS
@@ -787,7 +798,17 @@ fn draw_anchor(painter: &egui::Painter, row: &Row, audio: Rect, bars: &Bars, anc
     let width = if held { 3.0 } else { 2.0 } + 2.0 * anchor.pulse;
     painter.vline(x, audio.y_range(), Stroke::new(width, colour));
     let galley = painter.layout_no_wrap(anchor.bpm.clone(), FontId::monospace(11.0), colour);
-    let flag = Rect::from_min_size(pos2(x, audio.top() + 12.0), galley.size() + vec2(8.0, 2.0));
+    let size = galley.size() + vec2(8.0, 2.0);
+    let left = x.min(audio.right() - size.x);
+    let mut flag = Rect::from_min_size(pos2(left, audio.top() + 12.0), size);
+    if held {
+        // ponytail: three crowded flags fit vertically; add a label lane for denser selections.
+        while flags.iter().any(|previous| previous.intersects(flag)) {
+            flag = flag.translate(vec2(0.0, flag.height() + 2.0));
+        }
+    } else if flags.iter().any(|previous| previous.intersects(flag)) {
+        return;
+    }
     if anchor.selected || anchor.focused {
         painter.rect_filled(flag, 2.0, colour.gamma_multiply(0.35));
     } else {
@@ -800,6 +821,7 @@ fn draw_anchor(painter: &egui::Painter, row: &Row, audio: Rect, bars: &Bars, anc
         egui::StrokeKind::Inside,
     );
     painter.galley(flag.min + vec2(4.0, 1.0), galley, colour);
+    flags.push(flag);
 }
 
 /// Where `pos` is, among the rows laid out.
@@ -902,8 +924,16 @@ mod tests {
             ghost: None,
             reach: None,
         };
+        painted_scene(&row, &scene, paint)
+    }
+
+    fn painted_scene(
+        row: &Row,
+        scene: &Scene<'_>,
+        paint: fn(&egui::Painter, &Row, &Scene<'_>),
+    ) -> Vec<Shape> {
         let mut output = egui::Context::default().run_ui(egui::RawInput::default(), |ui| {
-            paint(ui.painter(), &row, &scene);
+            paint(ui.painter(), row, scene);
         });
         output.textures_delta.clear();
         output
@@ -976,6 +1006,194 @@ mod tests {
         };
         // Both are near-white lines down the audio, so their weight is what tells them apart.
         assert!(width(style::ANCHOR_SELECTED) >= 2.0 * width(style::NOW_LINE));
+    }
+
+    #[test]
+    fn close_anchors_keep_both_lines_but_not_overlapping_plain_flags() {
+        let anchors = [
+            Anchor {
+                tick: Tick::new(0),
+                bpm: "120".to_owned(),
+                focused: false,
+                selected: false,
+                pulse: 0.0,
+            },
+            Anchor {
+                tick: Tick::new(192),
+                bpm: "121".to_owned(),
+                focused: false,
+                selected: false,
+                pulse: 0.0,
+            },
+        ];
+        let shapes = painted(&[], &anchors, Tick::new(1920), draw);
+        let lines = shapes
+            .iter()
+            .filter(|shape| {
+                matches!(shape, Shape::LineSegment { stroke, .. } if stroke.color == style::ANCHOR)
+            })
+            .count();
+        let flags = shapes
+            .iter()
+            .filter(
+                |shape| matches!(shape, Shape::Rect(rect) if rect.stroke.color == style::ANCHOR),
+            )
+            .count();
+        let labels: Vec<&str> = shapes
+            .iter()
+            .filter_map(|shape| {
+                if let Shape::Text(text) = shape
+                    && matches!(text.galley.text(), "120" | "121")
+                {
+                    Some(text.galley.text())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(lines, 2);
+        assert_eq!(flags, 1);
+        assert_eq!(labels, ["120"]);
+    }
+
+    #[test]
+    fn focused_and_selected_flags_take_separate_space_ahead_of_plain_flags() {
+        let anchors = [
+            Anchor {
+                tick: Tick::new(0),
+                bpm: "120".to_owned(),
+                focused: false,
+                selected: false,
+                pulse: 0.0,
+            },
+            Anchor {
+                tick: Tick::new(96),
+                bpm: "121".to_owned(),
+                focused: false,
+                selected: true,
+                pulse: 0.0,
+            },
+            Anchor {
+                tick: Tick::new(192),
+                bpm: "122".to_owned(),
+                focused: true,
+                selected: false,
+                pulse: 0.0,
+            },
+        ];
+        let shapes = painted(&[], &anchors, Tick::new(1920), draw);
+        let labels: Vec<&str> = shapes
+            .iter()
+            .filter_map(|shape| {
+                if let Shape::Text(text) = shape
+                    && matches!(text.galley.text(), "120" | "121" | "122")
+                {
+                    Some(text.galley.text())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let held: Vec<Rect> = shapes
+            .iter()
+            .filter_map(|shape| {
+                if let Shape::Rect(rect) = shape
+                    && matches!(
+                        rect.stroke.color,
+                        style::ANCHOR_SELECTED | style::ANCHOR_FOCUS
+                    )
+                {
+                    Some(rect.rect)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert!(!labels.contains(&"120"), "{labels:?}");
+        assert!(
+            labels.contains(&"121") && labels.contains(&"122"),
+            "{labels:?}"
+        );
+        assert_eq!(held.len(), 2);
+        assert!(!held[0].intersects(held[1]), "{held:?}");
+        assert!(held.iter().all(|flag| flag.bottom() <= ROW - STRIP));
+    }
+
+    #[test]
+    fn a_flag_near_the_waveform_edge_moves_left_of_its_line() {
+        for selected in [false, true] {
+            let anchor = Anchor {
+                tick: Tick::new(3600),
+                bpm: "120".to_owned(),
+                focused: false,
+                selected,
+                pulse: 0.0,
+            };
+            let colour = if selected {
+                style::ANCHOR_SELECTED
+            } else {
+                style::ANCHOR
+            };
+            let shapes = painted(&[], &[anchor], Tick::new(1920), draw);
+            let flag = shapes
+                .iter()
+                .find_map(|shape| {
+                    if let Shape::Rect(rect) = shape
+                        && rect.stroke.color == colour
+                    {
+                        Some(rect.rect)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap();
+            assert!(flag.right() <= 110.0, "{flag:?}");
+            assert!(flag.left() < 103.75, "{flag:?}");
+        }
+    }
+
+    #[test]
+    fn densely_spaced_beats_only_number_lines_with_room_for_the_label() {
+        let document = song(&serde_json::json!([{ "tick": 0, "kind": { "bpm": 600.0 } }]));
+        let timing = document.timing();
+        let bars = Bars::new(timing, Tick::new(0), Tick::new(76800), 0).laid_out(Layout::Time);
+        let row = Row {
+            from: -0.8,
+            start: 0.0,
+            to: 8.0,
+            rect: Rect::from_min_size(Pos2::ZERO, vec2(110.0, ROW)),
+        };
+        let scene = Scene {
+            timing,
+            bars: &bars,
+            grid: Grid::default(),
+            peaks: None,
+            onsets: &[],
+            sensitivity: 0.1,
+            residuals: &[],
+            anchors: &[],
+            cursor: Tick::new(0),
+            ghost: None,
+            reach: None,
+        };
+        let numbers: Vec<Rect> = painted_scene(&row, &scene, draw)
+            .iter()
+            .filter_map(|shape| {
+                if let Shape::Text(text) = shape
+                    && text.galley.text().parse::<u32>().is_ok()
+                {
+                    Some(Rect::from_min_size(text.pos, text.galley.size()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert!(numbers.len() > 2 && numbers.len() < 20, "{numbers:?}");
+        assert!(
+            numbers
+                .windows(2)
+                .all(|pair| matches!(pair, [earlier, later] if earlier.right() <= later.left()))
+        );
     }
 
     #[test]

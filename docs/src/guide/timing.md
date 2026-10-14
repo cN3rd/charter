@@ -47,6 +47,8 @@ Timing > Timing window, or Ctrl+T, opens a window made for syncing. It lays the 
 each one to eight seconds long, with the beat grid drawn over it: downbeats thick, beats solid, the
 lines between dashed. A correct grid lines up with the hits down every row. V switches to rows of
 bars, which keep the grid still and slide the audio under it instead.
+Beat numbers thin out when they would overprint, but their lines stay. Crowded BPM flags keep their
+anchor lines, prefer focused and selected anchors, and turn left at the waveform's right edge.
 
 Each BPM change is an **anchor** pinning a beat to a moment of the audio. The window finds the
 onsets in the audio, the starts of hits, and measures the grid against them. It shows ticks along
