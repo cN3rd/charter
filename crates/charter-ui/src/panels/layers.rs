@@ -26,7 +26,7 @@ pub(super) fn layers(ui: &mut Ui, song: &Song, drafts: &mut SongDrafts, actions:
         let fill = if song.active_layer() == index {
             style::ACCENT_FILL
         } else if hovered {
-            egui::Color32::from_gray(40)
+            style::ROW_HOVER
         } else {
             egui::Color32::TRANSPARENT
         };

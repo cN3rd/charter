@@ -39,8 +39,12 @@ pub const EDGE: Color32 = Color32::from_gray(40);
 
 /// The one accent: the current selection, the primary action and focus.
 pub const ACCENT: Color32 = Color32::from_rgb(110, 170, 255);
-/// The accent as a fill behind white text, dark enough for 4.5:1.
+/// The accent as a fill behind [`ON_ACCENT`], dark enough for 4.5:1.
 pub const ACCENT_FILL: Color32 = Color32::from_rgb(40, 104, 208);
+/// Text and icons drawn on [`ACCENT_FILL`], the one pairing that fill is chosen for.
+pub const ON_ACCENT: Color32 = Color32::WHITE;
+/// A row of a list under the pointer, lighter than the panel without reading as a border.
+pub const ROW_HOVER: Color32 = Color32::from_gray(40);
 /// Warnings and refusals.
 pub const WARN: Color32 = Color32::from_rgb(240, 180, 90);
 /// The strip a notice sits on, tinted from the warning.
@@ -261,7 +265,7 @@ fn look(style: &mut egui::Style) {
     visuals.extreme_bg_color = FIELD;
     visuals.faint_bg_color = Color32::from_gray(30);
     visuals.selection.bg_fill = ACCENT_FILL;
-    visuals.selection.stroke = Stroke::new(1.0, Color32::WHITE);
+    visuals.selection.stroke = Stroke::new(1.0, ON_ACCENT);
     visuals.hyperlink_color = ACCENT;
     visuals.text_cursor.stroke = Stroke::new(2.0, ACCENT);
 
@@ -317,7 +321,7 @@ pub fn canvas() -> egui::Frame {
 
 /// The main action of a screen or dialog, in the accent.
 pub fn primary(text: &str) -> egui::Button<'_> {
-    egui::Button::new(RichText::new(text).color(Color32::WHITE)).fill(ACCENT_FILL)
+    egui::Button::new(RichText::new(text).color(ON_ACCENT)).fill(ACCENT_FILL)
 }
 
 /// Names `response`, a button, `name` for screen readers and tests.
@@ -330,8 +334,8 @@ fn named(ui: &Ui, response: egui::Response, name: &str) -> egui::Response {
 /// A button showing `symbol` before `text`, named `text` alone.
 pub fn icon_button(ui: &mut Ui, symbol: &str, text: &str, primary_look: bool) -> egui::Response {
     let button = if primary_look {
-        let white = |label: RichText| label.color(Color32::WHITE);
-        egui::Button::new((white(glyph(ui, symbol)), white(RichText::new(text)))).fill(ACCENT_FILL)
+        let lit = |label: RichText| label.color(ON_ACCENT);
+        egui::Button::new((lit(glyph(ui, symbol)), lit(RichText::new(text)))).fill(ACCENT_FILL)
     } else {
         egui::Button::new((glyph(ui, symbol), RichText::new(text)))
     };
@@ -351,7 +355,7 @@ pub fn quiet_icon(ui: &mut Ui, symbol: &str, name: &str, tip: &str) -> egui::Res
 pub fn tool(ui: &mut Ui, symbol: &str, name: &str, tip: &str, on: bool) -> egui::Response {
     let symbol = glyph(ui, symbol).size(16.0);
     let button = if on {
-        egui::Button::new(symbol.color(Color32::WHITE)).fill(ACCENT_FILL)
+        egui::Button::new(symbol.color(ON_ACCENT)).fill(ACCENT_FILL)
     } else {
         egui::Button::new(symbol.color(TEXT)).frame_when_inactive(false)
     };
@@ -514,7 +518,7 @@ pub fn check(ui: &mut Ui, on: &mut bool, text: &str) -> egui::Response {
             let at = |x: f32, y: f32| square.min + vec2(x, y) * square_w;
             painter.line(
                 vec![at(0.24, 0.52), at(0.43, 0.7), at(0.76, 0.32)],
-                Stroke::new(1.8, Color32::WHITE),
+                Stroke::new(1.8, ON_ACCENT),
             );
         } else {
             let edge = Color32::from_gray(if hovered { 140 } else { 96 });
@@ -645,6 +649,36 @@ pub fn table(ui: &mut Ui, id: &str, rows: impl FnOnce(&mut Ui)) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// WCAG relative luminance of `colour`, drawn opaque.
+    fn luminance(colour: Color32) -> f64 {
+        let channel = |value: u8| {
+            let value = f64::from(value) / 255.0;
+            if value <= 0.040_45 {
+                value / 12.92
+            } else {
+                ((value + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * channel(colour.r()) + 0.7152 * channel(colour.g()) + 0.0722 * channel(colour.b())
+    }
+
+    /// The contrast ratio between `a` and `b`, from 1.0 to 21.0.
+    fn contrast(a: Color32, b: Color32) -> f64 {
+        let (a, b) = (luminance(a), luminance(b));
+        (a.max(b) + 0.05) / (a.min(b) + 0.05)
+    }
+
+    #[test]
+    fn text_stays_readable_on_every_surface_it_is_drawn_on() {
+        for surface in [CHROME, PANEL, CANVAS, RAISED, FIELD, TOOLBAR, STAGE, WELL] {
+            for (name, text) in [("TEXT", TEXT), ("WEAK_TEXT", WEAK_TEXT)] {
+                let ratio = contrast(text, surface);
+                assert!(ratio >= 4.5, "{name} on {surface:?} is {ratio:.2}");
+            }
+        }
+        let on_fill = contrast(ON_ACCENT, ACCENT_FILL);
+        assert!(on_fill >= 4.5, "ON_ACCENT on ACCENT_FILL is {on_fill:.2}");
+    }
 
     #[test]
     fn fallback_fonts_come_after_inter_in_text_titles_and_monospace() {

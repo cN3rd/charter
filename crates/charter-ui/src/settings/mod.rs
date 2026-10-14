@@ -17,7 +17,9 @@ use charter_editor::SNAPS;
 use crate::flip::Direction;
 use crate::notefield::{GRIDS, Zoom};
 use crate::panels::ordinal;
-use crate::style::{ACCENT_FILL, PANEL, TEXT, WEAK_TEXT, glyph, icon, quiet_icon, switch, titles};
+use crate::style::{
+    ACCENT_FILL, ON_ACCENT, PANEL, TEXT, WEAK_TEXT, glyph, icon, quiet_icon, switch, titles,
+};
 use crate::window::Rate;
 use egui::RichText;
 

@@ -386,7 +386,7 @@ fn choose_game(ui: &mut Ui, games: &[&'static dyn RulesetPlugin], draft: &mut Dr
                     let chosen = draft.game == index;
                     let text = RichText::new(game.name());
                     let text = if chosen {
-                        text.color(egui::Color32::WHITE)
+                        text.color(style::ON_ACCENT)
                     } else {
                         text
                     };

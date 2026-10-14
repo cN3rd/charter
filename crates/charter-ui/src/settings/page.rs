@@ -215,7 +215,7 @@ fn sidebar(ui: &mut egui::Ui, page: &mut Page) {
                 for choice in Page::ALL {
                     let (name, symbol, _, _) = choice.words();
                     let chosen = *page == choice;
-                    let colour = if chosen { egui::Color32::WHITE } else { TEXT };
+                    let colour = if chosen { ON_ACCENT } else { TEXT };
                     let item = egui::Button::new((
                         glyph(ui, symbol).color(colour),
                         RichText::new(name).color(colour),
