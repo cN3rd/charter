@@ -58,7 +58,8 @@ report, with the licence and credits.
 ## Starting a song
 
 With nothing open, the window offers Open song…, New song and the demo song. The demo is also under
-Help, to try things on.
+Help, to try things on. On Windows and X11, an audio file dropped on the window starts a new song
+with that audio.
 
 **New song** (Ctrl+N) asks for:
 

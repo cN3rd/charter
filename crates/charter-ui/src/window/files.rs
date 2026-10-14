@@ -86,6 +86,10 @@ impl Window {
     }
     /// Uses a chosen or dropped audio file, either in the new-song dialog or the open song.
     pub(crate) fn use_audio(&mut self, file: &Path) {
+        // With no song open, audio starts one, as New song does once the audio is chosen.
+        if self.song.is_none() {
+            self.dialogs.new_song.get_or_insert_default();
+        }
         if self.dialogs.new_song.is_some() {
             self.draft_audio(file);
         } else {
@@ -2023,14 +2027,18 @@ mod tests {
         );
     }
     #[test]
-    fn audio_dropped_with_no_song_open_says_to_open_one() {
+    fn audio_dropped_with_no_song_open_starts_a_new_song_with_it() {
         let mut harness = window(Window::new(GAMES));
-        drop_file(&mut harness, "/music/track.ogg");
-        assert!(
-            harness
-                .query_by_label_contains("Open or start a song before adding its audio")
-                .is_some()
+        drop_keeping_requests(&mut harness, "/music/track.ogg");
+        let draft = harness.state().dialogs.new_song.as_ref();
+        assert_eq!(
+            draft.and_then(|draft| draft.audio()),
+            Some(Path::new("/music/track.ogg"))
         );
+        assert!(harness.state().requests.contains(&Request::ReadTags {
+            file: PathBuf::from("/music/track.ogg"),
+        }));
+        assert!(harness.query_by_label_contains("Open or start").is_none());
     }
     #[test]
     fn audio_dropped_on_a_read_only_song_is_refused() {
