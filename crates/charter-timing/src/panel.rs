@@ -266,7 +266,7 @@ fn anchor(
     );
     let bpm = frame.bpm_at(pin.tick);
     let delta = accuracy::nearest_onset(frame.onsets, window.sensitivity, pin.seconds.seconds())
-        .map(|onset| (pin.seconds.seconds() - onset) * 1000.0);
+        .map(|onset| (onset - pin.seconds.seconds()) * 1000.0);
     compact(ui, "anchor", |ui| {
         let caption = ui.weak("t");
         let text = format!("{:.4}", pin.seconds.seconds());
@@ -359,7 +359,8 @@ fn anchor(
             "tail"
         });
         ui.end_row();
-        ui.weak("Δ");
+        ui.weak("Δ")
+            .on_hover_text("Onset minus anchor: negative means early, positive means late");
         match delta {
             Some(ms) => {
                 let mark = if ms.abs() < ON_ONSET_MS { " ✓" } else { "" };
@@ -611,6 +612,25 @@ mod tests {
                 merge: false
             })]
         );
+    }
+
+    #[test]
+    fn inspector_delta_is_negative_for_early_onsets_and_positive_for_late_onsets() {
+        let mut harness = timing_harness();
+        harness.state_mut().window.focus = Some(Tick::new(960));
+        harness.state_mut().onsets = vec![crate::Onset {
+            seconds: 0.488,
+            strength: 1.0,
+        }];
+        harness.run();
+        assert!(harness.query_by_label("-12.0 ms").is_some());
+
+        harness.state_mut().onsets = vec![crate::Onset {
+            seconds: 0.512,
+            strength: 1.0,
+        }];
+        harness.run();
+        assert!(harness.query_by_label("+12.0 ms").is_some());
     }
 
     #[test]
