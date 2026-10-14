@@ -196,6 +196,7 @@ dark playfield, often in a dim room, and notes read best as bright shapes on dar
 - Plugins currently supply editable text settings, such as a TTR theme. Other chart settings,
   such as StepMania's meter and osu!mania's HP and OD, show as read-only values. Forms for
   arbitrary plugin `ext` fields and timing values remain planned.
+- A refused layer name keeps the typed text and focus for correction; Escape cancels the draft.
 - There is no inspector panel; the notefield keeps the width. The status bar counts the selection,
   the song panel sets the tempo, offset and sections at the cursor, and what keys cannot express
   on a note, such as a keysound, is still to find a place.

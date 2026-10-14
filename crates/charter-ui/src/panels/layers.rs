@@ -176,13 +176,15 @@ pub(super) fn layers(ui: &mut Ui, song: &Song, drafts: &mut SongDrafts, actions:
                                     format!("Rename {}", row.name),
                                 )
                             });
+                            if std::mem::take(&mut drafts.refocus_layer_name) {
+                                edit.request_focus();
+                            }
                             if !editable || ui.input(|input| input.key_pressed(egui::Key::Escape)) {
                                 drafts.layer_name = None;
                             } else if ui.input(|input| input.key_pressed(egui::Key::Enter))
                                 || (edit.lost_focus() && !edit.has_focus())
                             {
                                 actions.push(Action::RenameLayer(index, name.clone()));
-                                drafts.layer_name = None;
                             }
                         } else {
                             let text =

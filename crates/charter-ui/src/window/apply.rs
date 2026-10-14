@@ -123,6 +123,7 @@ impl Window {
     }
 
     /// Applies a layer-stack action, returning whether it matched.
+    #[expect(clippy::too_many_lines, reason = "one arm per layer-stack action")]
     #[expect(
         clippy::wildcard_enum_match_arm,
         reason = "this helper handles only layer actions and lets the next helper try the rest"
@@ -175,6 +176,17 @@ impl Window {
             }
             Action::RenameLayer(index, name) => {
                 self.failure = song.rename_layer(*index, name).err().as_ref().map(refused);
+                if self
+                    .song_drafts
+                    .layer_name
+                    .as_ref()
+                    .is_some_and(|(editing, _)| editing == index)
+                {
+                    self.song_drafts.refocus_layer_name = self.failure.is_some();
+                    if self.failure.is_none() {
+                        self.song_drafts.layer_name = None;
+                    }
+                }
             }
             Action::MoveLayer { from, to } => {
                 self.failure = song.move_layer(*from, *to).err().as_ref().map(refused);
@@ -491,6 +503,69 @@ impl Window {
 #[cfg(test)]
 mod tests {
     use crate::window::test_support::*;
+
+    fn refused_layer_rename() -> Harness<'static, Window> {
+        let mut harness = editable_demo();
+        harness.state_mut().apply(Action::AddLayer);
+        harness.run();
+        harness.get_by_label("Layer row Layer 1").click_secondary();
+        harness.run();
+        harness.get_by_label("Rename").click();
+        harness.run();
+        retype(&mut harness, "Rename Layer 1", "Layer 0");
+        harness
+    }
+
+    #[test]
+    fn a_refused_layer_rename_keeps_its_text_and_focus_for_correction() {
+        let mut harness = refused_layer_rename();
+        assert!(
+            harness
+                .state()
+                .failure
+                .as_deref()
+                .is_some_and(|why| why.contains("A layer named Layer 0 already exists"))
+        );
+        let field = harness.query_by_role_and_label(Role::TextInput, "Rename Layer 1");
+        assert_eq!(
+            field
+                .as_ref()
+                .and_then(egui_kittest::Node::value)
+                .as_deref(),
+            Some("Layer 0")
+        );
+        assert!(field.as_ref().unwrap().accesskit_node().is_focused());
+
+        retype(&mut harness, "Rename Layer 1", "Percussion");
+        assert_eq!(
+            harness.state().song.as_ref().unwrap().layers()[0].name,
+            "Percussion"
+        );
+        assert!(harness.query_by_label("Layer Percussion").is_some());
+    }
+
+    #[test]
+    fn escape_discards_a_refused_layer_rename_without_changing_the_song() {
+        let mut harness = refused_layer_rename();
+        assert_eq!(
+            harness
+                .get_by_role_and_label(Role::TextInput, "Rename Layer 1")
+                .value()
+                .as_deref(),
+            Some("Layer 0")
+        );
+        harness.key_press(egui::Key::Escape);
+        harness.run();
+        assert!(
+            harness
+                .query_by_role_and_label(Role::TextInput, "Rename Layer 1")
+                .is_none()
+        );
+        assert_eq!(
+            harness.state().song.as_ref().unwrap().layers()[0].name,
+            "Layer 1"
+        );
+    }
 
     #[test]
     fn alt_digits_switch_layers_and_move_notes_without_placing_lane_taps() {

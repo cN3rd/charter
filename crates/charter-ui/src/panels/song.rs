@@ -75,8 +75,10 @@ pub(crate) fn song_panel(
 /// What is being typed into the song section's fields, while one has the keyboard.
 #[derive(Debug, Default)]
 pub(crate) struct SongDrafts {
-    /// Name being typed for a layer.
-    pub(super) layer_name: Option<(LayerIndex, String)>,
+    /// Name being typed for a layer, kept when the rename is refused.
+    pub(crate) layer_name: Option<(LayerIndex, String)>,
+    /// Restore the rename field's keyboard focus after a refusal.
+    pub(crate) refocus_layer_name: bool,
     /// Layer whose notes need a deletion decision.
     pub(super) deleting_layer: Option<LayerName>,
     /// Title being edited, while its field has the keyboard.

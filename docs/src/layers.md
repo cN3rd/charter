@@ -67,6 +67,7 @@ Each row is, left to right:
 - **Lock**, `[L]`. A locked layer is drawn as usual but its notes cannot be selected or changed.
 - **The colour swatch.** A click opens the palette.
 - **The name.** A double-click renames it in place, and Enter or leaving the field applies it.
+  If the name is refused, the typed text stays in the focused field for correction; Escape cancels it.
 - **Its note count.** Ctrl+click on the row, or *Select notes* in its menu, selects them all, as
   Ctrl+click on a layer's thumbnail selects its pixels in Photoshop.
 

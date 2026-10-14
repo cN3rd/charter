@@ -89,7 +89,7 @@ is saved in the song, so changing it is an edit.
 
 The panel on the left holds everything about the song that is not a note. Each change in it is one
 undo step. A value typed in a field takes effect on Enter or when the field is left; Escape puts it
-back.
+back. A refused layer name stays in its field so you can correct it.
 
 - **Song**: the title and artist; the audio, with a button to choose another file; the preview, the
   time and length a song list plays; and the artwork, a PNG or JPEG beside the song. The artwork's
