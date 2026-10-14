@@ -44,7 +44,9 @@ of the repository. [Packaging](../packaging.md) covers release builds.
   below, the waveform, the lanes and the minimap. The bright line across it is the cursor,
   where notes go and playback starts.
 - The **status bar** at the bottom says whether the audio is ready, counts the selection and names
-  the active layer. Messages float over the notefield, each with a Dismiss button.
+  the active layer. Its editing state stays on the right when the window narrows; long audio and
+  layer names shorten, with the full name on hover. Messages float over the notefield, each with
+  a Dismiss button.
 
 F1 lists every key, with a filter; [Keyboard shortcuts](shortcuts.md) has the same list.
 Publication at <https://cn3rd.github.io/charter/> is currently disabled. The source is in

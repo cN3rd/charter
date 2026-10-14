@@ -222,8 +222,9 @@ dark playfield, often in a dim room, and notes read best as bright shapes on dar
   object in its way flashes, as Tempora does with a blocking neighbour.
 - The transport toolbar holds position as `measure:beat:tick` and time, playback rate, snap,
   zoom, grid and sound controls. The status bar shows audio state, selection count and active layer.
-  ArrowVortex allows rates from 10 to 400%, and its menu snaps, 4th to 192nd, are all exact at 960
-  ticks per beat.
+  Its editing state stays visible when long audio or layer names shorten, with their full text on
+  hover. ArrowVortex allows rates from 10 to 400%, and its menu snaps, 4th to 192nd, are all exact
+  at 960 ticks per beat.
 
 ## The notefield
 

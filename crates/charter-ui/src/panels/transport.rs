@@ -2,6 +2,7 @@ use super::{
     Action, Align, LayerIndex, Layout, NoteValue, Rate, RichText, Song, Tick, Ui, Zoom, egui, icon,
     style,
 };
+use egui::AtomExt as _;
 
 /// Draws the playback and editing controls, sending their choices as `actions`.
 #[expect(clippy::too_many_lines, reason = "toolbar groups in display order")]
@@ -266,59 +267,76 @@ pub(crate) fn status_bar(
     empty_status: Option<&str>,
     actions: &mut Vec<Action>,
 ) {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 10.0;
-        let Some(song) = song else {
-            ui.weak(empty_status.unwrap_or("No song open"));
-            return;
-        };
-        let (colour, state) = if playing {
-            (style::ACCENT, "Playing")
-        } else {
-            (style::WEAK_TEXT, "Paused")
-        };
-        ui.label(RichText::new("●").color(colour).size(9.0));
-        ui.label(state);
-        ui.weak(audio);
-        let layers = song.layers();
-        if let Some(row) = layers.get(song.active_layer().get()) {
-            ui.separator();
-            let menu = ui.menu_button(
-                (
-                    egui::RichText::new("■").color(style::layer_colour(row.colour)),
-                    row.name.as_str(),
-                ),
-                |ui| {
-                    for (index, layer) in layers.iter().enumerate() {
-                        if ui.button(&layer.name).clicked() {
-                            actions.push(Action::SetActiveLayer(LayerIndex::new(index)));
-                            ui.close();
-                        }
-                    }
-                },
-            );
-            menu.response
-                .on_hover_text("Active layer; click to switch")
-                .widget_info(|| {
-                    egui::WidgetInfo::labeled(egui::WidgetType::Button, true, row.name.as_str())
-                });
-        }
-        let selected = song.selection().count();
-        if selected > 0 {
-            ui.separator();
-            let noun = if selected == 1 { "note" } else { "notes" };
-            ui.label(RichText::new(format!("{selected} {noun} selected")).monospace());
-        }
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if song.read_only().is_some() {
-                ui.weak("Read only");
-                ui.label(style::glyph(ui, icon::LOCK_SIMPLE).color(style::WEAK_TEXT));
+    ui.spacing_mut().item_spacing.x = 10.0;
+    let Some(song) = song else {
+        ui.weak(empty_status.unwrap_or("No song open"));
+        return;
+    };
+    egui::Sides::new().shrink_left().truncate().show(
+        ui,
+        |left| {
+            let (colour, state) = if playing {
+                (style::ACCENT, "Playing")
             } else {
-                ui.label("Editing");
-                ui.label(style::glyph(ui, icon::PENCIL_SIMPLE).color(style::ACCENT));
+                (style::WEAK_TEXT, "Paused")
+            };
+            left.label(RichText::new("●").color(colour).size(9.0));
+            left.label(state);
+            let layers = song.layers();
+            let audio_rect = left.available_rect_before_wrap();
+            // ponytail: split spare width with the layer; measure both names if this split
+            // leaves too little of either visible in narrower windows.
+            let audio_width = if layers.get(song.active_layer().get()).is_some() {
+                audio_rect.width() * 0.5
+            } else {
+                audio_rect.width()
+            };
+            left.scope_builder(
+                egui::UiBuilder::new()
+                    .max_rect(audio_rect.with_max_x(audio_rect.min.x + audio_width)),
+                |audio_ui| audio_ui.add(egui::Label::new(RichText::new(audio).weak()).truncate()),
+            )
+            .inner
+            .on_hover_text(audio);
+            if let Some(row) = layers.get(song.active_layer().get()) {
+                left.separator();
+                let menu = left.menu_button(
+                    (
+                        egui::RichText::new("■").color(style::layer_colour(row.colour)),
+                        row.name.as_str().atom_shrink(true),
+                    ),
+                    |menu_ui| {
+                        for (index, layer) in layers.iter().enumerate() {
+                            if menu_ui.button(&layer.name).clicked() {
+                                actions.push(Action::SetActiveLayer(LayerIndex::new(index)));
+                                menu_ui.close();
+                            }
+                        }
+                    },
+                );
+                menu.response
+                    .on_hover_text(format!("Active layer: {}; click to switch", row.name))
+                    .widget_info(|| {
+                        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, row.name.as_str())
+                    });
             }
-        });
-    });
+            let selected = song.selection().count();
+            if selected > 0 {
+                left.separator();
+                let noun = if selected == 1 { "note" } else { "notes" };
+                left.label(RichText::new(format!("{selected} {noun} selected")).monospace());
+            }
+        },
+        |right| {
+            if song.read_only().is_some() {
+                right.weak("Read only");
+                right.label(style::glyph(right, icon::LOCK_SIMPLE).color(style::WEAK_TEXT));
+            } else {
+                right.label("Editing");
+                right.label(style::glyph(right, icon::PENCIL_SIMPLE).color(style::ACCENT));
+            }
+        },
+    );
 }
 
 /// A snap's name, such as `16th` or `32nd`.
@@ -332,4 +350,49 @@ pub(crate) fn ordinal(n: NoteValue) -> String {
         _ => "th",
     };
     format!("{n}{suffix}")
+}
+
+#[cfg(test)]
+mod tests {
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+
+    use super::*;
+
+    #[test]
+    fn long_audio_and_active_layer_keep_editing_status_on_screen() {
+        let layer_name = "A very long active layer for percussion and extra overdubs";
+        let audio_name = "audio-with-a-very-long-description-of-every-track-and-bonus-version.ogg";
+        let mut song = Song::open(
+            &charter_editor::demo::song().to_json().unwrap(),
+            &[&charter_stepmania::Plugin],
+        )
+        .unwrap();
+        song.rename_layer(LayerIndex::new(0), layer_name).unwrap();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(427.0, 180.0))
+            .build_ui_state(
+                |ui, song: &mut Song| {
+                    status_bar(ui, Some(song), (audio_name, false), None, &mut Vec::new());
+                },
+                song,
+            );
+        harness.run();
+
+        let editing = harness.query_by_label("Editing").map(|node| node.rect());
+        assert!(
+            editing.is_some_and(|rect| rect.left() >= 0.0 && rect.right() <= 427.0),
+            "Editing must be painted in the 427-point window: {editing:?}"
+        );
+        let layer = harness.query_by_label(layer_name).map(|node| node.rect());
+        assert!(
+            layer.is_some_and(|rect| rect.right() <= editing.unwrap().left()),
+            "Layer button should fit before Editing: {layer:?}, {editing:?}"
+        );
+        let audio = harness.query_by_label(audio_name).map(|node| node.rect());
+        assert!(
+            audio.is_some_and(|rect| rect.right() <= editing.unwrap().left()),
+            "Audio label should fit before Editing: {audio:?}, {editing:?}"
+        );
+    }
 }
