@@ -128,6 +128,8 @@ the tempo at the cursor.
   nothing to a screen reader. An off switch or checkbox is a dark well whose edge reaches 3:1
   against the panels behind it, that edge being all there is to find the control by, and it stays
   unlit beside the accent fill of one that is on.
+- An unlocked layer's lock icon reaches the 3:1 non-text contrast minimum without hover, and its
+  button reports locked or unlocked under one steady name.
 - As the window narrows, the transport drops its secondary tempo, snap, speed, grid and zoom
   controls, keeping playback, position, sound and settings; the menus, keys and settings still
   offer the rest. The settings window puts its page choice above its controls, the shortcut sheet

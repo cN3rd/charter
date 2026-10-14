@@ -65,6 +65,7 @@ Each row is, left to right:
   solos the layer, ghosting other shown layers and leaving hidden or already-ghosted layers as
   they were; Alt+click again puts them back as they were.
 - **Lock**, `[L]`. A locked layer is drawn as usual but its notes cannot be selected or changed.
+  The unlocked icon stays visible without hovering; screen readers hear whether *Lock [name]* is on.
 - **The colour swatch.** A click opens the palette.
 - **The name.** A double-click renames it in place, and Enter or leaving the field applies it.
   If the name is refused, the typed text stays in the focused field for correction; Escape cancels it.

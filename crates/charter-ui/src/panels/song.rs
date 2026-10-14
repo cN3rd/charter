@@ -861,7 +861,7 @@ mod tests {
                 .2
                 .contains(&Action::SoloLayer(LayerIndex::new(1)))
         );
-        harness.get_by_label("Toggle lock of Layer 0").click();
+        harness.get_by_label("Lock Layer 0").click();
         harness.run();
         assert!(
             harness

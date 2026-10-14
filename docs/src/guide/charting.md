@@ -84,6 +84,7 @@ whole notes in their layer's colour. [Layers](../layers.md) describes them in fu
 In a read-only song, the list still lets you choose a layer or select its notes, but adding,
 renaming, recolouring, reordering, showing, hiding and locking layers are disabled. Visibility
 is saved in the song, so changing it is an edit.
+The lock icon stays legible when unlocked, and its button tells screen readers whether it is locked.
 
 ## The song panel
 

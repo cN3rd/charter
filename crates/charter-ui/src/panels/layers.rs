@@ -117,7 +117,7 @@ pub(super) fn layers(ui: &mut Ui, song: &Song, drafts: &mut SongDrafts, actions:
                         } else if hovered {
                             style::TEXT
                         } else {
-                            style::WEAK_TEXT.gamma_multiply(0.55)
+                            style::WEAK_TEXT
                         };
                         let lock = ui
                             .add_enabled(
@@ -132,10 +132,11 @@ pub(super) fn layers(ui: &mut Ui, song: &Song, drafts: &mut SongDrafts, actions:
                             })
                             .on_disabled_hover_text(why);
                         lock.widget_info(|| {
-                            egui::WidgetInfo::labeled(
+                            egui::WidgetInfo::selected(
                                 egui::WidgetType::Button,
-                                true,
-                                format!("Toggle lock of {}", row.name),
+                                editable,
+                                row.locked,
+                                format!("Lock {}", row.name),
                             )
                         });
                         if lock.clicked() {
@@ -479,7 +480,7 @@ pub(super) fn layer_menu(
 
 #[cfg(test)]
 mod tests {
-    use egui::accesskit::Role;
+    use egui::accesskit::{Role, Toggled};
     use egui_kittest::Harness;
     use egui_kittest::kittest::{NodeT, Queryable};
 
@@ -510,12 +511,35 @@ mod tests {
     }
 
     #[test]
+    fn the_lock_button_reports_its_state_under_one_name() {
+        let mut harness = editable_layers();
+        assert_eq!(
+            harness
+                .query_by_label("Lock Layer 0")
+                .map(|node| node.accesskit_node().toggled()),
+            Some(Some(Toggled::False))
+        );
+        harness
+            .state_mut()
+            .0
+            .set_layer_locked(LayerIndex::new(0), true)
+            .unwrap();
+        harness.run();
+        assert_eq!(
+            harness
+                .query_by_label("Lock Layer 0")
+                .map(|node| node.accesskit_node().toggled()),
+            Some(Some(Toggled::True))
+        );
+    }
+
+    #[test]
     fn a_read_only_layer_disables_changes_but_can_still_be_selected() {
         let mut harness = read_only_layers();
         for label in [
             "Reorder Layer 0",
             "Cycle visibility of Layer 0",
-            "Toggle lock of Layer 0",
+            "Lock Layer 0",
             "Colour of Layer 0",
         ] {
             assert!(
