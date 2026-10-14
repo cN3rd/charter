@@ -178,25 +178,43 @@ fn header_buttons(ui: &mut egui::Ui, settings: &mut Settings, open: &mut bool) {
     if quiet_icon(ui, icon::X, "Close settings", tip).clicked() {
         *open = false;
     }
-    let defaults_tip = "Every setting on every page back to how charter starts, but the latency \
-        calibration, which measures this computer";
-    if quiet_icon(
+    let defaults_tip = "Review a reset of every setting on every page, except the latency \
+        calibration and recent songs";
+    let restore = quiet_icon(
         ui,
         icon::ARROW_COUNTER_CLOCKWISE,
         "Restore defaults",
         defaults_tip,
-    )
-    .clicked()
-    {
-        // The calibration measures this computer, and the recent songs are history, not choices.
-        *settings = Settings {
-            audio_latency_ms: settings.audio_latency_ms,
-            input_latency_ms: settings.input_latency_ms,
-            recent: std::mem::take(&mut settings.recent),
-            ffmpeg_offered: settings.ffmpeg_offered,
-            ..Settings::default()
-        };
-    }
+    );
+    egui::Popup::menu(&restore)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
+        .show(|popup_ui| {
+            popup_ui.set_max_width(320.0);
+            popup_ui.label(dialog_title(popup_ui, "Restore defaults?"));
+            popup_ui.add_space(4.0);
+            popup_ui.label("Every setting on every page returns to its default.");
+            popup_ui.label("Latency calibration and recent songs stay.");
+            popup_ui.add_space(10.0);
+            popup_ui.horizontal(|buttons| {
+                if buttons
+                    .add(crate::style::primary("Restore defaults"))
+                    .clicked()
+                {
+                    // Calibration measures this computer; recent songs and first-start help
+                    // are history, not choices.
+                    *settings = Settings {
+                        audio_latency_ms: settings.audio_latency_ms,
+                        input_latency_ms: settings.input_latency_ms,
+                        recent: std::mem::take(&mut settings.recent),
+                        ffmpeg_offered: settings.ffmpeg_offered,
+                        ..Settings::default()
+                    };
+                }
+                if buttons.button("Cancel").clicked() {
+                    buttons.close();
+                }
+            });
+        });
 }
 
 /// The pages, down the left of the window on a darker strip.
@@ -1035,6 +1053,83 @@ mod tests {
     }
 
     #[test]
+    fn restoring_defaults_waits_for_confirmation_on_every_page() {
+        let changed = Settings {
+            auto_jump: false,
+            direction: Direction::Left,
+            metronome: true,
+            autosave: false,
+            audio_latency_ms: 12.0.into(),
+            input_latency_ms: (-8.0).into(),
+            recent: vec![std::path::PathBuf::from("/songs/last.json")],
+            ffmpeg_offered: true,
+            ..Settings::default()
+        };
+        let mut harness = Harness::builder().build_ui_state(
+            |ui, (settings, open): &mut (Settings, bool)| {
+                show(ui.ctx(), settings, open, None, &FfmpegStatus::default());
+            },
+            (changed.clone(), true),
+        );
+        harness.run();
+        harness.get_by_label("Restore defaults").click();
+        harness.run();
+        assert_eq!(harness.state().0, changed, "the first click only asks");
+        assert!(
+            harness
+                .query_by_label_contains("Every setting on every page")
+                .is_some()
+        );
+        assert!(
+            harness
+                .query_by_label_contains("Latency calibration and recent songs")
+                .is_some()
+        );
+
+        harness
+            .query_all_by_label("Restore defaults")
+            .last()
+            .unwrap()
+            .click();
+        harness.run();
+        assert_eq!(
+            harness.state().0,
+            Settings {
+                audio_latency_ms: 12.0.into(),
+                input_latency_ms: (-8.0).into(),
+                recent: vec![std::path::PathBuf::from("/songs/last.json")],
+                ffmpeg_offered: true,
+                ..Settings::default()
+            }
+        );
+    }
+
+    #[test]
+    fn cancel_and_escape_leave_settings_unchanged() {
+        let mut harness = settings_window();
+        harness.state_mut().0.zoom = 175.0.into();
+        harness.run();
+
+        harness.get_by_label("Restore defaults").click();
+        harness.run();
+        assert!((harness.state().0.zoom.percent() - 175.0).abs() < f32::EPSILON);
+        harness.get_by_label("Cancel").click();
+        harness.run();
+        assert!((harness.state().0.zoom.percent() - 175.0).abs() < f32::EPSILON);
+
+        harness.get_by_label("Restore defaults").click();
+        harness.run();
+        harness.key_press(egui::Key::Escape);
+        harness.run();
+        assert!((harness.state().0.zoom.percent() - 175.0).abs() < f32::EPSILON);
+        assert!(
+            harness
+                .query_by_label_contains("Every setting on every page")
+                .is_none()
+        );
+    }
+
+    #[test]
     fn restoring_defaults_keeps_the_two_calibrations() {
         let mut harness = Harness::builder().build_ui_state(
             |ui, (settings, open): &mut (Settings, bool)| {
@@ -1052,6 +1147,12 @@ mod tests {
         );
         harness.run();
         harness.get_by_label("Restore defaults").click();
+        harness.run();
+        harness
+            .query_all_by_label("Restore defaults")
+            .last()
+            .unwrap()
+            .click();
         harness.run();
         assert!((harness.state().0.zoom.percent() - 100.0).abs() < f32::EPSILON);
         assert!((harness.state().0.audio_latency_ms.ms() - 12.0).abs() < f64::EPSILON);
@@ -1075,6 +1176,12 @@ mod tests {
         );
         harness.run();
         harness.get_by_label("Restore defaults").click();
+        harness.run();
+        harness
+            .query_all_by_label("Restore defaults")
+            .last()
+            .unwrap()
+            .click();
         harness.run();
         assert!(harness.state().0.ffmpeg_offered);
         assert!(harness.state().0.ffmpeg_path.is_empty());

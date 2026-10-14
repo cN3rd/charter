@@ -438,8 +438,8 @@ The clicks are mixed into the music before it plays, so they need no correction 
   dialog asks which game the file is for. Both report known conversion losses; the current
   reports are incomplete.
 - File > Open recent lists the last ten songs opened or saved, the latest first, and clears them; a
-  song that no longer opens leaves the list, and Restore defaults keeps it. Settings… sits at the
-  bottom of Edit, and the demo song in Help.
+  song that no longer opens leaves the list, and Restore defaults asks first and keeps it.
+  Settings… sits at the bottom of Edit, and the demo song in Help.
 
 ## Open for the next pass
 

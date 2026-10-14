@@ -9,9 +9,9 @@ status: draft
 # Settings
 
 Edit > Settings…, or Ctrl+Comma, opens the settings window. Changes take effect at once. Whatever
-you pick is remembered between runs, and Restore defaults, beside the close button, puts
-everything back except the latency calibration, the list of recent songs and whether ffmpeg
-installation help was already offered.
+you pick is remembered between runs. Restore defaults, beside the close button, first asks before
+resetting every setting on every page. Cancel or Escape leaves them as they were. The latency
+calibration, recent songs and whether ffmpeg installation help was already offered stay.
 
 The window is modeless. Opening it does not disable chart editing; lane keys can still change
 notes behind it when no text field has the keyboard.

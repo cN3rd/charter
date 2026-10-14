@@ -358,6 +358,12 @@ mod tests {
         harness.run();
         harness.get_by_label("Restore defaults").click();
         harness.run();
+        harness
+            .query_all_by_label("Restore defaults")
+            .last()
+            .unwrap()
+            .click();
+        harness.run();
         let calibrated = Settings {
             input_latency_ms: 25.0.into(),
             recent: vec![PathBuf::from("/songs/four.json")],
