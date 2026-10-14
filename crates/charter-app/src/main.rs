@@ -925,6 +925,32 @@ mod tests {
     }
 
     #[test]
+    fn only_a_missing_song_is_removed_from_recent_after_a_failed_open() {
+        let retry = PathBuf::from("/s/retry.json");
+        let broken = PathBuf::from("/s/broken.json");
+        let gone = PathBuf::from("/s/gone.json");
+        let recent = vec![retry.clone(), broken.clone(), gone.clone()];
+        let mut host = host(Memory {
+            unreadable: vec![retry.clone()],
+            ..Memory::with(&[("/s/retry.json", SONG), ("/s/broken.json", b"{ broken")])
+        });
+        host.window = Window::new(PLUGINS).with_settings(Settings {
+            recent: recent.clone(),
+            ..Settings::default()
+        });
+
+        host.read(&retry);
+        assert!(host.window.message().unwrap().contains("access denied"));
+        assert_eq!(host.window.settings().recent, recent);
+        host.read(&broken);
+        assert!(host.window.message().unwrap().contains("did not open"));
+        assert_eq!(host.window.settings().recent, recent);
+        host.read(&gone);
+        assert!(host.window.message().unwrap().contains("did not open"));
+        assert_eq!(host.window.settings().recent, [retry, broken]);
+    }
+
+    #[test]
     fn tags_of_audio_that_cannot_be_read_leave_the_song_alone() {
         let mut host = host(Memory::with(&[("/s/song.json", SONG)]));
         host.read(Path::new("/s/song.json"));

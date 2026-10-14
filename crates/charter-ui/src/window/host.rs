@@ -237,6 +237,8 @@ pub enum Answer {
         path: PathBuf,
         /// What stopped it, in the user's words.
         why: String,
+        /// Whether the host's read failed because the file was not found.
+        not_found: bool,
     },
     /// The song's audio is `file` from now on.
     UsedAudio {

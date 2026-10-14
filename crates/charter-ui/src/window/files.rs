@@ -430,10 +430,13 @@ impl Window {
             Err(error) => self.refuse(path, &error),
         }
     }
-    /// Shows why opening `path` failed and removes it from recent songs.
+    /// Shows why opening `path` failed, leaving it in recent songs for a retry.
     pub(crate) fn refuse(&mut self, path: &Path, why: impl std::fmt::Display) {
         self.failure = Some(format!("{} did not open: {why}", path.display()));
-        // A song that no longer opens leaves the recent list.
+    }
+    /// A file known to be gone cannot be opened from the recent-song list again.
+    pub(crate) fn refuse_missing(&mut self, path: &Path, why: impl std::fmt::Display) {
+        self.refuse(path, why);
         self.settings.recent.retain(|recent| recent != path);
     }
     /// Uses `folder` as the global snapshot destination.
@@ -1571,12 +1574,41 @@ mod tests {
                 path: PathBuf::from("/songs/b.json")
             }]
         );
-        harness
-            .state_mut()
-            .refuse(Path::new("/songs/a.json"), "it is not there");
+        harness.state_mut().answer(Answer::Refused {
+            path: PathBuf::from("/songs/a.json"),
+            why: "it is not there".to_owned(),
+            not_found: true,
+        });
         assert_eq!(recent(&harness).len(), 2);
         harness.state_mut().apply(Action::ClearRecent);
         assert_eq!(recent(&harness), Vec::<PathBuf>::new());
+    }
+    #[test]
+    fn a_recent_song_stays_retryable_after_a_temporary_open_failure() {
+        let path = PathBuf::from("/songs/retry.json");
+        let mut harness = window(Window::new(PLUGINS).with_settings(Settings {
+            recent: vec![path.clone()],
+            ..Settings::default()
+        }));
+        harness.state_mut().answer(Answer::Refused {
+            path: path.clone(),
+            why: "it is not there".to_owned(),
+            not_found: false,
+        });
+        harness.run();
+        assert_eq!(
+            harness.state().settings().recent.as_slice(),
+            std::slice::from_ref(&path)
+        );
+        assert!(harness.query_by_label("retry.json").is_some());
+
+        harness.state_mut().answer(Answer::Refused {
+            path,
+            why: "storage is unavailable".to_owned(),
+            not_found: true,
+        });
+        harness.run();
+        assert!(harness.state().settings().recent.is_empty());
     }
     #[test]
     fn unsaved_changes_wait_as_long_as_the_settings_say_before_they_are_autosaved() {

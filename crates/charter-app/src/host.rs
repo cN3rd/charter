@@ -352,6 +352,7 @@ impl<D: Disk> Host<D> {
             Err(error) => self.window.answer(Answer::Refused {
                 path: path.to_path_buf(),
                 why: error.to_string(),
+                not_found: error.kind() == std::io::ErrorKind::NotFound,
             }),
         }
     }
@@ -539,6 +540,7 @@ impl<D: Disk> Host<D> {
                 return self.window.answer(Answer::Refused {
                     path: path.to_path_buf(),
                     why: error.to_string(),
+                    not_found: error.kind() == std::io::ErrorKind::NotFound,
                 });
             }
         };
@@ -602,6 +604,7 @@ impl<D: Disk> Host<D> {
             Err(error) => self.window.answer(Answer::Refused {
                 path: recovery.clone(),
                 why: error.to_string(),
+                not_found: error.kind() == std::io::ErrorKind::NotFound,
             }),
         }
     }

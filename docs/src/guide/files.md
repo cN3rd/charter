@@ -32,6 +32,9 @@ out again.
 The title bar marks a song with unsaved changes with a star. Closing the window, opening another
 song or starting a new one first asks whether to save them.
 
+A song stays in Open recent after a permission or drive error, or if its contents are invalid, so
+it can be tried again. Only a file the host reports as missing leaves the list.
+
 ## The data folder
 
 Charter keeps its own files in `~/.local/share/charter` on Linux and `%APPDATA%\charter\data` on

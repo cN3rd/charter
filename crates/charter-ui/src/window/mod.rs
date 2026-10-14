@@ -479,7 +479,17 @@ impl Window {
             Answer::OpenedDemo => self.open_demo(),
             Answer::Saved(saved) => self.saved(saved),
             Answer::Recovered { bytes } => self.recover(&bytes),
-            Answer::Refused { path, why } => self.refuse(&path, why),
+            Answer::Refused {
+                path,
+                why,
+                not_found,
+            } => {
+                if not_found {
+                    self.refuse_missing(&path, &why);
+                } else {
+                    self.refuse(&path, &why);
+                }
+            }
             Answer::UsedAudio { file } => self.use_audio(&file),
             Answer::AudioReady { file, seconds } => self.audio_ready(&file, seconds),
             Answer::AudioFailed { file, why } => self.audio_failed(&file, &why),
