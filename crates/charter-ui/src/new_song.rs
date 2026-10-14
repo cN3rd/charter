@@ -230,11 +230,7 @@ pub(crate) fn show(
     let modal = egui::Modal::new(id).area(area).show(ui.ctx(), |ui| {
         ui.set_width(WIDTH.min((ui.ctx().content_rect().width() - 32.0).max(260.0)));
         ui.spacing_mut().item_spacing.y = 8.0;
-        ui.label(
-            RichText::new("New song")
-                .family(style::titles(ui))
-                .size(18.0),
-        );
+        ui.label(style::dialog_title(ui, "New song"));
         ui.weak("Pick the game and how its charts are laid out. Charts start empty.");
         ui.add_space(14.0);
         if games.get(draft.game).is_none() {

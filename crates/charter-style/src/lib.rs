@@ -611,6 +611,12 @@ pub fn title(ui: &Ui, text: &str) -> RichText {
         .extra_letter_spacing(0.9)
 }
 
+/// The title of a dialog or a settings page, above the line that explains it.
+#[must_use]
+pub fn dialog_title(ui: &Ui, text: &str) -> RichText {
+    RichText::new(text).family(titles(ui)).size(15.0)
+}
+
 /// Starts a panel section, with more room above its title than below.
 pub fn heading(ui: &mut Ui, text: &str) {
     ui.add_space(14.0);

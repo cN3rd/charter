@@ -83,11 +83,7 @@ pub(crate) fn ask_to_save(ui: &Ui, name: &str) -> Option<SaveChanges> {
     let mut answer = None;
     let modal = egui::Modal::new(egui::Id::new("save changes")).show(ui.ctx(), |ui| {
         ui.set_max_width(380.0);
-        ui.label(
-            RichText::new(format!("Save changes to {name}?"))
-                .family(style::titles(ui))
-                .size(15.0),
-        );
+        ui.label(style::dialog_title(ui, &format!("Save changes to {name}?")));
         ui.add_space(4.0);
         ui.label("Changes are lost unless you save them.");
         ui.add_space(14.0);
@@ -112,9 +108,7 @@ pub(crate) fn offer_tags(ui: &Ui, title: Option<&str>, artist: Option<&str>) -> 
     let mut answer = None;
     egui::Modal::new(egui::Id::new("offer tags")).show(ui.ctx(), |ui| {
         ui.set_max_width(380.0);
-        let heading = RichText::new("Import song metadata?")
-            .family(style::titles(ui))
-            .size(15.0);
+        let heading = style::dialog_title(ui, "Import song metadata?");
         ui.label(heading);
         ui.add_space(4.0);
         ui.label("Do you want to import song metadata from tags?");
@@ -144,7 +138,7 @@ pub(crate) fn ask_to_restore(ui: &Ui, name: &str) -> Option<Restore> {
     egui::Modal::new(egui::Id::new("restore changes")).show(ui.ctx(), |ui| {
         ui.set_max_width(380.0);
         let question = format!("Restore unsaved changes to {name}?");
-        ui.label(RichText::new(question).family(style::titles(ui)).size(15.0));
+        ui.label(style::dialog_title(ui, &question));
         ui.add_space(4.0);
         ui.label("charter closed before they were saved.");
         ui.add_space(14.0);
@@ -166,7 +160,7 @@ pub(crate) fn ask_to_download_weights(ui: &Ui, tracker: crate::Tracker) -> Optio
     egui::Modal::new(egui::Id::new("download weights")).show(ui.ctx(), |ui| {
         ui.set_max_width(420.0);
         let question = "Download the beat tracker?";
-        ui.label(RichText::new(question).family(style::titles(ui)).size(15.0));
+        ui.label(style::dialog_title(ui, question));
         ui.add_space(4.0);
         ui.label(match tracker {
             crate::Tracker::BeatThis => {
@@ -204,11 +198,7 @@ pub(crate) fn ask_to_install_ffmpeg(
     let mut answer = None;
     let modal = egui::Modal::new(egui::Id::new("install ffmpeg")).show(ui.ctx(), |ui| {
         ui.set_max_width(420.0);
-        ui.label(
-            RichText::new("Install ffmpeg?")
-                .family(style::titles(ui))
-                .size(15.0),
-        );
+        ui.label(style::dialog_title(ui, "Install ffmpeg?"));
         ui.add_space(4.0);
         match platform {
             crate::FfmpegPlatform::Windows => {
@@ -265,7 +255,7 @@ pub(crate) fn ask_to_run_on_cpu(ui: &Ui) -> Option<RunOnCpu> {
     egui::Modal::new(egui::Id::new("run on cpu")).show(ui.ctx(), |ui| {
         ui.set_max_width(420.0);
         let question = "No graphics card found";
-        ui.label(RichText::new(question).family(style::titles(ui)).size(15.0));
+        ui.label(style::dialog_title(ui, question));
         ui.add_space(4.0);
         ui.label(
             "Mapperatorinator runs on the graphics card, and charter found none it can use. It can \
@@ -297,7 +287,7 @@ pub(crate) fn choose_format(
     egui::Modal::new(egui::Id::new("choose format")).show(ui.ctx(), |ui| {
         ui.set_max_width(420.0);
         let question = "Which game is the file for?";
-        ui.label(RichText::new(question).family(style::titles(ui)).size(15.0));
+        ui.label(style::dialog_title(ui, question));
         ui.add_space(4.0);
         ui.label("Games read the same kind of file their own ways, so the notes depend on which.");
         ui.add_space(8.0);
@@ -323,7 +313,7 @@ pub(crate) fn ask_to_reset_timing(ui: &Ui) -> Option<ResetTiming> {
     egui::Modal::new(egui::Id::new("reset timing")).show(ui.ctx(), |ui| {
         ui.set_max_width(400.0);
         let question = "Reset the timing?";
-        ui.label(RichText::new(question).family(style::titles(ui)).size(15.0));
+        ui.label(style::dialog_title(ui, question));
         ui.add_space(4.0);
         ui.label(
             "Every BPM change, meter, stop and game timing event of the open chart's timing goes, \

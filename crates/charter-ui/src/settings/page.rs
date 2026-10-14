@@ -134,7 +134,7 @@ pub(crate) fn show(
                             }
                             let (_, _, title, about) = shown_page.words();
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new(title).family(titles(ui)).size(16.0));
+                                ui.label(dialog_title(ui, title));
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| header_buttons(ui, settings, is_open),
@@ -210,7 +210,7 @@ fn sidebar(ui: &mut egui::Ui, page: &mut Page) {
                 ui.set_min_height(ui.available_height());
                 ui.spacing_mut().item_spacing.y = 4.0;
                 ui.add_space(4.0);
-                ui.label(RichText::new("Settings").family(titles(ui)).size(16.0));
+                ui.label(dialog_title(ui, "Settings"));
                 ui.add_space(12.0);
                 for choice in Page::ALL {
                     let (name, symbol, _, _) = choice.words();

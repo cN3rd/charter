@@ -18,7 +18,7 @@ use crate::flip::Direction;
 use crate::notefield::{GRIDS, Zoom};
 use crate::panels::ordinal;
 use crate::style::{
-    ACCENT_FILL, ON_ACCENT, PANEL, TEXT, WEAK_TEXT, glyph, icon, quiet_icon, switch, titles,
+    ACCENT_FILL, ON_ACCENT, PANEL, TEXT, WEAK_TEXT, dialog_title, glyph, icon, quiet_icon, switch,
 };
 use crate::window::Rate;
 use egui::RichText;
