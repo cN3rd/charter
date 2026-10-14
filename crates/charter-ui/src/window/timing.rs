@@ -171,7 +171,9 @@ mod tests {
                 .accesskit_node()
                 .is_disabled()
         );
-        harness.get_by_label("Timing").click();
+        harness
+            .get_by_role_and_label(Role::Button, "Timing")
+            .click();
         harness.run();
         assert!(
             harness
@@ -644,14 +646,18 @@ mod tests {
     fn the_timing_menu_adds_a_bookmark_and_jumps_between_sections() {
         let mut harness = editable_demo();
         let before = marker_texts(&harness).len();
-        harness.get_by_label("Timing").click();
+        harness
+            .get_by_role_and_label(Role::Button, "Timing")
+            .click();
         harness.run();
         harness
             .get_by_label_contains("Add or remove a bookmark")
             .click();
         harness.run();
         assert_eq!(marker_texts(&harness).len(), before + 1);
-        harness.get_by_label("Timing").click();
+        harness
+            .get_by_role_and_label(Role::Button, "Timing")
+            .click();
         harness.run();
         harness.get_by_label_contains("Next section").click();
         harness.run();

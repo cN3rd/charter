@@ -500,6 +500,57 @@ mod tests {
         assert!(harness.query_by_label("kick.wav").is_some());
     }
 
+    /// A Tap Tap Revenge song of one chart called `name`, of the standard `level` if any.
+    fn ttr_song(name: &str, level: Option<usize>) -> Song {
+        let document = charter_ttr::Plugin
+            .new_song(&charter_core::NewSong {
+                metadata: charter_editor::demo::song().document().metadata.clone(),
+                layout: 0,
+                charts: vec![charter_core::NewChart {
+                    name: name.to_owned(),
+                    level,
+                }],
+            })
+            .unwrap();
+        Song::open(&document.to_json().unwrap(), &[&charter_ttr::Plugin]).unwrap()
+    }
+
+    #[test]
+    fn a_click_on_a_section_title_folds_it_and_screen_readers_hear_whether_it_is_open() {
+        let mut harness = Harness::builder().build_ui_state(
+            |ui, song: &mut Song| {
+                song_panel(
+                    ui,
+                    song,
+                    (&mut SongDrafts::default(), None),
+                    &mut Vec::new(),
+                );
+            },
+            ttr_song("Extreme", Some(3)),
+        );
+        harness.run();
+        let open = |panel: &Harness<'_, Song>| {
+            panel
+                .query_by_role_and_label(Role::DisclosureTriangle, "Song")
+                .expect("the Song section's header")
+                .accesskit_node()
+                .data()
+                .is_expanded()
+        };
+        assert_eq!(open(&harness), Some(true));
+        // At its centre, on the title rather than the triangle.
+        harness
+            .get_by_role_and_label(Role::DisclosureTriangle, "Song")
+            .click();
+        harness.run();
+        assert_eq!(open(&harness), Some(false));
+        assert!(
+            harness
+                .query_by_role_and_label(Role::TextInput, "Title")
+                .is_none()
+        );
+    }
+
     #[test]
     fn a_recent_path_without_a_filename_is_shown_as_its_full_path() {
         let mut harness = Harness::builder().build_ui_state(

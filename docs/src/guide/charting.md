@@ -93,7 +93,8 @@ The lock icon stays legible when unlocked, and its button tells screen readers w
 
 The panel on the left holds everything about the song that is not a note. Each change in it is one
 undo step. A value typed in a field takes effect on Enter or when the field is left; Escape puts it
-back. A refused layer name stays in its field so you can correct it.
+back. A refused layer name stays in its field so you can correct it. A click on a section's title
+folds or unfolds it, and the panel remembers which are folded.
 
 - **Song**: the title and artist; the audio, with a button to choose another file; the preview, the
   time and length a song list plays; and the artwork, a PNG or JPEG beside the song. The artwork's

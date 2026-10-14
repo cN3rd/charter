@@ -600,36 +600,100 @@ pub fn chip<R>(ui: &mut Ui, body: impl FnOnce(&mut Ui) -> R) -> R {
 
 /// A collapsible panel section, open to start with, under a title in small capitals.
 pub fn section(ui: &mut Ui, text: &str, body: impl FnOnce(&mut Ui)) {
-    ui.add_space(6.0);
-    let id = ui.make_persistent_id(("section", text));
-    let title = title(ui, text);
-    egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
-        .show_header(ui, |ui| ui.label(title))
-        .body(|ui| {
-            ui.add_space(2.0);
-            body(ui);
-            ui.add_space(6.0);
-        });
-    ui.add(egui::Separator::default().spacing(2.0));
+    let header = fold_header(ui, (text, true), |_| {});
+    fold_body(ui, header, body);
 }
 
 /// A section whose header also holds controls at the trailing edge.
 pub fn section_with_actions(ui: &mut Ui, text: &str, mut contents: impl FnMut(&mut Ui, bool)) {
+    let header = fold_header(ui, (text, true), |ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            contents(ui, true);
+        });
+    });
+    fold_body(ui, header, |ui| contents(ui, false));
+}
+
+/// A section's header: its triangle and `text` in small capitals, either of which folds and
+/// unfolds the section, then `actions`. Starts open when `open`. Returns the fold and the header
+/// row, for [`fold_body`].
+fn fold_header(
+    ui: &mut Ui,
+    (text, open): (&str, bool),
+    actions: impl FnOnce(&mut Ui),
+) -> (egui::collapsing_header::CollapsingState, egui::Response) {
     ui.add_space(6.0);
     let id = ui.make_persistent_id(("section", text));
-    let title = title(ui, text);
-    egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
-        .show_header(ui, |ui| {
-            ui.label(title);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                contents(ui, true);
-            });
-        })
-        .body(|ui| {
-            ui.add_space(2.0);
-            contents(ui, false);
-            ui.add_space(6.0);
+    let mut fold =
+        egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, open);
+    let row = ui.horizontal(|ui| {
+        let indent = ui.spacing().indent;
+        let galley = egui::WidgetText::from(title(ui, text)).into_galley(
+            ui,
+            Some(egui::TextWrapMode::Extend),
+            f32::INFINITY,
+            egui::TextStyle::Body,
+        );
+        let size = vec2(
+            indent + galley.size().x,
+            galley.size().y.max(ui.spacing().icon_width),
+        );
+        let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+        if response.clicked() {
+            fold.toggle(ui);
+        }
+        let enabled = ui.is_enabled();
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::CollapsingHeader, enabled, text)
         });
+        let expanded = fold.is_open();
+        // A disclosure, as screen readers announce folds, rather than egui's plain button, and
+        // so apart from the menu of the same name.
+        ui.ctx().accesskit_node_builder(response.id, |node| {
+            node.set_role(egui::accesskit::Role::DisclosureTriangle);
+            node.set_expanded(expanded);
+        });
+        if ui.is_rect_visible(rect) {
+            let icon = egui::Rect::from_center_size(
+                egui::pos2(rect.left() + indent / 2.0, rect.center().y),
+                egui::Vec2::splat(ui.spacing().icon_width_inner),
+            );
+            let openness = fold.openness(ui.ctx());
+            egui::collapsing_header::paint_default_icon(
+                ui,
+                openness,
+                &response.clone().with_new_rect(icon),
+            );
+            let lit = response.hovered() || response.has_focus();
+            let at = egui::pos2(
+                rect.left() + indent,
+                rect.center().y - galley.size().y / 2.0,
+            );
+            let colour = if lit { TEXT } else { WEAK_TEXT };
+            ui.painter()
+                .galley_with_override_text_color(at, galley, colour);
+            if response.has_focus() {
+                let ring = Stroke::new(2.0, ACCENT);
+                ui.painter()
+                    .rect_stroke(rect.expand(2.0), 4.0, ring, egui::StrokeKind::Outside);
+            }
+        }
+        actions(ui);
+    });
+    (fold, row.response)
+}
+
+/// The body of a section under its [`fold_header`], while unfolded, then the line closing it.
+fn fold_body(
+    ui: &mut Ui,
+    (mut fold, header): (egui::collapsing_header::CollapsingState, egui::Response),
+    body: impl FnOnce(&mut Ui),
+) {
+    fold.show_body_indented(&header, ui, |ui| {
+        ui.add_space(2.0);
+        body(ui);
+        ui.add_space(6.0);
+    });
     ui.add(egui::Separator::default().spacing(2.0));
 }
 
