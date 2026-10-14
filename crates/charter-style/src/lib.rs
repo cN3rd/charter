@@ -126,22 +126,23 @@ pub const REACH_DIM: Color32 = Color32::from_rgba_unmultiplied_const(0, 0, 0, 12
 /// The timing window's waveform, brighter than the notefield waveform because it stands alone.
 pub const TIMING_WAVE: Color32 = Color32::from_rgb(118, 158, 210);
 
-/// Palette colour legible against the dark panels and note lanes.
+/// Palette colour legible against the dark panels and note lanes. Each keeps its hue, and the
+/// lightness differs from one to the next so every pair stays apart to colour-blind eyes too.
 #[must_use]
 pub const fn layer_colour(colour: charter_core::LayerColour) -> Color32 {
     use charter_core::LayerColour;
     match colour {
-        LayerColour::Red => Color32::from_rgb(240, 105, 110),
-        LayerColour::Orange => Color32::from_rgb(240, 155, 85),
-        LayerColour::Yellow => Color32::from_rgb(235, 205, 95),
+        LayerColour::Red => Color32::from_rgb(219, 86, 93),
+        LayerColour::Orange => Color32::from_rgb(213, 130, 59),
+        LayerColour::Yellow => Color32::from_rgb(251, 221, 111),
         // Clear of SECTION, which marks a part of the chart rather than a layer.
-        LayerColour::Green => Color32::from_rgb(151, 199, 89),
-        LayerColour::Teal => Color32::from_rgb(85, 205, 190),
+        LayerColour::Green => Color32::from_rgb(156, 204, 94),
+        LayerColour::Teal => Color32::from_rgb(108, 226, 211),
         // Away from the accent, which marks selection and focus rather than a layer.
-        LayerColour::Blue => Color32::from_rgb(35, 184, 239),
+        LayerColour::Blue => Color32::from_rgb(28, 181, 236),
         // Clear of BOOKMARK, which marks a place in the chart rather than a layer.
-        LayerColour::Purple => Color32::from_rgb(148, 151, 248),
-        LayerColour::Pink => Color32::from_rgb(235, 140, 195),
+        LayerColour::Purple => Color32::from_rgb(127, 129, 224),
+        LayerColour::Pink => Color32::from_rgb(232, 137, 192),
     }
 }
 
@@ -692,8 +693,8 @@ pub fn table(ui: &mut Ui, id: &str, rows: impl FnOnce(&mut Ui)) {
 mod tests {
     use super::*;
 
-    /// WCAG relative luminance of `colour`, drawn opaque.
-    fn luminance(colour: Color32) -> f64 {
+    /// `colour`'s red, green and blue in linear light.
+    fn linear(colour: Color32) -> [f64; 3] {
         let channel = |value: u8| {
             let value = f64::from(value) / 255.0;
             if value <= 0.040_45 {
@@ -702,7 +703,17 @@ mod tests {
                 ((value + 0.055) / 1.055).powf(2.4)
             }
         };
-        0.2126 * channel(colour.r()) + 0.7152 * channel(colour.g()) + 0.0722 * channel(colour.b())
+        [
+            channel(colour.r()),
+            channel(colour.g()),
+            channel(colour.b()),
+        ]
+    }
+
+    /// WCAG relative luminance of `colour`, drawn opaque.
+    fn luminance(colour: Color32) -> f64 {
+        let [red, green, blue] = linear(colour);
+        0.2126 * red + 0.7152 * green + 0.0722 * blue
     }
 
     /// The contrast ratio between `a` and `b`, from 1.0 to 21.0.
@@ -768,35 +779,27 @@ mod tests {
         assert!(on_fill >= 4.5, "ON_ACCENT on ACCENT_FILL is {on_fill:.2}");
     }
 
-    /// OKLCH hue of `colour` in degrees, and its chroma.
-    fn hue(colour: Color32) -> (f64, f64) {
-        let channel = |value: u8| {
-            let value = f64::from(value) / 255.0;
-            if value <= 0.040_45 {
-                value / 12.92
-            } else {
-                ((value + 0.055) / 1.055).powf(2.4)
-            }
-        };
-        let (red, green, blue) = (
-            channel(colour.r()),
-            channel(colour.g()),
-            channel(colour.b()),
-        );
+    /// Oklab lightness, green–red and blue–yellow of the linear-light `[red, green, blue]`.
+    fn oklab([red, green, blue]: [f64; 3]) -> [f64; 3] {
         let long = (0.412_221_47 * red + 0.536_332_54 * green + 0.051_445_993 * blue).cbrt();
         let medium = (0.211_903_5 * red + 0.680_699_55 * green + 0.107_396_96 * blue).cbrt();
         let short = (0.088_302_46 * red + 0.281_718_84 * green + 0.629_978_7 * blue).cbrt();
-        let green_red = 1.977_998_5 * long - 2.428_592_2 * medium + 0.450_593_7 * short;
-        let blue_yellow = 0.025_904_037 * long + 0.782_771_77 * medium - 0.808_675_77 * short;
-        (
-            blue_yellow.atan2(green_red).to_degrees().rem_euclid(360.0),
-            green_red.hypot(blue_yellow),
-        )
+        [
+            0.210_454_26 * long + 0.793_617_8 * medium - 0.004_072_047 * short,
+            1.977_998_5 * long - 2.428_592_2 * medium + 0.450_593_7 * short,
+            0.025_904_037 * long + 0.782_771_77 * medium - 0.808_675_77 * short,
+        ]
+    }
+
+    /// OKLCH hue of `colour` in degrees.
+    fn hue(colour: Color32) -> f64 {
+        let [_, green_red, blue_yellow] = oklab(linear(colour));
+        blue_yellow.atan2(green_red).to_degrees().rem_euclid(360.0)
     }
 
     /// Degrees between the hues of `a` and `b`, at most 180.
     fn apart(a: Color32, b: Color32) -> f64 {
-        let gap = (hue(a).0 - hue(b).0).abs();
+        let gap = (hue(a) - hue(b)).abs();
         gap.min(360.0 - gap)
     }
 
@@ -827,6 +830,66 @@ mod tests {
                 }
                 let gap = apart(layer_colour(one), layer_colour(two));
                 assert!(gap >= 15.0, "{one:?} is {gap:.1} degrees from {two:?}");
+            }
+        }
+    }
+
+    /// Colour vision as matrices on linear light, after Machado, Oliveira and Fernandes (2009)
+    /// at full severity: typical vision, then the three kinds of colour blindness.
+    const VISIONS: [(&str, [[f64; 3]; 3]); 4] = [
+        (
+            "typical",
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        ),
+        (
+            "protanopia",
+            [
+                [0.152_286, 1.052_583, -0.204_868],
+                [0.114_503, 0.786_281, 0.099_216],
+                [-0.003_882, -0.048_116, 1.051_998],
+            ],
+        ),
+        (
+            "deuteranopia",
+            [
+                [0.367_322, 0.860_646, -0.227_968],
+                [0.280_085, 0.672_501, 0.047_413],
+                [-0.011_82, 0.042_94, 0.968_881],
+            ],
+        ),
+        (
+            "tritanopia",
+            [
+                [1.255_528, -0.076_749, -0.178_779],
+                [-0.078_411, 0.930_809, 0.147_602],
+                [0.004_733, 0.691_367, 0.303_9],
+            ],
+        ),
+    ];
+
+    #[test]
+    fn every_pair_of_layer_colours_stays_apart_to_colour_blind_eyes() {
+        // Hue is what colour blindness takes, so the palette spends lightness to keep each pair
+        // at least 6 apart in OKLab (×100), some six just-noticeable steps, whatever the vision.
+        let colours = charter_core::LayerColour::ALL;
+        for (vision, matrix) in VISIONS {
+            let seen = |colour| {
+                let light = linear(layer_colour(colour));
+                oklab(matrix.map(|row| {
+                    (row[0] * light[0] + row[1] * light[1] + row[2] * light[2]).clamp(0.0, 1.0)
+                }))
+            };
+            for (index, one) in colours.iter().enumerate() {
+                for two in &colours[index + 1..] {
+                    let (a, b) = (seen(*one), seen(*two));
+                    let gap = 100.0
+                        * ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2))
+                            .sqrt();
+                    assert!(
+                        gap >= 6.0,
+                        "{one:?} and {two:?} are {gap:.1} apart to {vision}"
+                    );
+                }
             }
         }
     }

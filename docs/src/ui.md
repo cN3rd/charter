@@ -115,6 +115,8 @@ the tempo at the cursor.
 - Colours are kept apart by what shares a surface, not by taste. A layer's colour stays at least
   15° of hue from the section and bookmark markers and from the accent, and its stripe down a
   note's leading edge sits on a lane-dark gutter, so it reads whatever kind of note it marks. The
+  eight layer colours also step in lightness from one to the next, so every pair stays apart to
+  colour-blind eyes, which keep lightness where they lose hue. The
   timing window gives blue to the waveform, orange to anchors and a green-and-magenta pair to the
   early and late estimates, which lie on top of both; early ones fill the top half of the strip
   under a row and late ones the bottom, so the pair reads without colour. A selected anchor draws
