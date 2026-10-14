@@ -3,6 +3,7 @@ use super::{
     egui,
 };
 use charter_core::LaneOffset;
+use egui::AtomExt as _;
 
 /// The menu bar. `recent` is the songs opened before, the latest first.
 #[expect(clippy::too_many_lines, reason = "menus read left to right")]
@@ -299,7 +300,7 @@ pub(crate) fn menu_bar(
 }
 
 /// File's Open recent submenu: the songs opened before, each by its file's name with its folder
-/// beside it, and a way to forget them.
+/// beside it, cut short before the name is, and a way to forget them.
 pub(super) fn open_recent(ui: &mut Ui, recent: &[std::path::PathBuf], actions: &mut Vec<Action>) {
     ui.add_enabled_ui(!recent.is_empty(), |ui| {
         ui.menu_button("Open recent", |ui| {
@@ -309,7 +310,13 @@ pub(super) fn open_recent(ui: &mut Ui, recent: &[std::path::PathBuf], actions: &
                     |name| name.to_string_lossy().into_owned(),
                 );
                 let folder = path.parent().map(|folder| folder.display().to_string());
-                let item = egui::Button::new(name).shortcut_text(folder.unwrap_or_default());
+                // The name tells the songs apart, so it stays whole and the folder beside it is
+                // what a narrow menu cuts short; the whole path shows on hover. Left to itself,
+                // egui would shrink the name, the first text, and wrap it a word to a line.
+                let folder = egui::RichText::new(folder.unwrap_or_default()).atom_shrink(true);
+                let item = egui::Button::new(name)
+                    .shortcut_text(folder)
+                    .wrap_mode(egui::TextWrapMode::Truncate);
                 if ui
                     .add(item)
                     .on_hover_text(path.display().to_string())
@@ -362,6 +369,31 @@ mod tests {
     use egui_kittest::kittest::Queryable;
 
     use super::*;
+
+    #[test]
+    fn a_long_recent_song_name_stays_on_one_line_and_its_folder_gives_way() {
+        // A song in a folder of its own name, so the folder runs as long as the name.
+        let path = std::path::PathBuf::from(
+            "/home/someone/charter-charts/fly to night, tonight (Insomnia C(o)urse Vocal \
+             Refined)/fly to night, tonight (Insomnia C(o)urse Vocal Refined).json",
+        );
+        let mut harness = Harness::builder().build_ui_state(
+            move |ui, actions: &mut Vec<Action>| {
+                open_recent(ui, std::slice::from_ref(&path), actions);
+            },
+            Vec::new(),
+        );
+        harness.run();
+        harness.get_by_label("Open recent").click();
+        harness.run();
+        // The name is what tells the songs apart, so it keeps one line; the folder is cut short.
+        let song = harness.get_by_label_contains("fly to night").rect();
+        let clear = harness.get_by_label("Clear recent songs").rect();
+        assert!(
+            song.height() < 1.5 * clear.height(),
+            "the name wraps: {song:?} beside {clear:?}"
+        );
+    }
 
     #[test]
     fn read_only_song_offers_edit_copy() {
