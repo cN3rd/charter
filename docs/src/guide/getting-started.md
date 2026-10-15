@@ -1,7 +1,7 @@
 ---
 type: Guide
 title: Getting started
-description: Installing charter, the parts of its window, and starting, opening or importing a song.
+description: Installing charter, opening a song, and what every part of the editor window is for.
 tags: [guide, install]
 status: draft
 ---
@@ -17,78 +17,153 @@ unpack it anywhere and run `charter` or `charter.exe`. There is no installer, an
 no files beside it: its sounds and fonts are built in. The `licenses` folder holds the licences of
 everything it includes.
 
-Some features need more:
+Two features need more than that:
 
-- [ffmpeg](https://ffmpeg.org), to convert audio when exporting a Tap Tap Revenge track. Charter
-  checks the binary set under Settings > Sounds first, then the `PATH`. If neither runs, charter
-  offers help at first start: a verified release download on Windows or macOS, or a package
-  manager command to copy on Linux. You can open the help again from Settings.
-- A graphics card, for finding timing with Mapperatorinator. Without one it runs on the processor,
-  much more slowly.
+- [ffmpeg](https://ffmpeg.org) converts the audio when you export a Tap Tap Revenge track.
+  Charter checks the binary set under Settings > Sounds first, then the `PATH`. If neither runs,
+  it offers help at first start: a verified release download on Windows or macOS, or a package
+  manager command to copy on Linux. Settings can open that help again.
+- A graphics card makes Mapperatorinator, one of the two automatic timing finders, usable.
+  Without one it runs on the processor instead, much more slowly.
 
-To build it yourself, install Rust, and on Linux `clang`, `mold` and the ALSA headers
+To build charter yourself, install Rust, and on Linux `clang`, `mold` and the ALSA headers
 (`libasound2-dev` on Debian and Ubuntu), then run `cargo run --release -p charter-app` in a clone
 of the repository. [Packaging](../packaging.md) covers release builds.
 
-## The window
+## The first screen
 
-- The **menu bar** holds File, Edit, Timing, View, Playback and Help. Every command with a key
-  shows it beside its name.
-- The **transport toolbar** under it shows the position as `measure:beat:tick` and time, with
-  play, the tempo, snap, speed, grid and zoom, and the volumes behind the speaker button. As the
-  window narrows it drops the less used controls; the menus still have them.
-- The **song panel** on the left holds the song's details, its charts and their settings, its
-  layers, its timing points and its markers. Ctrl+\\ folds it away.
-- The **notefield** fills the rest. From left to right it has the ruler with measure numbers, the
-  timing column, where each timing point draws a line with its tempo above and its other changes
-  below, the waveform, the lanes and the minimap. The bright line across it is the cursor,
-  where notes go and playback starts.
-- The **status bar** at the bottom says whether the audio is ready, counts the selection and names
-  the active layer. Its editing state stays on the right when the window narrows; long audio and
-  layer names shorten, with the full name on hover. Messages float over the notefield, each with
-  a Dismiss button.
+With no song open, charter lists the ways to start on the left and the songs you opened last on
+the right.
 
-F1 lists every key, with a filter; [Keyboard shortcuts](shortcuts.md) has the same list.
-Publication at <https://cn3rd.github.io/charter/> is currently disabled. The source is in
-`docs/src/guide/`; with `just`, mdbook and Python installed, `just docs-serve` previews the book
-from a checkout. The book uses `python` on Windows and `python3` elsewhere.
-Help > About charter shows the version and the commit it was built from, worth including in a bug
-report, with the licence and credits.
+![The welcome screen: a Start column with New song, Open song, Import song and Open the demo song, and a Recent column](images/welcome.png)
 
-## Starting a song
+**Open the demo song** needs no files of its own: it is a made-up song with two charts, a tempo
+change, a stop and a spell of 7/8, and it is the safest thing to try an unfamiliar command on.
+Help > Open the demo song opens it again later.
 
-With nothing open, the window lists the ways to start beside the songs opened last: New song…,
-Open song…, Import song… when a game's songs can be read, and the demo song, which is also under
-Help, to try things on. Each recent song shows its folder, with the whole path on hover. On
-Windows and X11, an audio file dropped on the window starts a new song with that audio.
+Each recent song shows the folder it lives in, with the whole path on hover. A song stays in the
+list after a permission error or a drive that was not plugged in, so you can try it again; only a
+file the system reports as missing drops out.
 
-**New song** (Ctrl+N) asks for:
-
-- the game, and the layout every chart shares, such as dance-single or 4K, drawn as lanes;
-- the title and artist, which an audio file's tags fill in;
-- the charts and their names, or for Tap Tap Revenge the levels, with presets for the usual sets;
-- the audio, dropped on the dialog or chosen with its button. It can also come later.
-
-Audio in AAC, M4A or MP4 files can be chosen or dropped alongside Ogg, MP3, WAV and FLAC.
-
-The song starts at 120 BPM in 4/4 with no notes. Next comes its [timing](timing.md), then the
-notes.
-
-Until the song is saved it lives in memory and in the autosave. **Save** (Ctrl+S) the first time
-asks where, and makes the song a folder: choosing `Anthem` makes `Anthem/Anthem.json` with a copy
-of the audio beside it. [Files and recovery](files.md) has the details.
+Under Windows and X11 you can also drop files on the window: a `.json` song opens it, and an
+audio file starts a new song around that audio. Wayland cannot deliver dropped files to charter
+yet, so there the window offers its buttons instead.
 
 ## Opening a song
 
-- **Open song…** (Ctrl+O) opens a charter song, a `.json` file.
-- The window with nothing open, and **File > Open recent**, list the last ten.
-- `charter path/to/song.json` on the command line opens one at start.
-- On Windows and X11 a song file dropped on the window opens. Under Wayland nothing can be dropped
-  yet, so the window offers its buttons instead.
-- **File > Import song…** opens a Tap Tap Revenge track or an Editor on Fire MIDI file as a new
-  song; see [Games, import and export](games.md).
+| To open | Do this |
+|---|---|
+| A charter song | **File > Open…** (Ctrl+O), or pick it from the first screen |
+| One you had open before | **File > Open recent** |
+| A song named on the command line | `charter path/to/song.json` |
+| A Tap Tap Revenge track or an Editor on Fire MIDI | **File > Import song…**, see [Games](games.md) |
 
-A song opens for editing when charter has its game's plugin. A song of another game opens
-read-only, with a banner naming the plugin it needs. You can still select and copy its notes
-with Edit > Copy or Ctrl+C, but cannot change its audio. When it has no audio, the chooser is
-disabled and the notice does not offer file drops.
+A song opens for editing when charter has the plugin for its game. A song for a game it does not
+know opens read-only, with a banner naming the plugin it needs; you can still select and copy its
+notes, but not change them or its audio.
+
+## The parts of the window
+
+[![The charter window: menu bar, transport toolbar, song panel on the left, notefield in the middle, minimap on the right, status bar along the bottom](images/window.png)](images/window.png)
+
+Five regions, from the top down.
+
+### The menu bar
+
+Six menus. Every command that has a key shows it beside its name, and a command greyed out is
+one the open song cannot take right now.
+
+| | |
+|---|---|
+| ![The File menu](images/menu-file.png) | **File** starts, opens, saves, imports and exports songs, and chooses the audio and artwork of the one that is open. |
+| ![The Edit menu](images/menu-edit.png) | **Edit** is undo, the selection, and every edit that acts on it. Settings… sits at the bottom. |
+| ![The Timing menu](images/menu-timing.png) | **Timing** moves the cursor by section, nudges the tempo and offset, and opens the timing window and the two automatic finders. |
+| ![The View menu](images/menu-view.png) | **View** hides the song panel, tints notes by layer, and changes the zoom and snap. |
+| ![The Playback menu](images/menu-playback.png) | **Playback** plays, changes the speed, and turns the metronome and note ticks on and off. |
+| ![The Help menu](images/menu-help.png) | **Help** is the shortcut list, the demo song and the About window. |
+
+F1 opens the shortcut list at any time, with a filter box;
+[Keyboard shortcuts](shortcuts.md) is the same list on a page. Help > About charter gives the
+version and the commit it was built from — worth quoting in a bug report — with the licence and
+the credits:
+
+![The About charter window: version, a one-line description, the licence, links to the guide, source, releases and issue tracker, and the credits](images/about.png)
+
+### The transport toolbar
+
+![The transport toolbar, left to right: panel toggle, jump to start, play, jump to end, the cursor readout, the tempo, the snap, the grid lines, the speed, the zoom, and on the right the volumes, metronome, tuned lanes, note ticks and settings](images/toolbar.png)
+
+- The **readout** is where the cursor is, twice over: `64:0:0` is measure 64, beat 0, tick 0, and
+  `01:53.801` is the same place in the audio.
+- **135 BPM** is the tempo in force at the cursor, not the song's average.
+- **Snap 16th** is how far one press of Up or Down moves the cursor. The arrows beside it, and
+  the Left and Right keys, make it coarser or finer.
+- **Grid** chooses how many lines the notefield draws between beats. When the snap lands between
+  those lines, `+ snap` appears and the notefield draws the snap's lines as well.
+- **Speed** and **Zoom** change how the song plays and how close the notefield sits. Neither
+  touches the chart.
+- On the right: the volumes, the metronome, tuned lanes, note ticks and the settings window.
+
+As the window narrows the toolbar drops controls rather than squeezing them: zoom and grid go
+below 1200 points of width, speed below 950, and the tempo and snap below 800. The menus still
+have all of them.
+
+### The song panel
+
+Everything about the song that is not a note: its title and audio, its charts, its layers, its
+timing and its markers. Ctrl+\\ folds it away when you want the room.
+[Charting](charting.md#the-song-panel) goes through it section by section.
+
+### The notefield
+
+The middle of the window, and where the chart actually is.
+
+![The notefield: the measure ruler, the song timing column, the audio strip, three lanes of notes and the cursor line](images/notefield.png)
+
+From left to right: the **ruler** with measure numbers and section names, the **song timing**
+column where each timing point draws its line, the **audio** strip, and then the **lanes**. The
+bright line across all of them is the cursor. Time runs downward to start with, so the notes
+below the cursor come later in the song; the Display settings can turn the notefield the other
+way up, or on its side.
+
+The **minimap** down the right edge shows the whole chart at once, its notes by lane and its
+sections as green lines. Click or drag it to jump.
+
+![The minimap, showing the whole chart with its sections marked](images/minimap.png)
+
+### The status bar
+
+![The status bar: playing state, audio state, the active layer, the selection count, and the editing state](images/statusbar.png)
+
+Whether the song is playing, whether its audio is ready, which layer new notes go on, how many
+notes are selected, and whether the song can be edited at all. Click the layer name to switch
+layers.
+
+Messages appear over the notefield rather than in the status bar, each with a button to dismiss
+it:
+
+![A message over the notefield saying a file did not open, with a dismiss button](images/message.png)
+
+## Starting a song of your own
+
+**File > New song…** (Ctrl+N) asks for the game first, because the game decides what the rest of
+the dialog offers.
+
+![The New song dialog on the StepMania tab: game, style, title, artist, audio and a list of charts](images/new-song.png)
+
+- **StepMania** asks for a style, from dance-single to pump-double, and you name each chart.
+- **Tap Tap Revenge** asks for a lane count and which of its four levels to make, with presets
+  for the usual sets.
+
+![The New song dialog on the Tap Tap Revenge tab, with a lane count and checkboxes for Easy, Medium, Hard and Extreme](images/new-song-ttr.png)
+
+- **osu!mania** asks for a key count.
+
+The title and artist fill themselves in from the audio file's tags. The audio can be dropped on
+the dialog, chosen with its button, or left until later.
+
+A new song starts at 120 BPM in 4/4 with no notes, and lives only in memory until you save it.
+**Save** (Ctrl+S) the first time asks where, and turns the song into a folder: choosing `Anthem`
+writes `Anthem/Anthem.json` with a copy of the audio beside it.
+
+Next: [your first chart](first-chart.md), start to finish.

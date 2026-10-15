@@ -8,12 +8,18 @@ status: draft
 
 # Keyboard shortcuts
 
-F1 shows this list in the editor, with a filter.
+F1 shows this list inside the editor, with a filter box:
 
-Settings, shortcut help and Import timing are modeless windows. Opening them does not disable
-chart editing: lane keys can still change the song behind them when no text field has the
-keyboard. A focused text field takes typed input; the timing window takes its own keys after a
-click inside it.
+![The Keyboard shortcuts window, listing note entry and selection keys](images/shortcuts.png)
+
+Type in the filter to narrow it to a key or to what a key does:
+
+![The same window filtered to "layer", showing only the layer shortcuts](images/shortcuts-filter.png)
+
+Settings, this window and Import timing are modeless. Opening them does not stop you editing the
+song behind them: lane keys still place notes as long as no text field has the keyboard. The
+timing window takes its own keys after a click inside it, and gives them back after a click
+outside.
 
 ## Note entry
 
@@ -69,7 +75,7 @@ click inside it.
 | Home, End | Jump to the start, or to where the last note ends |
 | Alt+Up, Alt+Down | Jump to the previous or next section |
 | Left, Right | Coarser or finer snap |
-| Ctrl+Wheel, Ctrl+Plus, Ctrl+Minus | Zoom |
+| Ctrl+Wheel, Ctrl+Plus, Ctrl+Equals, Ctrl+Minus | Zoom |
 
 ## Timing
 
@@ -79,6 +85,7 @@ click inside it.
 | Ctrl+B | Add or remove a bookmark at the cursor |
 | F7, F8 | Lower or raise the tempo at the cursor by 1 BPM |
 | Alt+Left, Alt+Right | Lower or raise the offset by 1 ms, or by 10 ms with Shift |
+| Shift+Escape | Stop waiting for an automatic timing search |
 
 ## Playback
 
@@ -104,27 +111,36 @@ click inside it.
 
 ## The timing window
 
-These work once the timing window has the keyboard, after a click in it. ? lists them there.
+These work once the timing window has the keyboard, after a click inside it. ? lists them there.
 
 | Keys | Action |
 |---|---|
-| Click | Add an anchor at the strongest onset nearby |
-| A | Add an anchor at the audio under the playhead |
+| Click empty space | Add an anchor, snapped as the toolbar's Snap boxes say: to the grid, and to the strongest onset within 25 ms |
+| Click an anchor | Focus it and select it alone |
+| Shift+Click an anchor | Select every anchor between the focused one and it |
+| Double-click an anchor | Focus it and put the keyboard in its time field |
+| Middle-click | Audition the anchor under the pointer, or play from that point |
 | Drag an anchor, Ctrl+Drag | Move its beat, or its moment in the audio; Shift for finer and unsnapped |
-| Drag elsewhere, Ctrl+A | Select the anchors inside, or every anchor |
-| J, K | Focus the anchor before or after |
-| 1 to 0 | Grid from 1/1 to 1/32 of a whole note |
-| Left, Right | Nudge by 1 ms, 0.1 ms with Shift, 10 ms with Ctrl |
-| Up, Down | Move a grid step |
-| +, - | Raise or lower the last section's tempo by 0.1 BPM, 1 BPM with Shift |
-| Delete, Backspace | Remove the anchor |
-| F, Shift+F | Fit to the onsets, or to half BPMs |
-| Enter, Escape | Apply or cancel a fit |
-| D, Shift+D | Double or halve the tempo |
-| N, Shift+N | Next or previous issue |
-| Space | Play from the cursor, or pause |
-| L, Shift+L | Loop the bar under the cursor, or the selection |
+| Drag elsewhere | Select the anchors inside |
+| Right-click | Menu: play from here, add an anchor here |
+| Space | Play or pause |
+| Enter | Play from a beat before the focused anchor; apply a fit |
+| Esc | Cancel a drag or fit, then clear the selection |
+| A | Add an anchor at the playhead |
+| J, K | Focus the anchor before, after |
+| N, Shift+N | Next, previous issue |
+| Left, Right | Nudge in the audio by 1 ms, 0.1 ms with Shift, 10 ms with Ctrl |
+| Up, Down | Move on the grid by one step |
+| +, =, - | Tail tempo by 0.1 BPM, 1 BPM with Shift |
+| 1 to 0 | Grid 1/1 to 1/32 |
+| F, Shift+F | Fit tempo, fit to half BPMs |
+| D, Shift+D | Double, halve the tempo |
+| O | Follow the playhead |
+| V | Rows of bars or rows of seconds |
+| L, Shift+L | Loop the bar under the cursor, the selection |
 | R | Switch to the alternate speed and back |
-| C, Shift+C | Turn the metronome on or off, or mute it while held |
-| O | Scroll the rows with the playhead, or stop |
-| V | Rows of audio time or rows of bars |
+| C, Shift+C held | Metronome on or off; muted while held |
+| ?, / | Show or hide these keys |
+| Delete, Backspace | Remove the focused or selected anchors |
+| Ctrl+A | Select every anchor |
+| Ctrl+Wheel | Nudge the focused anchor by 1 ms, 0.1 ms with Shift |
