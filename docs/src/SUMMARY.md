@@ -4,6 +4,7 @@
 
 - [User guide](./guide/index.md)
   - [Getting started](./guide/getting-started.md)
+  - [Your first chart](./guide/first-chart.md)
   - [Charting](./guide/charting.md)
   - [Timing](./guide/timing.md)
   - [Listening](./guide/listening.md)
