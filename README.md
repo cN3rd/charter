@@ -10,6 +10,7 @@ possible. It currently supports mostly Tap Tap Revenge and its variants, with mo
 
 **[Download builds](https://github.com/cN3rd/charter/releases)** |
 [User guide](https://cn3rd.github.io/charter/guide/index.html) |
+[Contributing](CONTRIBUTING.md) |
 [Report a bug](https://github.com/cN3rd/charter/issues)
 
 [![A three-lane Tap Tap Revenge chart in Charter, with a waveform beside the notes and the song panel on the left](docs/src/guide/images/window.png)](docs/src/guide/images/window.png)
@@ -62,6 +63,7 @@ Human audits are happening between prereleases. The hope, not a guarantee, is to
 release with most of the code vetted through human-AI collaboration.
 
 AI assistance is welcome; responsibility stays with the human submitting the change.
+The [contribution policy](docs/src/contributing.md) covers licensing, AI disclosure and verification.
 
 ## Build from source
 

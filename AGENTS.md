@@ -20,6 +20,12 @@ Never do these unless the user asks for that exact action. A higher rule wins ov
 
 Ask before any action that can't be undone and isn't covered above.
 
+## Contributions
+
+Before changing files or investigating bugs, read the
+[contribution policy](docs/src/contributing.md) in full. For commit requests, follow its
+[agent commit workflow](docs/src/contributing.md#agent-commit-workflow).
+
 ## Commands
 
 `just` lists every recipe; run `just setup` once after cloning. **`just ci`** is the pre-commit

@@ -84,3 +84,4 @@
 - [Automatic timing](./autotiming.md)
   - [Mapperatorinator port](./mapperatorinator.md)
 - [Packaging](./packaging.md)
+- [Contributing](./contributing.md)
