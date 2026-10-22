@@ -28,7 +28,7 @@ packages, its notes listing the commits since the one before.
 | `licenses/hit-sounds-*` | the note-tick hit sounds' licence, CC0 text and provenance |
 | `licenses/mapperatorinator-*` | Mapperatorinator's MIT licence and what the port takes from where |
 | `licenses/THIRD-PARTY.md` | every crate linked into the binary, with its version and licence |
-| `BUILD.txt` | the commit and the `rustc` and `cargo` versions it was built with |
+| `BUILD.txt` | the source commit, CI build tag when present, target and toolchain versions |
 
 There is no assets folder, and none is missing. The resources the editor ships with are compiled
 into the binary with `include_bytes!`, so it runs from anywhere with only its own file:
@@ -49,8 +49,10 @@ and its licence copied into `licenses/` by the `_licenses` recipe in the `justfi
 
 ## Reproducible packages
 
-Building the same commit with the same toolchain gives the same package byte for byte, wherever the
-checkout is and whenever it is built. Anyone can check a release by rebuilding it:
+Building the same commit with the same toolchain and build tag gives the same package byte for
+byte, wherever the checkout is and whenever it is built. Anyone can check a release by rebuilding
+it. For a CI package, set `CHARTER_BUILD` to the `build` value in `BUILD.txt` first (for example,
+`export CHARTER_BUILD=ci-42`). Leave it unset for local packages.
 
 ```bash
 git checkout <commit from BUILD.txt>
@@ -73,8 +75,13 @@ What keeps the build from depending on the machine:
 - Nothing reads the clock or the machine at build time. The commit the About window names comes in
   as `CHARTER_COMMIT`, set by the `justfile` from git.
 
-The recipes set these in `_reproducible`. A plain `cargo build --release` has none of them, and its
-binary names the folder it was built in.
+The recipes set these in `_reproducible`. A plain `cargo build --release` also records the Git
+commit for About, but does not apply the other settings; its binary names the folder it was built
+in. If Git metadata is unavailable, set `CHARTER_COMMIT` to the source commit, or About shows
+`commit unknown`.
+
+CI sets `CHARTER_BUILD` to the prerelease tag (`ci-<run>`). About and the welcome screen show it
+beside the commit; `BUILD.txt` records it for rebuilding.
 
 ## What is not in a package
 

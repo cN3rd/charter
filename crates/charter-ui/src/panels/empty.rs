@@ -295,8 +295,11 @@ fn footer(ui: &mut Ui, no_drops: bool) {
                 "Drop a charter song on the window to open it, or an audio file to start one.";
             ui.add(egui::Label::new(RichText::new(hint).color(style::WEAK_TEXT)).wrap());
         }
-        let version =
-            super::about::version_line(env!("CARGO_PKG_VERSION"), option_env!("CHARTER_COMMIT"));
+        let version = super::about::version_line(
+            env!("CARGO_PKG_VERSION"),
+            option_env!("CHARTER_COMMIT"),
+            option_env!("CHARTER_BUILD"),
+        );
         ui.label(
             RichText::new(version)
                 .size(ABOUT_SIZE)

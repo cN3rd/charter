@@ -15,6 +15,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  CHARTER_BUILD: ci-${{ github.run_number }}
 
 jobs:
   format-and-book:
@@ -174,7 +175,7 @@ jobs:
           path: dist
           merge-multiple: true
       - run: >
-          gh release create "ci-$GITHUB_RUN_NUMBER" dist/*
+          gh release create "$CHARTER_BUILD" dist/*
           --target "$GITHUB_SHA"
           --title "Development build $GITHUB_RUN_NUMBER"
           --notes-file notes.md

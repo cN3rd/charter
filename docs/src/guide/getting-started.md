@@ -84,8 +84,8 @@ one the open song cannot take right now.
 
 F1 opens the shortcut list at any time, with a filter box;
 [Keyboard shortcuts](shortcuts.md) is the same list on a page. Help > About charter gives the
-version and the commit it was built from — worth quoting in a bug report — with the licence and
-the credits:
+version, the source commit and, for CI builds, the prerelease tag (such as `ci-42`). Include that
+line in bug reports. The window also gives the licence and credits:
 
 ![The About charter window: version, a one-line description, the licence, links to the guide, source, releases and issue tracker, and the credits](images/about.png)
 

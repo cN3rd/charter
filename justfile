@@ -146,15 +146,19 @@ dist-windows: _dist-build-windows (_stage "windows" "charter-app.exe" "charter.e
     {{ python }} packaging/pack.py "dist/$name" "dist/$name.zip"
     echo "dist/$name.zip"
 
-# What a package was built from, for rebuilding it: the commit and the toolchain
+# What a package was built from, for rebuilding it: the commit, toolchain and CI build
 _build-info target:
     #!/usr/bin/env bash
     set -euo pipefail
     echo "commit $(git rev-parse HEAD)"
+    if [[ -n "${CHARTER_BUILD:-}" ]]; then
+        echo "build $CHARTER_BUILD"
+    fi
     echo "target {{ target }}"
     rustc -V
     cargo -V
-    echo "rebuild with: git checkout <commit>, rustup toolchain install <rustc version>, just dist"
+    echo "rebuild with: git checkout <commit>, rustup toolchain install <rustc version>," \
+        "${CHARTER_BUILD:+CHARTER_BUILD=<build> }just dist"
 
 # Package both; docs/src/packaging.md says what ships and why no assets folder is needed
 dist: dist-linux dist-windows

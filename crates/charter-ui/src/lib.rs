@@ -136,3 +136,11 @@ fn proptest_config() -> proptest::test_runner::Config {
         ..proptest::test_runner::Config::default()
     }
 }
+
+#[cfg(test)]
+#[path = "../build.rs"]
+#[expect(
+    dead_code,
+    reason = "Cargo runs the build-script entry point and Git I/O, not these sans-io unit tests"
+)]
+mod build_metadata;

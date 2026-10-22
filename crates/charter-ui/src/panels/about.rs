@@ -7,8 +7,14 @@ const REPOSITORY: &str = "https://github.com/cN3rd/charter";
 /// Where CI publishes the book, user guide first.
 const BOOK: &str = "https://cn3rd.github.io/charter/";
 
-/// The build's version, and the commit it was built from when packaging named one.
-pub(super) fn version_line(version: &str, commit: Option<&str>) -> String {
+/// The version, CI build tag and source commit, when available.
+pub(super) fn version_line(version: &str, commit: Option<&str>, build: Option<&str>) -> String {
+    if let Some(build) = build.filter(|build| !build.is_empty()) {
+        return format!(
+            "Version {version}, build {build}, commit {}",
+            commit.unwrap_or("unknown")
+        );
+    }
     match commit {
         Some(commit) => format!("Version {version}, commit {commit}"),
         None => format!("Version {version}, development build"),
@@ -35,6 +41,7 @@ pub(crate) fn about(ctx: &egui::Context, open: &mut bool) {
             ui.label(version_line(
                 env!("CARGO_PKG_VERSION"),
                 option_env!("CHARTER_COMMIT"),
+                option_env!("CHARTER_BUILD"),
             ));
             ui.label("A chart editor for rhythm games: StepMania, Tap Tap Revenge and osu!mania.");
             ui.label("Licensed under MIT or Apache-2.0, at your choice.");
@@ -77,29 +84,54 @@ mod tests {
     #[test]
     fn a_packaged_build_names_its_commit_and_a_development_build_says_so() {
         assert_eq!(
-            version_line("0.3.0", Some("1a2b3c4d5e6f")),
+            version_line("0.3.0", Some("1a2b3c4d5e6f"), None),
             "Version 0.3.0, commit 1a2b3c4d5e6f"
         );
         assert_eq!(
-            version_line("0.3.0", None),
+            version_line("0.3.0", None, None),
             "Version 0.3.0, development build"
+        );
+        assert_eq!(
+            version_line("0.3.0", Some("1a2b3c4d5e6f"), Some("")),
+            "Version 0.3.0, commit 1a2b3c4d5e6f"
         );
     }
 
     #[test]
-    fn the_window_shows_the_version_licence_and_credits_and_closes() {
+    fn ci_builds_name_the_published_release() {
+        assert_eq!(
+            version_line("0.3.0", Some("1a2b3c4d5e6f"), Some("ci-42")),
+            "Version 0.3.0, build ci-42, commit 1a2b3c4d5e6f"
+        );
+        assert_eq!(
+            version_line("0.3.0", None, Some("ci-42")),
+            "Version 0.3.0, build ci-42, commit unknown"
+        );
+    }
+
+    #[test]
+    fn the_window_shows_the_commit_version_licence_and_credits_and_closes() {
         let mut harness =
             Harness::builder().build_ui_state(|ui, open: &mut bool| about(ui.ctx(), open), true);
         harness.run();
-        let version = version_line(env!("CARGO_PKG_VERSION"), option_env!("CHARTER_COMMIT"));
+        let Some(commit) = option_env!("CHARTER_COMMIT") else {
+            panic!("Cargo builds must identify their commit, or mark it unknown");
+        };
+        let version = format!("Version {}", env!("CARGO_PKG_VERSION"));
+        let commit = format!("commit {commit}");
         for shown in [
             version.as_str(),
+            commit.as_str(),
             "MIT or Apache-2.0",
             "Inter",
             "Mapperatorinator",
             "Beat This!",
         ] {
             assert!(harness.query_by_label_contains(shown).is_some(), "{shown}");
+        }
+        if let Some(build) = option_env!("CHARTER_BUILD").filter(|build| !build.is_empty()) {
+            let build = format!("build {build}");
+            assert!(harness.query_by_label_contains(&build).is_some(), "{build}");
         }
         harness.get_by_label("Close").click();
         harness.run();
