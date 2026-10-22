@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="140" height="140" viewBox="0 0 35 35" role="img" aria-labelledby="title">
+  <title id="title">Charter</title>
+  <!-- ponytail: static export of crates/charter-ui/src/panels/empty.rs::mark; update when that drawing changes. -->
+  <rect x="0.5" y="0.5" width="34" height="34" rx="8.5" fill="#111111" stroke="#282828"/>
+  <path d="M11.5 7v18M17.5 7v18M23.5 7v18" fill="none" stroke="#242424"/>
+  <g fill="#6eaaff">
+    <rect x="6" y="7" width="5" height="3" rx="1"/>
+    <rect x="12" y="11" width="5" height="3" rx="1"/>
+    <rect x="18" y="15" width="5" height="3" rx="1"/>
+    <rect x="24" y="19" width="5" height="3" rx="1"/>
+  </g>
+  <path d="M6 26h23" fill="none" stroke="#ecf0f5" stroke-width="2"/>
+</svg>
