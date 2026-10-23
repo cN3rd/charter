@@ -45,8 +45,6 @@ fmt-check:
     cargo fmt --all --check
 
 # Run the Kani proofs of every crate Kani can build
-# ponytail: burn pulls in backtrace, which fails to compile under Kani's nightly (an ambiguous
-# `unreachable!`), so the crates linking burn are left out. Drop the exclusions once it builds.
 kani:
     cargo kani --workspace --exclude charter-beatthis-burn --exclude charter-app --exclude charter-mapperatorinator-burn
 

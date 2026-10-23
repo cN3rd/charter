@@ -73,7 +73,7 @@ floats, and one proof mixing division, multiplication and rounding never finishe
 - Undo/redo and multi-select are where borrow-checker pressure shows. Redesign ownership before
   reaching for `Rc<RefCell<_>>`.
 - Mark deliberate simplifications with a `ponytail:` comment naming the ceiling and the upgrade
-  path. The convention runs through `Cargo.toml`, `clippy.toml`, the `justfile`, CI and the source.
+  path. The convention runs through `Cargo.toml`, `clippy.toml`, CI and the source.
 
 ## Layout
 
