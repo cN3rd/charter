@@ -37,11 +37,10 @@ On Linux, also install clang, mold, pkg-config and the ALSA development headers
 Fork and clone the repository, and use a branch for your change. From the checkout:
 
 ```sh
-just setup
+git submodule update --init
 just run
 ```
 
-`just setup` fetches submodules and prepares the Windows target and cross-compilation tools.
 Use `just check` while editing. To run a focused test, for example:
 
 ```sh

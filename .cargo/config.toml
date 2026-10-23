@@ -3,3 +3,8 @@ linker = "clang"
 # Debug info stays in the object files instead of being linked into the binary, which drops a
 # dev build from 1.6 GB and halves its link; debuggers read it from there. MSVC lacks it.
 rustflags = ["-C", "link-arg=-fuse-ld=mold", "-C", "split-debuginfo=unpacked"]
+
+[target.x86_64-pc-windows-msvc]
+# The C runtime built in, so Windows users need no Visual C++ redistributable; /Brepro leaves the
+# link time out of the executable, so a package rebuilds byte for byte.
+rustflags = ["-C", "target-feature=+crt-static", "-C", "link-arg=/Brepro"]

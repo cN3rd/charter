@@ -2,27 +2,12 @@
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-linux := "x86_64-unknown-linux-gnu"
-windows := "x86_64-pc-windows-msvc"
-# The C runtime built in, so Windows users need no Visual C++ redistributable; /Brepro leaves the
-# link time out of the executable, so a package rebuilds byte for byte.
-windows_flags := "target." + windows + ".rustflags=['-C', 'target-feature=+crt-static', '-C', 'link-arg=/Brepro']"
-# On Windows itself the MSVC toolchain builds for Windows; elsewhere cargo-xwin cross-compiles,
-# with packaging/xwin's rc.exe on the PATH for the build scripts that want one.
-windows_build := if os() == "windows" { "cargo build" } else { "PATH=\"" + justfile_directory() + "/packaging/xwin:$PATH\" cargo xwin build" }
 # Windows installs Python as `python`, without a `python3`.
 python := if os() == "windows" { "python" } else { "python3" }
 
 # List the recipes
 default:
     @just --list --unsorted
-
-# One-time setup: the skills submodule, the Windows target and cargo-xwin
-setup:
-    git submodule update --init
-    rustup target add {{ windows }}
-    command -v cargo-xwin >/dev/null || cargo install --locked cargo-xwin
-    @echo "cargo xwin needs clang-cl, lld-link and llvm-rc (clang, lld and llvm from your package manager)."
 
 # Type-check everything, tests included
 check:
@@ -76,132 +61,61 @@ ci: fmt-check clippy test docs docs-check pack-check
 run *args:
     cargo run -p charter-app -- {{ args }}
 
-# Build the editor for 64-bit Windows, optimised: with MSVC on Windows, cargo-xwin elsewhere
-build-windows:
-    {{ windows_build }} -p charter-app --release --target {{ windows }} --config "{{ windows_flags }}"
-
-# Run the Windows build under Wine
-run-windows *args: build-windows
-    wine target/{{ windows }}/release/charter-app.exe {{ args }}
-
-# Build what `dist-linux` packages: release, without symbols, reproducibly
-_dist-build-linux:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    eval "$(just _reproducible {{ linux }})"
-    cargo build --locked -p charter-app --profile dist --config "$remap"
-
-# Build what `dist-windows` packages, reproducibly
-_dist-build-windows:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    eval "$(just _reproducible {{ windows }})"
-    {{ windows_build }} --locked -p charter-app --profile dist --target {{ windows }} \
-        --config "{{ windows_flags }}" --config "$remap"
-
-# Shell settings that make a package's build depend on its source alone: the folders it is built
-# in remapped out of the binary, for Rust and C alike, the commit named for the About window, and
-# the commit's time for the archives' files. docs/src/packaging.md says how to check a package.
-_reproducible target:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    # rustc sees Windows paths where Git's bash shows /c/...
-    native() { if command -v cygpath >/dev/null; then cygpath -w "$1"; else printf '%s' "$1"; fi; }
-    here="$(native "$PWD")"
-    cargo_home="$(native "${CARGO_HOME:-$HOME/.cargo}")"
-    # Literal TOML strings, so a Windows path's backslashes stay as they are.
-    echo "remap=\"target.{{ target }}.rustflags=['--remap-path-prefix=$here=.', '--remap-path-prefix=$cargo_home=/cargo']\""
-    target_var="$(echo '{{ target }}' | tr - _)"
-    echo "export CFLAGS_$target_var='-ffile-prefix-map=$here=. -ffile-prefix-map=$cargo_home=/cargo'"
-    echo "export CHARTER_COMMIT=$(git rev-parse --short=12 HEAD)"
-    echo "export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)"
-
-# Package the Linux build as dist/charter-<version>-linux-x86_64.tar.gz
-dist-linux: _dist-build-linux (_stage "linux" "charter-app" "charter") (_licenses "linux")
-    #!/usr/bin/env bash
-    set -euo pipefail
-    eval "$(just _reproducible {{ linux }})"
-    name="$(just _name linux-x86_64)"
-    just _build-info {{ linux }} > "dist/$name/BUILD.txt"
-    {{ python }} packaging/pack.py "dist/$name" "dist/$name.tar.gz"
-    echo "dist/$name.tar.gz"
-
-# Package the Windows build as dist/charter-<version>-windows-x86_64.zip
-dist-windows: _dist-build-windows (_stage "windows" "charter-app.exe" "charter.exe") (_licenses "windows")
-    #!/usr/bin/env bash
-    set -euo pipefail
-    eval "$(just _reproducible {{ windows }})"
-    name="$(just _name windows-x86_64)"
-    just _build-info {{ windows }} > "dist/$name/BUILD.txt"
-    {{ python }} packaging/pack.py "dist/$name" "dist/$name.zip"
-    echo "dist/$name.zip"
-
-# What a package was built from, for rebuilding it: the commit, toolchain and CI build
-_build-info target:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    echo "commit $(git rev-parse HEAD)"
-    if [[ -n "${CHARTER_BUILD:-}" ]]; then
-        echo "build $CHARTER_BUILD"
-    fi
-    echo "target {{ target }}"
-    rustc -V
-    cargo -V
-    echo "rebuild with: git checkout <commit>, rustup toolchain install <rustc version>," \
-        "${CHARTER_BUILD:+CHARTER_BUILD=<build> }just dist"
-
-# Package both; docs/src/packaging.md says what ships and why no assets folder is needed
-dist: dist-linux dist-windows
-
 # Remove build output and packages
 clean:
     cargo clean
     rm -rf dist docs/book
 
-# The folder name of a package for `platform`
-_name platform:
+# Package this machine's build reproducibly into dist/ (docs/src/packaging.md)
+dist:
     #!/usr/bin/env bash
     set -euo pipefail
-    version="$(cargo metadata --no-deps --format-version 1 \
-        | {{ python }} -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "charter-app"))')"
-    echo "charter-$version-{{ platform }}"
+    target="$(rustc -vV | sed -n 's/^host: //p')"
+    exe={{ if os() == "windows" { ".exe" } else { "" } }}
+    archive={{ if os() == "windows" { "zip" } else { "tar.gz" } }}
 
-# Copy the built binary into a fresh package folder, renamed
-_stage os binary renamed:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [ "{{ os }}" = windows ]; then
-        built="target/{{ windows }}/dist/{{ binary }}"; platform=windows-x86_64
-    else
-        built="target/dist/{{ binary }}"; platform=linux-x86_64
-    fi
-    folder="dist/$(just _name "$platform")"
+    # Remap the build folders out of Rust and C alike. rustc sees Windows paths where Git's bash
+    # shows /c/..., and literal TOML strings keep their backslashes.
+    native() { if command -v cygpath >/dev/null; then cygpath -w "$1"; else printf '%s' "$1"; fi; }
+    here="$(native "$PWD")"
+    cargo_home="$(native "${CARGO_HOME:-$HOME/.cargo}")"
+    remap="target.$target.rustflags=['--remap-path-prefix=$here=.', '--remap-path-prefix=$cargo_home=/cargo']"
+    export "CFLAGS_${target//-/_}=-ffile-prefix-map=$here=. -ffile-prefix-map=$cargo_home=/cargo"
+    export CHARTER_COMMIT="$(git rev-parse --short=12 HEAD)"
+    export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+
+    cargo build --locked -p charter-app --profile dist --config "$remap"
+
+    # `path+file:///…/charter-app#0.1.0`, or `…#name@0.1.0` when the folder is named otherwise.
+    id="$(cargo pkgid -p charter-app)"
+    name="charter-${id##*[#@]}-{{ os() }}-{{ arch() }}"
+    folder="dist/$name"
     rm -rf "$folder"
     mkdir -p "$folder/licenses"
-    cp "$built" "$folder/{{ renamed }}"
+    cp "target/dist/charter-app$exe" "$folder/charter$exe"
 
-# Put charter's licence, the bundled assets' and every linked crate's beside the binary
-_licenses os:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [ "{{ os }}" = windows ]; then
-        target="{{ windows }}"; platform=windows-x86_64
-    else
-        target="{{ linux }}"; platform=linux-x86_64
-    fi
-    folder="dist/$(just _name "$platform")"
+    {
+        echo "commit $(git rev-parse HEAD)"
+        [[ -z "${CHARTER_BUILD:-}" ]] || echo "build $CHARTER_BUILD"
+        echo "target $target"
+        rustc -V
+        cargo -V
+        echo "rebuild with: git checkout <commit>, rustup toolchain install <rustc version>," \
+            "${CHARTER_BUILD:+CHARTER_BUILD=<build> }just dist"
+    } > "$folder/BUILD.txt"
+
     cp LICENSE-MIT LICENSE-APACHE "$folder/"
-    cp crates/charter-style/assets/fonts/Inter-LICENSE.txt "$folder/licenses/Inter-OFL.txt"
-    clicks=crates/charter-audio/assets/clicks
-    cp "$clicks/LICENSE-AUDIO" "$folder/licenses/metronome-sounds-LICENSE.txt"
-    cp "$clicks/CC0-1.0.txt" "$folder/licenses/metronome-sounds-CC0-1.0.txt"
-    cp "$clicks/PROVENANCE.md" "$folder/licenses/metronome-sounds-PROVENANCE.md"
-    hits=crates/charter-audio/assets/hitsounds
-    cp "$hits/LICENSE-AUDIO" "$folder/licenses/hit-sounds-LICENSE.txt"
-    cp "$hits/CC0-1.0.txt" "$folder/licenses/hit-sounds-CC0-1.0.txt"
-    cp "$hits/PROVENANCE.md" "$folder/licenses/hit-sounds-PROVENANCE.md"
-    cp crates/charter-mapperatorinator-burn/LICENSE "$folder/licenses/mapperatorinator-LICENSE.txt"
-    cp crates/charter-mapperatorinator-burn/NOTICE "$folder/licenses/mapperatorinator-NOTICE.txt"
+    while read -r from to; do cp "$from" "$folder/licenses/$to"; done <<'END'
+    crates/charter-style/assets/fonts/Inter-LICENSE.txt         Inter-OFL.txt
+    crates/charter-audio/assets/clicks/LICENSE-AUDIO            metronome-sounds-LICENSE.txt
+    crates/charter-audio/assets/clicks/CC0-1.0.txt              metronome-sounds-CC0-1.0.txt
+    crates/charter-audio/assets/clicks/PROVENANCE.md            metronome-sounds-PROVENANCE.md
+    crates/charter-audio/assets/hitsounds/LICENSE-AUDIO         hit-sounds-LICENSE.txt
+    crates/charter-audio/assets/hitsounds/CC0-1.0.txt           hit-sounds-CC0-1.0.txt
+    crates/charter-audio/assets/hitsounds/PROVENANCE.md         hit-sounds-PROVENANCE.md
+    crates/charter-mapperatorinator-burn/LICENSE                mapperatorinator-LICENSE.txt
+    crates/charter-mapperatorinator-burn/NOTICE                 mapperatorinator-NOTICE.txt
+    END
     cargo metadata --format-version 1 --filter-platform "$target" | {{ python }} -c '
     import json, sys
     meta = json.load(sys.stdin)
@@ -224,3 +138,6 @@ _licenses os:
         pkg["license"] = pkg["license"] or "see the crate"
         print("| %(name)s | %(version)s | %(license)s |" % pkg)
     ' > "$folder/licenses/THIRD-PARTY.md"
+
+    {{ python }} packaging/pack.py "$folder" "dist/$name.$archive"
+    echo "dist/$name.$archive"

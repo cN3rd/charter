@@ -28,9 +28,9 @@ Before changing files or investigating bugs, read the
 
 ## Commands
 
-`just` lists every recipe; run `just setup` once after cloning. **`just ci`** is the pre-commit
-gate: fmt-check, clippy with `-D warnings`, the tests, the book and its checks, and the packager's
-self-test.
+`just` lists every recipe; run `git submodule update --init` once after cloning. **`just ci`** is
+the pre-commit gate: fmt-check, clippy with `-D warnings`, the tests, the book and its checks, and
+the packager's self-test.
 
 - `just check` is the fast loop; `just test -p charter-core format_chapter` runs a subset.
 - `just run [song]` starts the editor; `just dist` writes reproducible packages into `dist/`.
@@ -105,8 +105,8 @@ with user-visible changes, and `docs/src/packaging.md` with packaging changes.
 ## Tooling
 
 `.agents/skills/README.md` lists every skill and where it comes from: `/rust-skills` (a
-submodule, fetched by `just setup`), `/test-driven-development` before writing production code,
-`/commit` to split work into atomic commits. A skill's `PITFALLS.md` holds charter's local rules
+submodule, fetched by `git submodule update --init`), `/test-driven-development` before writing
+production code, `/commit` to split work into atomic commits. A skill's `PITFALLS.md` holds charter's local rules
 for it; when a skill leads you wrong, append a trigger, wrong, right entry there.
 `.github/lsp.json` registers rust-analyzer for code intelligence. Rules for one area sit in
 `.github/instructions/` and load with the files they cover.

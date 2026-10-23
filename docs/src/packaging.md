@@ -8,12 +8,11 @@ status: draft
 
 # Packaging
 
-`just dist` builds the editor with the `dist` profile, a release build with its symbols stripped.
-It writes two packages to `dist/`: `charter-<version>-linux-x86_64.tar.gz` and
-`charter-<version>-windows-x86_64.zip`. `just dist-linux` and `just dist-windows` build one each;
-the Windows build cross-compiles with cargo-xwin, or builds with MSVC when run on Windows as CI
-does, and links the C runtime in, so it needs no Visual C++ redistributable. Cross-compiling, LLVM's
-`llvm-rc` stands in for the `rc.exe` that turso's build script, under burn's kernel cache, runs.
+`just dist` builds the editor with the `dist` profile, a release build with its symbols stripped,
+and packages it for the machine it runs on: `dist/charter-<version>-linux-x86_64.tar.gz` on Linux,
+`dist/charter-<version>-windows-x86_64.zip` on Windows. There is no cross-compiling; CI builds each
+on its own platform. The Windows build links the C runtime in, so it needs no Visual C++
+redistributable.
 CI tests every push and pull request, and publishes each push to `main` as a prerelease of both
 packages, its notes listing the commits since the one before.
 
@@ -45,7 +44,7 @@ links it in. The Linux binary depends on system libraries alone, and the Windows
 DLLs alone.
 
 A new resource that must ship goes in the same way: `include_bytes!` in the crate that uses it,
-and its licence copied into `licenses/` by the `_licenses` recipe in the `justfile`.
+and its licence copied into `licenses/` by the `dist` recipe in the `justfile`.
 
 ## Reproducible packages
 
@@ -57,7 +56,7 @@ it. For a CI package, set `CHARTER_BUILD` to the `build` value in `BUILD.txt` fi
 ```bash
 git checkout <commit from BUILD.txt>
 rustup toolchain install <version from BUILD.txt> && rustup override set <version>
-just dist-linux    # or dist-windows
+just dist
 sha256sum dist/*.tar.gz
 ```
 
@@ -75,7 +74,7 @@ What keeps the build from depending on the machine:
 - Nothing reads the clock or the machine at build time. The commit the About window names comes in
   as `CHARTER_COMMIT`, set by the `justfile` from git.
 
-The recipes set these in `_reproducible`. A plain `cargo build --release` also records the Git
+The `dist` recipe sets these. A plain `cargo build --release` also records the Git
 commit for About, but does not apply the other settings; its binary names the folder it was built
 in. If Git metadata is unavailable, set `CHARTER_COMMIT` to the source commit, or About shows
 `commit unknown`.
