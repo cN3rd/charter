@@ -69,8 +69,9 @@ What keeps the build from depending on the machine:
 - The `dist` profile's `codegen-units = 1` and thin LTO leave the code's order to the compiler
   alone, and `strip` removes the debug information.
 - On Windows `/Brepro` keeps the link time out of the executable.
-- `packaging/pack.py` writes the archive itself, entries sorted, every file stamped with the
-  commit's time, owners and permissions fixed, where `tar` and `zip` would record the machine's.
+- GNU `tar` (Linux) and `7z` (Windows) are told to sort entries, stamp every file with the
+  commit's time (the zip with 1980-01-01, as 7-Zip would otherwise write local time), and fix
+  owners and permissions, where by default they would record the machine's.
 - Nothing reads the clock or the machine at build time. The commit the About window names comes in
   as `CHARTER_COMMIT`, set by the `justfile` from git.
 

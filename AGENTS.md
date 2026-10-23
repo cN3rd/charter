@@ -29,8 +29,7 @@ Before changing files or investigating bugs, read the
 ## Commands
 
 `just` lists every recipe; run `git submodule update --init` once after cloning. **`just ci`** is
-the pre-commit gate: fmt-check, clippy with `-D warnings`, the tests, the book and its checks, and
-the packager's self-test.
+the pre-commit gate: fmt-check, clippy with `-D warnings`, the tests, and the book and its checks.
 
 - `just check` is the fast loop; `just test -p charter-core format_chapter` runs a subset.
 - `just run [song]` starts the editor; `just dist` writes reproducible packages into `dist/`.
@@ -91,7 +90,6 @@ floats, and one proof mixing division, multiplication and rounding never finishe
 | `crates/charter-app` | thin binary: registers plugins, serves file/dialog requests (`std::fs`, rfd), plays audio (kira), time-stretch, settings in eframe storage, crash reports (`report.rs`, color-eyre). File I/O behind a `Disk` trait, so it is tested in memory |
 | `plugins/{stepmania,ttr,osu-mania}` | ruleset plugins: typed game models over `charter-core` with a `Plugin` the editor validates through |
 | `third-party/symphonia-wrap` | build-time facade over `symphonia`, `dylib` + `rlib` |
-| `packaging/pack.py` | writes `.tar.gz`/`.zip` deterministically; `just pack-check` self-tests it |
 
 Keep dependency direction one-way: **data → DSP → UI**, with plugins written against the same
 public surface a third-party plugin would use. Ask before inventing a crate boundary.

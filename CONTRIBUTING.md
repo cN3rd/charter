@@ -64,7 +64,7 @@ just fmt
 just ci
 ```
 
-`just ci` checks formatting, Clippy, tests, the book and the packager. If you couldn't run a
+`just ci` checks formatting, Clippy, tests, and the book. If you couldn't run a
 check, say which one and why.
 
 Read the [contribution policy](docs/src/contributing.md) before submitting. You are responsible

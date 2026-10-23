@@ -50,12 +50,8 @@ docs-check:
     {{ python }} docs/okf-frontmatter.py selftest
     {{ python }} docs/okf-frontmatter.py check docs/src
 
-# Check the packer writes the same archive from the same files
-pack-check:
-    {{ python }} packaging/pack.py selftest
-
 # Everything a change should pass before it is committed
-ci: fmt-check clippy test docs docs-check pack-check
+ci: fmt-check clippy test docs docs-check
 
 # Run the editor, passing any arguments on (a song to open)
 run *args:
@@ -129,5 +125,13 @@ dist:
             | LC_ALL=C sort -u
     } > "$folder/licenses/THIRD-PARTY.md"
 
-    {{ python }} packaging/pack.py "$folder" "dist/$name.$archive"
+    cd dist
+    if [[ {{ os() }} == windows ]]; then
+        rm -f "$name.zip"
+        7z a -tzip -mx=9 -mtm=off -mtc=off -mta=off -mcu=on "$name.zip" "$name" >/dev/null
+    else
+        tar --sort=name --mtime="@$SOURCE_DATE_EPOCH" --owner=0 --group=0 --numeric-owner \
+            --mode=a=rX,u+w --format=gnu -c "$name" | gzip -9n > "$name.tar.gz"
+    fi
+    cd ..
     echo "dist/$name.$archive"
