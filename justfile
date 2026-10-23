@@ -116,28 +116,18 @@ dist:
     crates/charter-mapperatorinator-burn/LICENSE                mapperatorinator-LICENSE.txt
     crates/charter-mapperatorinator-burn/NOTICE                 mapperatorinator-NOTICE.txt
     END
-    cargo metadata --format-version 1 --filter-platform "$target" | {{ python }} -c '
-    import json, sys
-    meta = json.load(sys.stdin)
-    packages = {p["id"]: p for p in meta["packages"]}
-    nodes = {n["id"]: n for n in meta["resolve"]["nodes"]}
-    ours = set(meta["workspace_members"])
-    start = next(i for i in ours if packages[i]["name"] == "charter-app")
-    # What ships: charter-app and what it links, not build scripts or tests.
-    seen, todo = set(), [start]
-    while todo:
-        node = nodes[todo.pop()]
-        for dep in node["deps"]:
-            if any(kind["kind"] is None for kind in dep["dep_kinds"]) and dep["pkg"] not in seen:
-                seen.add(dep["pkg"])
-                todo.append(dep["pkg"])
-    print("# Third-party crates in this build\n")
-    print("Each crate is used under the licence named; its text is in the crate on crates.io.\n")
-    print("| Crate | Version | Licence |\n|---|---|---|")
-    for pkg in sorted((packages[i] for i in seen - ours), key=lambda p: (p["name"], p["version"])):
-        pkg["license"] = pkg["license"] or "see the crate"
-        print("| %(name)s | %(version)s | %(license)s |" % pkg)
-    ' > "$folder/licenses/THIRD-PARTY.md"
+    {
+        echo "# Third-party crates in this build"
+        echo
+        echo "Each crate is used under the licence named; its text is in the crate on crates.io."
+        echo
+        echo "| Crate | Version | Licence |"
+        echo "|---|---|---|"
+        # Workspace crates print their folder, `(/…)` or `(C:\…)`; repeats end `(*)`.
+        cargo tree --locked -q -e normal --target "$target" --prefix none --format '| {p} | {l} |' \
+            | sed -E '/ \((\/|[A-Za-z]:)/d; s/ \((\*|proc-macro)\)//g; s/^\| (\S+) v(\S+) /| \1 | \2 /; s/\|  \|$/| see the crate |/' \
+            | LC_ALL=C sort -u
+    } > "$folder/licenses/THIRD-PARTY.md"
 
     {{ python }} packaging/pack.py "$folder" "dist/$name.$archive"
     echo "dist/$name.$archive"
