@@ -76,14 +76,6 @@ ci: fmt-check clippy test docs docs-check pack-check
 run *args:
     cargo run -p charter-app -- {{ args }}
 
-# Build the editor for this machine
-build:
-    cargo build -p charter-app
-
-# Build the editor for this machine, optimised
-release:
-    cargo build -p charter-app --release
-
 # Build the editor for 64-bit Windows, optimised: with MSVC on Windows, cargo-xwin elsewhere
 build-windows:
     {{ windows_build }} -p charter-app --release --target {{ windows }} --config "{{ windows_flags }}"
